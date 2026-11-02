@@ -1837,7 +1837,10 @@
   // each dot can fly from its place on the slide to its place in the UMAP.
   const UMAP_NONE = 0xffff;
   const UMAP_GREY = [92, 99, 115], UMAP_LIT_GREY = [232, 236, 244], UMAP_SEL = [255, 214, 64];
-  const FLY_MS = 1300;
+  // how long the flight takes: the "Speed" menu beside Play (slow ones are for talks and
+  // for following one region by eye); remembered per browser
+  const FLY_MS = 1300, FLY_KEY = "sv.flyMs";
+  const flyMs = () => Number($("flySpeed") && $("flySpeed").value) || FLY_MS;
   const umapBlank = () => ({ key: null, index: null, pos: null, uxy: null, box: null, nEmb: 0, radius: 1,
     clusters: new Map(), cl: null, clRes: null, res: null, centroids: new Map(), names: {}, hidden: new Set(),
     pick: null, sel: null, selN: 0, selEmb: 0, view: "tissue", colorBy: "gene", tool: null, hover: -1, grid: null,
@@ -2088,7 +2091,7 @@
     umapFly(true, U.tissueVs || imageFitVs(), S.viewState || umapFitVs(), true);
   }
 
-  // The flight, ~1.3 s eased: dots move from the slide to the UMAP (or back), the H&E fades,
+  // The flight, eased (1.3 s, or slower from the Speed menu): dots move from the slide to the UMAP (or back), the H&E fades,
   // the camera moves between the two framings. Instant for reduced motion (unless asked for
   // with Play) or a hidden tab.
   function umapFly(toUmap, vsFrom, vsTo, force) {
@@ -2105,11 +2108,11 @@
     const F = umapCloud("fly");
     if (!F.n) { done(); return; }
     $("densityKey").hidden = true;
-    const t0 = performance.now();
+    const t0 = performance.now(), ms = flyMs();
     let frames = 0;
     const step = (now) => {
       if (S.umap !== U || U.anim !== "fly") return;               // the layer changed mid-flight
-      const f = Math.min(1, (now - t0) / FLY_MS);
+      const f = Math.min(1, (now - t0) / ms);
       const ez = f < 0.5 ? 4 * f * f * f : 1 - Math.pow(-2 * f + 2, 3) / 2;
       umapFlyFrame(F, toUmap ? ez : 1 - ez, vs0, vsTo, ez);
       frames++;
@@ -2118,7 +2121,7 @@
     };
     requestAnimationFrame(step);
     // a tab sent to the background stops animation frames: never leave the view mid-flight
-    setTimeout(() => { if (U.anim === "fly" && S.umap === U) done(); }, FLY_MS + 1500);
+    setTimeout(() => { if (U.anim === "fly" && S.umap === U) done(); }, ms + 1500);
   }
   // one frame: a = 0 slide layout .. 1 UMAP layout; e = camera progress from vs0 to vs1
   function umapFlyFrame(F, a, vs0, vs1, e) {
@@ -2848,6 +2851,8 @@
     umapSelEvents();
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => { b.onclick = () => umapSetView(b.dataset.v); });
     $("flyPlay").onclick = umapPlay;
+    try { const v = localStorage.getItem(FLY_KEY); if (v && $("flySpeed").querySelector(`option[value="${v}"]`)) $("flySpeed").value = v; } catch (e) {}
+    $("flySpeed").onchange = (e) => { try { localStorage.setItem(FLY_KEY, e.target.value); } catch (err) {} };
     $("colorBy").onchange = async (e) => {
       const U = S.umap;
       U.colorBy = e.target.value;
