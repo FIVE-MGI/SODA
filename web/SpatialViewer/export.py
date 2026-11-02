@@ -106,11 +106,13 @@ def load_region_overlay(ds_dir: Path, m: dict, outline_names=regions.DEFAULT_OUT
 def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, log=print,
                   verify: bool = True, outline_names=regions.DEFAULT_OUTLINE_NAMES, hvg: bool = True,
                   umap: bool = True, celltypes: bool = True, markers: Path | None = None,
-                  grid_um: float = protgrid.DEFAULT_GRID_UM) -> Path:
+                  grid_um: float = protgrid.DEFAULT_GRID_UM,
+                  tissue_smooth_um: float = protgrid.DEFAULT_TISSUE_SMOOTH_UM) -> Path:
     """`markers`: the marker list for suggested cluster names. Default by modality:
     markers/nerve.json for RNA (Visium) layers, markers/akoya_nerve.json for the protein
     grid layer of an image dataset. `grid_um` (image datasets only): grid square size in
-    µm for the protein layer; 0 = no grid layer."""
+    µm for the protein layer; 0 = no grid layer. `tissue_smooth_um`: moving-average window
+    (µm) over the square means before the grid's tissue threshold; 0 = raw means."""
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
     out = Path(dest) / m["id"]
@@ -219,7 +221,8 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     grid_layer = None
     if grid_um and grid_um > 0 and protgrid.applies_to(m):
         grid_layer = protgrid.write_grid_layer(r, m, out, grid_um=grid_um, markers=markers,
-                                               umap=umap, celltypes=celltypes, log=log)
+                                               umap=umap, celltypes=celltypes, log=log,
+                                               tissue_smooth_um=tissue_smooth_um)
         if grid_layer and region_feats is not None:
             gk = grid_layer["key"]
             pos = np.fromfile(out / "expr" / gk / "positions.bin", dtype="<f4").reshape(-1, 2)

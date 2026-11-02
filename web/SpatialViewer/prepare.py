@@ -116,6 +116,10 @@ def main(argv=None):
                    help="image datasets (Akoya / multiplex TIFF, not Visium or H&E): size in µm of the grid squares "
                         "whose marker means become a 'protein' expression layer with a UMAP and clusters "
                         "(protgrid.py). Default 20; 0 = no grid layer. Needs the dataset's pixel size.")
+    e.add_argument("--tissue-smooth-um", type=float, default=100.0,
+                   help="grid layer: the tissue mask thresholds the DAPI square means after a moving average "
+                        "over this many µm (default 100 = 5x5 squares of 20 µm); 0 = threshold the raw means "
+                        "(keeps only nucleus-dense squares).")
     e.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
@@ -165,7 +169,7 @@ def main(argv=None):
         export_static(Path(args.out) / args.id, Path(args.dest), fmt=args.fmt, workers=args.workers, log=log,
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
-                      grid_um=args.grid_um)
+                      grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um)
         return
 
     if args.kind == "inspect":

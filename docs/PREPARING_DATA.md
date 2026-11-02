@@ -136,6 +136,14 @@ marker name is taken from between. `_gray` files are preferred; `_red`/`_green`/
 renderings are used only when a marker has no grey file. All files must have the same
 width and height.
 
+On `export`, a multi-channel fluorescence image (TIFF or Akoya, with a pixel size) also gets a
+grid layer: the mean of each marker per 20 µm square (`--grid-um`), with a UMAP and clusters.
+Only tissue squares are kept. The tissue mask: DAPI (or Hoechst) square means, averaged over
+100 µm (5 x 5 squares, `--tissue-smooth-um`), Otsu threshold on log1p, enclosed holes of up to
+4 squares filled. `--tissue-smooth-um 0` thresholds the raw square means instead, which keeps
+only nucleus-dense squares and drops axon and collagen stretches. The rule and window are
+recorded in the layer's `grid` block in `manifest.json` and in `umap/index.json`.
+
 ## H&E or other brightfield image on its own
 
 ```bash

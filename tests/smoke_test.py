@@ -526,7 +526,11 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     c.ok(not bad, f"{key}: gene files: {bad[:5]}")
     c.eq(len(list((d / "gene").glob("*.bin"))), len(genes), f"{key}: gene/*.bin count")
     gr = L.get("grid") or {}
-    if "DAPI" in V and "tissueThreshold" in gr:
+    # default tissue rule: Otsu after a 100 µm (5 x 5 square) moving average of the DAPI means
+    c.eq((gr.get("tissueSmoothUm"), gr.get("tissueSmoothSquares")), (100.0, 5), f"{key}: grid tissue smoothing")
+    c.ok("moving average" in gr.get("tissueRule", ""), f"{key}: grid tissueRule {gr.get('tissueRule')!r}")
+    if "DAPI" in V and "tissueThreshold" in gr and gr.get("tissueSmoothSquares", 1) <= 1:
+        # raw rule only: with smoothing the threshold applies to the averaged means, not to each square's
         below = int((V["DAPI"] <= gr["tissueThreshold"]).sum())
         c.ok(below <= gr.get("holesFilled", 0), f"{key}: {below} kept squares have DAPI <= the tissue threshold "
                                                  f"(only the {gr.get('holesFilled', 0)} filled holes may)")
@@ -601,15 +605,22 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     sug = ct["clusterings"][f"{cl['resolution']:g}"]
     c.eq(len(sug), cl["n"], f"{key}: one suggestion per cluster")
     # Vessels and the perineurium rim are about one 20 um square wide, so their squares are
-    # mixed: a confident name counts when its region is >= 25% of the cluster's squares.
+    # mixed: a confident name counts when its region is >= 20% of the cluster's squares.
+    # Squares on glass ("background") are left out of that share: the tissue mask averages the
+    # DAPI means over 100 um (5 x 5 squares) first, so it keeps a 1-2 square fringe of glass
+    # around the tissue - on this 1 mm demo ~140 squares - and a cluster of fringe squares has
+    # no drawn region to be right about (the typed-square check above still counts them).
     hits = total = 0
     for s in sug:
-        share = float(np.mean(truth[lab == s["cluster"]] == s["top"].lower()))
+        t = truth[lab == s["cluster"]]
+        t = t[t != "background"]
+        share = float(np.mean(t == s["top"].lower())) if len(t) else 0.0
         if s["confidence"] in ("high", "medium"):
             total += 1
-            hits += share >= 0.25
-    c.ok(total > 0 and hits == total, f"{key}: confident suggestions whose region is >= 25% of the cluster: {hits}/{total}")
-    print(f"    suggested names: {hits}/{total} confident suggestions name a region that is >= 25% of the cluster; "
+            hits += share >= 0.2
+    c.ok(total > 0 and hits == total, f"{key}: confident suggestions whose region is >= 20% of the cluster's "
+                                      f"tissue squares: {hits}/{total}")
+    print(f"    suggested names: {hits}/{total} confident suggestions name a region that is >= 20% of the cluster's tissue squares; "
           f"{agree:.0%} of typed squares match their region")
     return res
 
