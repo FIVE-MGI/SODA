@@ -1,0 +1,17 @@
+{
+  "$comment": "Azure Static Web Apps config for the viewer. Written for app_location = web/SpatialViewer, so the page is the site root. The deploy workflow copies this file into web/SpatialViewer/ before uploading (see deploy/azure/README.md). The data itself is in a private blob container behind /api/token; these rules only stop the tooling that sits next to the page from being served.",
+  "platform": {
+    "apiRuntime": "node:20"
+  },
+  "routes": [
+    { "route": "/*.{py,pyc,ps1,md,csv,password}", "statusCode": 404 },
+    { "route": "/requirements.txt", "statusCode": 404 },
+    { "route": "/requirements-clustering.txt", "statusCode": 404 },
+    { "route": "/.password", "statusCode": 404 },
+    { "route": "/.venv/*", "statusCode": 404 },
+    { "route": "/__pycache__/*", "statusCode": 404 }
+  ],
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff"
+  }
+}

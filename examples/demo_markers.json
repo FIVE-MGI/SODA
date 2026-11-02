@@ -1,0 +1,13 @@
+{
+  "name": "Synthetic demo regions",
+  "note": "Marker lists for the synthetic demo made by examples/make_demo.py: each region the demo draws has two named marker genes. Shows the shape of a marker-list file; for real tissue start from web/SpatialViewer/markers/nerve.json or write your own.",
+  "version": 1,
+  "types": [
+    { "name": "Stroma", "genes": ["MARKER_STROMA1", "MARKER_STROMA2"] },
+    { "name": "Fascicle", "genes": ["MARKER_FASC1", "MARKER_FASC2"] },
+    { "name": "Perineurium", "genes": ["MARKER_RIM1", "MARKER_RIM2"] },
+    { "name": "Vessel", "genes": ["MARKER_VESSEL1", "MARKER_VESSEL2"] },
+    { "name": "Adipose", "genes": ["MARKER_FAT1", "MARKER_FAT2"] },
+    { "name": "Edge", "genes": ["MARKER_EDGE1", "MARKER_EDGE2"] }
+  ]
+}

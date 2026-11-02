@@ -1,0 +1,28 @@
+# The only file that names a particular study: its datasets, institution and logos.
+web/SpatialViewer/config.js
+
+# Local branding assets that go with config.js
+web/SpatialViewer/logos/
+
+# The de-identification key: maps published numbers back to real sample IDs. Never commit it.
+sample_id_key.csv
+*_key.csv
+
+# Python / Node
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent tooling
+.claude/
+
+# Demo / smoke-test outputs (python examples/make_demo.py, python tests/smoke_test.py)
+demo/
+.pytest_cache/

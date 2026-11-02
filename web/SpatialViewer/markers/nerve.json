@@ -1,0 +1,19 @@
+{
+  "name": "Peripheral nerve",
+  "note": "Starting lists of widely used marker genes for cell types found in and around peripheral nerve. Review and edit them for your tissue: the suggested cluster names are only as good as these lists. Gene names are matched case-insensitively, so the same file works for human (MPZ) and mouse (Mpz). A type needs at least 2 of its genes in the data to be scored.",
+  "version": 1,
+  "types": [
+    { "name": "Myelinating Schwann", "genes": ["MPZ", "PMP22", "PRX", "MBP", "NCMAP", "DRP2", "EGR2", "MAG"] },
+    { "name": "Non-myelinating Schwann", "genes": ["NGFR", "L1CAM", "CDH19", "SCN7A", "GFRA3"] },
+    { "name": "Perineurial", "genes": ["SLC2A1", "CLDN1", "ITGB4", "MSLN", "KRT19"] },
+    { "name": "Fibroblast", "genes": ["PI16", "DPT", "LUM", "DCN", "PDGFRA", "CD34"] },
+    { "name": "Endothelial", "genes": ["PECAM1", "CDH5", "VWF", "CLDN5", "EMCN", "PLVAP"] },
+    { "name": "Pericyte / smooth muscle", "genes": ["ACTA2", "MYH11", "TAGLN", "RGS5", "PDGFRB", "CNN1"] },
+    { "name": "Macrophage", "genes": ["CD68", "CD163", "C1QA", "C1QB", "CSF1R", "MRC1", "LYVE1"] },
+    { "name": "Mast cell", "genes": ["TPSAB1", "TPSB2", "CPA3", "KIT", "MS4A2"] },
+    { "name": "T / NK cell", "genes": ["CD3D", "CD3E", "CD2", "IL7R", "NKG7"] },
+    { "name": "B / plasma cell", "genes": ["MS4A1", "CD79A", "JCHAIN", "MZB1"] },
+    { "name": "Adipocyte", "genes": ["ADIPOQ", "PLIN1", "PLIN4", "LEP", "CIDEC"] },
+    { "name": "Skeletal muscle", "genes": ["ACTA1", "CKM", "MYH1", "MYH2", "DES"] }
+  ]
+}

@@ -1,0 +1,16 @@
+# Core: prepare (ingest), export (static tree), the tile server and deid.
+# Clustering for the whole-section UMAP is optional: requirements-clustering.txt.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+numpy>=2.0
+# tifffile 2025.x needs zarr 3 for aszarr(); the pyramid code uses the zarr 2 API,
+# so tifffile, zarr and numcodecs are held together on the zarr-2 line.
+tifffile>=2024.8,<2025
+imagecodecs>=2024.6
+zarr>=2.18,<3
+numcodecs>=0.13,<0.16
+pillow>=10
+h5py>=3.12
+pyarrow>=17
+scipy>=1.14
+cryptography>=42
