@@ -8,6 +8,8 @@
     <dest>/<id>/expr/<key>/hvg/...              bin-major top-variable genes in spatial chunks (hvgchunks.py)
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
+    <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
+                                                square as a "protein" expr layer, with umap/ (protgrid.py)
     <dest>/<id>/overlays/<file>.geojson
 
 Upload the <id> folder to any static host (Azure blob, S3, a web server) and
@@ -28,6 +30,7 @@ import numpy as np
 
 import celltypes as celltypes_mod
 import hvgchunks
+import protgrid
 import regions
 import sectionumap
 from expr import ExprReader
@@ -102,7 +105,12 @@ def load_region_overlay(ds_dir: Path, m: dict, outline_names=regions.DEFAULT_OUT
 
 def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, log=print,
                   verify: bool = True, outline_names=regions.DEFAULT_OUTLINE_NAMES, hvg: bool = True,
-                  umap: bool = True, celltypes: bool = True, markers: Path | None = None) -> Path:
+                  umap: bool = True, celltypes: bool = True, markers: Path | None = None,
+                  grid_um: float = protgrid.DEFAULT_GRID_UM) -> Path:
+    """`markers`: the marker list for suggested cluster names. Default by modality:
+    markers/nerve.json for RNA (Visium) layers, markers/akoya_nerve.json for the protein
+    grid layer of an image dataset. `grid_um` (image datasets only): grid square size in
+    µm for the protein layer; 0 = no grid layer."""
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
     out = Path(dest) / m["id"]
@@ -207,6 +215,21 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
             n += 1
         log(f"[export] expr {key}: {n:,} gene files")
 
+    # ---- protein grid layer (image datasets): marker means per square ----------
+    grid_layer = None
+    if grid_um and grid_um > 0 and protgrid.applies_to(m):
+        grid_layer = protgrid.write_grid_layer(r, m, out, grid_um=grid_um, markers=markers,
+                                               umap=umap, celltypes=celltypes, log=log)
+        if grid_layer and region_feats is not None:
+            gk = grid_layer["key"]
+            pos = np.fromfile(out / "expr" / gk / "positions.bin", dtype="<f4").reshape(-1, 2)
+            ids, table = regions.index_bins(pos, region_feats, region_feat_id)
+            if table:
+                (out / "expr" / gk / "region.bin").write_bytes(np.ascontiguousarray(ids, dtype="<u2").tobytes())
+                grid_layer = {**grid_layer, "regions": table, "regionOverlay": region_file}
+                log(f"[export] expr {gk}: {len(table)} regions, "
+                    f"{int(np.count_nonzero(ids)):,}/{len(ids):,} squares assigned")
+
     # ---- overlays + manifest -----------------------------------------------
     for ov in m.get("overlays", []):
         src = ds_dir / "overlays" / ov["file"]
@@ -234,6 +257,8 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     if layer_umap:
         sm["expr"] = [({**layer, "umap": layer_umap[layer["key"]]} if layer["key"] in layer_umap else layer)
                       for layer in sm.get("expr", [])]
+    if grid_layer:
+        sm["expr"] = [L for L in sm.get("expr", []) if L.get("key") != grid_layer["key"]] + [grid_layer]
     (out / "manifest.json").write_text(json.dumps(sm, indent=1), encoding="utf-8")
     log(f"[export] done -> {out}")
     return out

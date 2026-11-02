@@ -113,14 +113,14 @@ def score_bins(cnt: dict[int, np.ndarray], lib: np.ndarray, matched: list[dict])
     return score, scored
 
 
-def best_type(score: np.ndarray, scored: np.ndarray) -> np.ndarray:
-    """Index of each bin's best type, NO_TYPE when its best score is < BIN_MIN (or nothing is scored)."""
+def best_type(score: np.ndarray, scored: np.ndarray, bin_min: float = BIN_MIN) -> np.ndarray:
+    """Index of each bin's best type, NO_TYPE when its best score is < bin_min (or nothing is scored)."""
     best = np.full(len(score), NO_TYPE, np.int64)
     if not scored.any():
         return best
     s = np.where(scored[None, :], score, -np.inf)
     arg = np.argmax(s, axis=1)                         # first max: list order breaks ties
-    ok = s[np.arange(len(s)), arg] >= BIN_MIN
+    ok = s[np.arange(len(s)), arg] >= bin_min
     best[ok] = arg[ok]
     return best
 
@@ -171,6 +171,10 @@ def write_celltypes(er, d, markers: Path | None = None, log=print) -> dict | Non
     t0 = time.time()
     index = json.loads(ip.read_text(encoding="utf-8"))
     ms, rel = load_markers(markers)
+    if ms.get("modality", "rna") != "rna":
+        log(f"[celltypes] {key}: marker list {rel} is for {ms.get('modality')!r}, this layer is RNA - skipped "
+            f"(pass an RNA list with --markers, e.g. markers/nerve.json)")
+        return None
     matched = match_genes(ms["types"], er.genes)
     names = [t["name"] for t in matched]
     if len(names) >= NO_TYPE:
@@ -245,3 +249,99 @@ def write_celltypes(er, d, markers: Path | None = None, log=print) -> dict | Non
         f"typed, " + ", ".join(f"r{r}: {sum(x['confidence'] == 'high' for x in v)} high"
                                for r, v in clusterings.items()) + f"  {time.time() - t0:.1f}s")
     return {"nTypes": len(names), "markerSet": ms.get("name")}
+
+
+# ---------------------------------------------------------------------------------------
+# Protein rule: grid squares of a multiplexed immunofluorescence image (protgrid.py)
+# ---------------------------------------------------------------------------------------
+DEFAULT_PROTEIN_MARKERS = Path(__file__).resolve().parent / "markers" / "akoya_nerve.json"
+PROTEIN_MIN_CHANNELS = 1
+PROTEIN_BIN_MIN = 0.5
+
+
+def rule_text_protein() -> str:
+    return (f"Protein rule. Each square: x' = its mean intensity per marker channel, clipped to the channel's "
+            f"1st..99.5th percentile over the tissue squares and scaled to 0..1; z-scored over the squares "
+            f"(population sd) and averaged over the type's channels (no log / CP10k, no rare-channel drop). "
+            f"The square's type is the best-scoring one if its score >= {PROTEIN_BIN_MIN:g}, else none. "
+            f"A channel the panel lacks is 'absent'; one that is flat over the tissue is left out as 'flat'. "
+            f"A type needs >= {PROTEIN_MIN_CHANNELS} channel present to be scored. "
+            f"Per cluster, pct = share of its squares of each type (none counts in the denominator). "
+            f"high: top pct >= {HIGH:g} and >= 2x the second; medium: >= {MEDIUM:g}; low: >= {LOW:g} "
+            f"(shown as 'maybe'); otherwise Unclear.")
+
+
+def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, markers: Path | None = None,
+                            key: str = "", log=print) -> dict | None:
+    """umap/celltypes.json + umap/celltype.bin for a protein layer (protgrid.py).
+
+    `xp` = squares x channels of x' (every positions.bin row is embedded), `channels`
+    their names, `usable[j]` False for a channel that is flat over the tissue.
+    Needs umap/index.json from sectionumap.write_feature_umap.
+    """
+    d = Path(d)
+    ud = d / "umap"
+    ip = ud / "index.json"
+    if not ip.exists():
+        log(f"[celltypes] {key}: no umap/index.json, skipped")
+        return None
+    t0 = time.time()
+    index = json.loads(ip.read_text(encoding="utf-8"))
+    ms, rel = load_markers(markers or DEFAULT_PROTEIN_MARKERS)
+    if ms.get("modality") != "protein":
+        log(f"[celltypes] {key}: marker list {rel} has no \"modality\": \"protein\" - skipped "
+            f"(pass a protein list with --markers, e.g. markers/akoya_nerve.json)")
+        return None
+    matched = match_genes(ms["types"], channels)
+    names = [t["name"] for t in matched]
+    if len(names) >= NO_TYPE:
+        raise SystemExit(f"[celltypes] {len(names)} types: celltype.bin holds at most {NO_TYPE}")
+    n = len(xp)
+    if index.get("nBins") != n or index.get("nEmbedded") != n:
+        raise SystemExit(f"[celltypes] {key}: umap/index.json does not cover the {n} squares")
+
+    z = {}
+    for j in sorted({c for t in matched for c in t["cols"]}):
+        x = xp[:, j].astype(np.float64)
+        sd = x.std()
+        if usable[j] and sd > 0:
+            z[j] = (x - x.mean()) / sd
+    score = np.full((n, len(matched)), np.nan)
+    scored = np.zeros(len(matched), bool)
+    types = []
+    for ti, t in enumerate(matched):
+        cols = [c for c in t["cols"] if c in z]
+        used = [g for g, c in zip(t["genes"], t["cols"]) if c in z]
+        flat = [g for g, c in zip(t["genes"], t["cols"]) if c not in z]
+        if len(cols) >= PROTEIN_MIN_CHANNELS:
+            score[:, ti] = np.mean([z[c] for c in cols], axis=0)
+            scored[ti] = True
+        e = {"name": t["name"], "genes": used,
+             "missing": t["missing"] + [{"gene": g, "reason": "flat"} for g in flat], "scored": bool(scored[ti])}
+        if not scored[ti]:
+            e["reason"] = (f"{len(used)} of {len(used) + len(e['missing'])} channels measurable here, "
+                           f"needs {PROTEIN_MIN_CHANNELS}")
+        types.append(e)
+    best = best_type(score, scored, PROTEIN_BIN_MIN)
+
+    clusterings = {}
+    for c in index["clusterings"]:
+        lab = np.fromfile(ud / c["file"], dtype="<u2").astype(np.int64)
+        if len(lab) != n or (lab == NO_CLUSTER).any() or int(lab.max()) + 1 != c["n"]:
+            raise SystemExit(f"[celltypes] {key}: {c['file']} does not match index.json")
+        clusterings[f"{c['resolution']:g}"] = summarise_clusters(lab, best, score, scored, names)
+
+    out = {"markerSet": {"name": ms.get("name"), "version": ms.get("version"), "file": rel},
+           "modality": "protein", "types": types, "rule": rule_text_protein(), "clusterings": clusterings}
+    deid.assert_clean(out, "umap/celltypes.json")
+    txt = json.dumps(out, separators=(",", ":"))
+    ct = best.astype(np.uint8)                       # every square is embedded: no 255 rows
+    for name, buf in (("celltype.bin", ct.tobytes()), ("celltypes.json", txt.encode("utf-8"))):
+        tmp = ud / (name + ".part")
+        tmp.write_bytes(buf)
+        tmp.replace(ud / name)
+    n_typed = int((best < NO_TYPE).sum())
+    log(f"[celltypes] {key}: protein, {int(scored.sum())}/{len(names)} types scored, {n_typed:,}/{n:,} squares "
+        f"typed, " + ", ".join(f"r{r}: {sum(x['confidence'] == 'high' for x in v)} high"
+                               for r, v in clusterings.items()) + f"  {time.time() - t0:.1f}s")
+    return {"nTypes": len(names), "markerSet": ms.get("name"), "modality": "protein"}

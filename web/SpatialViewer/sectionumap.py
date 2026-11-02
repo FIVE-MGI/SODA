@@ -16,6 +16,10 @@ RB configuration) on umap's fuzzy graph at 0.3 / 0.6 / 1.0. Cluster 0 is the
 largest. Markers: top 10 genes per cluster by log2 fold change of the mean
 expression (cluster vs rest) among genes seen in >= 25% of the cluster's bins.
 
+Protein grid layers (protgrid.py) go through the same UMAP / Leiden / renumbering /
+file writing (embed_and_cluster, write_umap_files) from a dense matrix of marker means
+instead: write_feature_umap; their index.json says "modality": "protein".
+
 Everything is seeded, so the same cache gives the same bytes. umap-learn, igraph
 and leidenalg are imported lazily: without them the step is skipped and the rest
 of the export carries on.
@@ -153,6 +157,106 @@ def _markers(Xn: sparse.csr_matrix, lab: np.ndarray, k: int, genes: list[str]) -
     return out
 
 
+def _clustering_libs(key, log):
+    """(umap, igraph, leidenalg), or None with a message when one is not installed."""
+    try:
+        import igraph as ig
+        import leidenalg as la
+        umap = _import_umap()
+    except ImportError as e:
+        log(f"[umap] {key}: skipped - {e.name} is not installed (pip install umap-learn igraph leidenalg)")
+        return None
+    return umap, ig, la
+
+
+def _reusable(ud, params: dict, key, log) -> dict | None:
+    """The manifest entry of an earlier umap/ with the same params and all its files, else None."""
+    if not (ud / "index.json").exists():
+        return None
+    try:
+        old = json.loads((ud / "index.json").read_text(encoding="utf-8"))
+        if old.get("params") == params and all(
+                (ud / f).exists() for f in ["coords.bin"] + [c["file"] for c in old["clusterings"]]):
+            log(f"[umap] {key}: reusing {ud / 'index.json'}")
+            return _entry(old)
+    except (ValueError, KeyError):
+        pass
+    return None
+
+
+def embed_and_cluster(pcs: np.ndarray, markers_of, libs, key, log=print, t0: float | None = None):
+    """UMAP of `pcs` (rows x components) + Leiden at every resolution on umap's fuzzy graph.
+
+    `markers_of(lab, k)` gives the marker lists of one clustering. Returns the 2-D
+    embedding (float32) and, per resolution, the index.json entry and the labels.
+    Shared by the RNA (write_section_umap) and protein (write_feature_umap) layers.
+    """
+    umap, ig, la = libs
+    t0 = time.time() if t0 is None else t0
+    # random_state makes umap-learn single-threaded: slower, but the same bytes every run
+    reducer = umap.UMAP(n_neighbors=N_NEIGHBORS, min_dist=MIN_DIST, n_components=2, metric="euclidean",
+                        random_state=SEED, transform_seed=SEED)
+    emb = reducer.fit_transform(pcs).astype(np.float32)
+    log(f"[umap] {key}: UMAP  {time.time() - t0:.0f}s")
+
+    clusterings, labels = [], []
+    G = _graph(reducer.graph_, ig)
+    for res in RESOLUTIONS:
+        lab = _leiden(G, res, la)
+        k = int(lab.max()) + 1
+        sizes = np.bincount(lab, minlength=k)
+        clusterings.append({"resolution": res, "file": f"clusters_r{res:.1f}.bin", "n": k,
+                            "sizes": [int(v) for v in sizes],
+                            "markers": markers_of(lab, k)})
+        labels.append(lab)
+        log(f"[umap] {key}: leiden r={res:g} -> {k} clusters  {time.time() - t0:.0f}s")
+    return emb, clusterings, labels
+
+
+def write_umap_files(ud, head: dict, params: dict, emb: np.ndarray, clusterings: list, labels: list,
+                     n_rows: int, rows: np.ndarray, libs, key, log=print, t0: float | None = None) -> dict:
+    """index.json + coords.bin + clusters_r*.bin; returns the manifest entry.
+
+    `head` = the first keys of index.json (nBins, nEmbedded, ...); `rows` = the
+    positions.bin row of each row of `emb`.
+    """
+    umap, ig, la = libs
+    t0 = time.time() if t0 is None else t0
+    n = len(emb)
+    index = {**head,
+             "bounds": [round(float(v), 4) for v in (emb[:, 0].min(), emb[:, 1].min(),
+                                                     emb[:, 0].max(), emb[:, 1].max())],
+             "params": params,
+             "versions": {"umap-learn": getattr(umap, "__version__", "?"),
+                          "leidenalg": getattr(la, "__version__", getattr(la, "version", "?")),
+                          "igraph": getattr(ig, "__version__", "?"), "numpy": np.__version__},
+             "clusterings": clusterings, "default": DEFAULT_RES}
+    deid.assert_clean(index, "umap/index.json")
+    txt = json.dumps(index, separators=(",", ":"))
+    if _BARCODE.search(txt):
+        raise SystemExit("[umap] REFUSING to write index.json: it contains a barcode")
+
+    ud.mkdir(parents=True, exist_ok=True)
+    coords = np.full((n_rows, 2), np.nan, np.float32)
+    coords[rows] = emb
+    files = {"coords.bin": np.ascontiguousarray(coords, dtype="<f4").tobytes()}
+    for c, lab in zip(clusterings, labels):
+        cl = np.full(n_rows, NO_CLUSTER, np.uint16)
+        cl[rows] = lab
+        files[c["file"]] = cl.astype("<u2").tobytes()
+    files["index.json"] = txt.encode("utf-8")           # last: its presence means the folder is complete
+    total = 0
+    for name, buf in files.items():
+        tmp = ud / (name + ".part")
+        tmp.write_bytes(buf)
+        tmp.replace(ud / name)
+        total += len(buf)
+    log(f"[umap] {key}: {n:,}/{n_rows:,} rows embedded, clusters "
+        + ", ".join(f"r{c['resolution']:g}={c['n']}" for c in clusterings)
+        + f", {total / 1e6:.1f} MB  {time.time() - t0:.0f}s")
+    return _entry(index)
+
+
 def write_section_umap(er, d, log=print, force: bool = False) -> dict | None:
     """Write expr/<key>/umap/ for one layer (ExprReader `er`, output dir `d`).
 
@@ -161,21 +265,12 @@ def write_section_umap(er, d, log=print, force: bool = False) -> dict | None:
     """
     key = er.meta.get("key")
     ud = d / "umap"
-    if not force and (ud / "index.json").exists():
-        try:
-            old = json.loads((ud / "index.json").read_text(encoding="utf-8"))
-            if old.get("params") == _params() and all(
-                    (ud / f).exists() for f in ["coords.bin"] + [c["file"] for c in old["clusterings"]]):
-                log(f"[umap] {key}: reusing {ud / 'index.json'}")
-                return _entry(old)
-        except (ValueError, KeyError):
-            pass
-    try:
-        import igraph as ig
-        import leidenalg as la
-        umap = _import_umap()
-    except ImportError as e:
-        log(f"[umap] {key}: skipped - {e.name} is not installed (pip install umap-learn igraph leidenalg)")
+    if not force:
+        old = _reusable(ud, _params(), key, log)
+        if old:
+            return old
+    libs = _clustering_libs(key, log)
+    if libs is None:
         return None
 
     t0 = time.time()
@@ -205,58 +300,89 @@ def write_section_umap(er, d, log=print, force: bool = False) -> dict | None:
 
     pcs = _pca(Xn[:, cols].tocsr(), N_PCS)
     log(f"[umap] {key}: PCA {pcs.shape[1]}  {time.time() - t0:.0f}s")
-    # random_state makes umap-learn single-threaded: slower, but the same bytes every run
-    reducer = umap.UMAP(n_neighbors=N_NEIGHBORS, min_dist=MIN_DIST, n_components=2, metric="euclidean",
-                        random_state=SEED, transform_seed=SEED)
-    emb = reducer.fit_transform(pcs).astype(np.float32)
-    log(f"[umap] {key}: UMAP  {time.time() - t0:.0f}s")
+    emb, clusterings, labels = embed_and_cluster(
+        pcs, lambda lab, k: _markers(Xn, lab, k, er.genes), libs, key, log, t0)
+    return write_umap_files(ud, {"nBins": n_rows, "nEmbedded": n, "minUmi": MIN_UMI}, _params(),
+                            emb, clusterings, labels, n_rows, row_of[bins], libs, key, log, t0)
 
-    clusterings, labels = [], []
-    G = _graph(reducer.graph_, ig)
-    for res in RESOLUTIONS:
-        lab = _leiden(G, res, la)
-        k = int(lab.max()) + 1
-        sizes = np.bincount(lab, minlength=k)
-        clusterings.append({"resolution": res, "file": f"clusters_r{res:.1f}.bin", "n": k,
-                            "sizes": [int(v) for v in sizes],
-                            "markers": _markers(Xn, lab, k, er.genes)})
-        labels.append(lab)
-        log(f"[umap] {key}: leiden r={res:g} -> {k} clusters  {time.time() - t0:.0f}s")
 
-    index = {"nBins": n_rows, "nEmbedded": n,
-             "minUmi": MIN_UMI,
-             "bounds": [round(float(v), 4) for v in (emb[:, 0].min(), emb[:, 1].min(),
-                                                     emb[:, 0].max(), emb[:, 1].max())],
-             "params": _params(),
-             "versions": {"umap-learn": getattr(umap, "__version__", "?"),
-                          "leidenalg": getattr(la, "__version__", getattr(la, "version", "?")),
-                          "igraph": getattr(ig, "__version__", "?"), "numpy": np.__version__},
-             "clusterings": clusterings, "default": DEFAULT_RES}
-    deid.assert_clean(index, "umap/index.json")
-    txt = json.dumps(index, separators=(",", ":"))
-    if _BARCODE.search(txt):
-        raise SystemExit("[umap] REFUSING to write index.json: it contains a barcode")
+# ---------------------------------------------------------------------------------------
+# Protein layers (multiplexed immunofluorescence, protgrid.py): a dense matrix of marker
+# means per grid square instead of counts. Same UMAP / Leiden / renumbering / files.
+# ---------------------------------------------------------------------------------------
+N_PCS_PROTEIN = 15
 
-    ud.mkdir(parents=True, exist_ok=True)
-    rows = row_of[bins]
-    coords = np.full((n_rows, 2), np.nan, np.float32)
-    coords[rows] = emb
-    files = {"coords.bin": np.ascontiguousarray(coords, dtype="<f4").tobytes()}
-    for c, lab in zip(clusterings, labels):
-        cl = np.full(n_rows, NO_CLUSTER, np.uint16)
-        cl[rows] = lab
-        files[c["file"]] = cl.astype("<u2").tobytes()
-    files["index.json"] = txt.encode("utf-8")           # last: its presence means the folder is complete
-    total = 0
-    for name, buf in files.items():
-        tmp = ud / (name + ".part")
-        tmp.write_bytes(buf)
-        tmp.replace(ud / name)
-        total += len(buf)
-    log(f"[umap] {key}: {n:,}/{n_rows:,} bins embedded, clusters "
-        + ", ".join(f"r{c['resolution']:g}={c['n']}" for c in clusterings)
-        + f", {total / 1e6:.1f} MB  {time.time() - t0:.0f}s")
-    return _entry(index)
+
+def protein_params(channels: list[str], extra: dict | None = None) -> dict:
+    return {"nPcs": f"min({N_PCS_PROTEIN}, channels - 1)", "nNeighbors": N_NEIGHBORS, "minDist": MIN_DIST,
+            "seed": SEED, "normalize": "per channel clip((x - p1) / (p99.5 - p1), 0, 1) over the tissue squares",
+            "scale": f"z-score per channel, clip {CLIP:g}",
+            "cluster": f"leiden RBConfiguration on umap fuzzy graph, {LEIDEN_ITERS} iterations",
+            "markers": (f"difference of the mean z-scored x' (cluster - rest, population sd), top {N_MARKERS} "
+                        "with lfc > 0; pct = share of the cluster's squares whose x' is above that channel's "
+                        "median over all squares"),
+            "channels": list(channels), **(extra or {})}
+
+
+def protein_markers(xp: np.ndarray, lab: np.ndarray, k: int, names: list[str], cols) -> list[list[dict]]:
+    """Top N_MARKERS channels per cluster by mean z difference (cluster - rest); see protein_params.
+
+    `xp` = rows x channels of x' in [0, 1]; only the columns in `cols` are ranked.
+    Field names as for RNA: lfc = the mean z difference, pct = share above the median.
+    """
+    cols = np.asarray(cols, dtype=np.int64)
+    X = xp[:, cols].astype(np.float64)
+    sd = X.std(0)
+    sd[sd == 0] = 1.0
+    Z = (X - X.mean(0)) / sd
+    above = (X > np.median(X, axis=0)).astype(np.float64)
+    n = len(lab)
+    nk = np.bincount(lab, minlength=k).astype(np.float64)
+    M = sparse.csr_matrix((np.ones(n, np.float64), (lab, np.arange(n))), shape=(k, n))
+    zs = np.asarray(M @ Z)                                   # k x channels sums of z
+    ab = np.asarray(M @ above)
+    tot = Z.sum(0)
+    out = []
+    for i in range(k):
+        rest = max(n - nk[i], 1.0)
+        diff = zs[i] / nk[i] - (tot - zs[i]) / rest
+        pct = ab[i] / nk[i]
+        top = np.argsort(-diff, kind="stable")[:N_MARKERS]
+        out.append([{"gene": names[cols[j]], "lfc": round(float(diff[j]), 2), "pct": round(float(pct[j]), 2)}
+                    for j in top if diff[j] > 0])
+    return out
+
+
+def write_feature_umap(d, xp: np.ndarray, names: list[str], embed_cols, marker_cols, key: str,
+                       log=print, force: bool = False, extra_params: dict | None = None) -> dict | None:
+    """expr/<key>/umap/ for a dense layer whose every positions.bin row is embedded.
+
+    `xp` = rows x channels, already x' in [0, 1] (protgrid.normalise). The embedding
+    uses the columns `embed_cols` (z-scored, PCA to min(15, n - 1)); the cluster markers
+    rank `marker_cols`. Returns the manifest entry, or None when skipped.
+    """
+    ud = d / "umap"
+    embed_cols = [int(c) for c in embed_cols]
+    params = protein_params([names[c] for c in embed_cols], extra_params)
+    if not force:
+        old = _reusable(ud, params, key, log)
+        if old:
+            return old
+    n = len(xp)
+    if n < 50 or len(embed_cols) < 2:
+        log(f"[umap] {key}: {n} rows x {len(embed_cols)} channels - too few to embed, skipped")
+        return None
+    libs = _clustering_libs(key, log)
+    if libs is None:
+        return None
+    t0 = time.time()
+    n_pcs = min(N_PCS_PROTEIN, len(embed_cols) - 1)
+    pcs = _pca(sparse.csr_matrix(np.ascontiguousarray(xp[:, embed_cols], dtype=np.float64)), n_pcs)
+    log(f"[umap] {key}: {n:,} rows, {len(embed_cols)} channels, PCA {pcs.shape[1]}  {time.time() - t0:.0f}s")
+    emb, clusterings, labels = embed_and_cluster(
+        pcs, lambda lab, k: protein_markers(xp, lab, k, names, marker_cols), libs, key, log, t0)
+    return write_umap_files(ud, {"nBins": n, "nEmbedded": n, "modality": "protein"}, params,
+                            emb, clusterings, labels, n, np.arange(n), libs, key, log, t0)
 
 
 def _entry(index: dict) -> dict:

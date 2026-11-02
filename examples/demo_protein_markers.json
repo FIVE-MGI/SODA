@@ -1,0 +1,12 @@
+{
+  "name": "Synthetic demo regions, protein channels",
+  "note": "Marker channels of the SYNTHETIC demo multiplex image (examples/make_demo.py). Each type is named after the drawn region whose channel it lists, so tests/smoke_test.py can check the suggested names of the grid layer's clusters. Synth-Autofluor is left out on purpose: it is smooth tissue-wide background, not a marker of one region. Not a biological panel.",
+  "version": 1,
+  "modality": "protein",
+  "types": [
+    { "name": "Fascicle", "genes": ["Synth-Axon"] },
+    { "name": "Perineurium", "genes": ["Synth-Membrane"] },
+    { "name": "Vessel", "genes": ["Synth-Vessel"] },
+    { "name": "Edge", "genes": ["Synth-Immune"] }
+  ]
+}

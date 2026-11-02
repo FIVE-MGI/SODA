@@ -12,13 +12,16 @@ this file:
     python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/visiumhd/image.tif --outs demo/raw/visiumhd/outs --out demo/cache
     python web/SpatialViewer/prepare.py tiff   --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
     python web/SpatialViewer/prepare.py export --id demo_visiumhd  --out demo/cache --dest demo/export --markers examples/demo_markers.json
-    python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export --fmt jpg
+    python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json
 
 and then checks the static tree the viewer reads: manifest.json, a tile for every
 channel / level / position, expr/<key>/positions.bin, genes.json and the per-gene
 files, the hvg/ chunks (layout in web/SpatialViewer/hvgchunks.py), the umap/ folder
 (web/SpatialViewer/sectionumap.py) including that the clusters are spatially coherent
 and match the regions the demo was drawn from, and that `deid.py check` passes.
+For the multiplex image it checks the protein grid layer (web/SpatialViewer/protgrid.py,
+expr/grid020um/) the same way: files, row counts, values, umap/ and celltypes.json, and
+that its clusters are coherent and follow the drawn regions.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -88,7 +91,8 @@ def demo_commands(root: Path) -> list[list[str]]:
          "--out", cache],
         [prep, "tiff", "--id", MX, "--src", f"{raw}/multiplex.ome.tif", "--out", cache],
         [prep, "export", "--id", VIS, "--out", cache, "--dest", export, "--markers", "examples/demo_markers.json"],
-        [prep, "export", "--id", MX, "--out", cache, "--dest", export, "--fmt", "jpg"],
+        [prep, "export", "--id", MX, "--out", cache, "--dest", export, "--fmt", "jpg",
+         "--markers", "examples/demo_protein_markers.json"],
     ]
 
 
@@ -442,7 +446,7 @@ def check_celltypes(c: Checker, ud: Path, L: dict, idx: dict, emb, truth):
           f"{agree:.0%} of typed bins match their region")
 
 
-def check_multiplex(c: Checker, root: Path):
+def check_multiplex(c: Checker, root: Path, clustering: bool) -> dict:
     out = root / "export" / MX
     m = read_json(out / "manifest.json")
     check_manifest_common(c, m, MX, "jpg")
@@ -452,8 +456,162 @@ def check_multiplex(c: Checker, root: Path):
          ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel", "Synth-Immune", "Synth-Autofluor"],
          "multiplex channel names (from the OME-XML)")
     c.ok(abs((m.get("pixelSizeUm") or 0) - 0.5) < 1e-6, f"multiplex pixelSizeUm {m.get('pixelSizeUm')}")
-    c.eq(m.get("expr"), [], "multiplex has no expression layers")
     check_tiles(c, out, m, "jpg")
+    layers = m.get("expr") or []
+    c.eq([L.get("key") for L in layers], ["grid020um"], "multiplex expr layers (the protein grid only)")
+    return check_grid(c, out, layers[0], clustering) if layers else {}
+
+
+GRID_UM, MX_MPP, MX_CHANNELS = 20.0, 0.5, ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel",
+                                           "Synth-Immune", "Synth-Autofluor"]
+
+
+def demo_regions(pos_px: np.ndarray) -> np.ndarray:
+    """Main drawn region of each grid square (5 x 5 samples), from examples/make_demo.py's layout."""
+    spec = importlib.util.spec_from_file_location("make_demo", REPO / "examples" / "make_demo.py")
+    md = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(md)
+    scale = md.FIELD_UM / (md.MX_PX * md.MX_MPP)               # layout um per image um
+    off = (np.arange(5) + 0.5) / 5 - 0.5
+    dx, dy = np.meshgrid(off, off)
+    sx = (pos_px[:, 0:1] * MX_MPP + dx.ravel()[None, :] * GRID_UM) * scale
+    sy = (pos_px[:, 1:2] * MX_MPP + dy.ravel()[None, :] * GRID_UM) * scale
+    lab = md.region_at(sx, sy)
+    major = np.array([np.bincount(r, minlength=len(md.REGIONS)).argmax() for r in lab])
+    return np.array([md.REGIONS[k] for k in major])
+
+
+def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
+    key = L["key"]
+    d = out / "expr" / key
+    step = GRID_UM / MX_MPP                                     # 40 px squares
+    print(f"  expr {key} (protein grid):")
+    for k in ("label", "kind", "binSizeUm", "nBins", "nGenes", "micronsPerPixel", "spotDiameterPx",
+              "imageScale", "channels"):
+        c.ok(k in L, f"{key}: manifest layer has no {k}")
+    c.eq(L.get("kind"), "protein", f"{key}: kind")
+    c.eq(L.get("binSizeUm"), GRID_UM, f"{key}: binSizeUm")
+    c.ok(abs(L.get("spotDiameterPx", 0) - step) < 1e-6, f"{key}: spotDiameterPx {L.get('spotDiameterPx')}")
+    c.ok(abs(L.get("micronsPerPixel", 0) - MX_MPP) < 1e-9, f"{key}: micronsPerPixel {L.get('micronsPerPixel')}")
+    c.ok("DAPI" not in L.get("channels", []) and len(L.get("channels", [])) >= 4,
+         f"{key}: embedded channels {L.get('channels')} (nuclear stain must be left out)")
+    c.ok(not (d / "hvg").exists(), f"{key}: protein layer must not have hvg/")
+
+    pos = f32(d / "positions.bin", 2)
+    n = len(pos)
+    c.eq(n, L["nBins"], f"{key}: positions.bin rows vs nBins")
+    c.ok(np.isfinite(pos).all() and ((pos >= 0) & (pos <= 2000)).all(), f"{key}: positions NaN / outside the image")
+    g = pos / step - 0.5
+    c.ok(np.abs(g - np.rint(g)).max() < 1e-4, f"{key}: positions are not square centres of the {step:g} px grid")
+    c.ok(len({p.tobytes() for p in pos}) == n, f"{key}: duplicate positions")
+    c.ok(200 < n < 2500, f"{key}: {n} tissue squares of 2500 (mask kept too few / everything)")
+
+    genes = read_json(d / "genes.json")
+    c.eq([x["n"] for x in genes], MX_CHANNELS, f"{key}: genes.json = the channels, in order")
+    c.eq(len(genes), L["nGenes"], f"{key}: genes.json length vs nGenes")
+    V = {}
+    bad = []
+    for x in genes:
+        p = d / "gene" / f"{enc(x['n'])}.bin"
+        if not p.exists():
+            bad.append(f"missing {p.name}"); continue
+        a = f32(p, 3)
+        if len(a) != n or not np.array_equal(a[:, :2], pos):
+            bad.append(f"{x['n']}: rows / xy differ from positions.bin"); continue
+        if not (np.isfinite(a[:, 2]).all() and (a[:, 2] >= 0).all()):
+            bad.append(f"{x['n']}: values NaN or < 0"); continue
+        if abs(float(a[:, 2].mean()) - x["t"]) > 1e-3 * max(1.0, x["t"]):
+            bad.append(f"{x['n']}: mean {a[:, 2].mean()} != t {x['t']}")
+        V[x["n"]] = a[:, 2].astype(np.float64)
+    c.ok(not bad, f"{key}: gene files: {bad[:5]}")
+    c.eq(len(list((d / "gene").glob("*.bin"))), len(genes), f"{key}: gene/*.bin count")
+    gr = L.get("grid") or {}
+    if "DAPI" in V and "tissueThreshold" in gr:
+        below = int((V["DAPI"] <= gr["tissueThreshold"]).sum())
+        c.ok(below <= gr.get("holesFilled", 0), f"{key}: {below} kept squares have DAPI <= the tissue threshold "
+                                                 f"(only the {gr.get('holesFilled', 0)} filled holes may)")
+
+    truth = demo_regions(pos)
+    if "Synth-Axon" in V:
+        fa = truth == "fascicle"
+        ratio = V["Synth-Axon"][fa].mean() / max(V["Synth-Axon"][~fa].mean(), 1e-9)
+        c.ok(fa.any() and ratio > 3, f"{key}: Synth-Axon only {ratio:.1f}x higher in fascicle squares")
+    print(f"    positions.bin {n:,} squares, {len(genes)} gene files; regions: "
+          + ", ".join(f"{r} {k}" for r, k in zip(*np.unique(truth, return_counts=True))))
+    if not clustering:
+        c.ok("umap" not in L, f"{key}: umap in manifest although clustering packages are missing")
+        print("    SKIP umap checks: clustering packages not installed")
+        return {"squares": n}
+
+    ud = d / "umap"
+    if not c.ok((ud / "index.json").exists(), f"{key}: umap/index.json missing"):
+        return {"squares": n}
+    idx = read_json(ud / "index.json")
+    c.eq((idx.get("nBins"), idx.get("nEmbedded")), (n, n), f"{key}: umap nBins / nEmbedded vs squares")
+    c.eq(idx.get("modality"), "protein", f"{key}: umap modality")
+    c.eq(idx["params"].get("channels"), L["channels"], f"{key}: umap params.channels vs manifest channels")
+    co = f32(ud / "coords.bin", 2)
+    c.ok(len(co) == n and np.isfinite(co).all(), f"{key}: coords.bin rows / NaN (every square is embedded)")
+    u = L.get("umap") or {}
+    c.eq([(x["resolution"], x["n"]) for x in u.get("clusterings", [])],
+         [(x["resolution"], x["n"]) for x in idx["clusterings"]], f"{key}: manifest umap.clusterings")
+    c.eq(sorted(p.name for p in ud.iterdir()),
+         sorted({"index.json", "coords.bin", "celltypes.json", "celltype.bin"} | {x["file"] for x in idx["clusterings"]}),
+         f"{key}: files in umap/")
+    pairs = grid_pairs(pos, step)
+    rng = np.random.default_rng(0)
+    res = {"squares": n, "clusterings": []}
+    for cl in idx["clusterings"]:
+        lab = np.fromfile(str(ud / cl["file"]), dtype="<u2").astype(np.int64)
+        c.eq(len(lab), n, f"{key}: {cl['file']} rows")
+        c.ok((lab < cl["n"]).all(), f"{key}: {cl['file']}: label >= n (or 0xFFFF)")
+        sizes = np.bincount(lab, minlength=cl["n"])
+        c.eq(sizes.tolist(), cl["sizes"], f"{key}: {cl['file']}: sizes")
+        c.ok((np.diff(sizes) <= 0).all(), f"{key}: {cl['file']}: cluster 0 is not the largest")
+        c.eq(len(cl["markers"]), cl["n"], f"{key}: {cl['file']}: one marker list per cluster")
+        c.ok(all(m["gene"] in V for ms in cl["markers"] for m in ms), f"{key}: {cl['file']}: marker not a channel")
+        same = float((lab[pairs[:, 0]] == lab[pairs[:, 1]]).mean())
+        sh = rng.permutation(lab)
+        chance = float((sh[pairs[:, 0]] == sh[pairs[:, 1]]).mean())
+        a = ari(lab, truth)
+        # ~1,300 squares in 13-18 clusters at r=1: chance is tiny, so also accept 3x chance
+        c.ok(same > chance + 0.25 or same > 3 * chance,
+             f"{key}: r={cl['resolution']}: neighbours agree {same:.2f} vs shuffled {chance:.2f}")
+        print(f"    leiden r={cl['resolution']:g}: {cl['n']} clusters, neighbour agreement {same:.2f} "
+              f"(shuffled {chance:.2f}), ARI vs drawn regions {a:.2f}")
+        res["clusterings"].append({"res": cl["resolution"], "n": cl["n"], "same": same, "chance": chance, "ari": a})
+    best = max((x["ari"] for x in res["clusterings"]), default=0)
+    c.ok(best > 0.3, f"{key}: clusters do not recover the drawn regions (best ARI {best:.2f})")
+
+    # suggested names (protein rule, examples/demo_protein_markers.json)
+    ct = read_json(ud / "celltypes.json")
+    names = [t["name"] for t in ct["types"]]
+    c.eq(ct.get("modality"), "protein", f"{key}: celltypes modality")
+    c.ok("protein" in ct.get("rule", "").lower(), f"{key}: celltypes rule does not say protein")
+    c.ok(all(t["scored"] for t in ct["types"]), f"{key}: a demo protein type was not scored")
+    c.eq((u.get("celltypes") or {}).get("nTypes"), len(names), f"{key}: manifest umap.celltypes.nTypes")
+    tb = np.fromfile(str(ud / "celltype.bin"), dtype=np.uint8)
+    c.eq(len(tb), n, f"{key}: celltype.bin rows")
+    c.ok(((tb < len(names)) | (tb == 254)).all(), f"{key}: celltype.bin values out of range (255 = not embedded is impossible here)")
+    typed = tb < len(names)
+    agree = float(np.mean([names[v].lower() == r for v, r in zip(tb[typed], truth[typed])])) if typed.any() else 0.0
+    c.ok(agree > 0.6, f"{key}: squares' suggested type matches the drawn region for {agree:.0%} of typed squares")
+    cl = idx["clusterings"][idx["default"]]
+    lab = np.fromfile(str(ud / cl["file"]), dtype="<u2").astype(np.int64)
+    sug = ct["clusterings"][f"{cl['resolution']:g}"]
+    c.eq(len(sug), cl["n"], f"{key}: one suggestion per cluster")
+    # Vessels and the perineurium rim are about one 20 um square wide, so their squares are
+    # mixed: a confident name counts when its region is >= 25% of the cluster's squares.
+    hits = total = 0
+    for s in sug:
+        share = float(np.mean(truth[lab == s["cluster"]] == s["top"].lower()))
+        if s["confidence"] in ("high", "medium"):
+            total += 1
+            hits += share >= 0.25
+    c.ok(total > 0 and hits == total, f"{key}: confident suggestions whose region is >= 25% of the cluster: {hits}/{total}")
+    print(f"    suggested names: {hits}/{total} confident suggestions name a region that is >= 25% of the cluster; "
+          f"{agree:.0%} of typed squares match their region")
+    return res
 
 
 def check_publishable(c: Checker, root: Path, log_path: Path):
@@ -502,7 +660,7 @@ def main(argv=None) -> int:
     print("checks: demo_visiumhd")
     summary = check_visium(c, root, clustering)
     print("checks: demo_multiplex")
-    check_multiplex(c, root)
+    summary["grid020um"] = check_multiplex(c, root, clustering)
     print("checks: publishable")
     check_publishable(c, root, log_path)
     timings["checks"] = time.time() - t0

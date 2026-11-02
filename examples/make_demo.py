@@ -371,7 +371,12 @@ def make_multiplex(rng, path: Path, seed: int = 0):
     axon = ndimage.gaussian_filter(ax_imp, 1.1)
     vessel = ndimage.gaussian_filter(((lab == VESSEL)).astype(np.float32), 2.0)
     vessel *= 1 + 0.3 * ndimage.gaussian_filter(rng.standard_normal(lab.shape).astype(np.float32), 3)
-    imm = cells * (rng.random(cells.shape) < 0.04).astype(np.float32)
+    # immune cells gather in the edge band (and a few in the stroma), so the grid layer's
+    # clusters (protgrid.py) have one more region told apart by a marker
+    p_imm = np.zeros(int(lab.max()) + 1, np.float32)
+    p_imm[[STROMA, EDGE]] = 0.06, 0.45
+    p_imm[[FASC, RIM, VESSEL]] = 0.01
+    imm = cells * (rng.random(cells.shape) < p_imm[lab]).astype(np.float32)
     immune = ndimage.gaussian_filter(imm, 3.0)
     auto = ndimage.gaussian_filter(rng.standard_normal(lab.shape).astype(np.float32), 40)
     auto = (auto - auto.min()) / (np.ptp(auto) + 1e-6) * tissue + 0.6 * (lab == MEMBRANE)
