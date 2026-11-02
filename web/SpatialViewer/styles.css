@@ -229,6 +229,7 @@ button.on { border-color: var(--accent); background: #1f3550; }
 .panel .sub-h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 10px 0 0; }
 .umap-note { word-break: normal; margin-bottom: 6px; }
 .sel-msg { word-break: normal; }
+.lasso-off { word-break: normal; margin: 8px 0 2px; font-style: italic; }
 .cl-tools { align-items: center; margin-top: 4px; }
 .cl-tools .meta { margin: 0; }
 .cl-tools button { padding: 2px 8px; font-size: 12px; }
@@ -294,3 +295,61 @@ button:disabled:hover { border-color: var(--line); }
 .ct-pop .ct-type small { color: var(--muted); }
 .ct-pop .found { color: var(--text); }
 .ct-pop .miss { color: var(--muted); }
+
+/* ---- counting tools for marker squares: % positive per marker, counts per cluster, combined rules ---- */
+.gate-head { display: flex; justify-content: space-between; align-items: center; }
+.gate-head h2 { margin: 0; }
+.gate-x { background: none; border: 0; color: var(--muted); font-size: 18px; line-height: 1; padding: 0 4px; }
+.gate-x:hover { color: var(--text); }
+  color: var(--muted); font-size: 12px; padding: 4px 2px; }
+.gate-note { word-break: normal; line-height: 1.45; }
+.gate-lead { margin: 8px 0 6px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+  border-radius: 4px; }
+.gate-edit { margin: 2px 0 8px; padding: 8px; background: var(--panel2); border-radius: 6px; }
+.gate-hist { display: block; width: 100%; height: 96px; cursor: ew-resize; touch-action: none; outline: none; }
+.gate-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.gate-sentence { margin: 6px 0 0; font-size: 12px; line-height: 1.45; }
+.gate-nogap { margin: 4px 0 0; font-size: 12px; color: #e6c86b; }
+.gate-ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.gate-ctl button { padding: 2px 10px; font-size: 12px; }
+.gate-ctl .linkish, .gate-add .linkish { margin: 0; font-size: 12px; }
+.gate-ctl label.check, label.gate-colour { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.gate-rules { display: flex; flex-direction: column; gap: 2px; }
+.gr-row { display: grid; grid-template-columns: 14px 1fr auto; gap: 6px; align-items: start; padding: 4px; border-radius: 4px; font-size: 12px; }
+.gr-row:hover { background: var(--panel2); }
+.gr-row.off { opacity: .55; }
+.gr-row input[type=color] { width: 12px; height: 12px; margin-top: 4px; border-radius: 2px; }
+.gr-row .gr-txt { line-height: 22px; min-width: 0; }
+.gr-row input.nm { width: 9.5em; padding: 1px 4px; font-size: 12px; background: transparent; border: 1px solid transparent; }
+.gr-row input.nm:hover, .gr-row input.nm:focus { border-color: var(--line); background: var(--bg); }
+.gr-row .eq { color: var(--muted); margin: 0 4px; }
+.gr-row .cond { white-space: nowrap; }
+.gr-row .cond .sg { background: none; border: 0; padding: 0 2px; font: inherit; color: var(--accent); cursor: pointer; }
+.gr-row .cond .rmc { background: none; border: 0; padding: 0 2px; color: var(--muted); visibility: hidden; font-size: 11px; }
+.gr-row .cond:hover .rmc { visibility: visible; }
+.gr-row .and { color: var(--muted); margin: 0 3px; }
+.gr-row select.addc { width: auto; padding: 0 2px; font-size: 11px; height: 20px; margin-left: 4px; color: var(--muted); }
+.gr-row .gr-btns { display: flex; gap: 1px; visibility: hidden; }
+.gr-row:hover .gr-btns, .gr-row:focus-within .gr-btns { visibility: visible; }
+.gr-row .gr-btns button { background: none; border: 0; color: var(--muted); padding: 0 3px; font-size: 12px; }
+.gr-row .gr-btns button:hover { color: var(--text); }
+.gr-row .gr-n { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.gr-row .gr-skip { display: block; color: var(--muted); font-size: 11px; line-height: 15px; }
+.gate-add { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.gate-more { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.gate-more button { font-size: 12px; padding: 3px 8px; }
+.gate-counts { overflow-x: auto; max-height: 320px; overflow-y: auto; margin-top: 8px; }
+.gate-counts table { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; min-width: 100%; }
+.gate-counts th, .gate-counts td { padding: 2px 6px; border-bottom: 1px solid #222a38; text-align: right; white-space: nowrap; }
+.gate-counts th:first-child, .gate-counts td:first-child { text-align: left; position: sticky; left: 0; background: var(--panel); }
+.gate-counts thead th { color: var(--muted); font-weight: 400; position: sticky; top: 0; background: var(--panel); }
+.gate-counts td small { color: var(--muted); margin-left: 4px; }
+.gate-counts tr.ph td:first-child { cursor: pointer; }
+.gate-counts tr.ph:hover td { background: var(--panel2); }
+.gate-counts tr.ph.sel td:first-child { color: var(--accent); }
+.gate-counts tr.tot td { color: var(--muted); border-bottom: 0; }
+.gate-counts i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+#panelGate .row.slim { margin-top: 8px; }
+.gate-counts td.lbl { cursor: default; }
+#gatePub { margin-top: 6px; word-break: normal; }

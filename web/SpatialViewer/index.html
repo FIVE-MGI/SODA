@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>Spatial Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link href="styles.css?v=20261102m" rel="stylesheet" />
+  <link href="styles.css?v=20261102gate3" rel="stylesheet" />
 </head>
 <body>
   <div class="app">
@@ -39,31 +39,99 @@
       </section>
 
       <section class="panel" id="panelGenes" hidden>
-        <h2>Transcripts <span id="geneCount" class="count"></span></h2>
+        <h2><span id="geneTitle">Transcripts</span> <span id="geneCount" class="count"></span></h2>
         <label class="row"><span>Layer</span><select id="exprSelect"></select></label>
         <div class="search">
           <input id="geneSearch" type="text" placeholder="Search gene… (Enter adds top hit)" autocomplete="off" />
           <div id="geneResults" class="results" hidden></div>
         </div>
         <div id="geneList" class="list"></div>
-        <label class="row slim"><span>View</span>
+        <label class="row slim" id="rowGeneBlend"><span>View</span>
           <select id="geneBlend"><option value="normal">Normal</option><option value="heatmap">Density</option></select></label>
         <label class="row slim" id="rowGenePalette"><span>Color</span>
           <select id="genePalette">
             <option value="genes">Gene colors (overlap darkens)</option>
             <option value="viridis">Viridis</option></select></label>
-        <label class="row slim"><span>Transcript opacity</span>
+        <label class="row slim"><span id="lblGeneOpacity">Transcript opacity</span>
           <input id="geneOpacity" type="range" min="0" max="1" step="0.02" value="1"></label>
-        <label class="row slim"><span>Point size ×</span>
+        <label class="row slim"><span id="lblPointScale">Point size ×</span>
           <input id="pointScale" type="range" min="0.25" max="4" step="0.05" value="1"></label>
-        <label class="row slim check"><input id="tissueBins" type="checkbox" /><span>Show all in-tissue bins</span></label>
+        <label class="row slim check"><input id="tissueBins" type="checkbox" /><span id="lblTissueBins">Show all in-tissue bins</span></label>
+        <div class="btnrow" id="rowGateOpen" hidden>
+          <button id="gateOpenPos" title="Pick a marker, set where real staining starts, and get the % of tissue squares above it per region">% positive for a marker…</button>
+          <button id="gateOpenCl" title="How many squares each cluster has, per region, under the cluster names you see">Count clusters…</button>
+        </div>
+        <div id="gatePub" class="meta" hidden>This dataset comes with published cut-offs (gates.json).</div>
+      </section>
+
+      <!-- Counting tools for marker (protein) square layers; hidden for sequencing data.
+           (A) % positive for one marker, (B) counts per cluster, and the optional combined rules. -->
+      <section class="panel gate" id="panelGate" hidden>
+        <div class="gate-head">
+          <h2 id="gateTitle">% positive for a marker</h2>
+          <button id="gateClose" class="gate-x" title="Close (your cut-offs are kept)">×</button>
+        </div>
+        <div class="meta gate-note" id="gateCaveat">Squares are 20 µm and can mix cells: counts are approximate.</div>
+
+        <div id="gateModePos">
+          <label class="row slim"><span>Marker</span><select id="gateMarker"></select></label>
+          <div id="gateSource" class="meta gate-note" hidden></div>
+          <div id="gateEdit" class="gate-edit" hidden>
+            <canvas id="gateHist" class="gate-hist" tabindex="0" title="Drag the line, or click where it should go (arrow keys nudge it)"></canvas>
+            <div class="gate-axis"><span>dim</span><span id="gateAxisHi">bright</span></div>
+            <p id="gateSentence" class="gate-sentence"></p>
+            <p id="gateNoGap" class="gate-nogap" hidden>No clear gap here — judge by eye.</p>
+            <div class="gate-ctl">
+              <button id="gateSuggest" title="Place the line at Otsu's suggestion">Suggest</button>
+              <label class="check"><input id="gatePreview" type="checkbox" checked /> Outline them on the image</label>
+              <button id="gateClearCut" class="linkish" title="Remove this marker's line">remove</button>
+            </div>
+          </div>
+          <div id="gatePosTable" class="gate-counts"></div>
+          <div class="gate-add">
+            <button id="gatePosCsv" title="One row per marker and region: dataset, layer, marker, cut-off, how it was set, region, squares above, tissue squares, percent. Every marker you have set is included.">Download CSV</button>
+            <button id="gateCombine" class="linkish" title="Name cell types from several markers (e.g. CD45+ and CD68+) and count them">Combine markers…</button>
+            <button id="gateMore" class="linkish">More</button>
+          </div>
+          <div id="gateMoreBox" class="gate-more" hidden>
+            <button id="gateSave" title="Every marker's cut-off (and how it was set), plus any combined cell types, as a JSON file">Save cut-offs</button>
+            <button id="gateLoadBtn" title="Read cut-offs saved earlier">Load cut-offs</button>
+            <input id="gateLoad" type="file" accept=".json,application/json" hidden />
+          </div>
+        </div>
+
+        <div id="gateModeCl" hidden>
+          <label class="row slim"><span>Clustering</span><select id="gateClRes" title="Leiden resolution: a higher number splits the squares into more, smaller clusters"></select></label>
+          <div id="gateClTable" class="gate-counts"></div>
+          <label class="check gate-colour"><input id="gateClColour" type="checkbox" /> Colour the squares by cluster</label>
+          <div class="gate-add">
+            <button id="gateClCsv" title="One row per region and cluster: dataset, layer, resolution, region, cluster id, cluster name, count, total squares, percent">Download CSV</button>
+          </div>
+        </div>
+
+        <div id="gateModeRules" hidden>
+          <p class="gate-lead">Each square gets the first cell type (top to bottom) whose markers all match; the rest are Unassigned. Markers use the lines set under % positive.</p>
+          <div id="gateRules" class="gate-rules"></div>
+          <div class="gate-add">
+            <button id="gateAddRule">Add a cell type</button>
+            <button id="gateExamples" class="linkish" title="Example rules for common immune, vessel and nerve markers: only those whose markers all have a line">Use example rules</button>
+          </div>
+          <label class="check gate-colour"><input id="gateColour" type="checkbox" /> Colour the squares by cell type</label>
+          <div id="gateCounts" class="gate-counts"></div>
+          <div class="gate-add">
+            <button id="gateCsvCounts" title="One row per region and cell type: dataset, layer, region, cell type, count, total squares, percent">Download CSV</button>
+            <button id="gateCsvSquares" class="linkish" title="One row per square: row, x, y (image px), cell type, one column per marker (1 = above its line). No barcodes.">Per-square CSV</button>
+            <button id="gateBackPos" class="linkish">← Back to markers</button>
+          </div>
+        </div>
+        <div id="gateMsg" class="meta gate-note"></div>
       </section>
 
       <section class="panel" id="panelUmap" hidden>
         <h2>Clusters &amp; selection</h2>
         <div id="umapNote" class="meta umap-note"></div>
-        <label class="row slim"><span>Colour bins by</span>
-          <select id="colorBy"><option value="gene">Genes (Transcripts above)</option><option value="cluster">Clusters (Leiden)</option><option value="celltype" hidden disabled>Suggested cell type</option></select></label>
+        <label class="row slim"><span id="lblColorBy">Colour bins by</span>
+          <select id="colorBy"><option value="gene">Genes (Transcripts above)</option><option value="cluster">Clusters (Leiden)</option><option value="celltype" hidden disabled>Suggested cell type</option><option value="phenotype" hidden disabled>Cell types (your rules)</option></select></label>
         <label class="row slim" id="rowRes" hidden><span title="Leiden resolution: a higher number splits the bins into more, smaller clusters">Resolution</span>
           <select id="clusterRes" title="Leiden resolution: a higher number splits the bins into more, smaller clusters"></select></label>
         <div id="clusterTools" class="btnrow cl-tools" hidden>
@@ -71,13 +139,14 @@
           <span class="meta">Click a cluster to highlight it</span>
         </div>
         <div id="clusterLegend" class="legend cl-legend"></div>
-        <div class="sub-h">Select bins</div>
+        <div class="sub-h" id="subSel">Select bins</div>
         <div class="btnrow">
           <button id="selBox" title="Drag a rectangle over the dots (Shift adds to the selection, Esc stops)">Box</button>
           <button id="selFree" title="Hold and draw around the dots (Shift adds to the selection, Esc stops)">Freehand</button>
           <button id="selClear" title="Remove the selection and the highlighted cluster">Clear selection</button>
         </div>
         <div id="selMsg" class="meta sel-msg"></div>
+        <div id="lassoOff" class="meta lasso-off" hidden>Circle → UMAP (a new UMAP of only the area you draw) works on sequencing data, so it is not offered for marker squares.</div>
         <div class="btnrow"><button id="selToShape" hidden title="Add the selected bins to Circle → UMAP below as one more shape">Use selection as a shape</button></div>
       </section>
 
@@ -194,6 +263,6 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261102m"></script>
+  <script src="viewer.js?v=20261102gate3"></script>
 </body>
 </html>

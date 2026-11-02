@@ -395,7 +395,9 @@
     // Tier A: when a region is selected, the density collapses to its bins only.
     const sel = S.region.selected || 0;
     const inSel = (g, i) => !sel || regionAt(g.positions[2 * i], g.positions[2 * i + 1]) === sel;
-    const key = on.map((g) => `${g.name}:${g.hex}:${g.min}`).join("|") +
+    // protein squares are windowed by both handles (like a stain), so the top one counts too
+    const prot = isProt();
+    const key = on.map((g) => `${g.name}:${g.hex}:${g.min}` + (prot ? `:${g.max}` : "")).join("|") +
                 `#${S.genePalette}#${S.geneBin}#${S.exprKey}#${cell}#r${sel}`;
     if (S.heat && S.heat.key === key) return S.heat;
 
@@ -422,6 +424,17 @@
     const norm = on.map((g) => {
       const sum = new Float32Array(n);
       const lo = g.min || 0;
+      if (prot) {
+        // One value per square already (a mean intensity, not a count), so no summing and
+        // no percentile: the square's place in the marker's min..max display window.
+        const inv = 1 / Math.max(g.max - lo, 1e-6);
+        for (let i = 0; i < g.n; i++) {
+          if (!inSel(g, i)) continue;
+          const v = g.values[i];
+          if (v > lo) sum[idx.get(binOf(g, i))] = Math.min(1, (v - lo) * inv);
+        }
+        return sum;
+      }
       for (let i = 0; i < g.n; i++) {
         if (!inSel(g, i)) continue;
         const v = g.values[i];
@@ -437,23 +450,30 @@
 
     if (ink) {
       const paper = new Float32Array(n * 3).fill(1), miss = new Float32Array(n).fill(1);
+      // Marker squares sit over a dark fluorescence image, not white paper: a faint square
+      // must read as faint red, not as white haze. So the hue mixes the inks relative to the
+      // strongest marker in the square, and how strong it is goes into the opacity alone.
+      let dmax = null;
+      if (prot) { dmax = new Float32Array(n); for (const d of norm) for (let j = 0; j < n; j++) if (d[j] > dmax[j]) dmax[j] = d[j]; }
       on.forEach((g, gi) => {
         const d = norm[gi], [tr, tg, tb] = hexToRgb255(g.hex);
         for (let j = 0; j < n; j++) {
           if (d[j] <= 0) continue;
           // a square with anything in it is at least a fifth of full ink
           const sEff = 0.2 + 0.8 * d[j];
-          paper[j * 3] *= 1 - sEff * (1 - tr / 255);
-          paper[j * 3 + 1] *= 1 - sEff * (1 - tg / 255);
-          paper[j * 3 + 2] *= 1 - sEff * (1 - tb / 255);
-          miss[j] *= 1 - sEff;
+          const sInk = prot ? d[j] / dmax[j] : sEff;
+          paper[j * 3] *= 1 - sInk * (1 - tr / 255);
+          paper[j * 3 + 1] *= 1 - sInk * (1 - tg / 255);
+          paper[j * 3 + 2] *= 1 - sInk * (1 - tb / 255);
+          miss[j] *= 1 - (prot ? d[j] : sEff);
         }
       });
       for (let j = 0; j < n; j++) {
         const c = j * 4;
         colors[c] = Math.round(paper[j * 3] * 255); colors[c + 1] = Math.round(paper[j * 3 + 1] * 255);
         colors[c + 2] = Math.round(paper[j * 3 + 2] * 255);
-        colors[c + 3] = Math.round(Math.sqrt(Math.max(0, 1 - miss[j])) * 255);
+        const a = Math.max(0, 1 - miss[j]);
+        colors[c + 3] = Math.round((prot ? a : Math.sqrt(a)) * 255);
       }
     } else {
       const lut = PALETTES[S.genePalette] || PALETTES.viridis;
@@ -483,10 +503,31 @@
     const el = $("densityKey");
     const on = S.genes.filter((g) => g.visible !== false);
     const umap = inUmap();
+    if (S.mode === "image" && gatePreviewOn() && !umapByCat()) {
+      const G = S.gate, c = G.cut.get(G.cur);
+      el.innerHTML = `<div class="genes"><span class="g"><i style="background:transparent;outline:2px solid rgb(${gateLineRgb(G.cur).join(",")});outline-offset:-2px"></i>${escHtml(G.cur)} above ${gateFmt(c.v)}</span></div>` +
+        `<div class="note">${umap ? "Lit dots: squares above the line." : "Outlined: squares above the line. Other tissue squares are darkened; the stain is underneath."}` +
+        ` ${(gateFracPos(G.vals.get(G.cur), c.v) * 100).toFixed(1)}% of squares.</div>`;
+      el.hidden = false;
+      return;
+    }
     if (S.mode !== "image" || (S.geneBlend !== "heatmap" && !umap) || !on.length || umapByCat()) { el.hidden = true; return; }
     const e = currentExpr();
     // in the UMAP every dot is one bin, so the key talks about bins rather than squares
-    const um = umap ? "bin" : `${(e && e.binSizeUm) ? `${e.binSizeUm.toLocaleString()} µm` : "each"} square`;
+    const um = umap ? wd().bin : `${(e && e.binSizeUm) ? `${e.binSizeUm.toLocaleString()} µm` : "each"} square`;
+    if (isProt()) {
+      const none = umap ? " Grey dots: below the left handle of every marker shown." : "";
+      const names = on.map((g) => g.name).join(", ");
+      el.innerHTML = S.genePalette === "genes"
+        ? `<div class="genes">${on.map((g) => `<span class="g"><i style="background:${g.hex}"></i>${g.name}</span>`).join("")}</div>` +
+          `<div class="note">Mean marker intensity per ${um}: ${umap ? "grey" : "clear"} = at or below the left handle, full colour = at the right handle.` +
+          (on.length > 1 ? " Where markers overlap the colours mix." : "") + `</div>`
+        : `<div class="ramp"><span>low</span><i style="background:${rampCss(S.genePalette)}"></i><span>high</span></div>` +
+          `<div class="note">` + (on.length > 1 ? `Mean intensity per ${um}, averaged over ${on.length} markers (${names})` : `Mean ${names} intensity per ${um}`) +
+          `.${none}</div>`;
+      el.hidden = false;
+      return;
+    }
     const none = umap ? " Grey dots: none of these genes." : "";
     if (S.genePalette === "genes") {
       el.innerHTML =
@@ -597,7 +638,8 @@
     if (S.imgOn) for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch));
     const tl = tissueLayer(); if (tl) layers.push(tl);
     // Colour by cluster replaces the gene density: one colour per bin, not two on top of each other.
-    if (!umapByCat()) {
+    const gPrev = gatePreviewOn();
+    if (!umapByCat() && !gPrev) {
       if (S.geneBlend === "heatmap") {
         const hl = geneHeatLayer();
         if (hl) layers.push(hl);
@@ -608,7 +650,8 @@
     drawDensityKey();
     updateRegionReadout();
     for (const o of S.overlays) { const l = overlayLayer(o); if (l) layers.push(l); }
-    layers.push(...umapTissueLayers());
+    // the gating preview replaces the coloured squares on the slide while it is on
+    if (gPrev) layers.push(gatePreviewLayer()); else layers.push(...umapTissueLayers());
     layers.push(...lassoLayers());
     layers.push(...umapSideLayers());
     deckgl.setProps({ layers });
@@ -641,7 +684,9 @@
     // it need throw the bins away. Clearing on every window change meant dragging
     // the upper handle recomputed 300k+ squares, and a percentile sort, per pixel of
     // drag - to redraw exactly the same picture.
-    if (g.heatKey !== `${g.hex}|${lo}`) { g.heatKey = `${g.hex}|${lo}`; S.heat = null; }
+    // (Protein squares are windowed by both handles, so for them the top one counts too.)
+    const hk = g.prot ? `${g.hex}|${lo}|${g.max}` : `${g.hex}|${lo}`;
+    if (g.heatKey !== hk) { g.heatKey = hk; S.heat = null; }
   }
 
   // ---- view -----------------------------------------------------------------------
@@ -732,7 +777,7 @@
         S.viewState = viewState; deckgl.setProps({ viewState: deckVs() }); updateHud();
         // the heat map's squares have a screen-space floor, so their size in world
         // units changes with the zoom
-        if (zoomed && S.geneBlend === "heatmap" && S.genes.length) requestRender();
+        if (zoomed && ((S.geneBlend === "heatmap" && S.genes.length) || gatePreviewOn())) requestRender();
       },
       onHover: (info) => {
         if (info.coordinate && !(info.viewport && info.viewport.id === "uside")) updateHud(info.coordinate);
@@ -968,20 +1013,67 @@
   function currentExpr() {
     return (S.m.expr || []).find((e) => e.key === S.exprKey) || null;
   }
+  // ---- protein grid layers (Akoya): the same machinery, other words --------------------
+  // An image dataset can carry an expression layer of kind "protein": the slide cut into
+  // squares, each holding the mean intensity of every marker. Searching, colouring, the
+  // section UMAP, clusters and suggested names all run on it exactly as on Visium bins;
+  // only the words change ("squares", "markers", intensity instead of UMI).
+  const isProt = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "protein"); };
+  const WORDS_RNA = { bin: "bin", bins: "bins", Bins: "Bins", gene: "gene", genes: "genes", Gene: "Gene", Genes: "Genes" };
+  const WORDS_PROT = { bin: "square", bins: "squares", Bins: "Squares", gene: "marker", genes: "markers", Gene: "Marker", Genes: "Markers" };
+  const wd = () => (isProt() ? WORDS_PROT : WORDS_RNA);
+  // a marker's value in a square: mean intensity on the image's own 0-255 scale
+  const protVal = (v) => (v ? (v >= 10 ? v.toFixed(0) : v.toFixed(1)) : "0");
+  // Static labels in index.html are the sequencing wording. For a protein layer they are
+  // swapped; the originals are kept so a Visium dataset opened afterwards reads exactly as before.
+  const toProtWords = (t) => t.replace(/\bbins\b/g, "squares").replace(/\bbin\b/g, "square")
+    .replace(/\bgenes\b/g, "markers").replace(/\bgene\b/g, "marker").replace(/\bUMI\b/g, "intensity");
+  const WORDING = [
+    ["#geneTitle", "textContent", "Marker expression (grid)"],
+    ["#geneSearch", "placeholder", "Search marker… (Enter adds top hit)"],
+    ["#genePalette option[value=genes]", "textContent", "Marker colors (overlap darkens)"],
+    ["#lblGeneOpacity", "textContent", "Square opacity"],
+    ["#lblPointScale", "textContent", "Square size ×"],
+    ["#lblTissueBins", "textContent", "Show all tissue squares"],
+    ["#lblColorBy", "textContent", "Colour squares by"],
+    ["#colorBy option[value=gene]", "textContent", "Markers (chosen above)"],
+    ["#subSel", "textContent", null],
+    ["#rowRes span", "title", null], ["#clusterRes", "title", null],
+    ["#viewSwitch button[data-v=tissue]", "title", null], ["#viewSwitch button[data-v=sbs]", "title", null],
+    ["#viewSwitch button[data-v=umap]", "title", null], ["#flyPlay", "title", null],
+  ];
+  const wordingOrig = new Map();
+  function syncWording() {
+    const prot = isProt();
+    for (const [sel, prop, txt] of WORDING) {
+      const el = document.querySelector(sel); if (!el) continue;
+      const k = sel + "|" + prop;
+      if (!wordingOrig.has(k)) wordingOrig.set(k, el[prop]);
+      const orig = wordingOrig.get(k);
+      el[prop] = prot ? (txt == null ? toProtWords(orig) : txt) : orig;
+    }
+    // squares are always drawn as squares: the round-spot "Normal" view has no meaning here
+    $("rowGeneBlend").hidden = prot;
+    $("lassoOff").hidden = !prot;
+  }
   async function loadGeneIndex() {
     S.geneIndex = [];
     if (!S.exprKey) return;
-    status("Loading gene list…");
+    status(`Loading ${wd().gene} list…`);
     try {
       const list = await S.src.genes(S.exprKey);
-      list.sort((a, b) => b.t - a.t);
+      // a panel of ~30 markers reads best alphabetically; a transcriptome by total count
+      if (isProt()) list.sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: true, sensitivity: "base" }));
+      else list.sort((a, b) => b.t - a.t);
       S.geneIndex = list;
     } finally { status(null); }
   }
   function showGeneResults(q) {
     const box = $("geneResults");
     q = q.trim().toLowerCase();
-    if (!q) { box.hidden = true; return; }
+    const prot = isProt();
+    // a marker panel is short: with nothing typed, list all of it (alphabetical)
+    if (!q && !prot) { box.hidden = true; return; }
     const hits = [];
     const exact = S.geneIndex.find((g) => g.n.toLowerCase() === q);
     if (exact) hits.push(exact);
@@ -998,7 +1090,9 @@
     box.innerHTML = "";
     hits.forEach((g, i) => {
       const d = document.createElement("div");
-      d.innerHTML = `<span>${g.n}</span><small>${Math.round(g.t).toLocaleString()} UMI</small>`;
+      const on = S.genes.some((x) => x.name === g.n);
+      d.innerHTML = prot ? `<span>${g.n}</span><small>${on ? "shown" : ""}</small>`
+        : `<span>${g.n}</span><small>${Math.round(g.t).toLocaleString()} UMI</small>`;
       if (i === 0) d.classList.add("hot");
       d.onmousedown = (e) => { e.preventDefault(); addGene(g.n); };
       box.appendChild(d);
@@ -1009,7 +1103,7 @@
     if (!S.exprKey || S.genes.some((g) => g.name === name)) return;
     $("geneResults").hidden = true; $("geneSearch").value = "";
     if (S.genes.length >= MAX_SPATIAL_GENES) {
-      status(`Up to ${MAX_SPATIAL_GENES} genes at once. Remove one to add ${name}.`, true);
+      status(`Up to ${MAX_SPATIAL_GENES} ${wd().genes} at once. Remove one to add ${name}.`, true);
       setTimeout(() => status(null), 4000);
       return;
     }
@@ -1023,6 +1117,14 @@
       const p99 = Math.max(1, percentile(sorted, 0.99));
       const g = { name, hex: GENE_COLORS[S.genes.length % GENE_COLORS.length], n, positions, values,
                   min: 0, max: p99, p99, vmax: sorted[sorted.length - 1] || 1, visible: true };
+      if (isProt()) {
+        // Every tissue square has a value, and most of it is background. Start the window
+        // like a stain's: squares at or below the typical (median) square stay clear, the
+        // brightest 1% are full colour. The sliders move it as for an image channel.
+        g.prot = true;
+        g.min = Math.floor(percentile(sorted, 0.5));
+        g.max = Math.max(g.min + 1, Math.ceil(p99));
+      }
       recolorGene(g);
       S.genes.push(g);
       buildGeneUI(); render();
@@ -1035,7 +1137,7 @@
     for (const g of S.genes) {
       const row = document.createElement("div");
       row.className = "chan";
-      const top = Math.max(2, Math.ceil(Math.min(g.vmax, g.p99 * 3)));
+      const top = g.prot ? Math.max(2, Math.ceil(g.vmax)) : Math.max(2, Math.ceil(Math.min(g.vmax, g.p99 * 3)));
       row.innerHTML = `
         <input class="cb" type="checkbox" ${g.visible === false ? "" : "checked"} />
         <input class="col" type="color" value="${g.hex}" />
@@ -1045,12 +1147,14 @@
       row.querySelector(".x").onclick = () => { S.genes = S.genes.filter((x) => x !== g); buildGeneUI(); render(); };
       const slider = rangeSlider(row.querySelector(".range"), {
         min: 0, max: top, step: top > 50 ? 1 : 0.5, lo: g.min, hi: g.max,
-        color: () => g.hex, fmt: (v) => `${v} UMI`,
+        color: () => g.hex, fmt: (v) => (g.prot ? `${v}` : `${v} UMI`),
         onChange: (a, b) => { g.min = a; g.max = b; recolorGene(g); requestRender(); },
       });
+      if (g.prot) row.querySelector(".range").title = "Mean intensity per square (0–255, as the image). " +
+        "Squares at or below the left handle stay clear; at the right handle and above, full colour.";
       row.querySelector(".col").oninput = (e) => { g.hex = e.target.value; slider.repaint(); recolorGene(g); requestRender(); };
       const cb = row.querySelector(".cb");
-      cb.title = `${g.n.toLocaleString()} bins > 0`;
+      cb.title = g.prot ? `${g.n.toLocaleString()} squares` : `${g.n.toLocaleString()} bins > 0`;
       cb.onchange = () => {
         g.visible = cb.checked;
         row.classList.toggle("off", !cb.checked);
@@ -1067,6 +1171,8 @@
     // One square per bin, always: the layer already sets the resolution, and a
     // second multiplier over it only invited the picker and the squares to disagree.
     S.geneBin = 1;
+    syncWording();
+    if (isProt()) { S.geneBlend = "heatmap"; $("geneBlend").value = "heatmap"; $("rowGenePalette").hidden = false; }
     buildGeneUI();
     await loadGeneIndex();
     S.region.selected = null;
@@ -1075,10 +1181,12 @@
     await lassoOnLayer();
     await umapOnLayer();
     render();
+    await gateOnLayer();
+    syncUmapUI(); render();
   }
   async function loadTissue() {
     if (!S.exprKey) return;
-    status("Loading bin positions…");
+    status(`Loading ${wd().bin} positions…`);
     try { S.tissue.positions = await S.src.positions(S.exprKey); }
     finally { status(null); }
   }
@@ -1847,7 +1955,9 @@
     tissueVs: null, umapVs: null, sideVs: null, anim: null, lastFly: null, rowOf: null, mix: null, ver: 0,
     cloud: new Map(), drawn: new Map(), busy: null,
     // suggested cell types: celltypes.json (per clustering), celltype.bin (per bin), a picked type
-    ctInfo: null, ctTried: false, ct: null, ctCounts: null, ctPick: null });
+    ctInfo: null, ctTried: false, ct: null, ctCounts: null, ctPick: null,
+    // gating: a highlighted phenotype (rule index, or GATE_NONE for Unassigned)
+    phPick: null });
   const inUmap = () => !!(S.umap && S.umap.view === "umap" && S.mode !== "rna");
   const umapSbs = () => !!(S.umap && S.umap.view === "sbs" && S.mode !== "rna");
   const umapMeta = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return e && e.umap ? e.umap : null; };
@@ -1938,7 +2048,7 @@
           if (!(x === x) || !(y === y)) continue;                  // NaN: under 10 UMI, not embedded
           ex[nEmb] = x; ey[nEmb] = y; nEmb++;
         }
-        if (!nEmb) throw new Error("no bin is embedded");
+        if (!nEmb) throw new Error(`no ${wd().bin} is embedded`);
         // frame on the middle 99%: a few stray bins far from the cloud would otherwise shrink
         // it to a corner of the picture (they are still drawn, just outside the first frame)
         const sx = ex.subarray(0, nEmb).sort(), sy = ey.subarray(0, nEmb).sort();
@@ -1994,7 +2104,7 @@
     const old = S.umap, was = old.view;
     umapSetTool(null);
     const U = S.umap = umapBlank();
-    U.colorBy = old.colorBy; U.tissueVs = was === "umap" ? old.tissueVs : S.viewState;
+    U.colorBy = old.colorBy === "phenotype" ? "gene" : old.colorBy; U.tissueVs = was === "umap" ? old.tissueVs : S.viewState;
     if (umapAvail()) {
       U.key = S.exprKey;
       const m = umapMeta(), list = m.clusterings || [];
@@ -2148,6 +2258,10 @@
     if (U.sel) return (r) => U.sel[r] === 1;
     if (U.pick !== null && U.cl) return (r) => U.cl[r] === U.pick;
     if (umapCtLit()) return (r) => U.ct[r] === U.ctPick;
+    if (umapPhLit()) { const calls = S.gate.calls, k = U.phPick; return (r) => calls[r] === k; }
+    // gating preview: the squares above the cut-off light up in the UMAP (on the slide the
+    // preview draws its own outlines)
+    if (where !== "tissue" && gatePreviewOn()) { const v = S.gate.vals.get(S.gate.cur), t = S.gate.cut.get(S.gate.cur).v; return (r) => v[r] > t; }
     // a shape, brushed points or a cluster picked in Circle -> UMAP light up in the UMAP too
     // (on the slide the circle tool draws its own highlight)
     const L = S.lasso;
@@ -2215,10 +2329,27 @@
     const N = U.pos.length / 2, t = new Float32Array(N).fill(-1), rgb = new Uint8Array(3 * N);
     if (S.genePalette === "genes") {
       const paper = new Float32Array(3 * N).fill(1), miss = new Float32Array(N).fill(1);
-      for (const g of on) {
+      // marker squares: each one's place in its marker's min..max display window, as on the
+      // slide; the hue mixes the inks relative to the strongest marker, strength is the opacity
+      const prot = isProt(), strength = prot ? on.map((g) => {
+        const br = geneByRow(g), lo = g.min || 0, inv = 1 / Math.max(g.max - lo, 1e-6), s = new Float32Array(N);
+        for (let r = 0; r < N; r++) { const v = br[r]; if (v > lo) s[r] = Math.min(1, (v - lo) * inv); }
+        return s;
+      }) : null;
+      const smax = prot ? new Float32Array(N) : null;
+      if (prot) for (const s of strength) for (let r = 0; r < N; r++) if (s[r] > smax[r]) smax[r] = s[r];
+      for (const [gi, g] of on.entries()) {
         const br = geneByRow(g), [tr, tg, tb] = hexToRgb255(g.hex), lo = g.min || 0, hi = Math.max(g.max, 1e-6);
         for (let r = 0; r < N; r++) {
-          const v = br[r]; if (!(v > 0) || v < lo) continue;
+          const v = br[r];
+          if (prot) {
+            const s = strength[gi][r]; if (!(s > 0)) continue;
+            const k = s / smax[r];
+            paper[3 * r] *= 1 - k * (1 - tr / 255); paper[3 * r + 1] *= 1 - k * (1 - tg / 255); paper[3 * r + 2] *= 1 - k * (1 - tb / 255);
+            miss[r] *= 1 - s;
+            continue;
+          }
+          if (!(v > 0) || v < lo) continue;
           const sEff = 0.2 + 0.8 * Math.min(1, v / hi);
           paper[3 * r] *= 1 - sEff * (1 - tr / 255); paper[3 * r + 1] *= 1 - sEff * (1 - tg / 255); paper[3 * r + 2] *= 1 - sEff * (1 - tb / 255);
           miss[r] *= 1 - sEff;
@@ -2233,6 +2364,11 @@
       const lut = PALETTES[S.genePalette] || VIRIDIS, sum = new Float32Array(N), any = new Uint8Array(N);
       for (const g of on) {
         const br = geneByRow(g), lo = g.min || 0, hi = Math.max(g.max, 1e-6);
+        if (g.prot) {
+          const inv = 1 / Math.max(g.max - lo, 1e-6);
+          for (let r = 0; r < N; r++) { const v = br[r]; if (v > lo) { sum[r] += Math.min(1, (v - lo) * inv); any[r] = 1; } }
+          continue;
+        }
         for (let r = 0; r < N; r++) { const v = br[r]; if (v > 0 && v >= lo) { sum[r] += Math.min(1, v / hi); any[r] = 1; } }
       }
       for (let r = 0; r < N; r++) {
@@ -2253,11 +2389,12 @@
   //   where = "fly":    every bin, slide place + UMAP place (for FlyScatterLayer)
   function umapCloud(where) {
     const U = S.umap, N = U.pos.length / 2, lit = umapLit(where), byCl = umapByCluster(), byCt = !byCl && umapByType();
-    const mix = byCl || byCt ? null : umapGeneMix();
-    const key = `${where}|${U.key}|${U.ver}|${byCl ? U.clRes : byCt ? "ct" : "g"}|${mix ? mix.key : ""}|${[...U.hidden].join(",")}|${lit ? 1 : 0}`;
+    const byPh = !byCl && !byCt && umapByPh(), calls = byPh ? S.gate.calls : null;
+    const mix = byCl || byCt || byPh ? null : umapGeneMix();
+    const key = `${where}|${U.key}|${U.ver}|${byCl ? U.clRes : byCt ? "ct" : byPh ? "ph" + S.gate.ver : "g"}|${mix ? mix.key : ""}|${[...U.hidden].join(",")}|${lit ? 1 : 0}`;
     const hit = U.cloud.get(where);
     if (hit && hit.key === key) return hit;
-    if (where === "tissue" && !byCl && !byCt && !lit) { const c = { key, n: 0 }; U.cloud.set(where, c); return c; }
+    if (where === "tissue" && !byCl && !byCt && !byPh && !lit) { const c = { key, n: 0 }; U.cloud.set(where, c); return c; }
     // counting sort on a 0..511 bucket: expression strength, +256 when lit
     const bucket = new Uint16Array(N), keep = new Uint8Array(N), start = new Uint32Array(513);
     let n = 0;
@@ -2266,9 +2403,11 @@
       let b = 0;
       if (byCl) { const c = U.cl[r]; if (U.hidden.has(c) || (c === UMAP_NONE && where !== "fly")) continue; }
       else if (byCt) { if (U.ct[r] === CT_OUT && where !== "fly") continue; }
+      // phenotypes: Unassigned squares are left off the slide, so the stains show through them
+      else if (byPh) { if (where === "tissue" && calls[r] === GATE_NONE && !(lit && lit(r))) continue; }
       else if (mix && mix.t[r] >= 0) b = 1 + Math.min(254, Math.round(mix.t[r] * 254));
       const l = lit ? lit(r) : false;
-      if (where === "tissue" && !byCl && !byCt && !l) continue;
+      if (where === "tissue" && !byCl && !byCt && !byPh && !l) continue;
       if (l) b += 256;
       keep[r] = 1; bucket[r] = b; start[b + 1]++; n++;
     }
@@ -2289,6 +2428,7 @@
       let c;
       if (byCl) c = clusterRgb(U.cl[r]);
       else if (byCt) c = ctRgb(U.ct[r]);
+      else if (byPh) c = gateRuleRgb(calls[r]);
       else if (mix && mix.t[r] >= 0) c = [mix.rgb[3 * r], mix.rgb[3 * r + 1], mix.rgb[3 * r + 2]];
       else c = l ? (where === "tissue" ? UMAP_SEL : UMAP_LIT_GREY) : UMAP_GREY;
       col[4 * j] = c[0]; col[4 * j + 1] = c[1]; col[4 * j + 2] = c[2];
@@ -2313,6 +2453,8 @@
       stroked: false, filled: true,
       // hover says which cluster a dot is in; on the slide only when the dots are the clusters
       pickable: where === "umap" || umapByCat(),
+      // marker squares: "Square opacity" fades the cluster colours too, so the stains show through
+      opacity: where === "tissue" && isProt() ? S.geneOpacity : 1,
       parameters: NORMAL,
       updateTriggers: { getFillColor: [C.key], getPosition: [C.key] },
     });
@@ -2421,15 +2563,20 @@
   }
   function umapTooltip(r) {
     if (r < 0) return null;
-    const U = S.umap, parts = [];
-    if (U.cl) parts.push(U.cl[r] === UMAP_NONE ? "No cluster (under 10 UMI)" : umapName(U.cl[r]));
+    const U = S.umap, parts = [], prot = isProt();
+    if (U.cl) parts.push(U.cl[r] === UMAP_NONE ? (prot ? "No cluster (not in the UMAP)" : "No cluster (under 10 UMI)") : umapName(U.cl[r]));
     if (umapByType() && U.ct[r] !== CT_OUT) parts.push(`Suggested type: ${ctName(U.ct[r])}`);
+    if (gateOn() && S.gate.calls && r < S.gate.N) parts.push(`Phenotype: ${gatePhName(S.gate.calls[r])}`);
     if (!umapByCat()) {
       for (const g of S.genes) {
         if (g.visible === false) continue;
         const v = geneByRow(g)[r];
-        parts.push(`${g.name}: ${v ? (Number.isInteger(v) ? v : v.toFixed(2)) : 0} UMI`);
+        parts.push(prot ? `${g.name}: ${protVal(v)} mean intensity` : `${g.name}: ${v ? (Number.isInteger(v) ? v : v.toFixed(2)) : 0} UMI`);
       }
+    }
+    if (prot && parts.length) {
+      const e = currentExpr();
+      parts.push(`(one ${e && e.binSizeUm ? `${e.binSizeUm} µm ` : ""}square)`);
     }
     return parts.length ? { text: parts.join("\n") } : null;
   }
@@ -2437,12 +2584,12 @@
   function umapPick(c) {
     const U = S.umap;
     U.pick = c === null || c === undefined || U.pick === c ? null : c;
-    U.sel = null; U.selN = 0; U.ctPick = null;
+    U.sel = null; U.selN = 0; U.ctPick = null; U.phPick = null;
     umapDirty(); syncUmapUI(); render();
   }
   function umapClearSel() {
     const U = S.umap;
-    U.sel = null; U.selN = 0; U.pick = null; U.ctPick = null;
+    U.sel = null; U.selN = 0; U.pick = null; U.ctPick = null; U.phPick = null;
     umapDirty(); syncUmapUI(); render();
   }
 
@@ -2495,7 +2642,7 @@
   async function umapStartTool(t) {
     const U = S.umap;
     if (!U.pos) {
-      try { U.pos = await umapPositions(); } catch (e) { status(`Could not load bin positions: ${e.message}`, true); return; }
+      try { U.pos = await umapPositions(); } catch (e) { status(`Could not load ${wd().bin} positions: ${e.message}`, true); return; }
     }
     umapSetTool(t);
   }
@@ -2514,7 +2661,7 @@
     }
     let n = 0, emb = 0;
     for (let r = 0; r < N; r++) if (sel[r]) { n++; if (U.uxy && U.uxy[2 * r] === U.uxy[2 * r]) emb++; }
-    U.sel = n ? sel : null; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null;
+    U.sel = n ? sel : null; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null; U.phPick = null;
     umapDirty(); syncUmapUI(); render();
   }
   // The selection becomes one more Circle -> UMAP shape: a list of bins rather than an outline.
@@ -2551,13 +2698,13 @@
   const CT_BADGE = { high: "high", medium: "medium", low: "low", none: "unclear" };
   const pctTxt = (p) => `${Math.round((p || 0) * 100)}%`;
   function clusterLegend(host, o) {
-    const esc = escHtml;
+    const esc = escHtml, W = wd(), prot = isProt();
     host.innerHTML = "";
     if (o.suggest) {
       const nHigh = o.acceptAll ? o.acceptAll(true) : 0;
       const head = document.createElement("div");
       head.className = "ct-head";
-      head.innerHTML = `<span>Suggested names from <button class="linkish ct-info" title="The genes behind each suggestion, and how it is made">marker lists</button></span>` +
+      head.innerHTML = `<span>Suggested names from <button class="linkish ct-info" title="The ${W.genes} behind each suggestion, and how it is made">marker lists</button></span>` +
         (o.acceptAll ? `<button class="ct-all" ${nHigh ? "" : "disabled"} title="Name every high-confidence cluster after its suggestion (clusters you already named keep their name)">Accept all high${nHigh ? ` (${nHigh})` : ""}</button>` : "");
       head.querySelector(".ct-info").onclick = (ev) => { ev.stopPropagation(); ctPopover(ev.currentTarget, o.markerInfo()); };
       const all = head.querySelector(".ct-all");
@@ -2573,13 +2720,15 @@
       row.className = "cl-row" + (o.picked === c ? " sel" : "") + (off ? " off" : "");
       row.innerHTML = (o.onHide ? `<input type="checkbox" class="cb" ${off ? "" : "checked"} title="Show or hide this cluster" />` : `<span></span>`) +
         `<i style="background:rgb(${r},${g},${b})"></i>` +
-        `<div class="cl-txt"><span class="nm"></span><small>${(o.sizes[c] || 0).toLocaleString()} bins` +
+        `<div class="cl-txt"><span class="nm"></span><small>${(o.sizes[c] || 0).toLocaleString()} ${W.bins}` +
         `${top.length ? ` · ${esc(top.join(", "))}` : ""}</small></div>` +
         `<button class="ren" title="Rename this cluster">✎</button>`;
       const nm = row.querySelector(".nm");
       nm.textContent = o.name(c);                                 // typed by the user: never as HTML
       row.title = mk.length
-        ? `Top marker genes (log fold change vs the rest, share of bins with the gene):\n` +
+        ? (prot ? `Top markers (how much higher than in the rest of the section, in standard deviations; ` +
+                  `share of the cluster's squares above that marker's typical level):\n`
+                : `Top marker genes (log fold change vs the rest, share of bins with the gene):\n`) +
           mk.slice(0, 10).map((m) => `${markerName(m)}  ${m.lfc != null ? (+m.lfc).toFixed(2) : ""}  ${m.pct != null ? Math.round(m.pct * 100) + "%" : ""}`).join("\n") +
           `\nClick to highlight this cluster in every view.`
         : "Click to highlight this cluster in every view.";
@@ -2591,13 +2740,13 @@
         const named = o.name(c) === sg.suggest;
         const mix = conf !== "none" && sg.second && sg.pct2 >= 0.1 ? ` · ${sg.second} ${pctTxt(sg.pct2)}` : "";
         line.innerHTML = `<b class="ct-badge ${conf}">${CT_BADGE[conf]}</b>` +
-          `<span class="txt">${conf === "none" ? `Unclear · no list fits most bins (best: ${esc(sg.top)} ${pctTxt(sg.pct)})`
-                                               : `${esc(sg.suggest)} · ${pctTxt(sg.pct)} of bins${esc(mix)}`}</span>` +
+          `<span class="txt">${conf === "none" ? `Unclear · no list fits most ${W.bins} (best: ${esc(sg.top)} ${pctTxt(sg.pct)})`
+                                               : `${esc(sg.suggest)} · ${pctTxt(sg.pct)} of ${W.bins}${esc(mix)}`}</span>` +
           (conf === "none" ? "" : named ? `<span class="acc-ok" title="This cluster carries the suggested name">✓</span>`
                                         : `<button class="acc" title="Name this cluster “${esc(sg.suggest)}”">✓ Accept</button>`);
         line.title = `Suggested: ${sg.suggest} (${CT_BADGE[conf]} confidence)\n` +
-          `${pctTxt(sg.pct)} of this cluster's bins score best for ${sg.top}` +
-          (sg.second ? `, ${pctTxt(sg.pct2)} for ${sg.second}` : "") + ".\nClick “marker lists” above for the genes and the rule.";
+          `${pctTxt(sg.pct)} of this cluster's ${W.bins} score best for ${sg.top}` +
+          (sg.second ? `, ${pctTxt(sg.pct2)} for ${sg.second}` : "") + `.\nClick “marker lists” above for the ${W.genes} and the rule.`;
         const acc = line.querySelector(".acc");
         if (acc) acc.onclick = (ev) => { ev.stopPropagation(); o.onAccept(c, sg.suggest); };
         row.appendChild(line);                                    // under the name, the full width of the row
@@ -2630,6 +2779,15 @@
     "if that score is at least 0.25, otherwise as none. A cluster is named after the type most of its bins count as: " +
     "high = at least half of its bins and twice the next type; medium = at least 30%; low (shown as “maybe …”) = at least 15%; " +
     "anything less is Unclear. Genes found in under 0.5% of the bins are left out, and a type needs at least 2 genes left to be scored.";
+  // the same rule on marker squares (celltypes.json "modality": "protein"): intensities, not counts
+  const CT_BIN_MIN_PROT = 0.5;
+  const CT_RULE_PROT = "Each square gets a score for each cell type: how far above their usual level that type's markers are in the square " +
+    "(mean intensity, scaled per marker from its dimmest 1% to its brightest 0.5% of tissue squares, as z-scores), averaged over the type's markers. " +
+    `A square counts as the type with the best score if that score is at least ${CT_BIN_MIN_PROT}, otherwise as none. ` +
+    "A cluster is named after the type most of its squares count as: high = at least half of its squares and twice the next type; " +
+    "medium = at least 30%; low (shown as “maybe …”) = at least 15%; anything less is Unclear. " +
+    "A type is scored when at least one of its markers is on this panel; a marker that is nearly the same in every square is left out.";
+  const ctProt = (ci) => !!((ci && ci.modality === "protein") || isProt());
   function ctPopover(anchor, info) {
     let el = $("ctPop");
     if (!el) {
@@ -2640,21 +2798,26 @@
       window.addEventListener("keydown", (e) => { if (e.key === "Escape") el.hidden = true; });
     }
     if (!info) return;
-    const esc = escHtml, set = info.markerSet || {};
+    const esc = escHtml, set = info.markerSet || {}, prot = !!info.prot;
     el.innerHTML =
       `<div class="ct-pop-h"><b>Marker lists${set.name ? `: ${esc(set.name)}` : ""}${set.version != null ? ` <small>v${esc(set.version)}</small>` : ""}</b>` +
       `<button class="ct-x" title="Close">×</button></div>` +
       (info.scope ? `<p class="meta">${esc(info.scope)}</p>` : "") +
-      `<p>${esc(CT_RULE)}</p>` +
+      `<p>${esc(prot ? CT_RULE_PROT : CT_RULE)}</p>` +
       (info.note ? `<p class="meta">${esc(info.note)}</p>` : "") +
       `<div class="ct-types">` + (info.types || []).map((t) => {
         // missing genes: "absent" = no such gene in the data used, "rare" = in under 0.5% of the bins
         const miss = (t.missing || []).map((m) => (typeof m === "string" ? { gene: m, reason: "absent" } : m));
-        const absent = miss.filter((m) => m.reason !== "rare").map((m) => m.gene), rare = miss.filter((m) => m.reason === "rare").map((m) => m.gene);
-        const why = rare.length && !absent.length ? "too rare in this data" : absent.length && !rare.length ? "its genes are not in the data" : "too few of its genes are measurable here";
+        // protein: "flat" = a channel with no contrast over the tissue, left out like a rare gene
+        const flat = prot ? miss.filter((m) => m.reason === "flat").map((m) => m.gene) : [];
+        const absent = miss.filter((m) => m.reason !== "rare" && !(prot && m.reason === "flat")).map((m) => m.gene), rare = miss.filter((m) => m.reason === "rare").map((m) => m.gene);
+        const why = prot ? (flat.length ? "its markers are missing from this panel or flat here" : "none of its markers are on this panel")
+          : rare.length && !absent.length ? "too rare in this data" : absent.length && !rare.length ? "its genes are not in the data" : "too few of its genes are measurable here";
         return `<div class="ct-type${t.scored ? "" : " off"}"><b>${esc(t.name)}</b>${t.scored ? "" : ` <small title="${esc(t.reason || "")}">not scored: ${why}</small>`}` +
-          `<div>${t.genes.length ? `<span class="found" title="Genes used for the score">${esc(t.genes.join(", "))}</span>` : `<span class="meta">no usable genes</span>`}` +
-          (absent.length ? ` <span class="miss" title="No gene of this name in the data used here">· not in the data: ${esc(absent.join(", "))}</span>` : "") +
+          `<div>${t.genes.length ? `<span class="found" title="${prot ? "Markers" : "Genes"} used for the score">${esc(t.genes.join(", "))}</span>` : `<span class="meta">no usable ${prot ? "markers" : "genes"}</span>`}` +
+          (absent.length && prot ? ` <span class="miss" title="No channel of this name on this panel">· not on this panel: ${esc(absent.join(", "))}</span>` : "") +
+          (flat.length ? ` <span class="miss" title="Nearly the same in every tissue square: left out, as it cannot tell squares apart">· flat here: ${esc(flat.join(", "))}</span>` : "") +
+          (absent.length && !prot ? ` <span class="miss" title="No gene of this name in the data used here">· not in the data: ${esc(absent.join(", "))}</span>` : "") +
           (rare.length ? ` <span class="miss" title="Counted in under 0.5% of the bins: left out, as one stray count would decide a bin">· too rare: ${esc(rare.join(", "))}</span>` : "") +
           `</div></div>`;
       }).join("") +
@@ -2677,7 +2840,7 @@
     : ctLut[t] || (ctLut[t] = liftForDark(t < CT_COLORS.length ? hexToRgb255(CT_COLORS[t]) : hslRgb((t * 137.508 + 40) % 360, 0.6, 0.6))));
   const umapCtAvail = () => { const m = umapMeta(); return !!(m && m.celltypes); };
   const umapByType = () => !!(S.umap && S.umap.colorBy === "celltype" && S.umap.ct);
-  const umapByCat = () => umapByCluster() || umapByType();      // one colour per bin replaces the genes
+  const umapByCat = () => umapByCluster() || umapByType() || umapByPh();      // one colour per bin replaces the genes
   const umapSuggest = (c) => { const U = S.umap, a = U.ctInfo && U.ctInfo.byRes.get(U.clRes); return (a && a[c]) || null; };
 
   // the suggestions per clustering: loaded with the clusters, quietly absent for older exports
@@ -2694,7 +2857,9 @@
         byRes.set(Number(k), a);                          // "1" in the file is resolution 1.0 here
       }
       U.ctInfo = { ...j, byRes };
-      loadMarkerSet();                                     // only for its note in "marker lists"
+      // only for its note in "marker lists"; a protein set names its own file (markers/akoya_*.json)
+      if (ctProt(j) && j.markerSet && j.markerSet.file) loadMarkerNote(j.markerSet.file);
+      else loadMarkerSet();
     } catch (e) { U.ctInfo = null; }
   }
   // each bin's suggested type, for Colour bins by "Suggested cell type"
@@ -2718,13 +2883,27 @@
     }
     umapDirty();
   }
-  const ctMarkerInfo = (ci, scope) => ci && {
-    markerSet: ci.markerSet, types: ci.types, scope,
-    note: S.markerSet && ci.markerSet && S.markerSet.name === ci.markerSet.name ? S.markerSet.note : null };
+  // A protein marker set (its own file, not the circle tool's RNA set): fetched once, for its note.
+  const markerNotes = new Map();
+  function loadMarkerNote(file) {
+    if (!/^markers\/[\w.-]+\.json$/.test(file) || markerNotes.has(file)) return;
+    markerNotes.set(file, null);
+    fetch(file, { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j && j.name) markerNotes.set(file, j); }).catch(() => {});
+  }
+  const ctMarkerInfo = (ci, scope) => {
+    if (!ci) return ci;
+    const own = ci.markerSet && ci.markerSet.file && markerNotes.get(ci.markerSet.file);
+    const ms = own && own.name === ci.markerSet.name ? own
+      : S.markerSet && ci.markerSet && S.markerSet.name === ci.markerSet.name ? S.markerSet : null;
+    return { markerSet: ci.markerSet, types: ci.types, scope, prot: ctProt(ci), note: ms ? ms.note : null };
+  };
+  const ctScope = () => (isProt() ? "Scored on every marker of the panel, over all squares in the section UMAP."
+    : "Scored on every gene, over all bins in the section UMAP.");
   function umapPickType(t) {
     const U = S.umap;
     U.ctPick = t === null || t === undefined || U.ctPick === t ? null : t;
-    U.pick = null; U.sel = null; U.selN = 0;
+    U.pick = null; U.sel = null; U.selN = 0; U.phPick = null;
     umapDirty(); syncUmapUI(); render();
   }
   const umapCtLit = () => !!(S.umap && S.umap.ctPick !== null && umapByType());
@@ -2732,12 +2911,12 @@
 
   // Colour bins by "Suggested cell type": one row per type in the marker set
   function typeLegend(host) {
-    const U = S.umap, ci = U.ctInfo, esc = escHtml;
+    const U = S.umap, ci = U.ctInfo, esc = escHtml, W = wd(), prot = ctProt(ci);
     host.innerHTML = "";
     const head = document.createElement("div");
     head.className = "ct-head";
-    head.innerHTML = `<span>Each bin's best-scoring type from the <button class="linkish ct-info" title="The genes behind each type, and how a bin is called">marker lists</button></span>`;
-    head.querySelector(".ct-info").onclick = (ev) => { ev.stopPropagation(); ctPopover(ev.currentTarget, ctMarkerInfo(ci, "Scored on every gene, over all bins in the section UMAP.")); };
+    head.innerHTML = `<span>Each ${W.bin}'s best-scoring type from the <button class="linkish ct-info" title="The ${W.genes} behind each type, and how a ${W.bin} is called">marker lists</button></span>`;
+    head.querySelector(".ct-info").onclick = (ev) => { ev.stopPropagation(); ctPopover(ev.currentTarget, ctMarkerInfo(ci, ctScope())); };
     host.appendChild(head);
     const rows = ci.types.map((t, i) => ({ t: i, name: t.name, scored: t.scored, n: U.ctCounts[i] }));
     rows.sort((a, b) => b.scored - a.scored || b.n - a.n || a.t - b.t);
@@ -2747,9 +2926,31 @@
       const row = document.createElement("div");
       row.className = "cl-row" + (U.ctPick === d.t ? " sel" : "") + (d.scored ? "" : " off");
       row.innerHTML = `<span></span><i style="background:${d.scored ? `rgb(${r},${g},${b})` : "transparent"}"></i>` +
-        `<div class="cl-txt"><span class="nm">${esc(d.name)}</span><small>${!d.scored ? "not scored: too few of its genes in the data"
-          : d.none ? `${d.n.toLocaleString()} bins · no type scores 0.25 or more` : `${d.n.toLocaleString()} bins`}</small></div><span></span>`;
-      if (d.scored) { row.title = "Click to highlight these bins in every view."; row.onclick = () => umapPickType(d.t); }
+        `<div class="cl-txt"><span class="nm">${esc(d.name)}</span><small>${!d.scored ? (prot ? "not scored: its markers are missing from this panel or flat here" : "not scored: too few of its genes in the data")
+          : d.none ? `${d.n.toLocaleString()} ${W.bins} · no type scores ${prot ? CT_BIN_MIN_PROT : "0.25"} or more` : `${d.n.toLocaleString()} ${W.bins}`}</small></div><span></span>`;
+      if (d.scored) { row.title = `Click to highlight these ${W.bins} in every view.`; row.onclick = () => umapPickType(d.t); }
+      host.appendChild(row);
+    }
+  }
+
+  // Colour squares by "Phenotype": one row per rule, in rule order, then Unassigned
+  function phenoLegend(host) {
+    const U = S.umap, G = S.gate, W = wd(), esc = escHtml;
+    host.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "ct-head";
+    head.innerHTML = `<span>Your cell types: the first matching rule per ${W.bin} (Combine markers…)</span>`;
+    host.appendChild(head);
+    const ids = G.rules.map((_, i) => i).slice(0, GATE_NONE).concat([GATE_NONE]);
+    for (const k of ids) {
+      const bad = k !== GATE_NONE && gateRuleProblems(G.rules[k]).length > 0;
+      const [r, g, b] = gateRuleRgb(k), n = G.counts ? G.counts[k] : 0;
+      const row = document.createElement("div");
+      row.className = "cl-row" + (U.phPick === k ? " sel" : "") + (bad ? " off" : "");
+      row.innerHTML = `<span></span><i style="background:rgb(${r},${g},${b})"></i>` +
+        `<div class="cl-txt"><span class="nm">${esc(gatePhName(k))}</span><small>${bad ? "matches nothing yet: see its rule"
+          : `${n.toLocaleString()} ${W.bins} · ${G.N ? ((100 * n) / G.N).toFixed(1) : 0}%`}</small></div><span></span>`;
+      if (!bad) { row.title = `Click to highlight these ${W.bins} in every view.`; row.onclick = () => umapPickPh(k); }
       host.appendChild(row);
     }
   }
@@ -2757,6 +2958,7 @@
   function buildUmapLegend() {
     const U = S.umap, host = $("clusterLegend"), info = umapClusterInfo();
     if (U.colorBy === "celltype" && U.ct && U.ctInfo) { typeLegend(host); return; }
+    if (U.colorBy === "phenotype" && umapByPh()) { phenoLegend(host); return; }
     if (U.colorBy !== "cluster" || !U.cl || !info) { host.innerHTML = ""; return; }
     let sizes = info.sizes;
     if (!sizes) { sizes = []; for (const c of U.cl) if (c !== UMAP_NONE) sizes[c] = (sizes[c] || 0) + 1; }
@@ -2771,7 +2973,7 @@
         umapDirty(); syncUmapUI(); render();
       },
       suggest: hasSug ? umapSuggest : null,
-      markerInfo: () => ctMarkerInfo(U.ctInfo, "Scored on every gene, over all bins in the section UMAP."),
+      markerInfo: () => ctMarkerInfo(U.ctInfo, ctScope()),
       onAccept: (c, t) => { setName(c, t); umapDirty(); syncUmapUI(); render(); },
       // count only = how many high clusters still have no name of their own
       acceptAll: (count) => {
@@ -2800,7 +3002,7 @@
     $("lassoCircle").title = um ? why : "Drag from the centre outwards (Esc to stop)";
     $("lassoFree").title = um ? why : "Hold and draw around the bins (Esc to stop)";
     $("sbsCaps").hidden = !ok || !umapSbs();
-    if (!ok) return;
+    if (!ok) { syncGateColourOpt(); gateCountsRefresh(); return; }
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === U.view));
     $("flyPlay").disabled = !!U.anim;
     const list = umapClusterings();
@@ -2808,6 +3010,7 @@
     $("colorBy").options[1].disabled = !list.length;
     const ctOpt = $("colorBy").options[2], ctOk = umapCtAvail();      // older exports: no such option
     ctOpt.hidden = !ctOk; ctOpt.disabled = !ctOk;
+    syncGateColourOpt();
     const resSel = $("clusterRes");
     const opts = list.map((c) => `<option value="${c.resolution}">${c.resolution} · ${c.n} clusters</option>`).join("");
     if (resSel.dataset.opts !== opts) { resSel.innerHTML = opts; resSel.dataset.opts = opts; }
@@ -2816,22 +3019,28 @@
     $("clusterTools").hidden = U.colorBy !== "cluster" || !U.cl;
     $("clShowAll").disabled = !U.hidden.size;
     buildUmapLegend();
-    const m = umapMeta(), e = currentExpr();
+    const m = umapMeta(), e = currentExpr(), W = wd(), prot = isProt();
     const nEmb = U.nEmb || m.nEmbedded;
-    $("sbsCapUmap").textContent = `UMAP · whole section${nEmb ? ` · ${nEmb.toLocaleString()} bins` : ""}`;
-    $("umapNote").textContent = (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} bins (those with at least 10 UMI) are in the UMAP. ` : "") +
-      `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`;
-    const ctLit = umapCtLit(), has = !!(U.sel || U.pick !== null || ctLit);
+    $("sbsCapUmap").textContent = `UMAP · whole section${nEmb ? ` · ${nEmb.toLocaleString()} ${W.bins}` : ""}`;
+    $("umapNote").textContent = prot
+      ? (nEmb ? (nEmb >= e.nBins ? `All ${e.nBins.toLocaleString()} tissue squares` : `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} tissue squares`) +
+                ` (${e.binSizeUm ? `${e.binSizeUm} µm` : "each"} across) are in the UMAP, placed by how alike their markers are. ` : "") +
+        `Switch between Tissue, Side by side and UMAP at the top left of the picture; markers, clusters and selections stay.`
+      : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} bins (those with at least 10 UMI) are in the UMAP. ` : "") +
+        `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`;
+    const ctLit = umapCtLit(), phLit = umapPhLit(), has = !!(U.sel || U.pick !== null || ctLit || phLit);
     $("selClear").disabled = !has;
     $("selToShape").hidden = !U.sel || $("panelLasso").hidden;
-    const selTxt = U.sel ? `${U.selN.toLocaleString()} bins selected` : U.pick !== null ? `${umapName(U.pick)} highlighted`
-      : ctLit ? `${ctName(U.ctPick)} highlighted` : "";
+    const selTxt = U.sel ? `${U.selN.toLocaleString()} ${W.bins} selected` : U.pick !== null ? `${umapName(U.pick)} highlighted`
+      : ctLit ? `${ctName(U.ctPick)} highlighted` : phLit ? `${gatePhName(U.phPick)} highlighted` : "";
     $("selMsg").textContent = U.sel
-      ? `${selTxt}, lit in every view` + (U.uxy && U.selEmb < U.selN ? ` (${U.selEmb.toLocaleString()} of them are in the UMAP; the others have under 10 UMI).` : ".")
-      : U.pick !== null || ctLit ? `${selTxt} in every view.`
-      : "Draw a box or a loop around dots, on the tissue or the UMAP, to light the same bins in both.";
+      ? `${selTxt}, lit in every view` + (U.uxy && U.selEmb < U.selN
+        ? ` (${U.selEmb.toLocaleString()} of them are in the UMAP; the others ${prot ? "are not" : "have under 10 UMI"}).` : ".")
+      : U.pick !== null || ctLit || phLit ? `${selTxt} in every view.`
+      : `Draw a box or a loop around dots, on the tissue or the UMAP, to light the same ${W.bins} in both.`;
     $("selChip").hidden = !has;
     $("selChipTxt").textContent = selTxt;
+    gateCountsRefresh();
   }
 
   // Saved with Circle -> UMAP's JSON: which whole-section clustering, and the names given to clusters.
@@ -2860,6 +3069,7 @@
         try { await umapSetRes(U.res); }
         catch (err) { status(`Could not load clusters: ${err.message}`, true); setTimeout(() => status(null), 5000); U.colorBy = "gene"; }
       }
+      if (U.colorBy === "phenotype") { await gateSetColour(true); return; }
       if (U.colorBy === "celltype" && !U.ct) {
         try { await umapLoadTypes(); }
         catch (err) { status(`Could not load cell types: ${err.message}`, true); setTimeout(() => status(null), 5000); U.colorBy = "gene"; }
@@ -2881,7 +3091,7 @@
       if (e.key !== "Escape" || !S.umap) return;
       if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
       if (S.umap.tool) umapSetTool(null);
-      else if (S.umap.sel || S.umap.pick !== null || S.umap.ctPick !== null) umapClearSel();
+      else if (S.umap.sel || S.umap.pick !== null || S.umap.ctPick !== null || S.umap.phPick != null) umapClearSel();
     });
     // side by side, the circle -> UMAP panel takes the lower half of the UMAP pane: re-lay
     // the panes whenever it opens or closes
@@ -2906,6 +3116,822 @@
     });
   }
 
+  // ---- Counting tools for marker squares: % positive, counts per cluster, combined rules -----
+  // For an expression layer with one value per square per marker (protein grid). Each marker
+  // gets a cut-off on its squares' mean intensity (0-255, the image's own units): set by hand
+  // on a histogram, or from Otsu's suggestion with one click - never silently. Rules then
+  // name the squares: the FIRST rule (top to bottom) whose conditions all hold, else
+  // "Unassigned". Calls live per positions.bin row, so they colour, highlight and select
+  // through the same machinery as clusters, in every view.
+  // Only shown for protein layers for now; nothing here runs for a sequencing layer.
+  const GATE_VERSION = "20261102gate3";
+  const GATE_NONE = 255;                                   // calls: no rule matched
+  const GATE_COLORS = ["#ff7f0e", "#e6194b", "#3cb44b", "#4c8dff", "#f032e6", "#42d4f4", "#ffe119", "#b07cff",
+                       "#bfef45", "#fabed4", "#2ec4b6", "#dcbeff", "#c8a27a", "#aaffc3", "#ff9e9e", "#9fd3ff"];
+  const GATE_GREY = [120, 120, 120];
+  // A starting point drawn from common immune / vascular / nerve markers. Only rules whose
+  // markers are all on the panel are offered, and the panel is labelled "example".
+  // Order matters (first match wins): the more specific rule sits above the general one.
+  const GATE_EXAMPLES = [
+    ["Treg", ["CD45+", "CD4+", "FoxP3+"]],
+    ["Cytotoxic T cell", ["CD45+", "CD8+"]],
+    ["Helper T cell", ["CD45+", "CD4+"]],
+    ["B cell", ["CD45+", "CD19+"]],
+    ["Plasma cell", ["CD138+", "CD38+"]],
+    ["Macrophage", ["CD45+", "CD68+"]],
+    ["Dendritic cell", ["CD45+", "CD11c+", "HLA-DR+"]],
+    ["Lymphatic endothelium", ["CD45-", "CD31+", "Podoplanin+"]],
+    ["Endothelial", ["CD45-", "CD31+"]],
+    ["Axons (NF-L)", ["NF-L+"]],
+    ["Glia / Schwann (GFAP)", ["GFAP+"]],
+  ];
+  const GATE_GAP_DIP = 1.5, GATE_GAP_ETA = 0.7, GATE_POS_HI = 0.6, GATE_POS_LO = 0.005;
+  const gateBlank = () => ({ key: null, pos: null, N: 0, rowIdx: null, markers: [], vals: new Map(), info: new Map(),
+    cut: new Map(), rules: [], cur: null, preview: false, calls: null, counts: null, ver: 0,
+    source: null, busy: null, masks: new Map(), tableKey: "", table: null, posT: null, clT: null });
+  const gateOn = () => !!(S.gate && S.gate.key && S.gate.key === S.exprKey && isProt());
+  const gateFmt = (v) => (v == null ? "–" : v >= 100 ? v.toFixed(0) : v.toFixed(1));
+  const gateRuleRgb = (i) => (i === GATE_NONE || !S.gate.rules[i] ? GATE_GREY : hexToRgb255(S.gate.rules[i].hex));
+  const gatePhName = (i) => (i === GATE_NONE ? "Unassigned" : (S.gate.rules[i] && S.gate.rules[i].name) || `Rule ${i + 1}`);
+  // the outlines belong to the % positive tool, while it is open on a marker with a line
+  const gatePreviewOn = () => !!(gateOn() && S.gateUi && S.gateUi.open && S.gateUi.mode === "pos" &&
+    S.gate.preview && S.gate.cur && S.gate.cut.has(S.gate.cur) && S.gate.vals.has(S.gate.cur));
+  const umapByPh = () => !!(S.umap && S.umap.colorBy === "phenotype" && gateOn() && S.gate.calls);
+  const umapPhLit = () => !!(S.umap && S.umap.phPick != null && gateOn() && S.gate.calls);
+  function gateMsg(t) { $("gateMsg").textContent = t || ""; }
+
+  // Called when the expression layer changes (after the UMAP state is rebuilt).
+  async function gateOnLayer() {
+    S.gate = gateBlank();
+    const prot = isProt();
+    $("rowGateOpen").hidden = !prot;
+    $("gateOpenCl").hidden = !umapClusterings().length;
+    $("gatePub").hidden = true;
+    $("panelGate").hidden = !prot || !S.gateUi.open;
+    syncGateColourOpt();
+    if (!prot) return;
+    const G = S.gate, e = currentExpr();
+    G.key = S.exprKey;
+    G.markers = S.geneIndex.map((g) => g.n);
+    $("gateCaveat").textContent = `Squares are ${e.binSizeUm ? `${e.binSizeUm} µm` : "small"} and can mix cells: counts are approximate.`;
+    if (S.gateUi.open) await gateOpenPanel(S.gateUi.mode);
+    // a lab can publish its cut-offs with the data: <dataset>/gates.json (absent = none, quietly)
+    const j = await gateFetchPublished();
+    if (S.gate !== G || !j) return;
+    if (j.layer && j.layer !== G.key) return;
+    await gateEnsurePos();
+    if (await gateApply(j, "this dataset's gates.json (published with the data)")) $("gatePub").hidden = false;
+  }
+  // fetched once per dataset; only static exports have a dataset folder to look in
+  function gateFetchPublished() {
+    if (!S.src || !S.src.json) return Promise.resolve(null);
+    if (S.gatePub && S.gatePub.ds === S.dsId) return S.gatePub.p;
+    const p = S.src.json("gates.json").catch(() => null);
+    S.gatePub = { ds: S.dsId, p };
+    return p;
+  }
+
+  // positions + one value per row for a marker. Gene files of a grid layer hold every square
+  // in positions.bin order; if one ever does not, rows are matched by coordinates.
+  async function gateEnsurePos() {
+    const G = S.gate;
+    if (G.pos) return G.pos;
+    if (!G.busy) G.busy = (async () => {
+      status(`Loading ${wd().bin} positions…`);
+      try {
+        const pos = S.umap && S.umap.pos && S.umap.key === S.exprKey ? S.umap.pos : await umapPositions();
+        if (S.gate !== G) return null;
+        G.pos = pos; G.N = pos.length / 2;
+        G.rowIdx = Array.from({ length: G.N }, (_, i) => i);
+        // the phenotype colours are drawn by the UMAP machinery, which needs the same rows
+        if (S.umap && !S.umap.pos) S.umap.pos = pos;
+        if (S.umap && !S.umap.key) S.umap.key = S.exprKey;
+        return pos;
+      } finally { status(null); G.busy = null; }
+    })();
+    return G.busy;
+  }
+  async function gateValues(name) {
+    const G = S.gate;
+    if (G.vals.has(name)) return G.vals.get(name);
+    await gateEnsurePos();
+    const shown = S.genes.find((g) => g.name === name);
+    let xyv = null, n, px;
+    if (shown) { n = shown.n; px = shown.positions; }
+    else {
+      status(`Loading ${name}…`);
+      try { xyv = await S.src.gene(S.exprKey, name); } finally { status(null); }
+      n = xyv.length / 3;
+    }
+    if (S.gate !== G) return null;
+    const N = G.N, P = G.pos, out = new Float32Array(N);
+    const X = (i) => (xyv ? xyv[3 * i] : px[2 * i]), Y = (i) => (xyv ? xyv[3 * i + 1] : px[2 * i + 1]);
+    const V = (i) => (xyv ? xyv[3 * i + 2] : shown.values[i]);
+    let same = n === N;
+    for (let i = 0; same && i < n; i++) if (X(i) !== P[2 * i] || Y(i) !== P[2 * i + 1]) same = false;
+    if (same) for (let i = 0; i < N; i++) out[i] = V(i);
+    else {
+      const m = new Map();
+      for (let r = 0; r < N; r++) m.set(ukey(P[2 * r], P[2 * r + 1]), r);
+      for (let i = 0; i < n; i++) { const r = m.get(ukey(X(i), Y(i))); if (r !== undefined) out[r] = V(i); }
+    }
+    G.vals.set(name, out);
+    G.info.set(name, gateStats(out));
+    return out;
+  }
+
+  // Otsu's threshold over the tissue squares (256 bins up to the 99.9th percentile, the very
+  // brightest clipped into the top bin), plus two plain checks on whether it means anything:
+  //   eta  = between-class / total variance at that threshold (1 = two perfectly separate groups)
+  //   dip  = is there a valley? the highest bar above the threshold vs the lowest bar between
+  //          the dim peak and it (64 smoothed bars). A tail that just fades out has dip ~ 1.
+  function gateStats(v) {
+    const N = v.length, s = Float32Array.from(v).sort();
+    const q = (f) => s[Math.min(N - 1, Math.max(0, Math.floor(f * (N - 1))))];
+    const top = Math.max(q(0.999), 1e-3), NB = 256, h = new Float64Array(NB);
+    for (let i = 0; i < N; i++) h[Math.min(NB - 1, Math.max(0, Math.floor((v[i] / top) * NB)))]++;
+    let muT = 0; for (let b = 0; b < NB; b++) muT += h[b] * ((b + 0.5) / NB) * top;
+    muT /= N;
+    let sT = 0; for (let b = 0; b < NB; b++) sT += h[b] * (((b + 0.5) / NB) * top - muT) ** 2;
+    sT /= N;
+    let w = 0, mu = 0, best = -1, kb = 0;
+    for (let b = 0; b < NB - 1; b++) {
+      const p = h[b] / N; w += p; mu += p * ((b + 0.5) / NB) * top;
+      if (w <= 0 || w >= 1) continue;
+      const sb = (muT * w - mu) ** 2 / (w * (1 - w));
+      if (sb > best) { best = sb; kb = b; }
+    }
+    const otsu = ((kb + 1) / NB) * top, eta = sT > 0 ? best / sT : 0;
+    // valley check on 64 smoothed bars; the top bar is left out (it holds the clipped brightest)
+    const NS = 64, h2 = new Float64Array(NS);
+    for (let i = 0; i < N; i++) h2[Math.min(NS - 1, Math.max(0, Math.floor((v[i] / top) * NS)))]++;
+    const sm = new Float64Array(NS);
+    for (let b = 0; b < NS; b++) sm[b] = (h2[Math.max(0, b - 1)] + h2[b] + h2[Math.min(NS - 1, b + 1)]) / 3;
+    const kt = Math.min(NS - 2, Math.floor((otsu / top) * NS));
+    let L = 0; for (let b = 0; b <= kt; b++) if (sm[b] > sm[L]) L = b;
+    let R = kt + 1; for (let b = kt + 1; b < NS - 1; b++) if (sm[b] > sm[R]) R = b;
+    let V = Infinity; for (let b = L; b <= R; b++) V = Math.min(V, sm[b]);
+    const dip = sm[R] / Math.max(V, 1e-9);
+    let pos = 0; for (let i = 0; i < N; i++) if (v[i] > otsu) pos++;
+    // display histogram: 96 bars from 0 to a little past the bright tail (or the cut-off)
+    const xmax = Math.min(255, Math.max(q(0.995) * 1.25, otsu * 1.5, 1));
+    return { otsu, eta, dip, fracOtsu: pos / N, xmax, median: q(0.5), p99: q(0.99) };
+  }
+  function gateHistBars(G, name) {
+    const I = G.info.get(name), v = G.vals.get(name), NB = 96;
+    if (I.bars && I.barsMax === I.xmax) return I.bars;
+    const h = new Float64Array(NB);
+    for (let i = 0; i < v.length; i++) h[Math.min(NB - 1, Math.max(0, Math.floor((v[i] / I.xmax) * NB)))]++;
+    I.bars = h; I.barsMax = I.xmax;
+    return h;
+  }
+  function gateWarnings(I) {
+    const out = [];
+    if (I.dip < GATE_GAP_DIP) out.push("No clear gap: the squares fade from dim to bright without a dip, so Otsu only splits the tail. Check by eye on the tissue.");
+    else if (I.eta < GATE_GAP_ETA) out.push(`Weak split (separation ${I.eta.toFixed(2)}; 1 = two clean groups). Check by eye on the tissue.`);
+    if (I.fracOtsu > GATE_POS_HI) out.push("Over 60% of the squares would be positive: check by eye.");
+    if (I.fracOtsu < GATE_POS_LO) out.push("Under 0.5% of the squares would be positive: check by eye.");
+    return out;
+  }
+  const gateFracPos = (v, c) => { let k = 0; for (let i = 0; i < v.length; i++) if (v[i] > c) k++; return v.length ? k / v.length : 0; };
+
+  // ---- calls: first matching rule per square ----------------------------------------------
+  function gateRuleProblems(rule) {
+    const G = S.gate, out = [];
+    if (!rule.conds.length) out.push("no conditions yet");
+    const off = rule.conds.filter((c) => !G.markers.includes(c.m)).map((c) => c.m);
+    if (off.length) out.push(`not on this panel: ${off.join(", ")}`);
+    const nocut = rule.conds.filter((c) => G.markers.includes(c.m) && !G.cut.has(c.m)).map((c) => c.m);
+    if (nocut.length) out.push(`no cut-off yet for ${nocut.join(", ")}`);
+    return out;
+  }
+  function gateRecompute() {
+    const G = S.gate;
+    if (!G.pos) return;
+    const N = G.N, calls = new Uint8Array(N).fill(GATE_NONE);
+    const act = G.rules.slice(0, GATE_NONE).map((rule) => (gateRuleProblems(rule).length || rule.conds.some((c) => !G.vals.has(c.m))
+      ? null : rule.conds.map((c) => ({ v: G.vals.get(c.m), t: G.cut.get(c.m).v, pos: c.s > 0 }))));
+    if (act.some(Boolean)) {
+      for (let r = 0; r < N; r++) {
+        for (let i = 0; i < act.length; i++) {
+          const a = act[i]; if (!a) continue;
+          let ok = true;
+          for (let j = 0; j < a.length; j++) { if ((a[j].v[r] > a[j].t) !== a[j].pos) { ok = false; break; } }
+          if (ok) { calls[r] = i; break; }
+        }
+      }
+    }
+    const counts = new Array(256).fill(0);
+    for (let r = 0; r < N; r++) counts[calls[r]]++;
+    G.calls = calls; G.counts = counts; G.ver++;
+    if (S.umap && S.umap.phPick != null && S.umap.phPick !== GATE_NONE && !G.rules[S.umap.phPick]) S.umap.phPick = null;
+    umapDirty();
+  }
+  // everything that follows a change of cut-off or rules: calls, the panel, the legend, the picture
+  function gateChanged() {
+    gateRecompute();
+    buildGateUI();
+    syncUmapUI(); render();
+  }
+  function gateSetCut(name, v, how) {
+    const G = S.gate;
+    if (v == null || !Number.isFinite(v)) G.cut.delete(name);
+    else G.cut.set(name, { v: Math.max(0, Math.min(255, Math.round(v * 10) / 10)), how });
+  }
+
+  // ---- the panel: one tool at a time ---------------------------------------------------------
+  //   pos      % positive for one marker: a line on its histogram, % above it per region
+  //   clusters counts per region of the current clusters, under their names
+  //   rules    optional: name cell types from several markers' lines, count them per region
+  const GATE_TITLES = { pos: "% positive for a marker", clusters: "Count clusters", rules: "Combine markers" };
+  function buildGateUI() {
+    if (!gateOn() || !S.gateUi.open) return;
+    const mode = S.gateUi.mode, G = S.gate;
+    $("panelGate").hidden = false;
+    $("gateTitle").textContent = GATE_TITLES[mode];
+    $("gateModePos").hidden = mode !== "pos"; $("gateModeCl").hidden = mode !== "clusters"; $("gateModeRules").hidden = mode !== "rules";
+    $("gateSource").hidden = !G.source; $("gateSource").textContent = G.source ? `Cut-offs loaded from ${G.source}.` : "";
+    if (mode === "pos") { buildGateMarkerSelect(); buildGateEdit(); }
+    if (mode === "rules") buildGateRules();
+    gateCountsRefresh(true);
+    syncGateColourOpt();
+  }
+  async function gateOpenPanel(mode) {
+    const G = S.gate;
+    S.gateUi.open = !!mode;
+    if (mode) S.gateUi.mode = mode;
+    gateMsg("");
+    if (!mode || !gateOn()) { $("panelGate").hidden = true; render(); return; }
+    try { await gateEnsurePos(); } catch (e) { gateMsg(`Could not load the ${wd().bins}: ${e.message}`); return; }
+    if (mode === "clusters" && !S.umap.cl && umapClusterings().length) {
+      try { await umapSetRes(S.umap.res); } catch (e) { gateMsg(`Could not load the clusters: ${e.message}`); }
+    }
+    if (S.gate !== G) return;
+    if (!G.calls) gateRecompute();
+    buildGateUI(); syncUmapUI();
+    $("panelGate").scrollIntoView({ block: "nearest" });
+    render();
+  }
+  // markers to offer: the panel minus the nuclear counterstain; the status is in the menu
+  const gateListMarkers = () => S.gate.markers.filter((m) => !NUCLEAR_CHANNEL.test(m));
+  function buildGateMarkerSelect() {
+    const G = S.gate, sel = $("gateMarker"), esc = escHtml;
+    sel.innerHTML = `<option value="">Choose a marker…</option>` + gateListMarkers().map((m) => {
+      const c = G.cut.get(m), v = G.vals.get(m);
+      const st = c && v ? ` · ${(gateFracPos(v, c.v) * 100).toFixed(1)}% positive` : c ? " · set" : "";
+      return `<option value="${esc(m)}">${esc(m)}${st}</option>`;
+    }).join("");
+    sel.value = G.cur || "";
+  }
+  async function gateSelect(m) {
+    const G = S.gate;
+    G.cur = m || null;
+    if (G.cur) {
+      try { await gateValues(m); } catch (e) { status(`Could not load ${m}: ${e.message}`, true); setTimeout(() => status(null), 4000); G.cur = null; }
+      if (S.gate !== G) return;
+      G.preview = true;                                       // outlines on by default while setting
+      if (G.cur) gateShowStain(G.cur);                        // the stain is what the line is judged against
+    }
+    buildGateMarkerSelect(); buildGateEdit(); gateCountsRefresh(true); render();
+  }
+  function gateShowStain(m) {
+    const ch = S.channels.find((c) => c.name.toLowerCase() === m.toLowerCase());
+    if (!ch || ch.visible) return;
+    ch.visible = true;
+    const rows = $("chanList").querySelectorAll(".chan"), i = S.channels.indexOf(ch);
+    if (rows[i]) { rows[i].querySelector(".cb").checked = true; rows[i].classList.remove("off"); }
+  }
+  function gateSentence() {
+    const G = S.gate, m = G.cur, c = G.cut.get(m), v = G.vals.get(m), I = G.info.get(m);
+    const el = $("gateSentence");
+    el.textContent = c ? `${(gateFracPos(v, c.v) * 100).toFixed(1)}% of tissue squares are above the line` +
+                         (G.preview ? " — they're outlined on the image." : ".")
+                       : "Drag on the chart to place the line where real staining starts, or press Suggest.";
+    el.title = (c ? `Line at ${gateFmt(c.v)} (mean intensity per square, 0–255 as the image; ${c.how === "otsu" ? "the suggestion" : "set by hand"}). ` : "") +
+      `Suggestion (Otsu): ${gateFmt(I.otsu)}, ${(I.fracOtsu * 100).toFixed(1)}% above. Typical square ${gateFmt(I.median)}; ` +
+      `brightest 1% above ${gateFmt(I.p99)}. Separation ${I.eta.toFixed(2)} (1 = two clean groups).` +
+      (gateWarnings(I).length ? " " + gateWarnings(I).join(" ") : "");
+  }
+  function buildGateEdit() {
+    const G = S.gate, m = G.cur, edit = $("gateEdit");
+    edit.hidden = !m || !G.vals.has(m);
+    if (edit.hidden) return;
+    const I = G.info.get(m), c = G.cut.get(m);
+    if (c && c.v > I.xmax * 0.95) I.xmax = Math.min(255, c.v * 1.3);
+    // the one warning worth a line of its own: no valley, or a split that leaves almost all / none positive
+    const w = I.dip < GATE_GAP_DIP || I.eta < GATE_GAP_ETA || I.fracOtsu > GATE_POS_HI || I.fracOtsu < GATE_POS_LO;
+    $("gateNoGap").hidden = !w;
+    $("gateNoGap").title = gateWarnings(I).join(" ");
+    $("gatePreview").checked = !!G.preview;
+    $("gateClearCut").hidden = !c;
+    $("gateAxisHi").textContent = `bright (${gateFmt(I.xmax)})`;
+    gateSentence();
+    drawGateHist();
+  }
+  function drawGateHist() {
+    const G = S.gate, m = G.cur, cv = $("gateHist");
+    if (!m || !G.vals.has(m) || $("gateEdit").hidden) return;
+    const I = G.info.get(m), c = G.cut.get(m), bars = gateHistBars(G, m);
+    const dpr = window.devicePixelRatio || 1, W = Math.max(100, cv.clientWidth || 300), H = cv.clientHeight || 96;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const g = cv.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    // bar height on a log scale: the dim background holds most squares by far
+    let top = 0; for (const b of bars) top = Math.max(top, Math.log1p(b));
+    const NB = bars.length, bw = W / NB, cx = c ? (c.v / I.xmax) * W : -1;
+    for (let b = 0; b < NB; b++) {
+      if (!bars[b]) continue;
+      const bh = Math.max(1, (Math.log1p(bars[b]) / top) * (H - 14));
+      g.fillStyle = c && (b + 0.5) * bw > cx ? `rgba(${gateLineRgb(m).join(",")},0.9)` : "rgba(160,170,190,0.45)";
+      g.fillRect(b * bw, H - bh, Math.max(1, bw - 0.6), bh);
+    }
+    if (c) {
+      g.strokeStyle = "#fff"; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, H); g.stroke();
+      g.fillStyle = "#fff"; g.font = "11px system-ui, sans-serif";
+      const t = gateFmt(c.v), tw = g.measureText(t).width;
+      g.fillText(t, cx + 4 + tw > W ? cx - tw - 4 : cx + 4, 11);
+    }
+  }
+  function gateHistEvents() {
+    const cv = $("gateHist");
+    let drag = false;
+    const at = (ev) => {
+      const G = S.gate, I = G.info.get(G.cur); if (!I) return null;
+      const r = cv.getBoundingClientRect();
+      return Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * I.xmax;
+    };
+    const live = (v, how) => {
+      const G = S.gate; if (v == null) return;
+      gateSetCut(G.cur, v, how || "manual");
+      $("gateClearCut").hidden = false;
+      gateSentence(); drawGateHist(); umapDirty(); requestRender();
+    };
+    cv.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0 || !S.gate || !S.gate.cur) return;
+      drag = true; cv.setPointerCapture(ev.pointerId); live(at(ev));
+    });
+    cv.addEventListener("pointermove", (ev) => { if (drag) live(at(ev)); });
+    const end = () => { if (!drag) return; drag = false; gateChanged(); };
+    cv.addEventListener("pointerup", end);
+    cv.addEventListener("pointercancel", end);
+    // arrow keys nudge the line by half a percent of the axis
+    cv.addEventListener("keydown", (ev) => {
+      const G = S.gate, I = G && G.info.get(G.cur); if (!I || !/^Arrow(Left|Right)$/.test(ev.key)) return;
+      ev.preventDefault(); ev.stopPropagation();
+      const c = G.cut.get(G.cur), step = Math.max(0.1, I.xmax / 200) * (ev.key === "ArrowLeft" ? -1 : 1);
+      live((c ? c.v : I.otsu) + step); gateChanged();
+    });
+  }
+
+  // ---- Combine markers: cell types as sentences ------------------------------------------------
+  // "[Macrophage] = CD45 + and CD68 +". The marker menu lists only markers that have a line.
+  const gateCutMarkers = () => S.gate.markers.filter((m) => S.gate.cut.has(m));
+  function buildGateRules() {
+    const G = S.gate, host = $("gateRules"), esc = escHtml, cutM = gateCutMarkers();
+    host.innerHTML = "";
+    $("gateAddRule").disabled = !cutM.length;
+    $("gateAddRule").title = cutM.length ? "Add a cell type at the bottom" : "Set a line for at least one marker first (← Back to markers)";
+    const ex = gateExampleRules();
+    $("gateExamples").disabled = !ex.length;
+    $("gateExamples").title = ex.length ? `Adds ${ex.map((r) => r[0]).join(", ")} (examples: edit them for your panel)`
+      : "No example fits the markers you have set yet (examples use CD45, CD4, CD8, CD68, CD31, NF-L …)";
+    if (!G.rules.length) {
+      host.innerHTML = `<div class="meta gate-note">${cutM.length ? `No cell types yet. Markers with a line: ${esc(cutM.join(", "))}.` : "Set a line for at least one marker first (← Back to markers)."}</div>`;
+      return;
+    }
+    G.rules.forEach((rule, i) => {
+      const probs = gateRuleProblems(rule);
+      const row = document.createElement("div");
+      row.className = "gr-row" + (probs.length && rule.conds.length ? " off" : "");
+      const n = G.counts && !probs.length ? G.counts[i] : null;
+      const conds = rule.conds.map((c, j) => `<span class="cond">${esc(c.m)} <button class="sg" data-j="${j}" title="Click to switch between + (above its line) and − (below)">${c.s > 0 ? "+" : "−"}</button>` +
+        `<button class="rmc" data-j="${j}" title="Remove ${esc(c.m)}">×</button></span>`).join(`<span class="and">and</span>`);
+      const free = cutM.filter((m) => !rule.conds.some((c) => c.m === m));
+      row.innerHTML = `<input type="color" value="${rule.hex}" title="Colour" />` +
+        `<div class="gr-txt"><input type="text" class="nm" maxlength="60" /><span class="eq">=</span>${conds}` +
+        (free.length ? `<select class="addc" title="Add a marker"><option value="">${rule.conds.length ? "+ and…" : "+ marker…"}</option>${free.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")}</select>` : "") +
+        (n != null ? ` <span class="gr-n" title="Squares called ${esc(rule.name)}">· ${n.toLocaleString()}</span>` : "") +
+        (probs.length && rule.conds.length ? `<span class="gr-skip">skipped: ${esc(probs.join("; "))}</span>` : "") + `</div>` +
+        `<div class="gr-btns"><button class="up" title="Move up (checked earlier)" ${i ? "" : "disabled"}>↑</button>` +
+        `<button class="dn" title="Move down" ${i < G.rules.length - 1 ? "" : "disabled"}>↓</button><button class="del" title="Delete">×</button></div>`;
+      const nm = row.querySelector(".nm");
+      nm.value = rule.name;
+      nm.onchange = () => { rule.name = nm.value.trim().slice(0, 60) || `Cell type ${i + 1}`; G.ver++; umapDirty(); syncUmapUI(); render(); };
+      nm.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") nm.blur(); };
+      row.querySelector("input[type=color]").oninput = (e) => { rule.hex = e.target.value; G.ver++; umapDirty(); syncUmapUI(); requestRender(); };
+      row.querySelector(".up").onclick = () => { G.rules.splice(i - 1, 0, G.rules.splice(i, 1)[0]); gateRulesEdited(); };
+      row.querySelector(".dn").onclick = () => { G.rules.splice(i + 1, 0, G.rules.splice(i, 1)[0]); gateRulesEdited(); };
+      row.querySelector(".del").onclick = () => { G.rules.splice(i, 1); gateRulesEdited(); };
+      row.querySelectorAll(".sg").forEach((b) => { b.onclick = () => { const c = rule.conds[+b.dataset.j]; c.s = -c.s; gateRulesEdited(); }; });
+      row.querySelectorAll(".rmc").forEach((b) => { b.onclick = () => { rule.conds.splice(+b.dataset.j, 1); gateRulesEdited(); }; });
+      const add = row.querySelector(".addc");
+      if (add) add.onchange = (e) => { const m = e.target.value; if (m) rule.conds.push({ m, s: 1 }); gateRulesEdited(); };
+      host.appendChild(row);
+    });
+  }
+  // the examples whose markers all have a line (and are not in the list already)
+  function gateExampleRules() {
+    const G = S.gate, byLow = new Map(G.markers.map((m) => [m.toLowerCase(), m]));
+    const have = new Set(G.rules.map((r) => r.name.toLowerCase()));
+    const out = [];
+    for (const [name, conds] of GATE_EXAMPLES) {
+      const cs = conds.map((c) => ({ m: byLow.get(c.slice(0, -1).toLowerCase()), s: c.endsWith("-") ? -1 : 1 }));
+      if (cs.every((c) => c.m && G.cut.has(c.m)) && !have.has(name.toLowerCase())) out.push([name, cs]);
+    }
+    return out;
+  }
+  async function gateRulesEdited() {
+    const G = S.gate;
+    if (S.umap) S.umap.phPick = null;                  // rule numbers may have moved
+    // a rule whose markers have lines needs their values (loaded on demand)
+    const need = new Set();
+    for (const r of G.rules) for (const c of r.conds) if (G.cut.has(c.m) && !G.vals.has(c.m)) need.add(c.m);
+    for (const m of need) { try { await gateValues(m); } catch (e) { /* stays skipped */ } }
+    if (S.gate !== G) return;
+    gateChanged();
+  }
+
+  // ---- regions: whole tissue, Tier A regions, overlays switched on, the selection -------------
+  function gateOverlayMask(o) {
+    const G = S.gate, k = `${o.key || o.file}|${G.N}`;
+    if (G.masks.has(k)) return G.masks.get(k);
+    const groups = new Map();                          // region name -> Uint8Array over rows
+    const feats = (o.data && (o.data.features || (o.data.type === "Feature" ? [o.data] : []))) || [];
+    const P = G.pos, N = G.N;
+    for (const f of feats) {
+      const geo = f && f.geometry; if (!geo) continue;
+      const polys = geo.type === "Polygon" ? [geo.coordinates] : geo.type === "MultiPolygon" ? geo.coordinates : [];
+      if (!polys.length) continue;
+      const p = f.properties || {};
+      const name = String(p.name || (p.classification && p.classification.name) || p.label || p.id || o.label || "Region");
+      let mk = groups.get(name); if (!mk) { mk = new Uint8Array(N); groups.set(name, mk); }
+      for (const rings of polys) {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const [x, y] of rings[0]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+        for (let r = 0; r < N; r++) {
+          const x = P[2 * r], y = P[2 * r + 1];
+          if (mk[r] || x < x0 || x > x1 || y < y0 || y > y1) continue;
+          let inside = false;                            // even-odd over the rings: holes come out
+          for (const ring of rings) if (inPoly(x, y, ring)) inside = !inside;
+          if (inside) mk[r] = 1;
+        }
+      }
+    }
+    const out = [...groups].map(([name, mk]) => ({ name: `${o.label}: ${name}`, mask: mk }));
+    G.masks.set(k, out);
+    return out;
+  }
+  function gateGroups() {
+    const G = S.gate, U = S.umap, out = [{ name: "Whole tissue", test: null }];
+    const R = S.region;
+    if (R.meta && R.ids && R.ids.length === G.N) {
+      for (const m of R.meta) { const id = m.id; out.push({ name: m.name || `Region ${id}`, test: (r) => R.ids[r] === id }); }
+    }
+    for (const o of S.overlays) {
+      if (!o.on || !o.data) continue;
+      if (R.meta && R.ids && (o.file === R.overlayKey || o.key === R.overlayKey)) continue;   // already counted by region.bin
+      for (const g of gateOverlayMask(o)) { const mk = g.mask; out.push({ name: g.name, test: (r) => mk[r] === 1 }); }
+    }
+    if (U && U.sel && U.sel.length === G.N) { const sel = U.sel; out.push({ name: `Selection (${U.selN.toLocaleString()} ${wd().bins})`, test: (r) => sel[r] === 1, sel: true }); }
+    return out;
+  }
+  // counts per group x phenotype; rows = rules in order, then Unassigned
+  function gateTable() {
+    const G = S.gate;
+    if (!G.calls) return null;
+    const key = `${G.ver}|${gateGroupKey()}`;
+    if (G.table && G.tableKey === key) return G.table;
+    const groups = gateGroups(), K = G.rules.length, calls = G.calls;
+    for (const g of groups) {
+      const c = new Float64Array(K + 1); let tot = 0;
+      for (let r = 0; r < G.N; r++) {
+        if (g.test && !g.test(r)) continue;
+        const k = calls[r]; c[k === GATE_NONE ? K : k]++; tot++;
+      }
+      g.counts = c; g.total = tot;
+    }
+    G.table = { groups, K }; G.tableKey = key;
+    return G.table;
+  }
+  // what the region columns depend on: the selection, overlays switched on, region.bin
+  function gateGroupKey() {
+    const U = S.umap;
+    return `${U && U.sel ? `${U.selN}:${U.selEmb}` : ""}|${S.overlays.filter((o) => o.on && o.data).map((o) => o.key || o.file).join(",")}|${S.region.ids ? 1 : 0}`;
+  }
+  // squares above one marker's line, per region
+  function gatePosCounts(m) {
+    const G = S.gate, c = G.cut.get(m), v = G.vals.get(m);
+    if (!c || !v || !G.pos) return null;
+    const groups = gateGroups(), t = c.v;
+    for (const g of groups) {
+      let pos = 0, tot = 0;
+      for (let r = 0; r < G.N; r++) { if (g.test && !g.test(r)) continue; tot++; if (v[r] > t) pos++; }
+      g.pos = pos; g.total = tot;
+    }
+    return { m, cut: c, groups };
+  }
+  function gatePosTable() {
+    const G = S.gate, m = G.cur, c = m && G.cut.get(m);
+    if (!c) return null;
+    const key = `${m}|${c.v}|${gateGroupKey()}`;
+    if (!(G.posT && G.posT.key === key)) G.posT = { key, ...gatePosCounts(m) };
+    return G.posT;
+  }
+  // squares per cluster (the clustering on show), per region; the last column is "not in a cluster"
+  function gateClTable() {
+    const U = S.umap, G = S.gate;
+    if (!U || !U.cl || !G.pos || U.cl.length !== G.N) return null;
+    const key = `${U.clRes}|${gateGroupKey()}`;
+    if (G.clT && G.clT.key === key) return G.clT;
+    let K = 0; for (let r = 0; r < G.N; r++) if (U.cl[r] !== UMAP_NONE && U.cl[r] + 1 > K) K = U.cl[r] + 1;
+    const groups = gateGroups(), cl = U.cl;
+    for (const g of groups) {
+      const cnt = new Float64Array(K + 1); let tot = 0;
+      for (let r = 0; r < G.N; r++) { if (g.test && !g.test(r)) continue; const c = cl[r]; cnt[c === UMAP_NONE ? K : c]++; tot++; }
+      g.counts = cnt; g.total = tot;
+    }
+    G.clT = { key, K, res: U.clRes, groups };
+    return G.clT;
+  }
+  const gateColHead = (groups) => `<tr><th></th>${groups.map((g) => `<th title="${escHtml(g.name)}">${escHtml(g.name.length > 22 ? g.name.slice(0, 21) + "…" : g.name)}</th>`).join("")}</tr>`;
+  const gatePct = (a, b) => (b ? ((100 * a) / b).toFixed(1) : "0.0");
+  const gateMoreCols = (n, what = "column") => (n === 1 ? ` A Box or Freehand selection (or a region overlay) adds a ${what}.` : "");
+  // redraws the table of whichever tool is open (cheap when nothing it counts has changed)
+  function gateCountsRefresh(force) {
+    const G = S.gate;
+    if (!G || !gateOn() || !S.gateUi || !S.gateUi.open) return;
+    if (force) { G.tableKey = ""; }
+    const mode = S.gateUi.mode, esc = escHtml, U = S.umap, W = wd();
+    if (mode === "pos") {
+      const host = $("gatePosTable"), T = gatePosTable();
+      $("gatePosCsv").disabled = !gateCutMarkers().length;
+      if (!T) { host.innerHTML = ""; return; }
+      host.innerHTML = `<table><thead><tr><th></th><th>Above the line</th><th>Tissue ${W.bins}</th><th>%</th></tr></thead><tbody>` +
+        T.groups.map((g) => `<tr><td class="lbl" title="${esc(g.name)}">${esc(g.name)}</td><td>${g.pos.toLocaleString()}</td><td>${g.total.toLocaleString()}</td><td>${gatePct(g.pos, g.total)}%</td></tr>`).join("") +
+        `</tbody></table><div class="meta gate-note">${esc(T.m)} above ${gateFmt(T.cut.v)}.${gateMoreCols(T.groups.length, "row")}` +
+        (gateCutMarkers().length > 1 ? ` The CSV holds every marker with a line: ${esc(gateCutMarkers().join(", "))}.` : "") + `</div>`;
+      return;
+    }
+    if (mode === "clusters") {
+      const host = $("gateClTable"), list = umapClusterings(), rs = $("gateClRes");
+      const opts = list.map((c) => `<option value="${c.resolution}">Leiden ${c.resolution} · ${c.n} clusters</option>`).join("");
+      if (rs.dataset.opts !== opts) { rs.innerHTML = opts; rs.dataset.opts = opts; }
+      if (U && U.clRes != null) rs.value = String(U.clRes);
+      $("gateClColour").checked = !!(U && U.colorBy === "cluster");
+      const T = gateClTable();
+      $("gateClCsv").disabled = !T;
+      if (!T) { host.innerHTML = `<div class="meta gate-note">${list.length ? "Loading the clusters…" : "This layer has no clusters."}</div>`; return; }
+      const rows = [];
+      for (let k = 0; k <= T.K; k++) {
+        const tot = T.groups.reduce((a, g) => a + g.counts[k], 0);
+        if (k === T.K && !tot) continue;
+        const none = k === T.K, [r, gg, b] = none ? GATE_GREY : clusterRgb(k);
+        rows.push(`<tr class="ph${!none && U.pick === k ? " sel" : ""}" data-k="${none ? -1 : k}"><td title="${none ? "Squares left out of the UMAP" : "Click to highlight in every view"}"><i style="background:rgb(${r},${gg},${b})"></i>${esc(none ? "Not in a cluster" : umapName(k))}</td>` +
+          T.groups.map((g) => `<td>${g.counts[k].toLocaleString()}<small>${gatePct(g.counts[k], g.total)}%</small></td>`).join("") + `</tr>`);
+      }
+      rows.push(`<tr class="tot"><td>All ${W.bins}</td>${T.groups.map((g) => `<td>${g.total.toLocaleString()}</td>`).join("")}</tr>`);
+      host.innerHTML = `<table><thead>${gateColHead(T.groups)}</thead><tbody>${rows.join("")}</tbody></table>` +
+        `<div class="meta gate-note">Names as in Clusters &amp; selection (rename with ✎ there). Click a cluster to highlight it.${gateMoreCols(T.groups.length)}</div>`;
+      host.querySelectorAll("tr.ph").forEach((tr) => { const k = +tr.dataset.k; if (k >= 0) tr.onclick = () => umapPick(k); });
+      return;
+    }
+    // combined rules
+    const host = $("gateCounts");
+    const T = G.rules.length ? gateTable() : null;
+    $("gateCsvCounts").disabled = !T; $("gateCsvSquares").disabled = !T;
+    if (!T) { host.innerHTML = ""; return; }
+    const rows = [];
+    for (let k = 0; k <= T.K; k++) {
+      const id = k === T.K ? GATE_NONE : k, [r, gg, b] = gateRuleRgb(id);
+      rows.push(`<tr class="ph${U && U.phPick === id ? " sel" : ""}" data-k="${id}"><td title="Click to highlight in every view"><i style="background:rgb(${r},${gg},${b})"></i>${esc(gatePhName(id))}</td>` +
+        T.groups.map((g) => `<td>${g.counts[k].toLocaleString()}<small>${gatePct(g.counts[k], g.total)}%</small></td>`).join("") + `</tr>`);
+    }
+    rows.push(`<tr class="tot"><td>All ${W.bins}</td>${T.groups.map((g) => `<td>${g.total.toLocaleString()}</td>`).join("")}</tr>`);
+    host.innerHTML = `<table><thead>${gateColHead(T.groups)}</thead><tbody>${rows.join("")}</tbody></table>` +
+      `<div class="meta gate-note">Click a cell type to highlight it.${gateMoreCols(T.groups.length)}</div>`;
+    host.querySelectorAll("tr.ph").forEach((tr) => { tr.onclick = () => umapPickPh(+tr.dataset.k); });
+  }
+  function umapPickPh(k) {
+    const U = S.umap; if (!U) return;
+    U.phPick = k === null || k === undefined || U.phPick === k ? null : k;
+    U.pick = null; U.sel = null; U.selN = 0; U.ctPick = null;
+    umapDirty(); syncUmapUI(); render();
+  }
+
+  // ---- exports: counts, per-square calls, the gates themselves ---------------------------------
+  const csvQ = (x) => `"${String(x).replace(/"/g, '""')}"`;
+  function gateCountsCsv() {
+    const G = S.gate, T = gateTable(); if (!T) return "";
+    const lines = ["dataset,layer,region,cell_type,count,total_squares,percent"];
+    for (const g of T.groups) for (let k = 0; k <= T.K; k++) {
+      const id = k === T.K ? GATE_NONE : k;
+      lines.push([csvQ(S.dsId), csvQ(G.key), csvQ(g.sel ? "Selection" : g.name), csvQ(gatePhName(id)), g.counts[k], g.total,
+                  g.total ? ((100 * g.counts[k]) / g.total).toFixed(3) : "0.000"].join(","));
+    }
+    return lines.join("\n") + "\n";
+  }
+  // % positive: one row per marker with a line x region
+  function gatePosCsv() {
+    const G = S.gate, ms = gateCutMarkers().filter((m) => G.vals.has(m));
+    if (!ms.length) return "";
+    const lines = ["dataset,layer,marker,cutoff,how_set,region,squares_above,total_squares,percent"];
+    for (const m of ms) {
+      const T = gatePosCounts(m);
+      for (const g of T.groups) lines.push([csvQ(S.dsId), csvQ(G.key), csvQ(m), T.cut.v, T.cut.how === "otsu" ? "otsu" : "manual",
+        csvQ(g.sel ? "Selection" : g.name), g.pos, g.total, g.total ? ((100 * g.pos) / g.total).toFixed(3) : "0.000"].join(","));
+    }
+    return lines.join("\n") + "\n";
+  }
+  function gateClCsv() {
+    const G = S.gate, T = gateClTable(); if (!T) return "";
+    const lines = ["dataset,layer,leiden_resolution,region,cluster,cluster_name,count,total_squares,percent"];
+    for (const g of T.groups) for (let k = 0; k <= T.K; k++) {
+      if (k === T.K && !g.counts[k]) continue;
+      lines.push([csvQ(S.dsId), csvQ(G.key), T.res, csvQ(g.sel ? "Selection" : g.name), k === T.K ? "" : k,
+        csvQ(k === T.K ? "Not in a cluster" : umapName(k)), g.counts[k], g.total, g.total ? ((100 * g.counts[k]) / g.total).toFixed(3) : "0.000"].join(","));
+    }
+    return lines.join("\n") + "\n";
+  }
+  function gateSquaresCsv() {
+    const G = S.gate; if (!G.calls) return "";
+    const ms = G.markers.filter((m) => G.cut.has(m) && G.vals.has(m));
+    const cols = ms.map((m) => ({ v: G.vals.get(m), t: G.cut.get(m).v }));
+    const names = G.rules.map((r, i) => csvQ(gatePhName(i))), none = csvQ("Unassigned");
+    const out = ["row,x_px,y_px,cell_type" + ms.map((m) => "," + csvQ(`${m}_pos`)).join("")];
+    const P = G.pos;
+    for (let r = 0; r < G.N; r++) {
+      let s = `${r},${P[2 * r].toFixed(1)},${P[2 * r + 1].toFixed(1)},${G.calls[r] === GATE_NONE ? none : names[G.calls[r]]}`;
+      for (const c of cols) s += c.v[r] > c.t ? ",1" : ",0";
+      out.push(s);
+    }
+    return out.join("\n") + "\n";
+  }
+  function gateJson() {
+    const G = S.gate, e = currentExpr();
+    const cutoffs = {};
+    for (const m of G.markers) {
+      const c = G.cut.get(m); if (!c) continue;
+      const I = G.info.get(m);
+      cutoffs[m] = { value: c.v, how: c.how === "otsu" ? "otsu" : "manual", ...(I ? { otsu: Math.round(I.otsu * 10) / 10 } : {}) };
+    }
+    return {
+      tool: "Spatial Viewer gating", viewerVersion: GATE_VERSION, dataset: S.dsId, layer: G.key,
+      unit: "mean intensity per square, 0-255 as the image (8-bit); positive = above the cut-off",
+      squareUm: e && e.binSizeUm ? e.binSizeUm : null,
+      perSlide: "Cut-offs belong to the slide they were set on; check them again before using them on another slide.",
+      cutoffs,
+      rules: G.rules.map((r) => ({ name: r.name, color: r.hex, conditions: r.conds.map((c) => `${c.m}${c.s > 0 ? "+" : "-"}`) })),
+      firstMatchWins: true,
+      date: new Date().toISOString(),
+    };
+  }
+  // Apply a gates JSON (a file, or the dataset's own gates.json). Nothing is guessed: cut-offs
+  // for markers not on this panel are listed and skipped; rules keep their order and flags.
+  async function gateApply(j, source) {
+    const G = S.gate;
+    if (!j || typeof j !== "object" || (!j.cutoffs && !Array.isArray(j.rules))) { gateMsg("That file holds no cut-offs or rules.", true); return false; }
+    const notes = [];
+    if (j.dataset && j.dataset !== S.dsId) notes.push(`These cut-offs were set on ${j.dataset}, not this slide: check each one before trusting the calls.`);
+    if (j.layer && j.layer !== G.key) notes.push(`They were set on layer ${j.layer}.`);
+    const byLow = new Map(G.markers.map((m) => [m.toLowerCase(), m]));
+    const skipped = [];
+    G.cut = new Map();
+    for (const [m0, c] of Object.entries(j.cutoffs || {})) {
+      const m = byLow.get(String(m0).toLowerCase()), v = c && typeof c === "object" ? Number(c.value) : Number(c);
+      if (!m || !Number.isFinite(v)) { skipped.push(m0); continue; }
+      gateSetCut(m, v, c && c.how === "otsu" ? "otsu" : "manual");
+    }
+    if (skipped.length) notes.push(`Not on this panel, skipped: ${skipped.join(", ")}.`);
+    if (Array.isArray(j.rules)) {
+      G.rules = j.rules.slice(0, GATE_NONE).map((r, i) => ({
+        name: String((r && r.name) || `Rule ${i + 1}`).slice(0, 60),
+        hex: /^#[0-9a-f]{6}$/i.test(r && r.color) ? r.color : GATE_COLORS[i % GATE_COLORS.length],
+        conds: (Array.isArray(r && r.conditions) ? r.conditions : []).map((s) => {
+          const t = String(s).trim().replace(/−/g, "-"), sg = t.endsWith("-") ? -1 : 1, nm = t.replace(/[+-]$/, "");
+          return { m: byLow.get(nm.toLowerCase()) || nm, s: sg };
+        }).filter((c) => c.m),
+      }));
+    }
+    G.source = source;
+    try {
+      for (const m of G.cut.keys()) { await gateValues(m); if (S.gate !== G) return false; }
+    } catch (e) { notes.push(`Could not load every marker: ${e.message}`); }
+    if (S.umap) S.umap.phPick = null;
+    gateRecompute();
+    buildGateUI();
+    gateMsg(notes.join(" "));
+    syncUmapUI(); render();
+    return true;
+  }
+  async function gateLoadFile(file) {
+    let j;
+    try { j = JSON.parse(await file.text()); } catch (e) { gateMsg("Not a JSON file.", true); return; }
+    await gateEnsurePos();
+    await gateApply(j, `the file ${file.name || "you chose"}`);
+  }
+
+  // ---- drawing: positives preview on the tissue; the colour-by option ---------------------------
+  // The squares above the cut-off keep the image as it is and get a yellow outline; every other
+  // tissue square is darkened, so stained structures inside the outlines are easy to check.
+  // The outline must stand out from the marker's own stain colour: magenta, or yellow over a red stain.
+  function gateLineRgb(m) {
+    const ch = S.channels.find((c) => c.name.toLowerCase() === String(m || "").toLowerCase());
+    const [r, g, b] = ch ? ch.color : [0, 0, 0];
+    return r > 0.6 && g < 0.5 ? [255, 214, 64] : [255, 72, 220];
+  }
+  function gatePreviewLayer() {
+    const G = S.gate, e = currentExpr(), v = G.vals.get(G.cur), t = G.cut.get(G.cur).v, P = G.pos;
+    const ppu = Math.pow(2, (S.viewState && S.viewState.zoom) || 0);
+    const side = Math.max(((e && e.spotDiameterPx) || 8) * S.pointScale, HEAT_MIN_PX / ppu);
+    const CLEAR = [0, 0, 0, 0], DIM = [0, 0, 0, 170], LINE = [...gateLineRgb(G.cur), 255];
+    return new ColumnLayer({
+      id: `gateprev-${S.dsId}-${G.key}`, data: G.rowIdx,
+      getPosition: (r) => [P[2 * r], P[2 * r + 1], 0],
+      getFillColor: (r) => (v[r] > t ? CLEAR : DIM),
+      getLineColor: (r) => (v[r] > t ? LINE : CLEAR),
+      diskResolution: 4, angle: 45, radius: side / Math.SQRT2, radiusUnits: "common",
+      extruded: false, filled: true, stroked: true, lineWidthUnits: "pixels", getLineWidth: 1.25,
+      parameters: NORMAL, pickable: false,
+      updateTriggers: { getFillColor: [G.cur, t], getLineColor: [G.cur, t, LINE.join()] },
+    });
+  }
+  function syncGateColourOpt() {
+    const opt = $("colorBy").querySelector("option[value=phenotype]"), ok = gateOn() && S.gate.rules.length > 0;
+    opt.hidden = !ok; opt.disabled = !ok;
+    $("gateColour").checked = !!(S.umap && S.umap.colorBy === "phenotype");
+    $("gateClColour").checked = !!(S.umap && S.umap.colorBy === "cluster");
+  }
+  async function gateSetColour(on) {
+    const U = S.umap; if (!U) return;
+    if (on) { await gateEnsurePos(); if (!S.gate.calls) gateRecompute(); }
+    U.colorBy = on ? "phenotype" : "gene";
+    umapDirty(); syncUmapUI(); render();
+  }
+
+  function gateInit() {
+    S.gate = gateBlank();
+    S.gateUi = { open: false, mode: "pos" };
+    gateHistEvents();
+    const toggle = (mode) => gateOpenPanel(S.gateUi.open && S.gateUi.mode === mode ? null : mode);
+    $("gateOpenPos").onclick = () => toggle("pos");
+    $("gateOpenCl").onclick = () => toggle("clusters");
+    $("gateClose").onclick = () => gateOpenPanel(null);
+    $("gateCombine").onclick = () => gateOpenPanel("rules");
+    $("gateBackPos").onclick = () => gateOpenPanel("pos");
+    $("gateMarker").onchange = (e) => gateSelect(e.target.value);
+    $("gateSuggest").onclick = () => {
+      const G = S.gate, I = G.info.get(G.cur); if (!I) return;
+      gateSetCut(G.cur, I.otsu, "otsu"); gateChanged();
+    };
+    $("gateClearCut").onclick = () => {
+      const G = S.gate; if (!G.cur) return;
+      gateSetCut(G.cur, null); gateChanged();
+    };
+    $("gatePreview").onchange = (e) => {
+      const G = S.gate; G.preview = e.target.checked;
+      if (G.preview && G.cur) { gateShowStain(G.cur); if (S.umap && S.umap.view === "umap") umapSetView("sbs"); }
+      gateSentence(); umapDirty(); render();
+    };
+    $("gateMore").onclick = () => { $("gateMoreBox").hidden = !$("gateMoreBox").hidden; };
+    $("gatePosCsv").onclick = () => { const t = gatePosCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_percent_positive.csv`, t, "text/csv"); };
+    $("gateClRes").onchange = async (e) => {
+      try { await umapSetRes(Number(e.target.value)); } catch (err) { gateMsg(`Could not load the clusters: ${err.message}`); }
+      syncUmapUI(); render();
+    };
+    $("gateClColour").onchange = async (e) => {
+      const U = S.umap;
+      if (e.target.checked && !U.cl) { try { await umapSetRes(U.res); } catch (err) { gateMsg(err.message); return; } }
+      U.colorBy = e.target.checked ? "cluster" : "gene";
+      umapDirty(); syncUmapUI(); render();
+    };
+    $("gateClCsv").onclick = () => { const t = gateClCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_cluster_counts_r${S.umap.clRes}.csv`, t, "text/csv"); };
+    $("gateAddRule").onclick = () => {
+      const G = S.gate;
+      G.rules.push({ name: `Cell type ${G.rules.length + 1}`, hex: GATE_COLORS[G.rules.length % GATE_COLORS.length], conds: [] });
+      gateRulesEdited().then(() => { const nm = $("gateRules").querySelectorAll("input.nm"); if (nm.length) { nm[nm.length - 1].focus(); nm[nm.length - 1].select(); } });
+    };
+    $("gateExamples").onclick = () => {
+      const G = S.gate, ex = gateExampleRules(); if (!ex.length) return;
+      for (const [name, conds] of ex) G.rules.push({ name, hex: GATE_COLORS[G.rules.length % GATE_COLORS.length], conds });
+      gateRulesEdited().then(() => gateMsg("Example rules added: edit them for your panel."));
+    };
+    $("gateColour").onchange = (e) => gateSetColour(e.target.checked);
+    $("gateCsvCounts").onclick = () => { const t = gateCountsCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_celltype_counts.csv`, t, "text/csv"); };
+    $("gateCsvSquares").onclick = () => { const t = gateSquaresCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_celltype_squares.csv`, t, "text/csv"); };
+    $("gateSave").onclick = () => lassoDownload(`${S.dsId}_${S.gate.key}_gates.json`, JSON.stringify(gateJson(), null, 1), "application/json");
+    $("gateLoadBtn").onclick = () => $("gateLoad").click();
+    $("gateLoad").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) gateLoadFile(f); };
+    window.addEventListener("resize", () => { if (S.gate && S.gate.cur) drawGateHist(); });
+    // for testing from the console: the texts the buttons would download, and loading without a file
+    Object.assign(window.__spatialViewer, {
+      gate: () => S.gate, gateUi: () => S.gateUi, gateSelect, gateOpenPanel,
+      gateSetCut: (m, v, how) => { gateSetCut(m, v, how || "manual"); gateChanged(); },
+      gatePosCsv, gateClCsv, gateCountsCsv, gateSquaresCsv, gateJson, gateApply: (j) => gateApply(j, "a test object"),
+      gateSetColour, umapPickPh, gateRulesEdited,
+    });
+  }
+
   // ---- UI: overlays -----------------------------------------------------------------
   function buildOverlayUI() {
     const list = $("overlayList"); list.innerHTML = "";
@@ -2920,6 +3946,7 @@
           status(`Loading ${o.label}…`);
           try { o.data = await S.src.overlay(S.src.kind === "static" ? o.file : o.key); } finally { status(null); }
         }
+        gateCountsRefresh();
         render();
       };
       list.appendChild(row);
@@ -3544,6 +4571,7 @@
     S.region = { meta: null, ids: null, lookup: null, selected: null, overlayKey: null };
     lassoReset();
     umapReset();
+    S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
     leaveRna();
     try {
       const d = S.datasets.find((x) => x.id === id);
@@ -3603,8 +4631,11 @@
     // Panels follow the platform: sequencing datasets (Visium) get transcripts and just an
     // image opacity control for the H&E; imaging datasets (Akoya, Xenium stains, TIFF) get
     // the per-channel marker list and no transcript panel.
-    const isVisium = S.m.kind === "visium" || ex.length > 0;
-    $("panelGenes").hidden = !isVisium;
+    // An image dataset can also carry protein squares (Akoya grid): it keeps its marker
+    // list and gets the expression panel too, worded for markers (see syncWording).
+    const isVisium = S.m.kind === "visium" || ex.some((e) => e.kind !== "protein");
+    const hasProt = !isVisium && ex.length > 0;
+    $("panelGenes").hidden = !isVisium && !hasProt;
     $("chanList").hidden = isVisium;
     $("chanCount").hidden = isVisium;
     $("btnAllOn").hidden = isVisium;
@@ -3616,6 +4647,7 @@
     if (!isVisium) S.imgOn = true;
     $("chanTitle").textContent = isVisium ? "Image" : "Markers / stains";
     if (isVisium) S.channels.forEach((c) => (c.visible = true));
+    if (!ex.length) syncWording();             // no layer to switch to: back to the default words
     // Only the resolutions worth offering. The 2 um grid stays in the exports but is
     // not listed: at that size a bin holds a single transcript nearly everywhere, so
     // a density map of it is a presence map. The counts that give the view meaning
@@ -3625,7 +4657,9 @@
     const sel = $("exprSelect"); sel.innerHTML = "";
     for (const e of shownEx) {
       const o = document.createElement("option"); o.value = e.key;
-      o.textContent = `${e.label} · ${e.nBins.toLocaleString()} bins · ${e.nGenes.toLocaleString()} genes`;
+      o.textContent = e.kind === "protein"
+        ? `${e.label} · ${e.nBins.toLocaleString()} squares · ${e.nGenes.toLocaleString()} markers`
+        : `${e.label} · ${e.nBins.toLocaleString()} bins · ${e.nGenes.toLocaleString()} genes`;
       sel.appendChild(o);
     }
     const isPhoto = img.channels.length === 3 && img.channels.every((c) => /^(red|green|blue)$/i.test(c.name));
@@ -3633,8 +4667,9 @@
     S.genePalette = "genes"; S.geneBin = 1; S.heat = null;
     $("geneBlend").value = S.geneBlend;
     $("genePalette").value = S.genePalette;
-    S.imgOn = true; S.imgOpacity = 1; S.geneOpacity = 1;
-    $("imgOpacity").value = 1; $("geneOpacity").value = 1;
+    // marker squares start a little see-through, so the stains under them always show
+    S.imgOn = true; S.imgOpacity = 1; S.geneOpacity = hasProt ? 0.85 : 1;
+    $("imgOpacity").value = 1; $("geneOpacity").value = S.geneOpacity;
     syncImageButton();
     S.overlays = (S.m.overlays || []).map((o) => ({ ...o, on: false, data: null }));
     buildOverlayUI();
@@ -3658,6 +4693,7 @@
     initDeck();
     lassoInit();
     umapInit();
+    gateInit();
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
       group: cfgSets[id].group, base: cfgSets[id].base }));
@@ -3728,10 +4764,12 @@
         e.preventDefault();
         const hot = $("geneResults").querySelector(".hot span") || $("geneResults").querySelector("div span");
         if (hot) addGene(hot.textContent);
-        else if (e.target.value.trim()) { status(`No gene named "${e.target.value.trim()}" in this layer`, true); setTimeout(() => status(null), 3500); }
+        else if (e.target.value.trim()) { status(`No ${wd().gene} named "${e.target.value.trim()}" in this layer`, true); setTimeout(() => status(null), 3500); }
       }
       if (e.key === "Escape") $("geneResults").hidden = true;
     };
+    // a marker panel: clicking into the box lists every marker, nothing to remember or type
+    $("geneSearch").onfocus = (e) => { if (isProt()) showGeneResults(e.target.value); };
     $("geneSearch").onblur = () => setTimeout(() => ($("geneResults").hidden = true), 150);
     const syncGeneMode = () => {
       const heat = S.geneBlend === "heatmap";
