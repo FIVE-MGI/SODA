@@ -30,8 +30,7 @@ of 20 µm; moving average, edges by nearest-square replication); a square is kep
 is above an Otsu threshold over all squares, taken on log1p (see tissue_mask for why not linear).
 Enclosed holes of <= HOLE_MAX squares are filled. tissue_smooth_um = 0 thresholds the raw square
 means (the rule before 2026-11: it keeps only nucleus-dense squares, a lacy mask that misses axon /
-collagen stretches). The default is the validation study's "area mask"
-(D:/SpatialVizValidation/scripts/make_tiles.py), square for square.
+collagen stretches).
 
 Channels: names matching the viewer's hidden-channel default (open / blank / empty / unused)
 are dropped altogether. Written but left out of the embedding: nuclear stains, and channels
