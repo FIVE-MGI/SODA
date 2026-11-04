@@ -27,6 +27,11 @@ tested.
 Before anything leaves your computer, go through the
 [checklist at the end](#before-you-upload-checklist).
 
+**Name your site after SODA.** Please put `soda` in the web address you choose, for
+example `https://soda.yourlab.org/` or `https://yourlab.org/soda/`, so visitors know
+which software they are using. The SODA label in the bottom corner of the page stays
+whatever title you give your instance in `config.js`.
+
 ---
 
 ## A. On your own computer

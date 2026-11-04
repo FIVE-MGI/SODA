@@ -31,10 +31,11 @@ Placeholders used below. Replace them everywhere, including the angle brackets:
 
 | Placeholder | Meaning | Example |
 |---|---|---|
-| `<rg>` | resource group | `spatial-viewer-rg` |
-| `<account>` | storage account name: 3-24 lowercase letters/digits, globally unique | `mylabviewerdata` |
-| `<container>` | container name: lowercase letters, digits, hyphens | `viewer-data` |
-| `<site>` | your Static Web App host name, shown in the portal after step 4 | `nice-pond-0123.azurestaticapps.net` |
+| `<rg>` | resource group | `soda-rg` |
+| `<account>` | storage account name: 3-24 lowercase letters/digits, globally unique | `mylabsodadata` |
+| `<container>` | container name: lowercase letters, digits, hyphens | `soda-data` |
+| `<app-name>` | the Static Web App resource name | `soda-mylab` |
+| `<site>` | your Static Web App host name, shown in the portal after step 4; if you add a custom domain, please include `soda` (e.g. `soda.yourlab.org`) | `nice-pond-0123.azurestaticapps.net` |
 | `<UPLOAD-SAS>` | a write SAS for uploading, made in step 3 | `sv=...&sig=...` |
 
 ---
