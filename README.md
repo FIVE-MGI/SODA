@@ -140,6 +140,9 @@ The page reads `web/SpatialViewer/config.js` for your dataset list, institution 
 logos and password endpoint. Copy `config.example.js` to `config.js`; every option is
 explained in that file. `config.js` is listed in `.gitignore`.
 
+**Rather not set it up yourself?** We can prepare and host your datasets for you. Please
+email wbuchser@wustl.edu with any questions about hosting.
+
 ## Documentation
 
 | | |
