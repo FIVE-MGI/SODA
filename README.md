@@ -1,6 +1,6 @@
-# Spatial Viewer
+# SODA: Spatial Omics Data Annex
 
-Spatial Viewer shows very large spatial biology datasets in a web browser:
+SODA shows very large spatial biology datasets in a web browser:
 multiplexed immunofluorescence, H&E, Visium and Visium HD spatial transcriptomics,
 Xenium morphology images, and single-cell RNA-seq UMAPs. Each slide is converted once
 into a pyramid of small image tiles plus compact per-gene files. The browser then
