@@ -1041,6 +1041,8 @@
     ["#rowRes span", "title", null], ["#clusterRes", "title", null],
     ["#viewSwitch button[data-v=tissue]", "title", null], ["#viewSwitch button[data-v=sbs]", "title", null],
     ["#viewSwitch button[data-v=umap]", "title", null], ["#flyPlay", "title", null],
+    ["#lassoMode option[value=bins]", "textContent", null],
+    ["#lassoSaveCsv", "title", null], ["#selToShape", "title", null],
   ];
   const wordingOrig = new Map();
   function syncWording() {
@@ -1054,7 +1056,7 @@
     }
     // squares are always drawn as squares: the round-spot "Normal" view has no meaning here
     $("rowGeneBlend").hidden = prot;
-    $("lassoOff").hidden = !prot;
+    $("lassoOff").hidden = !prot || !!(currentExpr() || {}).mat;
   }
   async function loadGeneIndex() {
     S.geneIndex = [];
@@ -1261,12 +1263,14 @@
   // Draw circles or freehand shapes over a Visium section. The bins inside go through a
   // UMAP computed in a worker (lasso_worker.js) from the export's hvg/ chunks - only the
   // chunks under the shapes are fetched - and land in a side panel coloured by shape.
+  // Marker squares (protein grid) work the same way from their mat/ chunks (the embedded
+  // channels' mean intensities; protgrid.write_mat_chunks): L.prot, and the worker's runProtein.
   // Brushing the panel lights the bins on the slide; picking a shape lights its points.
   // A bin inside two shapes belongs to the one drawn last, never to both.
   const LASSO_COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4",
                         "#f032e6", "#bfef45", "#469990", "#9a6324", "#fabed4", "#dcbeff"];
   const LASSO = { minPoints: 50, fewPoints: 300, smallShape: 20, softCap: 20000, cap: 50000, minUmi: 10,
-                  nHvg: 1000, nPcs: 30, nNeighbors: 15, minDist: 0.3, minShapesForUmap: 15, umapJs: "1.4.0" };
+                  nHvg: 1000, nPcs: 30, nPcsProtein: 15, nNeighbors: 15, minDist: 0.3, minShapesForUmap: 15, umapJs: "1.4.0" };
   const lassoBlank = () => ({ tool: null, shapes: [], next: 1, drawing: null, pos: null, hvg: null,
     chunks: new Map(), assign: null, bin: null, result: null, brush: null, selShape: null, hover: -1,
     worker: null, running: false, lpVs: null,
@@ -1288,16 +1292,22 @@
     const L = S.lasso, e = currentExpr();
     lassoCancel(); L.result = null; L.brush = null; L.selShape = null; L.selCluster = null; L.chunks = new Map(); L.hvgGenes = null;
     $("lassoPanel").hidden = true;
-    const ok = S.src && S.src.kind === "static" && e && e.hvg && S.mode !== "rna";
+    const prot = !!(e && e.kind === "protein" && e.mat);
+    const ok = S.src && S.src.kind === "static" && e && (e.hvg || prot) && S.mode !== "rna";
     $("panelLasso").hidden = !ok;
-    if (!ok) { lassoSetTool(null); L.pos = null; L.hvg = null; return; }
+    if (!ok) { lassoSetTool(null); L.pos = null; L.hvg = null; L.prot = false; return; }
     try {
-      const [hvg, pos] = await Promise.all([S.src.json(`expr/${S.exprKey}/hvg/index.json`),
+      const [hvg, pos] = await Promise.all([S.src.json(`expr/${S.exprKey}/${prot ? "mat" : "hvg"}/index.json`),
         S.tissue.positions && S.tissue.key === S.exprKey ? S.tissue.positions : S.src.positions(S.exprKey)]);
-      L.hvg = hvg; L.pos = pos;
+      // a protein index names its channels: they stand in for the gene count and names
+      if (prot) { hvg.nGenes = hvg.nChannels; L.hvgGenes = hvg.channels; }
+      L.hvg = hvg; L.pos = pos; L.prot = prot;
     } catch (err) { $("panelLasso").hidden = true; return; }
-    $("lassoNote").textContent = `Uses the ${e.label} layer. The UMAP can only use the ${L.hvg.nGenes.toLocaleString()} ` +
-      `most variable genes of the whole section; inside the shapes it keeps the ${LASSO.nHvg.toLocaleString()} that vary most.`;
+    $("lassoNote").textContent = prot
+      ? `Uses the ${e.label} layer: the ${L.hvg.nChannels} markers of the section UMAP, each scaled with the whole ` +
+        `section's window (1st to 99.5th percentile), then compared within the shapes.`
+      : `Uses the ${e.label} layer. The UMAP can only use the ${L.hvg.nGenes.toLocaleString()} ` +
+        `most variable genes of the whole section; inside the shapes it keeps the ${LASSO.nHvg.toLocaleString()} that vary most.`;
     lassoAssign();
   }
 
@@ -1503,12 +1513,14 @@
         if (s.lost) t += ` · ${s.lost.toLocaleString()} given to later shapes`;
         notes.push(`<small>${t}</small>`);
         if (R && R.info.found[i] !== undefined)
-          notes.push(`<small>${R.info.kept[i].toLocaleString()} in UMAP · ${R.info.dropped[i].toLocaleString()} under ${LASSO.minUmi} UMI</small>`);
+          notes.push(`<small>${R.info.kept[i].toLocaleString()} in UMAP` +
+            (L.prot ? "" : ` · ${R.info.dropped[i].toLocaleString()} under ${LASSO.minUmi} UMI`) + `</small>`);
         const n = R ? R.info.kept[i] : s.bins;
         if (n > 0 && n < LASSO.smallShape) notes.push(`<small class="warn">too few bins for this shape to mean much</small>`);
       }
       if (s.missing) notes.push(`<small class="bad">data missing for part of this shape</small>`);
-      row.innerHTML = `<i style="background:${s.hex}"></i><div><span class="nm"></span>${notes.join("")}</div>` +
+      const nt = notes.join("");
+      row.innerHTML = `<i style="background:${s.hex}"></i><div><span class="nm"></span>${L.prot ? toProtWords(nt) : nt}</div>` +
         `<span class="lbtns"><button class="ren" title="rename / label">✎</button><button class="rm" title="remove">×</button></span>`;
       const nm = row.querySelector(".nm");
       nm.textContent = s.name;                     // typed by the user: never as HTML
@@ -1544,7 +1556,7 @@
       let m = L.shapes.length ? `${total.toLocaleString()} bins inside the shapes.` : "Pick Circle or Freehand, then draw on the slide.";
       if (total > LASSO.cap) m += ` Over ${LASSO.cap.toLocaleString()}: a seeded sample of ${LASSO.cap.toLocaleString()} will be used.`;
       if (total > LASSO.softCap) m += ` This will take about ${Math.round(Math.min(total, LASSO.cap) * 0.00095)} s.`;
-      $("lassoMsg").textContent = m;
+      $("lassoMsg").textContent = L.prot ? toProtWords(m) : m;
     }
     $("lassoRun").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoSaveCsv").disabled = !R;
@@ -1574,10 +1586,27 @@
     return markerSetP;
   }
 
+  let protMarkerSetP = null;
+  function loadProteinMarkerSet() {
+    const e = currentExpr() || {}, ci = (S.umap && S.umap.ctInfo) || (e.umap && e.umap.celltypes), own = ci && ci.markerSet && ci.markerSet.file;
+    const file = own && /^markers\/[\w.-]+\.json$/.test(own) ? own : "markers/akoya_nerve.json";
+    if (!protMarkerSetP || protMarkerSetP.file !== file) {
+      protMarkerSetP = (async () => {
+        try {
+          const r = await fetch(file, { cache: "no-cache" });
+          const j = r.ok ? await r.json() : null;
+          return j && j.modality === "protein" && Array.isArray(j.types) && j.types.length ? j : null;
+        } catch (e) { return null; }
+      })();
+      protMarkerSetP.file = file;
+    }
+    return protMarkerSetP;
+  }
+
   async function lassoRun() {
     const L = S.lasso;
     if (L.running || !L.hvg || !L.assign) return;
-    const msg = (t, err) => { $("lassoMsg").textContent = t; $("lassoMsg").style.color = err ? "#ff8f8f" : ""; };
+    const msg = (t, err) => { $("lassoMsg").textContent = L.prot ? toProtWords(t) : t; $("lassoMsg").style.color = err ? "#ff8f8f" : ""; };
     const mode = $("lassoMode").value;
     const seed = Number($("lassoSeed").value);
     if (!Number.isInteger(seed) || seed < 0) { msg("Seed must be a whole number ≥ 0.", true); return; }
@@ -1608,7 +1637,7 @@
         const k = keys[next++];
         if (L.chunks.has(k)) { bufs.push(L.chunks.get(k)); continue; }
         if (!have.has(k)) { missing.push(k); continue; }
-        try { const b = await S.src.buf(`expr/${S.exprKey}/hvg/${k}.bin`); L.chunks.set(k, b); bufs.push(b); }
+        try { const b = await S.src.buf(`expr/${S.exprKey}/${L.prot ? "mat" : "hvg"}/${k}.bin`); L.chunks.set(k, b); bufs.push(b); }
         catch (e) { missing.push(k); }
       }
     };
@@ -1625,12 +1654,12 @@
     // gene names for the marker lists (column order of the hvg chunks); markers fall back to
     // column numbers if the file is missing
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
-    const markerSet = mode === "bins" && resolution > 0 ? await loadMarkerSet() : null;
+    const markerSet = mode === "bins" && resolution > 0 ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261102c");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261104a");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO.cap, minPoints: LASSO.minPoints, nHvg: LASSO.nHvg,
-                     nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
+                     nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
                      resolution };
     const t0 = performance.now();
     L.worker.onmessage = (ev) => {
@@ -1662,8 +1691,9 @@
       requestAnimationFrame(() => { lpDeck && lpDeck.setProps({ width: "100%", height: "100%" }); fitLassoPanel(); lassoFrameShapes(); });
     };
     msg("Computing…");
+    const protein = L.prot ? { channels: L.hvg.channels, p1: L.hvg.p1, p99_5: L.hvg.p99_5, median: L.hvg.median, scale: L.hvg.scale } : null;
     L.worker.postMessage({ chunks: bufs, rowShape: L.assign, nShapes: L.shapes.length, nGenes: L.hvg.nGenes, params, resolution,
-                           geneNames: L.hvgGenes || null, markerSet });
+                           geneNames: L.hvgGenes || null, markerSet, protein });
   }
 
   // ---- the UMAP panel: its own small deck --------------------------------------------
@@ -1805,8 +1835,10 @@
         onPick: (c) => lassoPickCluster(c),
         onRename: (c, t) => { if (t) L.clNames[c] = t; renderLassoPanel(); },
         suggest: ct ? sug : null,
-        markerInfo: () => ({ ...ctMarkerInfo(ct, `Scored on the ${I.nIn.toLocaleString()} bins of this run, using only the section's ` +
-          `${L.hvg ? L.hvg.nGenes.toLocaleString() : ""} most variable genes: marker genes outside them are listed as not found.`) }),
+        markerInfo: () => ({ ...ctMarkerInfo(ct, L.prot
+          ? `Scored on the ${I.nIn.toLocaleString()} squares of this run, on the ${L.hvg ? L.hvg.nChannels : ""} markers of the section UMAP.`
+          : `Scored on the ${I.nIn.toLocaleString()} bins of this run, using only the section's ` +
+            `${L.hvg ? L.hvg.nGenes.toLocaleString() : ""} most variable genes: marker genes outside them are listed as not found.`) }),
         onAccept: (c, t) => { L.clNames[c] = t; renderLassoPanel(); },
         acceptAll: (count) => {
           const todo = [];
@@ -1816,10 +1848,11 @@
         },
       });
     } else {
-      $("lpLegend").innerHTML = L.shapes.map((s, i) => I.kept[i] ? `<div class="leg"><i style="background:${s.hex}"></i><span>${esc(s.name)}</span><small>${I.kept[i].toLocaleString()} bins</small></div>` : "").join("");
+      $("lpLegend").innerHTML = L.shapes.map((s, i) => I.kept[i] ? `<div class="leg"><i style="background:${s.hex}"></i><span>${esc(s.name)}</span><small>${I.kept[i].toLocaleString()} ${wd().bins}</small></div>` : "").join("");
     }
     $("lpFoot").textContent = ($("lpFoot").dataset.brush && L.brush ? $("lpFoot").dataset.brush + " " : "") +
-      `${I.nGenesUsed} variable genes (of the section's ${L.hvg ? L.hvg.nGenes : "?"}) · log1p CP10k · ${I.nPcs} PCs · ` +
+      (L.prot ? `${I.nGenesUsed} markers · intensity scaled to the section's 1st–99.5th percentile, z-scored here · ${I.nPcs} PCs · `
+              : `${I.nGenesUsed} variable genes (of the section's ${L.hvg ? L.hvg.nGenes : "?"}) · log1p CP10k · ${I.nPcs} PCs · `) +
       `${I.method === "umap" ? `umap-js ${LASSO.umapJs}, ${LASSO.nNeighbors} neighbours, min_dist ${LASSO.minDist}, ` : ""}seed ${R.seed}` +
       `${R.cluster ? ` · Leiden resolution ${R.resolution}, ${I.nClusters} clusters` : ""}. ` +
       `Drag a box to select · click a point to pick its ${byCl ? "cluster" : "shape"} · scroll to zoom.`;
@@ -1844,8 +1877,12 @@
     const out = {
       tool: "Spatial Viewer circle -> UMAP", version: 1, umapJs: LASSO.umapJs, dataset: S.dsId, layer: S.exprKey,
       seed: Number($("lassoSeed").value), mode: $("lassoMode").value,
-      params: { minUmi: LASSO.minUmi, nHvg: LASSO.nHvg, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
-                cap: LASSO.cap, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
+      params: L.prot
+        ? { modality: "protein", channels: L.hvg ? L.hvg.channels : null, nPcs: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors,
+            minDist: LASSO.minDist, cap: LASSO.cap, normalisation: L.hvg ? L.hvg.normalize : null, scaling: "z-score within the shapes, clip 10",
+            overlap: "drawn last wins" }
+        : { minUmi: LASSO.minUmi, nHvg: LASSO.nHvg, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
+            cap: LASSO.cap, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
       shapes: L.shapes.map((s) => ({ name: s.name, color: s.hex, kind: s.kind,
                                       points: s.pts.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]),
                                       ...(s.rows ? { rows: Array.from(s.rows) } : {}) })),
@@ -3000,7 +3037,7 @@
     const why = "Shapes are drawn on the tissue: switch the view to Tissue or Side by side to draw one.";
     $("lassoCircle").disabled = um; $("lassoFree").disabled = um;
     $("lassoCircle").title = um ? why : "Drag from the centre outwards (Esc to stop)";
-    $("lassoFree").title = um ? why : "Hold and draw around the bins (Esc to stop)";
+    $("lassoFree").title = um ? why : `Hold and draw around the ${wd().bins} (Esc to stop)`;
     $("sbsCaps").hidden = !ok || !umapSbs();
     if (!ok) { syncGateColourOpt(); gateCountsRefresh(); return; }
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === U.view));

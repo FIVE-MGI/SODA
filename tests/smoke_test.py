@@ -525,6 +525,34 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
         V[x["n"]] = a[:, 2].astype(np.float64)
     c.ok(not bad, f"{key}: gene files: {bad[:5]}")
     c.eq(len(list((d / "gene").glob("*.bin"))), len(genes), f"{key}: gene/*.bin count")
+
+    # mat/: the embedded channels square by square, for circle -> UMAP (protgrid.write_mat_chunks)
+    mi = read_json(d / "mat" / "index.json") if (d / "mat" / "index.json").exists() else None
+    c.ok(mi is not None and isinstance(L.get("mat"), dict), f"{key}: no mat/index.json or manifest mat entry")
+    if mi:
+        ch = mi.get("channels", [])
+        c.eq(ch, L.get("channels"), f"{key}: mat channels vs the embedded channels")
+        c.eq(len(mi.get("chunks", [])), L["mat"].get("chunks"), f"{key}: mat chunk count vs manifest")
+        K, sc, cp = len(ch), mi.get("scale"), mi.get("chunkPx")
+        seen = np.zeros(n, np.int64)
+        bad = []
+        for e in mi.get("chunks", []):
+            p = d / "mat" / f"{e['tx']}_{e['ty']}.bin"
+            b = p.read_bytes() if p.exists() else b""
+            if len(b) != e["bytes"]:
+                bad.append(f"{p.name}: {len(b)} bytes, index says {e['bytes']}"); continue
+            m = int(np.frombuffer(b[:4], "<u4")[0])
+            rows = np.frombuffer(b[4:4 + 4 * m], "<u4")
+            q = np.frombuffer(b[4 + 4 * m:], "<u2").reshape(m, K).astype(np.float64) / sc
+            seen[rows] += 1
+            if (np.floor(pos[rows] / cp) != [e["tx"], e["ty"]]).any():
+                bad.append(f"{p.name}: a square outside its chunk")
+            for j, nm in enumerate(ch):
+                if nm in V and np.abs(q[:, j] - V[nm][rows]).max() > 0.5 / sc + 1e-6:
+                    bad.append(f"{p.name}: {nm} values differ from gene/{enc(nm)}.bin"); break
+        c.ok(not bad, f"{key}: mat chunks: {bad[:5]}")
+        c.ok((seen == 1).all(), f"{key}: mat chunks must hold every square exactly once")
+        c.ok(all(len(mi.get(k, [])) == K for k in ("p1", "p99_5", "median")), f"{key}: mat p1 / p99_5 / median per channel")
     gr = L.get("grid") or {}
     # default tissue rule: Otsu after a 100 µm (5 x 5 square) moving average of the DAPI means
     c.eq((gr.get("tissueSmoothUm"), gr.get("tissueSmoothSquares")), (100.0, 5), f"{key}: grid tissue smoothing")

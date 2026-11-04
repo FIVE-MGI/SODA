@@ -31,6 +31,11 @@ container behind a password. No database and no always-on server are needed.
 - **Circle → UMAP.** Draw circles or freehand shapes on the tissue and get a UMAP, with
   optional Leiden clusters, of just the bins inside, computed in the browser. Save the
   shapes and every parameter to redo it later.
+- **Multiplexed protein images (Akoya / PhenoCycler and other multi-channel TIFFs).** The
+  slide is cut into 20 µm squares holding each marker's mean intensity, and the squares
+  get everything above: UMAP, Leiden clusters, suggested names from protein marker lists,
+  and Circle → UMAP. Set a cut-off per marker (by eye or Otsu) to read the % of tissue
+  squares positive for it, or count squares per cluster. No cell segmentation (yet).
 - **Region overlays.** GeoJSON regions (for example from QuPath) drawn over the image;
   click a region to restrict the gene density to its bins.
 - **Single-cell RNA-seq.** UMAP from AnnData (`.h5ad`) or 10x output, coloured by cluster

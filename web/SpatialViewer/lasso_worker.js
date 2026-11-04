@@ -4,6 +4,9 @@
 //   gather -> drop low-UMI bins -> cap (stratified sample) -> log1p CP10k ->
 //   top variable genes within the selection -> scale -> randomized PCA -> umap-js
 //   -> Leiden on the UMAP's fuzzy neighbour graph -> marker genes per cluster.
+// Marker squares (protein grid, msg.protein) take a shorter road through runProtein: the
+// mat/ chunks' raw means -> x' with the whole section's window -> z-score within the
+// selection -> PCA -> the same UMAP, Leiden, markers and suggested names.
 /* global UMAP, leiden */
 importScripts("https://cdn.jsdelivr.net/npm/umap-js@1.4.0/lib/umap-js.min.js");
 importScripts("leiden.js?v=20261102a");
@@ -194,7 +197,13 @@ function cellTypes(d, val, cl, nCl, set, names) {
     for (const j of cols) { const x = z.get(j); for (let i = 0; i < N; i++) score[i * T + ti] += x[i]; }
     for (let i = 0; i < N; i++) score[i * T + ti] /= cols.length;
   });
-  // each bin's type, then per cluster the share of each type and the mean score
+  return ctSummarise(score, scored, types, cl, nCl, CT.binMin, set,
+    (t) => `only ${t.used.length} of its ${t.used.length + t.missing.length} genes are measurable here (needs ${CT.minGenes})`);
+}
+
+// each bin's type (best score >= binMin), then per cluster the share of each type and the mean score
+function ctSummarise(score, scored, types, cl, nCl, binMin, set, why) {
+  const N = cl.length, T = types.length;
   const NONE = -1, cnt = new Float64Array(nCl * T), sum = new Float64Array(nCl * T), size = new Float64Array(nCl);
   for (let i = 0; i < N; i++) {
     const c = cl[i]; size[c]++;
@@ -204,7 +213,7 @@ function cellTypes(d, val, cl, nCl, set, names) {
       const s = score[i * T + t]; sum[c * T + t] += s;
       if (s > bs) { bs = s; best = t; }
     }
-    if (best !== NONE && bs >= CT.binMin) cnt[c * T + best]++;
+    if (best !== NONE && bs >= binMin) cnt[c * T + best]++;
   }
   const r3 = (x) => Math.round(x * 1000) / 1000;
   const clusters = [];
@@ -220,8 +229,173 @@ function cellTypes(d, val, cl, nCl, set, names) {
   }
   return { markerSet: { name: set.name || null, version: set.version != null ? set.version : null },
            types: types.map((t, ti) => ({ name: t.name, genes: t.used, missing: t.missing, scored: scored[ti],
-             ...(scored[ti] ? {} : { reason: `only ${t.used.length} of its ${t.used.length + t.missing.length} genes are measurable here (needs ${CT.minGenes})` }) })),
+             ...(scored[ti] ? {} : { reason: why(t) }) })),
            clusters };
+}
+
+// ---- marker squares (protein grid) -------------------------------------------------
+// The same rule as celltypes.write_celltypes_protein (keep the two identical), on the run's
+// squares: z = (x' - mean) / sd per channel over the squares (population sd; sd 0 = "flat");
+// score = mean z over the type's channels found (>= PROTEIN_CT.minChannels); bin threshold 0.5;
+// the cluster summary as for genes.
+const PROTEIN_CT = { minChannels: 1, binMin: 0.5 };
+function cellTypesProtein(X, N, K, cl, nCl, set, names) {
+  const first = new Map();
+  names.forEach((g, j) => { const k = String(g).toUpperCase(); if (!first.has(k)) first.set(k, j); });
+  const z = new Map();
+  const zOf = (j) => {
+    if (z.has(j)) return z.get(j);
+    let m = 0; for (let i = 0; i < N; i++) m += X[i * K + j];
+    m /= N;
+    let v = 0; for (let i = 0; i < N; i++) v += (X[i * K + j] - m) ** 2;
+    const sd = Math.sqrt(v / N);
+    let col = null;
+    if (sd > 0) { col = new Float64Array(N); for (let i = 0; i < N; i++) col[i] = (X[i * K + j] - m) / sd; }
+    z.set(j, col); return col;
+  };
+  const T = set.types.length, score = new Float64Array(N * T), scored = new Array(T).fill(false);
+  const types = set.types.map((t, ti) => {
+    const used = [], missing = [], cols = [];
+    for (const g of t.genes || []) {
+      const j = first.get(String(g).toUpperCase());
+      if (j === undefined) missing.push({ gene: g, reason: "absent" });
+      else if (!zOf(j)) missing.push({ gene: names[j], reason: "flat" });
+      else { used.push(names[j]); cols.push(j); }
+    }
+    if (cols.length >= PROTEIN_CT.minChannels) {
+      scored[ti] = true;
+      for (const j of cols) { const x = z.get(j); for (let i = 0; i < N; i++) score[i * T + ti] += x[i]; }
+      for (let i = 0; i < N; i++) score[i * T + ti] /= cols.length;
+    }
+    return { name: t.name, used, missing };
+  });
+  const out = ctSummarise(score, scored, types, cl, nCl, PROTEIN_CT.binMin, set,
+    (t) => `${t.used.length} of ${t.used.length + t.missing.length} channels measurable here, needs ${PROTEIN_CT.minChannels}`);
+  out.modality = "protein";
+  return out;
+}
+
+// Top 10 channels per cluster by the difference of the mean z (cluster - rest), lfc > 0 only;
+// pct = share of the cluster's squares whose x' is above the channel's median over the whole
+// section (sectionumap.protein_markers, on the run's squares). Field names as for genes.
+function proteinMarkers(Z, XP, N, K, med, cl, nCl, names) {
+  const sz = new Float64Array(nCl * K), ab = new Float64Array(nCl * K), tot = new Float64Array(K), size = new Float64Array(nCl);
+  for (let i = 0; i < N; i++) {
+    const c = cl[i]; size[c]++;
+    for (let j = 0; j < K; j++) { const v = Z[i * K + j]; sz[c * K + j] += v; tot[j] += v; if (XP[i * K + j] > med[j]) ab[c * K + j]++; }
+  }
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+  const out = [];
+  for (let c = 0; c < nCl; c++) {
+    const rest = Math.max(N - size[c], 1), rows = [];
+    for (let j = 0; j < K; j++) {
+      const diff = sz[c * K + j] / size[c] - (tot[j] - sz[c * K + j]) / rest;
+      if (diff > 0) rows.push([j, diff, ab[c * K + j] / size[c]]);
+    }
+    rows.sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+    out.push(rows.slice(0, 10).map(([j, lfc, pct]) => ({ gene: names[j], gi: j, lfc: r3(lfc), pct: r3(pct) })));
+  }
+  return out;
+}
+
+function runProtein(msg) {
+  const P = msg.params, rand = mulberry32(P.seed), pr = msg.protein, K = pr.channels.length;
+  progress("Reading squares", 0);
+  // gather: row, shape and where the raw means of every selected square sit
+  const sel = [];
+  for (const buf of msg.chunks) {
+    const n = new DataView(buf).getUint32(0, true);
+    const row = new Uint32Array(buf.slice(4, 4 + 4 * n));
+    const q = new Uint16Array(buf.slice(4 + 4 * n, 4 + 4 * n + 2 * n * K));
+    for (let i = 0; i < n; i++) {
+      const s = msg.rowShape[row[i]];
+      if (s !== NO_SHAPE) sel.push({ row: row[i], shape: s, q, at: i * K });
+    }
+  }
+  sel.sort((a, b) => a.row - b.row);           // row order before anything seeded (see run)
+  const nShapes = msg.nShapes, found = new Array(nShapes).fill(0), dropped = new Array(nShapes).fill(0);
+  sel.forEach((r) => found[r.shape]++);
+  let keep = sel.map((_, i) => i), sampledFrom = 0;
+  if (P.mode === "bins" && sel.length > P.cap) {
+    sampledFrom = sel.length;
+    keep = stratifiedSample(sel.map((r) => r.shape), nShapes, P.cap, rand);
+  }
+  const kept = new Array(nShapes).fill(0);
+  keep.forEach((i) => kept[sel[i].shape]++);
+  // x' with the whole section's window, so a circle reads the slide as the section UMAP did
+  const xpOf = (r, j) => {
+    const lo = pr.p1[j], rg = pr.p99_5[j] - lo, v = r.q[r.at + j] / pr.scale;
+    return rg > 0 ? Math.min(1, Math.max(0, (v - lo) / rg)) : 0;
+  };
+  let rows, shape, XP, N;
+  if (P.mode === "shapes") {                   // one mean profile per non-empty shape
+    const live = kept.map((n, s) => (n ? s : -1)).filter((s) => s >= 0), at = new Map(live.map((s, i) => [s, i]));
+    N = live.length; XP = new Float64Array(N * K);
+    for (const i of keep) { const r = sel[i], a = at.get(r.shape); for (let j = 0; j < K; j++) XP[a * K + j] += xpOf(r, j); }
+    live.forEach((s, a) => { for (let j = 0; j < K; j++) XP[a * K + j] /= kept[s]; });
+    rows = live.slice(); shape = live.slice();
+  } else {
+    N = keep.length; XP = new Float64Array(N * K); rows = new Array(N); shape = new Array(N);
+    keep.forEach((i, a) => { const r = sel[i]; rows[a] = r.row; shape[a] = r.shape; for (let j = 0; j < K; j++) XP[a * K + j] = xpOf(r, j); });
+  }
+  const info = { found, dropped, kept, sampledFrom, nIn: N, modality: "protein" };
+  if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} squares; the shapes hold ${N}.`);
+  if (P.mode === "shapes" && N < 3) throw new Error(`"One dot per shape" needs at least 3 non-empty shapes; there are ${N}.`);
+
+  // z-score per channel within the selection (population sd), clipped at 10 as the section's
+  progress("Scaling", 0.05);
+  const Z = new Float64Array(N * K), Zc = new Float64Array(N * K);
+  let varying = 0;
+  for (let j = 0; j < K; j++) {
+    let m = 0; for (let i = 0; i < N; i++) m += XP[i * K + j];
+    m /= N;
+    let v = 0; for (let i = 0; i < N; i++) v += (XP[i * K + j] - m) ** 2;
+    const sd = Math.sqrt(v / N);
+    if (sd > 0) varying++;
+    for (let i = 0; i < N; i++) { const zz = sd > 0 ? (XP[i * K + j] - m) / sd : 0; Z[i * K + j] = zz; Zc[i * K + j] = Math.min(10, zz); }
+  }
+  if (varying < 2) throw new Error("Fewer than 2 markers vary inside the shapes: nothing to lay out.");
+  // dense PCA through the sparse routine: every entry present, columns already centred
+  progress("PCA", 0.15);
+  const ptr = new Uint32Array(N + 1), col = new Uint32Array(N * K);
+  for (let i = 0; i < N; i++) { ptr[i + 1] = (i + 1) * K; for (let j = 0; j < K; j++) col[i * K + j] = j; }
+  const nPcs = Math.max(2, Math.min(P.nPcsProtein, N - 1, K - 1));
+  const pca = randomizedPCA(N, K, ptr, col, Zc, new Float64Array(K), nPcs, rand);
+
+  let emb = new Float32Array(N * 2), method = "umap", umap = null;
+  if (P.mode === "shapes" && N < P.minShapesForUmap) {
+    method = "pca";
+    for (let i = 0; i < N; i++) { emb[2 * i] = pca.scores[i][0]; emb[2 * i + 1] = pca.scores[i][1] || 0; }
+  } else {
+    umap = new UMAP.UMAP({ nComponents: 2, nNeighbors: Math.max(2, Math.min(P.nNeighbors, N - 1)), minDist: P.minDist, random: rand });
+    const nEpochs = umap.initializeFit(pca.scores);
+    for (let e = 0; e < nEpochs; e++) {
+      umap.step();
+      if (e % 10 === 0) progress("UMAP", 0.2 + 0.8 * e / nEpochs);
+    }
+    const Y = umap.getEmbedding();
+    for (let i = 0; i < N; i++) { emb[2 * i] = Y[i][0]; emb[2 * i + 1] = Y[i][1]; }
+  }
+  info.nGenesUsed = K; info.nPcs = nPcs; info.varFrac = pca.varFrac.slice(0, 2); info.method = method;
+  const out = { emb, rows: Uint32Array.from(rows), shape: Uint16Array.from(shape), info };
+
+  const resolution = Number(msg.resolution !== undefined ? msg.resolution : P.resolution);
+  if (P.mode === "bins" && umap && resolution) {
+    progress("Clustering", 1);
+    const g = fuzzyGraphCSR(umap, N);
+    const cluster = leiden(N, g.indptr, g.indices, g.weights, { resolution, seed: P.seed });
+    let nCl = 0; for (let i = 0; i < N; i++) if (cluster[i] + 1 > nCl) nCl = cluster[i] + 1;
+    const sizes = new Array(nCl).fill(0); cluster.forEach((c) => sizes[c]++);
+    info.nClusters = nCl; info.clusterSizes = sizes; info.resolution = resolution;
+    info.markers = proteinMarkers(Z, XP, N, K, pr.median, cluster, nCl, pr.channels);
+    const ms = msg.markerSet;
+    if (ms && Array.isArray(ms.types) && ms.types.length) {
+      progress("Suggesting cell types", 1);
+      info.celltypes = cellTypesProtein(XP, N, K, cluster, nCl, ms, pr.channels);
+    }
+    out.cluster = cluster;
+  }
+  return out;
 }
 
 // ---- dense helpers for the randomized PCA (column-major: cols[j] is Float64Array(N)) ----
@@ -443,7 +617,7 @@ function run(msg) {
 
 onmessage = (ev) => {
   try {
-    const r = run(ev.data);
+    const r = ev.data.protein ? runProtein(ev.data) : run(ev.data);
     const tr = [r.emb.buffer, r.rows.buffer, r.shape.buffer];
     if (r.cluster) tr.push(r.cluster.buffer);
     postMessage({ type: "done", ...r }, tr);

@@ -12,7 +12,8 @@ that machinery works unchanged (cell segmentation is a later, separate step):
                                                     the viewer treats v <= 0 as "nothing here", as for RNA)
     expr/grid<NNN>um/umap/...          as sectionumap.py (index.json, coords.bin, clusters_r*.bin)
                                        + celltypes.json / celltype.bin (celltypes.py, protein rule)
-    No hvg/ (the circle -> UMAP tool is for counts).
+    expr/grid<NNN>um/mat/...           the embedded channels square by square, in spatial chunks, for the
+                                       circle -> UMAP tool (write_mat_chunks). No hvg/: that is for counts.
 
 v is in the 8-bit units of the tiles: the raw mean for a uint8 pyramid, the raw mean
 mapped through the channel's `bits` window for uint16 (not clipped at 255).
@@ -245,6 +246,60 @@ def square_means(r, grid_um: float, px_um: float, log=print, workers: int = 4) -
     return {"V": V, "V64": V64, "nx": nx, "ny": ny, "level": L, "pxUm": px_L}
 
 
+MAT_SCALE = 100              # mat/ chunks store round(v * MAT_SCALE) as uint16 (0.01 of an 8-bit unit)
+MAT_CHUNK_UM = 500.0         # = hvgchunks.DEFAULT_CHUNK_UM
+
+
+def write_mat_chunks(d: Path, pos: np.ndarray, V: np.ndarray, names: list[str], p1, p995, mpp: float,
+                     chunk_um: float = MAT_CHUNK_UM, log=print) -> dict:
+    """expr/<key>/mat/: the embedded channels square by square, cut into squares of tissue.
+
+    The circle -> UMAP tool needs every channel for the few squares under a shape - the
+    gene files hold one channel for every square - so, like hvg/ for counts:
+
+        mat/index.json      {chunkPx, chunkUm, scale, channels, p1, p99_5, median, chunks: [{tx, ty, n, bytes}]}
+        mat/<tx>_<ty>.bin   little-endian: u32 nSquares, u32 row[nSquares] (index into positions.bin),
+                            u16 value[nSquares * nChannels] (square-major, round(v * scale), clipped at 65535)
+
+    `V` = squares x channels (positions.bin order), raw means; `p1` / `p995` the whole-section
+    window of each channel, so a circle is scaled as the section UMAP was: x' = clip((v - p1) /
+    (p99.5 - p1), 0, 1). `median` = each channel's median x' over the section (the markers' pct).
+    """
+    V = np.asarray(V, np.float64)
+    p1, p995 = np.asarray(p1, np.float64), np.asarray(p995, np.float64)
+    rng = p995 - p1
+    xp = np.clip(np.where(rng > 0, (V - p1) / np.where(rng > 0, rng, 1.0), 0.0), 0.0, 1.0)
+    med = np.median(xp, axis=0)
+    chunk_px = int(round(chunk_um / mpp))
+    xy = np.asarray(pos, np.float64)
+    tx = np.floor(xy[:, 0] / chunk_px).astype(np.int64)
+    ty = np.floor(xy[:, 1] / chunk_px).astype(np.int64)
+    rows = np.arange(len(xy))
+    q = np.minimum(np.rint(np.maximum(V, 0.0) * MAT_SCALE), 65535).astype("<u2")
+    md = Path(d) / "mat"
+    md.mkdir(parents=True, exist_ok=True)
+    order = np.lexsort((rows, ty, tx))
+    keys = np.stack([tx[order], ty[order]], 1)
+    split = np.flatnonzero(np.any(np.diff(keys, axis=0) != 0, axis=1)) + 1
+    chunks, total = [], 0
+    for grp in np.split(order, split):
+        buf = b"".join([np.uint32(len(grp)).astype("<u4").tobytes(), grp.astype("<u4").tobytes(),
+                        np.ascontiguousarray(q[grp]).tobytes()])
+        cx, cy = int(tx[grp[0]]), int(ty[grp[0]])
+        _atomic(md / f"{cx}_{cy}.bin", buf)
+        chunks.append({"tx": cx, "ty": cy, "n": int(len(grp)), "bytes": len(buf)})
+        total += len(buf)
+    r6 = lambda a: [round(float(x), 6) for x in a]
+    index = {"chunkPx": chunk_px, "chunkUm": chunk_um, "scale": MAT_SCALE, "nChannels": len(names),
+             "channels": list(names), "p1": r6(p1), "p99_5": r6(p995), "median": r6(med),
+             "normalize": "per channel clip((v - p1) / (p99.5 - p1), 0, 1), window over the whole section",
+             "chunks": chunks}
+    deid.assert_clean(index, "mat/index.json")
+    _atomic(md / "index.json", json.dumps(index, separators=(",", ":")).encode("utf-8"))
+    log(f"[grid] mat/: {len(names)} channels, {len(chunks)} chunks of {chunk_um:g} um, {total / 1e6:.1f} MB")
+    return {"nChannels": len(names), "chunkPx": chunk_px, "chunks": len(chunks), "bytes": total}
+
+
 def _atomic(p: Path, buf: bytes):
     tmp = p.with_name(p.name + ".part")
     tmp.write_bytes(buf)
@@ -336,6 +391,8 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
         xyv[:, 2] = Vt[:, k]
         _atomic(d / "gene" / f"{_encode(nm)}.bin", np.ascontiguousarray(xyv, dtype="<f4").tobytes())
     log(f"[grid] {key}: {n:,} squares, {len(wnames)} gene files -> {d}")
+    mat = write_mat_chunks(d, pos, Vt[:, embed], [wnames[k] for k in embed], p1[embed], p995[embed],
+                           float(px_um), log=log) if embed else None
 
     entry = {"key": key, "label": f"{grid_um:g} µm squares · marker means", "kind": "protein",
              "binSizeUm": grid_um, "nBins": n, "nGenes": len(wnames), "micronsPerPixel": float(px_um),
@@ -347,6 +404,8 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
                       "tissueSmoothUm": size * grid_um if size > 1 else 0, "tissueSmoothSquares": size,
                       "holesFilled": n_filled, "squares": nx * ny},
              "dropped": dropped}
+    if mat:
+        entry["mat"] = mat
 
     if umap:
         # reuse an earlier umap/ only if it was made from these very numbers

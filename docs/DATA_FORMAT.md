@@ -34,6 +34,7 @@ General rules:
   expr/<key>/gene/<NAME>.bin
   expr/<key>/region.bin                  only if an overlay has polygons
   expr/<key>/hvg/{genes.json, index.json, <tx>_<ty>.bin}
+  expr/<key>/mat/{index.json, <tx>_<ty>.bin}   protein grid layers only (instead of hvg/)
   expr/<key>/umap/{index.json, coords.bin, clusters_r<res>.bin}
 <root>/about.html                        optional, shown by "Read more about this project"
 ```
@@ -108,6 +109,7 @@ The prepare cache's own manifest also has a `source` block with local file paths
 | `regions` | only with a region overlay: `[{"id": 1, "name": "Cortex", "nBins": 5123}, ...]`, ids as in `region.bin`, regions with no bins left out |
 | `regionOverlay` | only with a region overlay: the overlay `file` the ids refer to |
 | `hvg` | only if `hvg/` was written: `{"nGenes", "chunkPx", "chunks", "bytes"}` |
+| `mat` | protein grid layers (`"kind": "protein"`) only, if `mat/` was written: `{"nChannels", "chunkPx", "chunks", "bytes"}` |
 | `umap` | only if `umap/` was written: `{"nEmbedded", "clusterings": [{"resolution", "n"}], "default"}` |
 
 ## Tiles: `tiles/<c>/<z>/<x>/<y>.<tileFormat>`
@@ -210,6 +212,35 @@ have ≥ 10 UMI.
   | 8 + 12n + 2nnz | uint16 | nnz | UMI count, clipped at 65535 |
 
   File size = 8 + 12n + 4nnz.
+
+### `mat/`: the same, for marker squares (protein grid layers)
+
+A protein grid layer (`protgrid.py`, Akoya and other multi-channel images) has no counts,
+so instead of `hvg/` it carries every embedded channel square by square, cut into the
+same 500 µm chunks:
+
+- `index.json`:
+
+  ```json
+  {"chunkPx": 247, "chunkUm": 500.0, "scale": 100, "nChannels": 26,
+   "channels": ["CD104", "CD45", ...], "p1": [...], "p99_5": [...], "median": [...],
+   "normalize": "per channel clip((v - p1) / (p99.5 - p1), 0, 1), window over the whole section",
+   "chunks": [{"tx": 0, "ty": 3, "n": 1520, "bytes": 85124}, ...]}
+  ```
+
+  `channels` = the layer's embedded channels (manifest `channels`), in column order.
+  `p1` / `p99_5` = each channel's whole-section window, so the circle tool scales a
+  selection exactly as the section UMAP was scaled; `median` = each channel's median x'
+  over the section (the `pct` of the cluster markers).
+- `<tx>_<ty>.bin`: every square of the chunk (chunk of a square as for `hvg/`):
+
+  | Offset (bytes) | Type | Count | Content |
+  |---|---|---|---|
+  | 0 | uint32 | 1 | `n` |
+  | 4 | uint32 | n | row in `positions.bin` |
+  | 4 + 4n | uint16 | n × nChannels | square-major mean intensities, `round(v × scale)`, clipped at 65535 |
+
+  File size = 4 + 4n + 2n·nChannels.
 
 ### `umap/`: whole-section UMAP and Leiden clusters
 
