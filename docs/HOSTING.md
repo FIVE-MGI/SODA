@@ -1,6 +1,6 @@
 # Hosting your own data
 
-Spatial Viewer has two halves:
+SODA has two halves:
 
 - **the page**: the files in `web/SpatialViewer/` that a browser runs (`index.html`,
   `viewer.js`, `styles.css`, `lasso_worker.js`, `leiden.js`, and your `config.js`);

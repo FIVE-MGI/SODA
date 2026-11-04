@@ -1875,7 +1875,7 @@
   function lassoSaveJson() {
     const L = S.lasso, R = L.result;
     const out = {
-      tool: "Spatial Viewer circle -> UMAP", version: 1, umapJs: LASSO.umapJs, dataset: S.dsId, layer: S.exprKey,
+      tool: "SODA circle -> UMAP", version: 1, umapJs: LASSO.umapJs, dataset: S.dsId, layer: S.exprKey,
       seed: Number($("lassoSeed").value), mode: $("lassoMode").value,
       params: L.prot
         ? { modality: "protein", channels: L.hvg ? L.hvg.channels : null, nPcs: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors,
@@ -3813,7 +3813,7 @@
       cutoffs[m] = { value: c.v, how: c.how === "otsu" ? "otsu" : "manual", ...(I ? { otsu: Math.round(I.otsu * 10) / 10 } : {}) };
     }
     return {
-      tool: "Spatial Viewer gating", viewerVersion: GATE_VERSION, dataset: S.dsId, layer: G.key,
+      tool: "SODA gating", viewerVersion: GATE_VERSION, dataset: S.dsId, layer: G.key,
       unit: "mean intensity per square, 0-255 as the image (8-bit); positive = above the cut-off",
       squareUm: e && e.binSizeUm ? e.binSizeUm : null,
       perSlide: "Cut-offs belong to the slide they were set on; check them again before using them on another slide.",

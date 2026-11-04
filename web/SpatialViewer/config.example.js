@@ -31,7 +31,7 @@ window.SpatialViewerConfig = {
   // ---- whose instance this is ----------------------------------------------------
   // The viewer has no institution of its own. Logo paths are relative to this folder.
   brand: {
-    title: "Spatial Viewer",
+    title: "SODA",
     logos: [
       // { src: "logos/institution.png", alt: "Institution", className: "logo-wide" },
     ],
