@@ -222,16 +222,20 @@ same 500 µm chunks:
 - `index.json`:
 
   ```json
-  {"chunkPx": 247, "chunkUm": 500.0, "scale": 100, "nChannels": 26,
-   "channels": ["CD104", "CD45", ...], "p1": [...], "p99_5": [...], "median": [...],
-   "normalize": "per channel clip((v - p1) / (p99.5 - p1), 0, 1), window over the whole section",
-   "chunks": [{"tx": 0, "ty": 3, "n": 1520, "bytes": 85124}, ...]}
+  {"chunkPx": 987, "chunkUm": 500.0, "scale": 100, "nChannels": 26,
+   "channels": ["CD104", "CD45", ...], "normalize": "bg-asinh-v1",
+   "bg": [...], "hi": [...], "cofactor": 0.2, "median": [...],
+   "chunks": [{"tx": 0, "ty": 3, "n": 970, "bytes": 54324}, ...]}
   ```
 
   `channels` = the layer's embedded channels (manifest `channels`), in column order.
-  `p1` / `p99_5` = each channel's whole-section window, so the circle tool scales a
-  selection exactly as the section UMAP was scaled; `median` = each channel's median x'
-  over the section (the `pct` of the cluster markers).
+  `bg` / `hi` = each channel's whole-slide background (median of the off-tissue squares) and
+  99.5th percentile above it over the tissue (leaving out the squares flagged everything
+  bright, so a fold cannot set it), so the circle tool scales a selection exactly
+  as the section UMAP was: x = asinh(max(v − bg, 0) / hi / cofactor) / asinh(1 / cofactor).
+  `median` = each channel's median x over the section (the `pct` of the cluster markers).
+  Exports made before November 2026 have no `normalize`, and `p1` / `p99_5` instead of
+  `bg` / `hi` (x′ = clip((v − p1) / (p99.5 − p1), 0, 1)); the viewer reads both.
 - `<tx>_<ty>.bin`: every square of the chunk (chunk of a square as for `hvg/`):
 
   | Offset (bytes) | Type | Count | Content |
@@ -241,6 +245,39 @@ same 500 µm chunks:
   | 4 + 4n | uint16 | n × nChannels | square-major mean intensities, `round(v × scale)`, clipped at 65535 |
 
   File size = 4 + 4n + 2n·nChannels.
+
+### `qc.json` and `qc_flags.bin`: slide QC (protein grid layers)
+
+Written by `protgrid.py` next to `positions.bin`; the manifest layer's `qc` block names
+them and repeats the headline numbers (`everythingBright`, `saturatedSquares`, `weak`,
+`saturated`, `seamsFlagged`).
+
+- `qc.json`:
+
+  ```json
+  {"channels": [{"name": "CD90", "inUmap": true, "status": "saturated", "background": 1.09,
+                 "p99_5AboveBg": 253.7, "signalToBackground": 232.0, "saturatedPct": 2.84,
+                 "weak": false, "saturated": true}, ...],
+   "dropped": [{"name": "open-cy5", "reason": "open / blank channel: not written"}, ...],
+   "squares": 677828,
+   "everythingBright": {"n": 757, "share": 0.00112, "rule": "..."},
+   "saturatedSquares": {"n": 1203, "share": 0.00177, "rule": "..."},
+   "seams": {"columns": {"channelsChecked": 27, "channelsWithSteps": 9, "spacingPx": 960, "spacingUm": 486,
+                         "channels": ["CD45", "CD90", ...], "repeats": 24, "flagged": true},
+             "rows": {...}, "flagged": true, "rule": "..."},
+   "rules": {"weak": "...", "saturated": "...", "background": "...", "limit": [255]},
+   "note": "UMAPs, clusters and names are per slide: ...",
+   "flagsFile": "qc_flags.bin", "flagBits": {"everythingBright": 1, "saturated": 2}}
+  ```
+
+  `status` is one of `ok`, `weak`, `saturated`, `flat` (not in the UMAP), `nuclear`
+  (tissue mask only). Values are in the 8-bit units of the gene files. `seams`: per axis, the
+  channels whose full-resolution column (row) means step sharply at one repeated spacing - a
+  camera tile edge - and that spacing; `flagged` when at least two channels share it.
+- `qc_flags.bin`: one uint8 per row of `positions.bin`. Bit 1: everything bright (more
+  than 80% of the UMAP channels above their 95th percentile over the tissue: folds,
+  bubbles, bright edges). Bit 2: more than half of the square's pixels at the detector's
+  limit in some written channel.
 
 ### `umap/`: whole-section UMAP and Leiden clusters
 

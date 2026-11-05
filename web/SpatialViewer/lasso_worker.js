@@ -7,8 +7,9 @@
 //   umap-js started from PC1 / PC2 -> Leiden on the UMAP's fuzzy neighbour graph, the
 //   resolution chosen by stability unless given -> marker genes per cluster.
 // Marker squares (protein grid, msg.protein) take a shorter road through runProtein: the
-// mat/ chunks' raw means -> x' with the whole section's window -> z-score within the
-// selection -> PCA -> the same UMAP, Leiden, markers and suggested names.
+// mat/ chunks' raw means -> x with the whole slide's background and p99.5 (asinh; older
+// exports: x' with the 1st..99.5th percentile window) -> z-score within the selection ->
+// PCA -> the same UMAP, Leiden, markers and suggested names.
 /* global UMAP, leiden */
 importScripts("https://cdn.jsdelivr.net/npm/umap-js@1.4.0/lib/umap-js.min.js");
 importScripts("leiden.js?v=20261102a");
@@ -378,13 +379,27 @@ function ctSummarise(score, scored, types, cl, nCl, binMin, set, why) {
 
 // ---- marker squares (protein grid) -------------------------------------------------
 // The same rule as celltypes.write_celltypes_protein (keep the two identical), on the run's
-// squares: z = (x' - mean) / sd per channel over the squares (population sd; sd 0 = "flat");
-// score = mean z over the type's channels found (>= PROTEIN_CT.minChannels); bin threshold 0.5;
-// the cluster summary as for genes.
-const PROTEIN_CT = { minChannels: 1, binMin: 0.5 };
-function cellTypesProtein(X, N, K, cl, nCl, set, names) {
-  const first = new Map();
-  names.forEach((g, j) => { const k = String(g).toUpperCase(); if (!first.has(k)) first.set(k, j); });
+// squares: z = (x - mean) / sd per channel over the squares (population sd; sd 0 = "flat");
+// score = mean z over the type's channels found (>= the type's "min", else the list's
+// "minChannels", else 1); bin threshold 0.5; the cluster summary as for genes. Channel names
+// are matched after normName, each list name also under its aliases (set.aliases).
+// A cluster with more than half its squares flagged everything-bright (flags bit 1) is
+// suggested as ARTEFACT.
+const PROTEIN_CT = { minChannels: 1, binMin: 0.5, artefactShare: 0.5 };
+const ARTEFACT = "Artefact? (fold / edge)";
+// = celltypes.norm_name: a leading index, trailing fluorophore / FFPE tags, then case,
+// spaces, "-", "_" and "." ignored
+const NN_LEAD = /^\s*\d+\s*[_\-.:)]\s*/;
+const NN_TAG = /(?:[\s_\-]+|\s*\()(?:opal\s*\d+|atto\s*\d+|af\s*\d+|alexa(?:\s*fluor)?\s*\d+|cy\s*\d(?:\.\d)?|fitc|tritc|pe|apc|ffpe|405|488|514|520|532|546|555|568|570|594|620|647|650|660|680|690|700|750|780|790)\)?\s*$/i;
+function normName(s) {
+  s = String(s).replace(NN_LEAD, "");
+  for (;;) { const t = s.replace(NN_TAG, ""); if (t === s || !t.trim()) break; s = t; }
+  return s.replace(/[\s_\-.]/g, "").toLowerCase();
+}
+const typeMin = (set, t) => Number(t.min != null ? t.min : set.minChannels != null ? set.minChannels : PROTEIN_CT.minChannels);
+function cellTypesProtein(X, N, K, cl, nCl, set, names, flags) {
+  const first = new Map(), aliases = set.aliases || {};
+  names.forEach((g, j) => { const k = normName(g); if (!first.has(k)) first.set(k, j); });
   const z = new Map();
   const zOf = (j) => {
     if (z.has(j)) return z.get(j);
@@ -398,22 +413,33 @@ function cellTypesProtein(X, N, K, cl, nCl, set, names) {
   };
   const T = set.types.length, score = new Float64Array(N * T), scored = new Array(T).fill(false);
   const types = set.types.map((t, ti) => {
-    const used = [], missing = [], cols = [];
+    const used = [], missing = [], cols = [], need = typeMin(set, t);
     for (const g of t.genes || []) {
-      const j = first.get(String(g).toUpperCase());
-      if (j === undefined) missing.push({ gene: g, reason: "absent" });
+      const k = [normName(g), ...(aliases[g] || []).map(normName)].find((x) => first.has(x));
+      const j = k === undefined ? undefined : first.get(k);
+      if (j === undefined || cols.includes(j)) missing.push({ gene: g, reason: "absent" });
       else if (!zOf(j)) missing.push({ gene: names[j], reason: "flat" });
       else { used.push(names[j]); cols.push(j); }
     }
-    if (cols.length >= PROTEIN_CT.minChannels) {
+    if (cols.length >= need) {
       scored[ti] = true;
       for (const j of cols) { const x = z.get(j); for (let i = 0; i < N; i++) score[i * T + ti] += x[i]; }
       for (let i = 0; i < N; i++) score[i * T + ti] /= cols.length;
     }
-    return { name: t.name, used, missing };
+    return { name: t.name, used, missing, need };
   });
   const out = ctSummarise(score, scored, types, cl, nCl, PROTEIN_CT.binMin, set,
-    (t) => `${t.used.length} of ${t.used.length + t.missing.length} channels measurable here, needs ${PROTEIN_CT.minChannels}`);
+    (t) => `${t.used.length} of ${t.used.length + t.missing.length} channels measurable here, needs ${t.need}`);
+  out.types.forEach((t, ti) => { t.min = types[ti].need; });
+  if (flags) {                                 // flags[i]: the qc_flags byte of the run's square i
+    const br = new Float64Array(nCl), size = new Float64Array(nCl);
+    for (let i = 0; i < N; i++) { size[cl[i]]++; if (flags[i] & 1) br[cl[i]]++; }
+    for (const c of out.clusters) {
+      const share = size[c.cluster] ? br[c.cluster] / size[c.cluster] : 0;
+      c.artefact = Math.round(share * 1000) / 1000;
+      if (share > PROTEIN_CT.artefactShare) Object.assign(c, { suggest: ARTEFACT, confidence: "low", artefactRule: true });
+    }
+  }
   out.modality = "protein";
   return out;
 }
@@ -466,10 +492,17 @@ function runProtein(msg) {
   const kept = new Array(nShapes).fill(0);
   keep.forEach((i) => kept[sel[i].shape]++);
   // x' with the whole section's window, so a circle reads the slide as the section UMAP did
-  const xpOf = (r, j) => {
-    const lo = pr.p1[j], rg = pr.p99_5[j] - lo, v = r.q[r.at + j] / pr.scale;
-    return rg > 0 ? Math.min(1, Math.max(0, (v - lo) / rg)) : 0;
-  };
+  // = protgrid.normalise_bg_asinh ("normalize": "bg-asinh-v1"); older exports: the p1..p99.5 window
+  const asinh1 = Math.asinh(1 / (pr.cofactor || 0.2));
+  const xpOf = pr.normalize === "bg-asinh-v1"
+    ? (r, j) => {
+      const hi = pr.hi[j], v = r.q[r.at + j] / pr.scale;
+      return hi > 0 ? Math.asinh(Math.max(v - pr.bg[j], 0) / hi / pr.cofactor) / asinh1 : 0;
+    }
+    : (r, j) => {
+      const lo = pr.p1[j], rg = pr.p99_5[j] - lo, v = r.q[r.at + j] / pr.scale;
+      return rg > 0 ? Math.min(1, Math.max(0, (v - lo) / rg)) : 0;
+    };
   let rows, shape, XP, N;
   if (P.mode === "shapes") {                   // one mean profile per non-empty shape
     const live = kept.map((n, s) => (n ? s : -1)).filter((s) => s >= 0), at = new Map(live.map((s, i) => [s, i]));
@@ -526,7 +559,8 @@ function runProtein(msg) {
     const ms = msg.markerSet;
     if (ms && Array.isArray(ms.types) && ms.types.length) {
       progress("Suggesting cell types", 1);
-      info.celltypes = cellTypesProtein(XP, N, K, cluster, nCl, ms, pr.channels);
+      const fl = msg.flags ? Uint8Array.from(rows, (r) => msg.flags[r] || 0) : null;
+      info.celltypes = cellTypesProtein(XP, N, K, cluster, nCl, ms, pr.channels, fl);
     }
     out.cluster = cluster;
   }

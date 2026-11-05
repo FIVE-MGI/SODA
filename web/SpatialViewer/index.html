@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>SODA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link href="styles.css?v=20261104soda" rel="stylesheet" />
+  <link href="styles.css?v=20261105qc" rel="stylesheet" />
 </head>
 <body>
   <div class="app">
@@ -62,6 +62,13 @@
           <button id="gateOpenCl" title="How many squares each cluster has, per region, under the cluster names you see">Count clusters…</button>
         </div>
         <div id="gatePub" class="meta" hidden>This dataset comes with published cut-offs (gates.json).</div>
+        <!-- marker squares: the export's slide QC (protgrid.py qc.json); hidden for other layers and older exports -->
+        <div id="qcBox" class="qc-box" hidden>
+          <div class="sub-h">Slide QC</div>
+          <div id="qcSummary" class="meta qc-sum"></div>
+          <label class="row slim check" id="rowQcOutline" hidden><input id="qcOutline" type="checkbox" /><span title="Orange rings: everything bright (folds, bubbles, edges). Magenta rings: many pixels at the detector's limit.">Outline flagged squares</span></label>
+          <details class="qc-det"><summary>Each marker</summary><div id="qcChannels"></div></details>
+        </div>
       </section>
 
       <!-- Counting tools for marker (protein) square layers; hidden for sequencing data.
@@ -264,6 +271,6 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261104stab6"></script>
+  <script src="viewer.js?v=20261105qc"></script>
 </body>
 </html>

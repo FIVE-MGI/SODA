@@ -26,16 +26,21 @@ container behind a password. No database and no always-on server are needed.
   between the tissue and the UMAP, or show both linked side by side: select bins in one
   and the same bins light up in the other.
 - **Suggested cluster names.** Each cluster gets a suggested cell type from editable
-  marker-gene lists (peripheral nerve lists included), with a confidence and the runner-up
-  shown; accept it, accept all high-confidence ones, or type your own.
+  marker lists, with a confidence and the runner-up shown; accept it, accept all
+  high-confidence ones, or type your own. General lists for any tissue (genes and protein
+  panels, with common marker-name aliases) are used by default; peripheral nerve lists are
+  included too.
 - **Circle → UMAP.** Draw circles or freehand shapes on the tissue and get a UMAP, with
   optional Leiden clusters, of just the bins inside, computed in the browser. Save the
   shapes and every parameter to redo it later.
 - **Multiplexed protein images (Akoya / PhenoCycler and other multi-channel TIFFs).** The
-  slide is cut into 20 µm squares holding each marker's mean intensity, and the squares
-  get everything above: UMAP, Leiden clusters, suggested names from protein marker lists,
-  and Circle → UMAP. Set a cut-off per marker (by eye or Otsu) to read the % of tissue
-  squares positive for it, or count squares per cluster. No cell segmentation (yet).
+  slide is cut into 16 µm squares holding each marker's mean intensity (from full-resolution
+  pixels), and the squares get everything above: UMAP, Leiden clusters, suggested names from
+  protein marker lists, and Circle → UMAP. Each marker is normalised per slide (background
+  off, scaled to its 99.5th percentile, asinh), empty and duplicate channels are dropped
+  automatically, and a slide QC box lists weak and saturated stains and outlines folds and
+  bright edges. Set a cut-off per marker (by eye or Otsu) to read the % of tissue squares
+  positive for it, or count squares per cluster. No cell segmentation (yet).
 - **Region overlays.** GeoJSON regions (for example from QuPath) drawn over the image;
   click a region to restrict the gene density to its bins.
 - **Single-cell RNA-seq.** UMAP from AnnData (`.h5ad`) or 10x output, coloured by cluster

@@ -14,31 +14,49 @@ that machinery works unchanged (cell segmentation is a later, separate step):
                                        + celltypes.json / celltype.bin (celltypes.py, protein rule)
     expr/grid<NNN>um/mat/...           the embedded channels square by square, in spatial chunks, for the
                                        circle -> UMAP tool (write_mat_chunks). No hvg/: that is for counts.
+    expr/grid<NNN>um/qc.json           per channel: background, p99.5 above it, signal-to-background,
+                                       saturated %, status (ok / weak / saturated / flat / nuclear); the
+                                       channels dropped and why; flagged squares; the seam check
+    expr/grid<NNN>um/qc_flags.bin      uint8 per positions.bin row: bit 1 = everything bright (fold, bubble,
+                                       edge), bit 2 = many saturated pixels
 
 v is in the 8-bit units of the tiles: the raw mean for a uint8 pyramid, the raw mean
 mapped through the channel's `bits` window for uint16 (not clipped at 255).
 
-Squares: `grid_um` wide (default 20), starting at the image's top-left corner; a last
-partial row / column is kept when it is at least half a square. The means come from the
-pyramid level whose pixel is closest to grid/8 and never coarser than grid/4, streamed one
-chunk row at a time (each chunk is read once per channel; the full-res level is never loaded
-unless it is that level).
+Squares: `grid_um` wide (default 16, as the Visium HD 16 µm bins), starting at the image's
+top-left corner; a last partial row / column is kept when it is at least half a square. The
+means come from FULL-RESOLUTION pixels (level 0, streamed one chunk row at a time, each chunk read
+once per channel): the coarser pyramid levels are max-pooled for display and overstate markers
+(square_means). The same pass counts pixels at the detector's limit per square and channel.
 
 Tissue: the DAPI (or Hoechst) square means (without a nuclear stain, the mean over the written
-channels) are first averaged over a window of `tissue_smooth_um` (default 100 µm = 5 x 5 squares
-of 20 µm; moving average, edges by nearest-square replication); a square is kept when that value
+channels) are first averaged over a window of `tissue_smooth_um` (default 100 µm = 7 x 7 squares
+of 16 µm; moving average, edges by nearest-square replication); a square is kept when that value
 is above an Otsu threshold over all squares, taken on log1p (see tissue_mask for why not linear).
 Enclosed holes of <= HOLE_MAX squares are filled. tissue_smooth_um = 0 thresholds the raw square
 means (the rule before 2026-11: it keeps only nucleus-dense squares, a lacy mask that misses axon /
 collagen stretches).
 
-Channels: names matching the viewer's hidden-channel default (open / blank / empty / unused)
-are dropped altogether. Written but left out of the embedding: nuclear stains, and channels
-that are flat over the tissue (p99.5 - p1 of the square means < FLAT_RANGE units).
-Embedding (sectionumap.write_feature_umap): x' = clip((v - p1) / (p99.5 - p1), 0, 1) per channel
-over the tissue squares -> z-score -> PCA min(15, channels - 1) -> UMAP (15 neighbours, min_dist 0.3,
-seed 42) -> Leiden 0.3 / 0.6 / 1.0, cluster 0 = largest. Markers: difference of the mean z of x'
-(cluster - rest); pct = share of the cluster's squares whose x' is above the channel's median.
+Channels, in order (each reason goes to the manifest's "dropped" and qc.json):
+  1. names matching the viewer's hidden-channel default (open / blank / empty / unused / none):
+     not written;
+  2. duplicates - the same name after celltypes.norm_name (case, "01_" prefixes, fluorophore /
+     FFPE tags): the copy with the stronger signal-to-background is kept, the others not written;
+  3. flat over the tissue (p99.5 - background < FLAT_RANGE units): written, not embedded;
+  4. nuclear stains: written (they make the tissue mask), not embedded.
+Weak (signal-to-background < WEAK_SNR) and saturated (> SAT_SHARE of in-tissue pixels at the
+limit) channels stay in the embedding and are flagged in qc.json.
+
+Normalization (per channel, per slide - pieces on one slide were stained together):
+  bg = median over the off-tissue squares (background); hi = p99.5 of (v - bg) over the tissue
+  squares, leaving out the "everything bright" ones (bright_squares: folds would set it);
+  x = asinh(max(v - bg, 0) / hi / 0.2) / asinh(5)   (0 at background, 1 at p99.5, no upper clip).
+Embedding (sectionumap.write_feature_umap): x -> z-score (clip 10) -> PCA min(15, channels - 1) ->
+UMAP (15 neighbours, min_dist 0.3, seed 42; above sectionumap.UMAP_SAMPLE squares fitted on a seeded
+sample, the rest placed with transform) -> Leiden 0.3 / 0.6 / 1.0, cluster 0 = largest. Markers:
+difference of the mean z of x (cluster - rest); pct = share of the cluster's squares whose x is
+above the channel's median. Exports before 2026-11 used x' = clip((v - p1) / (p99.5 - p1), 0, 1)
+on means from a max-pooled level (normalise, kept for reference).
 """
 from __future__ import annotations
 
@@ -55,10 +73,10 @@ import numpy as np
 
 import deid
 
-DEFAULT_GRID_UM = 20.0
+DEFAULT_GRID_UM = 16.0
 NUCLEAR = re.compile(r"^\s*(dapi|hoechst)\b", re.I)                    # = viewer.js NUCLEAR_CHANNEL
-HIDDEN = re.compile(r"^\s*(open|blank|empty|unused)([\s_-]|$)", re.I)   # = viewer.js HIDE_CHANNEL default
-FLAT_RANGE = 2.0              # p99.5 - p1 of the tissue squares, 8-bit units: below this a channel is flat
+HIDDEN = re.compile(r"^\s*(open|blank|empty|unused|none)([\s_-]|$)", re.I)   # = viewer.js HIDE_CHANNEL default
+FLAT_RANGE = 2.0              # p99.5 - background over the tissue squares, 8-bit units: below this a channel is flat
 P_LO, P_HI = 1.0, 99.5
 HOLE_MAX = 4                  # tissue mask: enclosed background holes up to this many squares are filled
 DEFAULT_TISSUE_SMOOTH_UM = 100.0   # tissue mask: moving-average window over the square means (0 = none)
@@ -85,37 +103,33 @@ def applies_to(m: dict) -> bool:
             and not is_photo(m["image"].get("channels", [])))
 
 
-def pick_level(shapes, width: int, px_um: float, grid_um: float) -> tuple[int, float]:
-    """(level, µm per pixel at that level): pixel closest to grid/8 (log scale), never coarser than grid/4."""
-    best = None
-    for L, (_h, w) in enumerate(shapes):
-        p = px_um * width / w
-        if p > grid_um / 4 * (1 + 1e-9):
-            continue
-        d = abs(math.log(p / (grid_um / 8)))
-        if best is None or d < best[0] - 1e-12:
-            best = (d, L, p)
-    if best is None:                                  # even full res is coarser than grid/4
-        return 0, px_um
-    return best[1], best[2]
-
-
 def edges(n_px: int, step: float) -> np.ndarray:
     """Pixel edges of the squares along one axis (a last partial square is kept if >= half a square)."""
     n = int(math.floor(n_px / step + 0.5))
     return np.minimum(np.round(np.arange(n + 1) * step).astype(np.int64), n_px)
 
 
-def channel_sums(a, c: int, ye: np.ndarray, xe: np.ndarray) -> np.ndarray:
-    """Sum of channel `c` of zarr array `a` (C, H, W) over every square, one chunk row at a time."""
+def channel_sums(a, c: int, ye: np.ndarray, xe: np.ndarray, top: int | None = None,
+                 profiles: bool = False):
+    """Sum of channel `c` of zarr array `a` (C, H, W) over every square, one chunk row at a time.
+
+    With `top`, also the count of pixels >= top per square (saturation), returned as
+    (sums, counts). With `profiles`, also the mean of every image column and row
+    (for the seam check): (sums, counts, colMean, rowMean)."""
     ny, nx = len(ye) - 1, len(xe) - 1
     S = np.zeros((ny, nx), np.float64)
+    T = np.zeros((ny, nx), np.int64) if top is not None else None
     rows = a.chunks[1]
     h_used, w_used = int(ye[-1]), int(xe[-1])
+    colsum = np.zeros(w_used, np.float64) if profiles else None
+    rowmean = np.zeros(h_used, np.float64) if profiles else None
     buf, b0, j = None, 0, 0
     for y0 in range(0, h_used, rows):
         y1 = min(y0 + rows, h_used)
         band = np.asarray(a[c, y0:y1, :w_used])
+        if profiles:
+            colsum += band.sum(0, dtype=np.float64)
+            rowmean[y0:y1] = band.mean(1, dtype=np.float64)
         buf = band if buf is None or len(buf) == 0 else np.concatenate([buf, band])
         j1 = j
         while j1 < ny and ye[j1 + 1] <= y1:
@@ -124,9 +138,16 @@ def channel_sums(a, c: int, ye: np.ndarray, xe: np.ndarray) -> np.ndarray:
             blk = buf[ye[j] - b0: ye[j1] - b0]
             rs = np.add.reduceat(blk, ye[j:j1] - ye[j], axis=0, dtype=np.uint64)
             S[j:j1] = np.add.reduceat(rs, xe[:-1], axis=1)
+            if T is not None:
+                hit = np.add.reduceat((blk >= top).view(np.uint8), ye[j:j1] - ye[j], axis=0, dtype=np.int64)
+                T[j:j1] = np.add.reduceat(hit, xe[:-1], axis=1)
             buf = buf[ye[j1] - b0:]
             b0, j = int(ye[j1]), j1
-    return S
+    if T is None:
+        return S
+    if profiles:
+        return S, T, colsum / max(h_used, 1), rowmean
+    return S, T
 
 
 def otsu(v: np.ndarray, bins: int = 256) -> float:
@@ -206,7 +227,8 @@ def tissue_rule(size: int, grid_um: float) -> str:
 
 
 def normalise(V: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """x' = clip((v - p1) / (p99.5 - p1), 0, 1) per column; also returns p1 and p99.5."""
+    """The rule before 2026-11 (old exports; the circle tool still reads it from them):
+    x' = clip((v - p1) / (p99.5 - p1), 0, 1) per column; also returns p1 and p99.5."""
     V = np.asarray(V, np.float64)
     lo = np.percentile(V, P_LO, axis=0)
     hi = np.percentile(V, P_HI, axis=0)
@@ -215,59 +237,176 @@ def normalise(V: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return np.clip(xp, 0.0, 1.0), lo, hi
 
 
+# ---- normalization (2026-11): background off, / p99.5, asinh -----------------------------
+NORMALIZE = "bg-asinh-v1"     # mat/index.json "normalize": lasso_worker.js xpOf switches on it
+COFACTOR = 0.2                # asinh cofactor, in units of the channel's p99.5 above background
+BG_MIN_OFF = 1000             # off-tissue squares needed for the background; fewer -> 1st pct in tissue
+WEAK_SNR = 15.0               # (p99.5 - bg) / bg below this: "weak" (kept, flagged)
+SAT_SHARE = 0.01              # share of in-tissue pixels at the detector's limit above this: "saturated"
+SAT_SQUARE = 0.5              # a square with more than this share of its pixels at the limit is flagged
+                              # (0.10 flagged 25% of s48's squares: bright stains clip in every dense patch)
+BRIGHT_PCT, BRIGHT_SHARE = 95.0, 0.8   # "everything bright": > 80% of the marker channels above their p95
+SEAM_JUMP_PCT = 99.7          # seam check: a "step" = a jump between neighbouring pixel columns above this percentile
+SEAM_MIN_PX, SEAM_MAX_PX = 200, 4000   # tile spacings looked for, in full-resolution pixels
+SEAM_REPEATS = 8              # a channel shows seams when one spacing between steps repeats this often
+SEAM_CHANNELS = 2             # the slide is flagged when this many channels share that spacing (within 1%)
+FLAG_BRIGHT, FLAG_SAT = 1, 2  # qc_flags.bin bits
+
+
+def background(V: np.ndarray, keep: np.ndarray) -> tuple[np.ndarray, str]:
+    """Per column: the median over OFF-tissue squares, or, with fewer than BG_MIN_OFF of them
+    (tissue fills the slide), the 1st percentile over the tissue squares."""
+    V = np.asarray(V, np.float64)
+    off = ~np.asarray(keep, bool)
+    if off.sum() >= BG_MIN_OFF:
+        return np.median(V[off], axis=0), "median of the off-tissue squares"
+    return np.percentile(V[keep], P_LO, axis=0), "1st percentile of the tissue squares (too little background)"
+
+
+def normalise_bg_asinh(Vt: np.ndarray, bg: np.ndarray, hi: np.ndarray, cof: float = COFACTOR) -> np.ndarray:
+    """x = asinh(u / cof) / asinh(1 / cof), u = max(v - bg, 0) / hi: 0 at background, 1 at the
+    channel's p99.5, no upper clip (a fold at 3x p99.5 reads 1.47). hi <= 0 -> 0."""
+    Vt = np.asarray(Vt, np.float64)
+    ok = np.asarray(hi, np.float64) > 0
+    u = np.maximum(Vt - bg, 0.0) / np.where(ok, hi, 1.0)
+    return np.where(ok, np.arcsinh(u / cof) / np.arcsinh(1.0 / cof), 0.0)
+
+
+def _steps(prof: np.ndarray) -> dict | None:
+    """Sharp steps in one channel's column (or row) means at full resolution: the jumps between
+    neighbouring pixel columns above their 99.7th percentile, and the most common spacing between
+    them (to 4 px). A camera tile edge gives the same spacing again and again; anatomy does not."""
+    prof = np.asarray(prof, np.float64)
+    if len(prof) < 4 * SEAM_MIN_PX:
+        return None
+    g = np.abs(np.diff(prof))
+    idx = np.flatnonzero(g > np.percentile(g, SEAM_JUMP_PCT))
+    gaps = np.diff(idx)
+    gaps = gaps[(gaps >= SEAM_MIN_PX) & (gaps <= SEAM_MAX_PX)]
+    if not len(gaps):
+        return None
+    vals, cnt = np.unique(np.round(gaps / 4).astype(np.int64) * 4, return_counts=True)
+    k = int(np.argmax(cnt))
+    return {"spacingPx": int(vals[k]), "repeats": int(cnt[k]), "jumps": int(len(idx))}
+
+
+def seam_check(profiles: list, names: list[str], px_um: float) -> dict | None:
+    """Tile seams: per channel, _steps of its column and row means (full-resolution pixels). A channel
+    shows seams along an axis when one spacing repeats >= SEAM_REPEATS times; the slide is flagged when
+    >= SEAM_CHANNELS channels show the same spacing (within 1%). (s48: CD45 and CD90 step every 960 px
+    across and 720 px down - the 486 x 365 µm camera field - and circle -> UMAP clusters drawn there
+    come out in vertical bands; DAPI barely shows it, so one channel is not enough to look at.)"""
+    if not profiles:
+        return None
+    out = {"rule": f"per channel, sharp steps between neighbouring pixel columns / rows (above the "
+                   f"{SEAM_JUMP_PCT:g}th percentile of the jumps) and their most common spacing; flagged when "
+                   f">= {SEAM_CHANNELS} channels repeat one spacing (within 1%) >= {SEAM_REPEATS} times"}
+    flagged = False
+    for axis, k in (("columns", 0), ("rows", 1)):
+        hits = []
+        for nm, pr in zip(names, profiles):
+            st = _steps(pr[k])
+            if st and st["repeats"] >= SEAM_REPEATS:
+                hits.append((st["spacingPx"], st["repeats"], nm))
+        best = []
+        for sp, _r, _n in hits:
+            grp = [h for h in hits if abs(h[0] - sp) <= 0.01 * sp + 4]
+            if len(grp) > len(best):
+                best = grp
+        res = {"channelsChecked": len(names), "channelsWithSteps": len(hits)}
+        if best:
+            sp = int(np.median([h[0] for h in best]))
+            res.update(spacingPx=sp, spacingUm=round(sp * px_um), channels=[h[2] for h in best],
+                       repeats=int(np.median([h[1] for h in best])))
+        res["flagged"] = len(best) >= SEAM_CHANNELS
+        flagged |= res["flagged"]
+        out[axis] = res
+    out["flagged"] = flagged
+    return out
+
+
+def saturation_top(dtype, channels: list[dict]) -> int:
+    """The pixel value that means "at the detector's limit", one per slide: 255 for uint8; for
+    uint16 4,095 when no channel goes above it (a 12-bit camera), else 65,535."""
+    if str(dtype) == "uint8":
+        return 255
+    dm = [float(ch["dataMax"]) for ch in channels if ch.get("dataMax") is not None]
+    return 4095 if dm and max(dm) <= 4095 else 65535
+
+
+def bright_squares(Vt: np.ndarray) -> np.ndarray:
+    """"Everything bright" (folds, bubbles, bright edges): more than BRIGHT_SHARE of the columns
+    above their own BRIGHT_PCT-th percentile. Ranks per column, so it does not depend on the
+    normalization, and the normalization can leave these squares out of its p99.5."""
+    Vt = np.asarray(Vt, np.float64)
+    if Vt.shape[1] == 0:
+        return np.zeros(len(Vt), bool)
+    return (Vt > np.percentile(Vt, BRIGHT_PCT, axis=0)).mean(1) > BRIGHT_SHARE
+
+
 def square_means(r, grid_um: float, px_um: float, log=print, workers: int = 4) -> dict:
-    """Mean per square and channel (8-bit units) over the whole grid, from the chosen level."""
-    L, px_L = pick_level(r.shapes, r.W, px_um, grid_um)
-    H_L, W_L = r.shapes[L]
-    step_L = grid_um / px_L
-    if step_L < 2:
-        raise ValueError(f"{grid_um} µm squares are {step_L:.1f} px at full resolution: too small")
-    if px_L > grid_um / 4:
-        log(f"[grid] WARNING: full-res pixels ({px_um:.2f} µm) are coarser than grid/4")
-    ye, xe = edges(H_L, step_L), edges(W_L, step_L)
+    """Mean per square and channel (8-bit units) over the whole grid, from FULL-RESOLUTION pixels.
+
+    The coarser pyramid levels of a fluorescence image are 2x2 MAX-pooled (pyramid.py, so the
+    display keeps small bright structures), so a mean taken from them overstates every marker:
+    on s48, 16 µm, DAPI by ~20% and sparse markers (Ki67) by ~2x. Level 0 is read once per
+    channel, a chunk row at a time. Also counts, per square and channel, the pixels at the
+    detector's limit (saturation_top), and every channel's column / row means (seam_check).
+    """
+    a = r._arrays[0]
+    step = grid_um / px_um
+    if step < 2:
+        raise ValueError(f"{grid_um} µm squares are {step:.1f} px at full resolution: too small")
+    ye, xe = edges(r.H, step), edges(r.W, step)
     ny, nx = len(ye) - 1, len(xe) - 1
-    a = r._arrays[L]
+    tops = [saturation_top(a.dtype, r.channels)] * len(r.channels)
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        sums = list(ex.map(lambda c: channel_sums(a, c, ye, xe), range(len(r.channels))))
+        res = list(ex.map(lambda c: channel_sums(a, c, ye, xe, top=tops[c], profiles=True), range(len(r.channels))))
     npx = np.outer(np.diff(ye), np.diff(xe)).astype(np.float64)
     V = np.empty((ny * nx, len(r.channels)), np.float32)
     V64 = np.empty((ny * nx, len(r.channels)), np.float64)   # for the tissue mask (not rounded to float32)
-    for c, S in enumerate(sums):
+    SAT = np.empty((ny * nx, len(r.channels)), np.int32)     # pixels at the limit per square
+    prof = []
+    for c, (S, T, pc, pr) in enumerate(res):
+        prof.append((pc, pr))
         mean = (S / npx).ravel()
         b0, b1 = (float(x) for x in r.channels[c]["bits"])
         if not (str(a.dtype) == "uint8" and b0 == 0 and b1 == 255):
             mean = np.maximum((mean - b0) * (255.0 / max(b1 - b0, 1e-9)), 0.0)
         V[:, c] = mean
         V64[:, c] = mean
-    log(f"[grid] level {L} ({px_L:.3f} µm/px, {W_L}x{H_L}), {step_L:.2f} px squares, {nx}x{ny} = {nx * ny:,} "
+        SAT[:, c] = T.ravel()
+    log(f"[grid] full resolution ({px_um:.3f} µm/px, {r.W}x{r.H}), {step:.2f} px squares, {nx}x{ny} = {nx * ny:,} "
         f"squares x {len(r.channels)} channels  {time.time() - t0:.0f}s")
-    return {"V": V, "V64": V64, "nx": nx, "ny": ny, "level": L, "pxUm": px_L}
+    return {"V": V, "V64": V64, "nx": nx, "ny": ny, "level": 0, "pxUm": float(px_um), "sat": SAT,
+            "npx": npx.ravel(), "tops": tops, "profiles": prof}
 
 
 MAT_SCALE = 100              # mat/ chunks store round(v * MAT_SCALE) as uint16 (0.01 of an 8-bit unit)
 MAT_CHUNK_UM = 500.0         # = hvgchunks.DEFAULT_CHUNK_UM
 
 
-def write_mat_chunks(d: Path, pos: np.ndarray, V: np.ndarray, names: list[str], p1, p995, mpp: float,
-                     chunk_um: float = MAT_CHUNK_UM, log=print) -> dict:
+def write_mat_chunks(d: Path, pos: np.ndarray, V: np.ndarray, names: list[str], bg, hi, mpp: float,
+                     chunk_um: float = MAT_CHUNK_UM, log=print, cofactor: float = COFACTOR) -> dict:
     """expr/<key>/mat/: the embedded channels square by square, cut into squares of tissue.
 
     The circle -> UMAP tool needs every channel for the few squares under a shape - the
     gene files hold one channel for every square - so, like hvg/ for counts:
 
-        mat/index.json      {chunkPx, chunkUm, scale, channels, p1, p99_5, median, chunks: [{tx, ty, n, bytes}]}
+        mat/index.json      {chunkPx, chunkUm, scale, channels, normalize, bg, hi, cofactor, median,
+                             chunks: [{tx, ty, n, bytes}]}
         mat/<tx>_<ty>.bin   little-endian: u32 nSquares, u32 row[nSquares] (index into positions.bin),
                             u16 value[nSquares * nChannels] (square-major, round(v * scale), clipped at 65535)
 
-    `V` = squares x channels (positions.bin order), raw means; `p1` / `p995` the whole-section
-    window of each channel, so a circle is scaled as the section UMAP was: x' = clip((v - p1) /
-    (p99.5 - p1), 0, 1). `median` = each channel's median x' over the section (the markers' pct).
+    `V` = squares x channels (positions.bin order), raw means; `bg` / `hi` each channel's whole-slide
+    background and p99.5 above it, so a circle is scaled as the section UMAP was (normalise_bg_asinh,
+    "normalize": NORMALIZE). `median` = each channel's median x over the section (the markers' pct).
+    Exports before 2026-11 carry p1 / p99_5 instead and no "normalize" (x' = clip((v - p1) / (p99.5 - p1), 0, 1)).
     """
     V = np.asarray(V, np.float64)
-    p1, p995 = np.asarray(p1, np.float64), np.asarray(p995, np.float64)
-    rng = p995 - p1
-    xp = np.clip(np.where(rng > 0, (V - p1) / np.where(rng > 0, rng, 1.0), 0.0), 0.0, 1.0)
+    bg, hi = np.asarray(bg, np.float64), np.asarray(hi, np.float64)
+    xp = normalise_bg_asinh(V, bg, hi, cofactor)
     med = np.median(xp, axis=0)
     chunk_px = int(round(chunk_um / mpp))
     xy = np.asarray(pos, np.float64)
@@ -290,8 +429,10 @@ def write_mat_chunks(d: Path, pos: np.ndarray, V: np.ndarray, names: list[str], 
         total += len(buf)
     r6 = lambda a: [round(float(x), 6) for x in a]
     index = {"chunkPx": chunk_px, "chunkUm": chunk_um, "scale": MAT_SCALE, "nChannels": len(names),
-             "channels": list(names), "p1": r6(p1), "p99_5": r6(p995), "median": r6(med),
-             "normalize": "per channel clip((v - p1) / (p99.5 - p1), 0, 1), window over the whole section",
+             "channels": list(names), "normalize": NORMALIZE, "bg": r6(bg), "hi": r6(hi), "cofactor": cofactor,
+             "median": r6(med),
+             "normalizeRule": "x = asinh(max(v - bg, 0) / hi / cofactor) / asinh(1 / cofactor), "
+                              "bg and hi over the whole slide",
              "chunks": chunks}
     deid.assert_clean(index, "mat/index.json")
     _atomic(md / "index.json", json.dumps(index, separators=(",", ":")).encode("utf-8"))
@@ -307,11 +448,12 @@ def _atomic(p: Path, buf: bytes):
 
 def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, markers: Path | None = None,
                      umap: bool = True, celltypes: bool = True, log=print, force: bool = False,
-                     tissue_smooth_um: float = DEFAULT_TISSUE_SMOOTH_UM) -> dict | None:
+                     tissue_smooth_um: float = DEFAULT_TISSUE_SMOOTH_UM, umap_sample: int | None = None) -> dict | None:
     """Write expr/<key>/ for an image dataset (PyramidReader `r`, manifest `m`) into export folder `out`.
 
     `tissue_smooth_um`: moving-average window (µm) over the square means before the tissue
-    threshold; 0 = threshold the raw means (the old, lacy mask).
+    threshold; 0 = threshold the raw means (the old, lacy mask). `umap_sample`: fit the section
+    UMAP on this many squares and place the rest (None = sectionumap.UMAP_SAMPLE, 0 = fit on all).
 
     Returns the manifest's expr entry, or None when the dataset has no pixel size.
     """
@@ -325,20 +467,21 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     grid_um = float(grid_um)
     key = layer_key(grid_um)
     t_all = time.time()
-    g = square_means(r, grid_um, float(px_um), log=log)
-    V, V64, nx, ny = g["V"], g["V64"], g["nx"], g["ny"]
     names = [str(ch["name"]) for ch in r.channels]
 
-    # ---- channels written / embedded --------------------------------------------------
+    # ---- 1. channels: open / blank by name ----------------------------------------------
     written = [j for j, n in enumerate(names) if not HIDDEN.match(n)]
     dropped = [{"name": names[j], "reason": "open / blank channel: not written"}
                for j in range(len(names)) if j not in written]
     if not written:
         log("[grid] skipped: every channel is an open / blank channel")
         return None
-
-    # ---- tissue mask ---------------------------------------------------------------------
     nuc = [j for j in written if NUCLEAR.match(names[j])]
+
+    g = square_means(r, grid_um, float(px_um), log=log)
+    V, V64, nx, ny = g["V"], g["V64"], g["nx"], g["ny"]
+
+    # ---- 2. tissue mask --------------------------------------------------------------------
     by = names[nuc[0]] if nuc else "mean of the channels"
     src = V64[:, nuc[0]] if nuc else V64[:, written].mean(1)
     size = smooth_squares(tissue_smooth_um, grid_um)
@@ -353,14 +496,42 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     log(f"[grid] tissue mask: {sm_txt} > {thr:.2f} (Otsu on log1p over {len(src):,} squares), "
         f"+ {n_filled} squares in {n_holes} enclosed holes of <= {HOLE_MAX} squares: keeps {n:,} ({n / len(src):.0%})")
 
-    Vt = V[rows][:, written].astype(np.float64)       # tissue squares x written channels
+    # ---- 3. per channel: background, p99.5 above it, signal, saturation --------------------
+    # p99.5 leaves out the "everything bright" squares (bright_squares, on the non-nuclear written
+    # channels): a fold covering more than 0.5% of the tissue would otherwise set every channel's
+    # p99.5 and squash the real signal (the demo's 150 µm fold made fascicles read as perineurium)
+    bg_all, bg_rule = background(V64, keep)
+    Vt_all = V64[rows]
+    bright = bright_squares(Vt_all[:, [j for j in written if not NUCLEAR.match(names[j])]])
+    ref = ~bright if (~bright).sum() >= max(50, n // 2) else np.ones(n, bool)
+    hi_all = np.percentile(np.maximum(Vt_all[ref] - bg_all, 0.0), P_HI, axis=0)
+    snr_all = hi_all / np.maximum(bg_all, 0.5)
+    npx_t = float(g["npx"][rows].sum())
+    sat_all = g["sat"][rows].sum(0) / max(npx_t, 1.0)
+
+    # ---- 4. duplicates (same name after the name cleanup): keep the stronger ----------------
+    groups: dict[str, list[int]] = {}
+    for j in written:
+        groups.setdefault(celltypes_mod.norm_name(names[j]), []).append(j)
+    for js in groups.values():
+        if len(js) < 2:
+            continue
+        best = max(js, key=lambda j: (snr_all[j], -j))
+        for j in js:
+            if j != best:
+                written.remove(j)
+                dropped.append({"name": names[j], "reason": f"duplicate of channel {best + 1} ({names[best]}), "
+                                                            f"which has the stronger signal: not written"})
+    nuc = [j for j in written if NUCLEAR.match(names[j])]
+
+    Vt = Vt_all[:, written]                            # tissue squares x written channels
     wnames = [names[j] for j in written]
-    xp, p1, p995 = normalise(Vt)
-    flat = (p995 - p1) < FLAT_RANGE
+    bg, hi, snr, sat = bg_all[written], hi_all[written], snr_all[written], sat_all[written]
+    flat = hi < FLAT_RANGE
     embed, marker_cols = [], []
     for k, j in enumerate(written):
         if flat[k]:
-            dropped.append({"name": names[j], "reason": f"flat over the tissue (p99.5 - p1 = {p995[k] - p1[k]:.2f}): "
+            dropped.append({"name": names[j], "reason": f"flat over the tissue (p99.5 - background = {hi[k]:.2f}): "
                                                          "written, not embedded"})
             continue
         marker_cols.append(k)
@@ -368,9 +539,51 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
             dropped.append({"name": names[j], "reason": "nuclear stain: written (and the tissue mask), not embedded"})
         else:
             embed.append(k)
+    x = normalise_bg_asinh(Vt, bg, hi)
     log(f"[grid] {len(written)} channels written, {len(embed)} embedded: " + ", ".join(wnames[k] for k in embed))
     for dr in dropped:
         log(f"[grid]   left out: {dr['name']} - {dr['reason']}")
+
+    # ---- 5. QC: weak / saturated channels, everything-bright and saturated squares, seams ----
+    flags = np.zeros(n, np.uint8)
+    flags[bright] |= FLAG_BRIGHT
+    sat_sq = (g["sat"][rows][:, written] / g["npx"][rows][:, None]) > SAT_SQUARE
+    flags[sat_sq.any(1)] |= FLAG_SAT
+    seams = seam_check([g["profiles"][j] for j in written], wnames, float(px_um))
+    qc_ch = []
+    for k, nm in enumerate(wnames):
+        status = ("flat" if flat[k] else "nuclear" if k in marker_cols and k not in embed
+                  else "saturated" if sat[k] > SAT_SHARE else "weak" if snr[k] < WEAK_SNR else "ok")
+        qc_ch.append({"name": nm, "inUmap": k in embed, "status": status,
+                      "background": round(float(bg[k]), 3), "p99_5AboveBg": round(float(hi[k]), 3),
+                      "signalToBackground": round(float(snr[k]), 2), "saturatedPct": round(float(sat[k]) * 100, 3),
+                      "weak": bool(snr[k] < WEAK_SNR), "saturated": bool(sat[k] > SAT_SHARE)})
+    n_bright, n_sat = int((flags & FLAG_BRIGHT).astype(bool).sum()), int((flags & FLAG_SAT).astype(bool).sum())
+    qc = {"channels": qc_ch,
+          "dropped": [{"name": dr["name"], "reason": dr["reason"]} for dr in dropped],
+          "squares": n,
+          "everythingBright": {"n": n_bright, "share": round(n_bright / n, 5),
+                               "rule": f"more than {BRIGHT_SHARE:.0%} of the marker channels (all written but the "
+                                       f"nuclear stain) above their {BRIGHT_PCT:g}th percentile over the tissue "
+                                       "(folds, bubbles, bright edges); left out of each channel's p99.5"},
+          "saturatedSquares": {"n": n_sat, "share": round(n_sat / n, 5),
+                               "rule": f"more than {SAT_SQUARE:.0%} of the square's pixels at the detector's limit "
+                                       "in any written channel"},
+          "seams": seams,
+          "rules": {"weak": f"(p99.5 - background) / background < {WEAK_SNR:g}: kept in the UMAP, flagged",
+                    "saturated": f"more than {SAT_SHARE:.0%} of the in-tissue pixels at the detector's limit "
+                                 f"(255 for 8-bit images; 4,095 or 65,535 for 16-bit): kept, flagged",
+                    "background": bg_rule, "limit": sorted({int(t) for t in g["tops"]}),
+                    "p99_5": "99.5th percentile of (v - background) over the tissue squares, leaving out the "
+                             "everything-bright squares"},
+          "note": "UMAPs, clusters and names are per slide: their colours and positions are not comparable "
+                  "across slides.",
+          "flagsFile": "qc_flags.bin", "flagBits": {"everythingBright": FLAG_BRIGHT, "saturated": FLAG_SAT}}
+    weak = [c["name"] for c in qc_ch if c["weak"] and c["inUmap"]]
+    satd = [f"{c['name']} {c['saturatedPct']:.1f}%" for c in qc_ch if c["saturated"]]
+    log(f"[grid] QC: weak {', '.join(weak) or 'none'}; saturated {', '.join(satd) or 'none'}; "
+        f"everything-bright squares {n_bright:,}; squares with saturated pixels {n_sat:,}; "
+        f"seams {'FLAGGED' if seams and seams['flagged'] else 'not flagged'}")
 
     # ---- files ---------------------------------------------------------------------------
     step_full = grid_um / float(px_um)
@@ -390,34 +603,44 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
         xyv[:, 2] = Vt[:, k]
         _atomic(d / "gene" / f"{_encode(nm)}.bin", np.ascontiguousarray(xyv, dtype="<f4").tobytes())
     log(f"[grid] {key}: {n:,} squares, {len(wnames)} gene files -> {d}")
-    mat = write_mat_chunks(d, pos, Vt[:, embed], [wnames[k] for k in embed], p1[embed], p995[embed],
+    deid.assert_clean(qc, "grid qc.json")
+    _atomic(d / "qc.json", json.dumps(qc, separators=(",", ":")).encode("utf-8"))
+    _atomic(d / "qc_flags.bin", flags.tobytes())
+    mat = write_mat_chunks(d, pos, Vt[:, embed], [wnames[k] for k in embed], bg[embed], hi[embed],
                            float(px_um), log=log) if embed else None
 
     entry = {"key": key, "label": f"{grid_um:g} µm squares · marker means", "kind": "protein",
              "binSizeUm": grid_um, "nBins": n, "nGenes": len(wnames), "micronsPerPixel": float(px_um),
              "spotDiameterPx": step_full, "imageScale": 1, "channels": [wnames[k] for k in embed],
-             "geneSummary": "mean intensity per square (8-bit units)",
+             "geneSummary": "mean intensity per square (8-bit units, full-resolution pixels)",
              # exact (not rounded) so the square edges can be rebuilt: protgrid.edges(H, binSizeUm / levelPixelUm)
              "grid": {"level": g["level"], "levelPixelUm": g["pxUm"], "nx": nx, "ny": ny,
                       "tissueBy": by, "tissueThreshold": round(thr, 3), "tissueRule": rule,
                       "tissueSmoothUm": size * grid_um if size > 1 else 0, "tissueSmoothSquares": size,
                       "holesFilled": n_filled, "squares": nx * ny},
+             "normalize": NORMALIZE,
+             "qc": {"file": "qc.json", "flags": "qc_flags.bin", "everythingBright": n_bright, "saturatedSquares": n_sat,
+                    "weak": weak, "saturated": [c["name"] for c in qc_ch if c["saturated"]],
+                    "seamsFlagged": bool(seams and seams["flagged"])},
              "dropped": dropped}
     if mat:
         entry["mat"] = mat
 
     if umap:
         # reuse an earlier umap/ only if it was made from these very numbers
-        h = hashlib.sha256(np.ascontiguousarray(xp[:, embed]).tobytes()).hexdigest()[:16]
-        u = sectionumap.write_feature_umap(d, xp, wnames, embed, marker_cols, key, log=log, force=force,
+        h = hashlib.sha256(np.ascontiguousarray(x[:, embed]).tobytes()).hexdigest()[:16]
+        u = sectionumap.write_feature_umap(d, x, wnames, embed, marker_cols, key, log=log, force=force,
+                                           sample=umap_sample,
                                            extra_params={"gridUm": grid_um, "tissueRule": rule,
                                                          "tissueSmoothUm": size * grid_um if size > 1 else 0,
+                                                         "normalize": NORMALIZE, "cofactor": COFACTOR,
                                                          "input": h})
         if u:
             entry["umap"] = u
             if celltypes:
                 usable = ~flat
-                c = celltypes_mod.write_celltypes_protein(d, xp, wnames, usable, markers=markers, key=key, log=log)
+                c = celltypes_mod.write_celltypes_protein(d, x, wnames, usable, markers=markers, key=key, log=log,
+                                                          flags=flags)
                 if c:
                     entry["umap"] = {**u, "celltypes": c}
     deid.assert_clean(entry, "grid manifest entry")

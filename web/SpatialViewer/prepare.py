@@ -11,10 +11,12 @@ the server just scans <out> for manifest.json files.
 
     python prepare.py export --id sample1 --out <cache folder> --dest <static folder> [--fmt jpg]
 
-writes the static tree. For an image dataset (akoya / tiff / xenium) it also adds a 20 µm grid
-of marker means as a "protein" expression layer with a UMAP, Leiden clusters and suggested names
-(--grid-um N to change the square size, 0 to skip; --markers picks the marker list, default
-markers/akoya_nerve.json for protein and markers/nerve.json for Visium genes).
+writes the static tree. For an image dataset (akoya / tiff / xenium) it also adds a 16 µm grid
+of marker means (from full-resolution pixels) as a "protein" expression layer with a QC report,
+a UMAP, Leiden clusters and suggested names (--grid-um N to change the square size, 0 to skip;
+--markers picks the marker list, default markers/protein_generic.json for protein and
+markers/rna_generic.json for Visium genes; tissue-specific lists such as markers/nerve.json and
+markers/akoya_nerve.json are passed with --markers).
 """
 from __future__ import annotations
 
@@ -109,17 +111,23 @@ def main(argv=None):
     e.add_argument("--fmt", choices=["png", "jpg"], default="png")
     e.add_argument("--workers", type=int, default=8)
     e.add_argument("--markers", help="marker-list JSON for suggested cluster names. Default by what the dataset "
-                                     "holds: markers/nerve.json (genes) for Visium / RNA layers, "
-                                     "markers/akoya_nerve.json (\"modality\": \"protein\") for the grid layer of an "
-                                     "image dataset. A list of the other modality is skipped with a message.")
-    e.add_argument("--grid-um", type=float, default=20.0,
+                                     "holds: markers/rna_generic.json (genes) for Visium / RNA layers, "
+                                     "markers/protein_generic.json (\"modality\": \"protein\") for the grid layer "
+                                     "of an image dataset. Tissue-specific lists: markers/nerve.json, "
+                                     "markers/akoya_nerve.json. A list of the other modality is skipped with a message.")
+    e.add_argument("--grid-um", type=float, default=16.0,
                    help="image datasets (Akoya / multiplex TIFF, not Visium or H&E): size in µm of the grid squares "
                         "whose marker means become a 'protein' expression layer with a UMAP and clusters "
-                        "(protgrid.py). Default 20; 0 = no grid layer. Needs the dataset's pixel size.")
+                        "(protgrid.py). Default 16 (as the Visium HD 16 µm bins); 8 is about 4x the squares and "
+                        "files. 0 = no grid layer. Needs the dataset's pixel size.")
     e.add_argument("--tissue-smooth-um", type=float, default=100.0,
                    help="grid layer: the tissue mask thresholds the DAPI square means after a moving average "
-                        "over this many µm (default 100 = 5x5 squares of 20 µm); 0 = threshold the raw means "
+                        "over this many µm (default 100 = 7x7 squares of 16 µm); 0 = threshold the raw means "
                         "(keeps only nucleus-dense squares).")
+    e.add_argument("--umap-sample", type=int, default=None,
+                   help="grid layer: above this many tissue squares the section UMAP is fitted on a seeded random "
+                        "sample of this size and the other squares are placed into it (default 200000; 0 = always "
+                        "fit on every square, slower on big slides).")
     e.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
@@ -169,7 +177,7 @@ def main(argv=None):
         export_static(Path(args.out) / args.id, Path(args.dest), fmt=args.fmt, workers=args.workers, log=log,
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
-                      grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um)
+                      grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample)
         return
 
     if args.kind == "inspect":

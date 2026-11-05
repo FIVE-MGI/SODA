@@ -11,7 +11,7 @@
   const GENE_COLORS = cfg.geneColors || ["#ff3355", "#33ddff", "#ffdd33", "#66ff66"];
   const NUCLEAR_CHANNEL = /^\s*(dapi|hoechst)\b/i;   // pinned to the top of the list
   const HIDE_CHANNEL = cfg.hideChannels ? new RegExp(cfg.hideChannels, "i")
-                                        : /^\s*(open|blank|empty|unused)([\s_-]|$)/i;
+                                        : /^\s*(open|blank|empty|unused|none)([\s_-]|$)/i;
   const $ = (id) => document.getElementById(id);
 
   if (!window.deck) {
@@ -80,6 +80,8 @@
     exprKey: null, geneIndex: [], genes: [],   // genes: {name,hex,color,max,p99,n,positions,values,colors}
     geneBlend: "heatmap", pointScale: 1, genePalette: "genes", geneBin: 1, heat: null,
     tissue: { on: false, positions: null, key: null },
+    // marker squares: the export's slide QC (qc.json) and per-square flags (qc_flags.bin)
+    qc: { key: null, info: null, flags: null, positions: null, outline: false },
     overlays: [],          // {key,label,on,data}
     // Tier A region linking: meta from the manifest, ids aligned to positions.bin,
     // and a quantized-xy -> region-id lookup so a gene point finds its region.
@@ -652,6 +654,7 @@
     for (const o of S.overlays) { const l = overlayLayer(o); if (l) layers.push(l); }
     // the gating preview replaces the coloured squares on the slide while it is on
     if (gPrev) layers.push(gatePreviewLayer()); else layers.push(...umapTissueLayers());
+    const ql = qcLayer(); if (ql) layers.push(ql);
     layers.push(...lassoLayers());
     layers.push(...umapSideLayers());
     deckgl.setProps({ layers });
@@ -1179,6 +1182,7 @@
     await loadGeneIndex();
     S.region.selected = null;
     await loadRegions();
+    await loadQc();
     if (S.tissue.on) await loadTissue();
     await lassoOnLayer();
     await umapOnLayer();
@@ -1191,6 +1195,85 @@
     status(`Loading ${wd().bin} positions…`);
     try { S.tissue.positions = await S.src.positions(S.exprKey); }
     finally { status(null); }
+  }
+
+  // ---- slide QC (marker squares): protgrid.py qc.json + qc_flags.bin -------------------
+  // Channels left out or flagged (weak, saturated), squares flagged "everything bright"
+  // (folds, bubbles, edges) or with many saturated pixels, the seam check. Older exports
+  // have no qc: the box stays hidden.
+  const QC_STATUS = { weak: "weak", saturated: "saturated", flat: "flat: not in the UMAP", nuclear: "nuclear: tissue mask only" };
+  async function loadQc() {
+    const Q = S.qc, e = currentExpr();
+    Q.key = null; Q.info = null; Q.flags = null; Q.positions = null;
+    if (e && e.qc && e.qc.file && S.src && S.src.buf) {
+      try {
+        const [info, buf] = await Promise.all([S.src.json(`expr/${S.exprKey}/${e.qc.file}`),
+          S.src.buf(`expr/${S.exprKey}/${e.qc.flags || "qc_flags.bin"}`)]);
+        Q.info = info; Q.flags = new Uint8Array(buf); Q.key = S.exprKey;
+      } catch (err) { Q.info = null; Q.flags = null; }
+    }
+    buildQcBox();
+  }
+  function buildQcBox() {
+    const Q = S.qc, box = $("qcBox");
+    box.hidden = !Q.info;
+    if (!Q.info) { Q.outline = false; $("qcOutline").checked = false; return; }
+    const I = Q.info, esc = escHtml;
+    const ch = I.channels || [], weak = ch.filter((c) => c.weak && c.inUmap), sat = ch.filter((c) => c.saturated);
+    const nUmap = ch.filter((c) => c.inUmap).length, drop = I.dropped || [];
+    const pct = (n) => (I.squares ? `${(100 * n / I.squares).toFixed(2)}%` : "");
+    const br = I.everythingBright || {}, ss = I.saturatedSquares || {}, sm = I.seams;
+    const lines = [
+      `<b>${nUmap}</b> markers in the UMAP; ${drop.length} left out` +
+        (drop.length ? ` (<span title="${esc(drop.map((d) => `${d.name}: ${d.reason}`).join("\n"))}">${esc(drop.map((d) => d.name).join(", "))}</span>)` : "") + ".",
+      weak.length ? `<span class="qc-warn" title="${esc((I.rules && I.rules.weak) || "")}">Weak stain</span>: ${esc(weak.map((c) => c.name).join(", "))}. Kept in the UMAP; check them by eye.` : "No weak stains.",
+      sat.length ? `<span class="qc-warn" title="${esc((I.rules && I.rules.saturated) || "")}">Saturated</span>: ${esc(sat.map((c) => `${c.name} ${c.saturatedPct.toFixed(1)}%`).join(", "))} of tissue pixels at the detector's limit.` : "No saturated stains.",
+      `<span title="${esc(br.rule || "")}">Everything bright</span> (folds, bubbles, edges): ${(br.n || 0).toLocaleString()} squares (${pct(br.n || 0)}).` +
+        ` <span title="${esc(ss.rule || "")}">Many saturated pixels</span>: ${(ss.n || 0).toLocaleString()} (${pct(ss.n || 0)}).`,
+      sm ? (sm.flagged ? `<span class="qc-warn" title="${esc(sm.rule || "")}">Possible tile seams</span>: ` +
+                         ["columns", "rows"].filter((k) => sm[k] && sm[k].flagged).map((k) =>
+                           `<span title="${esc(sm[k].channels.join(", "))}">${sm[k].channels.length} of ${sm[k].channelsChecked} markers ` +
+                           `(${esc(sm[k].channels.slice(0, 4).join(", "))}${sm[k].channels.length > 4 ? " …" : ""})</span> step every ` +
+                           `${sm[k].spacingPx} px (~${sm[k].spacingUm} µm) ${k === "columns" ? "across" : "down"} the slide`).join("; ") +
+                         `. Clusters may follow these stripes (bands in the UMAP colours); compare with the image before trusting them.`
+                       : `<span title="${esc(sm.rule || "")}">No tile seams found.</span>`) : "",
+      `<i>${esc(I.note || "")}</i>`,
+    ].filter(Boolean);
+    $("qcSummary").innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
+    $("rowQcOutline").hidden = !((br.n || 0) + (ss.n || 0));
+    $("qcChannels").innerHTML = `<table class="qc-tab"><tr><th>Marker</th><th title="Off-tissue level (0–255)">Bg</th>` +
+      `<th title="(99.5th percentile − background) / background">Signal</th><th title="Share of tissue pixels at the detector's limit">Sat.</th><th></th></tr>` +
+      ch.map((c) => `<tr class="${c.status === "ok" ? "" : "qc-" + c.status}"><td>${esc(c.name)}</td><td>${c.background.toFixed(1)}</td>` +
+        `<td>${c.signalToBackground.toFixed(0)}</td><td>${c.saturatedPct.toFixed(2)}%</td><td>${esc(QC_STATUS[c.status] || "")}</td></tr>`).join("") +
+      `</table>`;
+  }
+  async function qcSetOutline(on) {
+    const Q = S.qc;
+    Q.outline = !!on && !!Q.flags;
+    if (Q.outline && !Q.positions) {
+      const pos = S.tissue.positions && S.tissue.key === S.exprKey ? S.tissue.positions : await S.src.positions(S.exprKey);
+      const idx = [];
+      for (let i = 0; i < Q.flags.length; i++) if (Q.flags[i]) idx.push(i);
+      const xy = new Float32Array(idx.length * 2), col = new Uint8Array(idx.length * 4);
+      idx.forEach((i, k) => {
+        xy[2 * k] = pos[2 * i]; xy[2 * k + 1] = pos[2 * i + 1];
+        col.set(Q.flags[i] & 1 ? [255, 170, 40, 255] : [230, 60, 230, 255], 4 * k);   // orange: everything bright, magenta: saturated
+      });
+      Q.positions = { xy, col, n: idx.length };
+    }
+    render();
+  }
+  function qcLayer() {
+    const Q = S.qc;
+    if (!Q.outline || !Q.positions || Q.key !== S.exprKey) return null;
+    const e = currentExpr(), r = Math.max(0.5, e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4);
+    return new ScatterplotLayer({
+      id: `qc-${S.dsId}-${Q.key}`,
+      data: { length: Q.positions.n, attributes: { getPosition: { value: Q.positions.xy, size: 2 },
+                                                   getLineColor: { value: Q.positions.col, size: 4, normalized: true } } },
+      radiusUnits: "common", getRadius: r, filled: false, stroked: true,
+      lineWidthUnits: "pixels", getLineWidth: 1.5, parameters: NORMAL,
+    });
   }
 
   // ---- Tier A: region linking --------------------------------------------------------
@@ -1308,8 +1391,9 @@
       L.hvg = hvg; L.pos = pos; L.prot = prot;
     } catch (err) { $("panelLasso").hidden = true; return; }
     $("lassoNote").textContent = prot
-      ? `Uses the ${e.label} layer: the ${L.hvg.nChannels} markers of the section UMAP, each scaled with the whole ` +
-        `section's window (1st to 99.5th percentile), then compared within the shapes.`
+      ? `Uses the ${e.label} layer: the ${L.hvg.nChannels} markers of the section UMAP, each scaled as the whole ` +
+        (L.hvg.normalize === "bg-asinh-v1" ? `slide was (background taken off, divided by its 99.5th percentile, asinh), `
+                                           : `section was (1st to 99.5th percentile), `) + `then compared within the shapes.`
       : `Uses the ${e.label} layer. The UMAP can only use the ${L.hvg.nGenes.toLocaleString()} ` +
         `most variable genes of the whole section; inside the shapes it keeps those counted in at least ` +
         `${LASSO.minDetect}–${LASSO.minDetectCap} of the bins (1% of them, within those limits).`;
@@ -1595,7 +1679,7 @@
   function loadMarkerSet() {
     if (!markerSetP) markerSetP = (async () => {
       try {
-        const r = await fetch(cfg.markerSet || "markers/nerve.json", { cache: "no-cache" });
+        const r = await fetch(cfg.markerSet || "markers/rna_generic.json", { cache: "no-cache" });
         const j = r.ok ? await r.json() : null;
         S.markerSet = j && Array.isArray(j.types) && j.types.length ? j : null;
       } catch (e) { S.markerSet = null; }
@@ -1607,7 +1691,7 @@
   let protMarkerSetP = null;
   function loadProteinMarkerSet() {
     const e = currentExpr() || {}, ci = (S.umap && S.umap.ctInfo) || (e.umap && e.umap.celltypes), own = ci && ci.markerSet && ci.markerSet.file;
-    const file = own && /^markers\/[\w.-]+\.json$/.test(own) ? own : "markers/akoya_nerve.json";
+    const file = own && /^markers\/[\w.-]+\.json$/.test(own) ? own : "markers/protein_generic.json";
     if (!protMarkerSetP || protMarkerSetP.file !== file) {
       protMarkerSetP = (async () => {
         try {
@@ -1676,7 +1760,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261104g");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261105qc");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO.cap, minPoints: LASSO.minPoints,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
@@ -1713,9 +1797,12 @@
       requestAnimationFrame(() => { lpDeck && lpDeck.setProps({ width: "100%", height: "100%" }); fitLassoPanel(); lassoFrameShapes(); });
     };
     msg("Computing…");
-    const protein = L.prot ? { channels: L.hvg.channels, p1: L.hvg.p1, p99_5: L.hvg.p99_5, median: L.hvg.median, scale: L.hvg.scale } : null;
+    const H = L.hvg;
+    const protein = L.prot ? { channels: H.channels, p1: H.p1, p99_5: H.p99_5, median: H.median, scale: H.scale,
+                               normalize: H.normalize || null, bg: H.bg, hi: H.hi, cofactor: H.cofactor } : null;
+    const flags = L.prot && S.qc.flags && S.qc.key === S.exprKey ? S.qc.flags : null;   // for the "Artefact?" name
     L.worker.postMessage({ chunks: bufs, rowShape: L.assign, nShapes: L.shapes.length, nGenes: L.hvg.nGenes, params, resolution,
-                           geneNames: L.hvgGenes || null, markerSet, protein });
+                           geneNames: L.hvgGenes || null, markerSet, protein, flags });
   }
 
   // ---- the UMAP panel: its own small deck --------------------------------------------
@@ -1874,7 +1961,7 @@
       $("lpLegend").innerHTML = L.shapes.map((s, i) => I.kept[i] ? `<div class="leg"><i style="background:${s.hex}"></i><span>${esc(s.name)}</span><small>${I.kept[i].toLocaleString()} ${wd().bins}</small></div>` : "").join("");
     }
     $("lpFoot").textContent = ($("lpFoot").dataset.brush && L.brush ? $("lpFoot").dataset.brush + " " : "") +
-      (L.prot ? `${I.nGenesUsed} markers · intensity scaled to the section's 1st–99.5th percentile, z-scored here · ${I.nPcs} PCs · `
+      (L.prot ? `${I.nGenesUsed} markers · intensity ${L.hvg.normalize === "bg-asinh-v1" ? "with the slide's background off, scaled to its 99.5th percentile, asinh" : "scaled to the section's 1st–99.5th percentile"}, z-scored here · ${I.nPcs} PCs · `
               : `${I.nGenesUsed} variable genes (of the section's ${L.hvg ? L.hvg.nGenes : "?"}) · log1p CP10k · ${I.nPcs} PCs · `) +
       `${I.method === "umap" ? `umap-js ${LASSO.umapJs}, ${I.nNeighbors || LASSO.nNeighbors} neighbours, min_dist ${LASSO.minDist}${I.init ? `, ${I.init.toUpperCase()} start` : ""}, ` : ""}seed ${R.seed}` +
       `${R.cluster ? ` · Leiden resolution ${R.resolution}${I.autoResolution ? " (auto)" : ""}, ${I.nClusters} clusters` +
@@ -2805,9 +2892,11 @@
         const conf = sg.confidence in CT_BADGE ? sg.confidence : "none";
         const named = o.name(c) === sg.suggest;
         const mix = conf !== "none" && sg.second && sg.pct2 >= 0.1 ? ` · ${sg.second} ${pctTxt(sg.pct2)}` : "";
-        line.innerHTML = `<b class="ct-badge ${conf}">${CT_BADGE[conf]}</b>` +
-          `<span class="txt">${conf === "none" ? `Unclear · no list fits most ${W.bins} (best: ${esc(sg.top)} ${pctTxt(sg.pct)})`
-                                               : `${esc(sg.suggest)} · ${pctTxt(sg.pct)} of ${W.bins}${esc(mix)}`}</span>` +
+        line.innerHTML = (sg.artefactRule ? `<b class="ct-badge low qc-warn" title="Most of this cluster's squares are flagged everything bright">check</b>`
+                                          : `<b class="ct-badge ${conf}">${CT_BADGE[conf]}</b>`) +
+          `<span class="txt">${sg.artefactRule ? `${esc(sg.suggest)} · ${pctTxt(sg.artefact)} of ${W.bins} flagged everything bright`
+                               : conf === "none" ? `Unclear · no list fits most ${W.bins} (best: ${esc(sg.top)} ${pctTxt(sg.pct)})`
+                                                 : `${esc(sg.suggest)} · ${pctTxt(sg.pct)} of ${W.bins}${esc(mix)}`}</span>` +
           (conf === "none" ? "" : named ? `<span class="acc-ok" title="This cluster carries the suggested name">✓</span>`
                                         : `<button class="acc" title="Name this cluster “${esc(sg.suggest)}”">✓ Accept</button>`);
         line.title = `Suggested: ${sg.suggest} (${CT_BADGE[conf]} confidence)\n` +
@@ -2848,11 +2937,16 @@
   // the same rule on marker squares (celltypes.json "modality": "protein"): intensities, not counts
   const CT_BIN_MIN_PROT = 0.5;
   const CT_RULE_PROT = "Each square gets a score for each cell type: how far above their usual level that type's markers are in the square " +
-    "(mean intensity, scaled per marker from its dimmest 1% to its brightest 0.5% of tissue squares, as z-scores), averaged over the type's markers. " +
+    "(mean intensity with the slide's background taken off, divided by the marker's brightest 0.5% of tissue squares and put through asinh, " +
+    "as z-scores), averaged over the type's markers. " +
     `A square counts as the type with the best score if that score is at least ${CT_BIN_MIN_PROT}, otherwise as none. ` +
     "A cluster is named after the type most of its squares count as: high = at least half of its squares and twice the next type; " +
     "medium = at least 30%; low (shown as “maybe …”) = at least 15%; anything less is Unclear. " +
-    "A type is scored when at least one of its markers is on this panel; a marker that is nearly the same in every square is left out.";
+    "A type is scored when enough of its markers are on this panel (the number is next to each type below); names match ignoring " +
+    "case, number prefixes, dye tags and the list's aliases; a marker that is nearly the same in every square is left out. " +
+    "A cluster with more than half of its squares flagged “everything bright” (folds, bubbles, edges) is suggested as “Artefact? (fold / edge)”. " +
+    "Squares hold several cells, so the names describe neighbourhoods. (Exports made before November 2026 scale each marker from its " +
+    "dimmest 1% to its brightest 0.5% of tissue squares instead.)";
   const ctProt = (ci) => !!((ci && ci.modality === "protein") || isProt());
   function ctPopover(anchor, info) {
     let el = $("ctPop");
@@ -2877,9 +2971,11 @@
         // protein: "flat" = a channel with no contrast over the tissue, left out like a rare gene
         const flat = prot ? miss.filter((m) => m.reason === "flat").map((m) => m.gene) : [];
         const absent = miss.filter((m) => m.reason !== "rare" && !(prot && m.reason === "flat")).map((m) => m.gene), rare = miss.filter((m) => m.reason === "rare").map((m) => m.gene);
-        const why = prot ? (flat.length ? "its markers are missing from this panel or flat here" : "none of its markers are on this panel")
+        const need = t.min != null ? t.min : 1;
+        const why = prot ? (flat.length ? `too few of its markers are on this panel or vary here (needs ${need})`
+                                        : need > 1 ? `fewer than ${need} of its markers are on this panel` : "none of its markers are on this panel")
           : rare.length && !absent.length ? "too rare in this data" : absent.length && !rare.length ? "its genes are not in the data" : "too few of its genes are measurable here";
-        return `<div class="ct-type${t.scored ? "" : " off"}"><b>${esc(t.name)}</b>${t.scored ? "" : ` <small title="${esc(t.reason || "")}">not scored: ${why}</small>`}` +
+        return `<div class="ct-type${t.scored ? "" : " off"}"><b>${esc(t.name)}</b>${prot && t.min != null ? ` <small class="meta" title="Markers this type needs on the panel">needs ${t.min}</small>` : ""}${t.scored ? "" : ` <small title="${esc(t.reason || "")}">not scored: ${why}</small>`}` +
           `<div>${t.genes.length ? `<span class="found" title="${prot ? "Markers" : "Genes"} used for the score">${esc(t.genes.join(", "))}</span>` : `<span class="meta">no usable ${prot ? "markers" : "genes"}</span>`}` +
           (absent.length && prot ? ` <span class="miss" title="No channel of this name on this panel">· not on this panel: ${esc(absent.join(", "))}</span>` : "") +
           (flat.length ? ` <span class="miss" title="Nearly the same in every tissue square: left out, as it cannot tell squares apart">· flat here: ${esc(flat.join(", "))}</span>` : "") +
@@ -4849,6 +4945,7 @@
     syncGeneMode();
     $("pointScale").oninput = (e) => { S.pointScale = +e.target.value; requestRender(); };
     $("tissueBins").onchange = async (e) => { S.tissue.on = e.target.checked; if (S.tissue.on && !S.tissue.positions) await loadTissue(); render(); };
+    $("qcOutline").onchange = (e) => qcSetOutline(e.target.checked);
     // The description is held with the data, not in this page. Anything written
     // into index.html is readable by anyone who opens the page - including the
     // parts of the project that are not public yet - so the body is fetched from
