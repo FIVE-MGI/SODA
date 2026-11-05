@@ -88,8 +88,21 @@
     umap: null,            // whole-section UMAP + Leiden: tissue <-> UMAP switch, clusters, selection
     viewState: null,
   };
+  // A finger for a pointer: a phone or tablet. It has a fraction of a desktop's memory and
+  // single-core speed, and iOS reloads a tab that outgrows ~1-1.5 GB, so a few limits are
+  // tighter on it. Decided once, at load.
+  const TOUCH = !!(window.matchMedia && matchMedia("(pointer: coarse)").matches);
+  // A phone screen is 3x its CSS size: drawing every one of those pixels is 9x the work for
+  // detail nobody can see at arm's length. 2x is as sharp to the eye.
+  const DEVICE_PX = TOUCH ? Math.min(window.devicePixelRatio || 1, 2) : true;
   const tileCache = new Map();   // "ds/c/z/x/y" -> ImageBitmap (LRU)
-  const TILE_CACHE_MAX = cfg.tileCacheSize || 1500;
+  // On touch the decoded tiles kept for a quick return get ~256 MB (4 bytes a pixel), not 1500 tiles
+  const tileCacheMax = () => cfg.tileCacheSize ||
+    (TOUCH && S.m ? Math.max(32, Math.floor(256e6 / (4 * S.m.image.tileSize * S.m.image.tileSize))) : 1500);
+  // On touch each stain's tile layer keeps at most this many tiles (GPU textures) between them,
+  // rather than deck's five screens' worth per stain
+  const TOUCH_TILE_BUDGET = 96;
+  const TOUCH_MANY_CHANNELS = 10;      // more stains than this on at once: say a phone may reload
   // How many genes may be shown at once, so no dataset can exhaust the browser tab.
   // UMAP panels are light (one small panel per gene); a spatial transcript layer draws every
   // bin of that gene, so it is capped more tightly.
@@ -309,13 +322,13 @@
         if (bmp) {
           tileCache.set(key, bmp);
           // never close() evicted bitmaps: deck may still be drawing them; GC reclaims them
-          if (tileCache.size > TILE_CACHE_MAX) tileCache.delete(tileCache.keys().next().value);
+          while (tileCache.size > tileCacheMax()) tileCache.delete(tileCache.keys().next().value);
         }
         return bmp;
       });
   }
 
-  function channelLayer(ch, op = S.imgOpacity) {
+  function channelLayer(ch, op = S.imgOpacity, nOn = 1) {
     const img = S.m.image;
     const maxLevel = img.levels - 1;
     return new TileLayer({
@@ -325,6 +338,8 @@
       maxZoom: 0,
       extent: [0, 0, img.width, img.height],
       maxRequests: 12,
+      // touch: the stains share one budget, but each keeps enough for a phone screen and its parents
+      ...(TOUCH ? { maxCacheSize: Math.max(8, Math.floor(TOUCH_TILE_BUDGET / nOn)) } : {}),
       // Safe under MAX: an overlapping parent tile cannot brighten anything, so a coarse
       // tile can show immediately while its children load.
       refinementStrategy: "best-available",
@@ -635,7 +650,9 @@
     if (!S.viewState || !Number.isFinite(S.viewState.zoom) || fitPending) fitView();
     if (inUmap()) { renderUmap(); return; }
     const layers = [];
-    if (S.imgOn) for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch));
+    const nOn = S.imgOn ? S.channels.filter((ch) => ch.visible).length : 0;
+    manyChannelsNote(nOn);
+    if (S.imgOn) for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch, S.imgOpacity, nOn));
     const tl = tissueLayer(); if (tl) layers.push(tl);
     // Colour by cluster replaces the gene density: one colour per bin, not two on top of each other.
     const gPrev = gatePreviewOn();
@@ -655,6 +672,20 @@
     layers.push(...lassoLayers());
     layers.push(...umapSideLayers());
     deckgl.setProps({ layers });
+  }
+
+  // touch: every stain on is a set of full-size textures. Past a handful a phone can run out
+  // of memory and reload the page, so say so once each time the count goes over (not blocked:
+  // a newer phone may well cope).
+  let manyWarned = false;
+  function manyChannelsNote(n) {
+    if (!TOUCH) return;
+    if (n <= TOUCH_MANY_CHANNELS) { manyWarned = false; return; }
+    if (manyWarned) return;
+    manyWarned = true;
+    const m = `${n} stains on at once: a phone may run out of memory and reload the page. Turning some off keeps it smooth.`;
+    status(m);
+    setTimeout(() => { if ($("status").textContent === m) status(null); }, 7000);
   }
 
   // ---- gene colors -------------------------------------------------------------
@@ -792,7 +823,7 @@
       },
       viewState: { target: [0, 0, 0], zoom: 0 },
       layers: [],
-      useDevicePixels: true,
+      useDevicePixels: DEVICE_PX,
       // keep the last frame in the buffer so screenshots / "save image" see it
       deviceProps: { webgl: { preserveDrawingBuffer: true } },
       style: { background: "#000" },
@@ -1296,6 +1327,9 @@
                         "#f032e6", "#bfef45", "#469990", "#9a6324", "#fabed4", "#dcbeff"];
   const LASSO = { minPoints: 50, fewPoints: 300, smallShape: 20, softCap: 20000, cap: 50000, minUmi: 10,
                   nHvg: 1000, nPcs: 30, nPcsProtein: 15, nNeighbors: 15, minDist: 0.3, minShapesForUmap: 15, umapJs: "1.4.0" };
+  // The run is single-threaded: 50,000 bins took 76 s on a desktop core and would take 2-5 min on
+  // a phone, long enough to be frozen by a locked screen. On touch the sample stops at the soft cap.
+  const LASSO_CAP = TOUCH ? LASSO.softCap : LASSO.cap;
   const lassoBlank = () => ({ tool: null, shapes: [], next: 1, drawing: null, pos: null, hvg: null,
     chunks: new Map(), assign: null, bin: null, result: null, brush: null, selShape: null, hover: -1,
     worker: null, running: false, lpVs: null,
@@ -1626,8 +1660,11 @@
     const total = L.shapes.reduce((a, s) => a + s.bins, 0);
     if (!L.running && !R) {
       let m = L.shapes.length ? `${total.toLocaleString()} bins inside the shapes.` : "Pick Circle or Freehand, then draw on the slide.";
-      if (total > LASSO.cap) m += ` Over ${LASSO.cap.toLocaleString()}: a seeded sample of ${LASSO.cap.toLocaleString()} will be used.`;
-      if (total > LASSO.softCap) m += ` This will take about ${Math.round(Math.min(total, LASSO.cap) * 0.00095)} s.`;
+      if (total > LASSO_CAP) m += ` Over ${LASSO_CAP.toLocaleString()}: a seeded sample of ${LASSO_CAP.toLocaleString()} will be used` +
+        (TOUCH ? ` (a phone's limit; a computer takes up to ${LASSO.cap.toLocaleString()}).` : ".");
+      const secs = Math.round(Math.min(total, LASSO_CAP) * 0.00095);
+      if (TOUCH && total > 5000) m += ` On a phone this takes about ${secs}-${3 * secs} s: keep this page open until it finishes.`;
+      else if (total > LASSO.softCap) m += ` This will take about ${secs} s.`;
       $("lassoMsg").textContent = L.prot ? toProtWords(m) : m;
     }
     $("lassoRun").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
@@ -1639,6 +1676,22 @@
     if (L && L.worker && L.running) { L.worker.terminate(); L.worker = null; }
     if (L) L.running = false;
     $("lassoCancel").hidden = true;
+    lassoWake(false);
+  }
+
+  // Keep the screen on while a UMAP runs: a phone that locks freezes the page, and the run with
+  // it. Refused (battery saver, plain http) or unsupported: the run simply goes on without it.
+  let wakeLock = null, wakeWant = false;
+  async function lassoWake(on) {
+    if (!TOUCH) return;                                        // a desktop's screen settings are its own
+    wakeWant = on;
+    try {
+      if (on && !wakeLock && navigator.wakeLock) {
+        const w = await navigator.wakeLock.request("screen");
+        w.addEventListener("release", () => { if (wakeLock === w) wakeLock = null; });
+        if (wakeWant) wakeLock = w; else w.release();          // the run ended while we waited
+      } else if (!on && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+    } catch (e) { /* not allowed here */ }
   }
 
   const lassoChunkOf = (x, y, cp) => `${Math.floor(x / cp)}_${Math.floor(y / cp)}`;
@@ -1701,6 +1754,7 @@
     }
     L.shapes.forEach((s) => (s.missing = false));
     L.running = true; $("lassoCancel").hidden = false; buildLassoUI();
+    lassoWake(true);
     msg(`Fetching ${need.size} data chunk(s)…`);
     const keys = [...need.keys()], bufs = [], missing = [];
     let next = 0;
@@ -1719,7 +1773,7 @@
       missing.forEach((k) => need.get(k).forEach((s) => (L.shapes[s].missing = true)));
       L.running = false; buildLassoUI();
       if (!confirm(`${missing.length} of ${need.size} data chunk(s) could not be loaded, so part of a shape has no data. Run anyway on what did load?`)) {
-        msg("Not run: data missing for part of a shape.", true); $("lassoCancel").hidden = true; return;
+        msg("Not run: data missing for part of a shape.", true); $("lassoCancel").hidden = true; lassoWake(false); return;
       }
       L.running = true;
     }
@@ -1730,14 +1784,14 @@
     if (!L.running) return;                         // cancelled meanwhile
     if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261104a");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
-    const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO.cap, minPoints: LASSO.minPoints, nHvg: LASSO.nHvg,
+    const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints, nHvg: LASSO.nHvg,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
                      resolution };
     const t0 = performance.now();
     L.worker.onmessage = (ev) => {
       const d = ev.data;
       if (d.type === "progress") { msg(`${d.step}… ${Math.round(d.frac * 100)}%`); return; }
-      L.running = false; $("lassoCancel").hidden = true;
+      L.running = false; $("lassoCancel").hidden = true; lassoWake(false);
       if (d.type === "error") { msg(d.message, true); buildLassoUI(); return; }
       if (sig !== L.shapes.map((s) => `${s.id}:${s.bins}`).join(",")) { buildLassoUI(); return; }   // shapes moved on
       const idxOfRow = new Map(); d.rows.forEach((r, j) => idxOfRow.set(r, j));
@@ -1776,7 +1830,7 @@
       views: [new OrthographicView({ id: "lp", flipY: false,
         controller: { dragPan: false, dragRotate: false, doubleClickZoom: false, keyboard: false, scrollZoom: { speed: 0.01, smooth: false } } })],
       viewState: { target: [0, 0, 0], zoom: 0 },
-      layers: [], useDevicePixels: true,
+      layers: [], useDevicePixels: DEVICE_PX,
       deviceProps: { webgl: { preserveDrawingBuffer: true } },
       getCursor: () => "crosshair",
       onViewStateChange: ({ viewState }) => { S.lasso.lpVs = viewState; lpDeck.setProps({ viewState }); },
@@ -1956,10 +2010,10 @@
       seed: Number($("lassoSeed").value), mode: $("lassoMode").value,
       params: L.prot
         ? { modality: "protein", channels: L.hvg ? L.hvg.channels : null, nPcs: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors,
-            minDist: LASSO.minDist, cap: LASSO.cap, normalisation: L.hvg ? L.hvg.normalize : null, scaling: "z-score within the shapes, clip 10",
+            minDist: LASSO.minDist, cap: R ? R.params.cap : LASSO_CAP, normalisation: L.hvg ? L.hvg.normalize : null, scaling: "z-score within the shapes, clip 10",
             overlap: "drawn last wins" }
         : { minUmi: LASSO.minUmi, nHvg: LASSO.nHvg, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
-            cap: LASSO.cap, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
+            cap: R ? R.params.cap : LASSO_CAP, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
       shapes: L.shapes.map((s) => ({ name: s.name, color: s.hex, kind: s.kind,
                                       points: s.pts.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]),
                                       ...(s.rows ? { rows: Array.from(s.rows) } : {}) })),
@@ -2365,7 +2419,10 @@
     S.viewState = vs;
     const layers = [];
     const op = S.imgOpacity * Math.max(0, 1 - a * 1.6);           // the H&E is gone a little before the dots land
-    if (S.imgOn && op > 0.01) for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch, op));
+    if (S.imgOn && op > 0.01) {
+      const nOn = S.channels.filter((ch) => ch.visible).length;
+      for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch, op, nOn));
+    }
     layers.push(new FlyScatterLayer({
       id: `ufly-${U.key}`, data: F.data, flyT: a,
       radiusUnits: "common", getRadius: 1, radiusScale: rT + (rU - rT) * a, radiusMinPixels: 0.8,
@@ -5069,6 +5126,19 @@
     const mo = new MutationObserver(sync);
     for (const p of pads) mo.observe(p, { attributes: true, attributeFilter: ["hidden"] });
     done.onclick = () => { lassoSetTool(null); umapSetTool(null); };
+    // A phone freezes a page it hides (another app, the screen locked anyway): the screen lock is
+    // dropped and a running UMAP waits. Coming back, take the lock again and say why it took longer.
+    let hiddenRun = false;
+    document.addEventListener("visibilitychange", () => {
+      const L = S.lasso; if (!TOUCH || !L) return;
+      if (document.hidden) { hiddenRun = L.running; return; }
+      if (!hiddenRun || !L.running) { hiddenRun = false; return; }
+      hiddenRun = false;
+      lassoWake(true);
+      const m = "The UMAP was paused while this page was hidden; it carries on now (its time includes the pause).";
+      status(m);
+      setTimeout(() => { if ($("status").textContent === m) status(null); }, 7000);
+    });
   }
 
   init();
