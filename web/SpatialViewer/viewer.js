@@ -691,8 +691,12 @@
 
   // ---- view -----------------------------------------------------------------------
   let fitPending = false;   // the pane was 0 px when we fitted (hidden tab): refit on resize
+  // still showing the fitted view (nobody has panned or zoomed since): a resize, a rotated
+  // phone or the controls sheet opening refits it rather than leaving it framed for the old size
+  let autoFit = false;
   function fitView() {
     if (!S.m) return;
+    autoFit = true;
     if (S.mode === "rna") { fitRna(); return; }
     if (inUmap()) { S.viewState = umapFitVs(); deckgl.setProps({ viewState: deckVs() }); updateHud(); return; }
     if (umapSbs()) {
@@ -771,6 +775,7 @@
       style: { background: "#000" },
       getCursor: ({ isDragging }) => (isDragging ? "grabbing" : "crosshair"),
       onViewStateChange: ({ viewState, viewId }) => {
+        autoFit = false;
         if (S.mode === "rna" && S.rna) { S.rna.vs = viewState; deckgl.setProps({ viewState: rnaViewStates() }); return; }
         if (viewId === "uside") { S.umap.sideVs = viewState; deckgl.setProps({ viewState: deckVs() }); return; }
         const zoomed = !S.viewState || Math.abs(S.viewState.zoom - viewState.zoom) > 1e-6;
@@ -1764,12 +1769,15 @@
       if (s.rows && L.pos) for (const i of s.rows) grow(L.pos[2 * i], L.pos[2 * i + 1]);
     }
     if (!(x1 > x0)) return;
-    const el = $("viewport"), sbs = umapSbs(), W = sbs ? el.clientWidth / 2 : el.clientWidth, H = el.clientHeight;
-    // side by side, the panel sits over the UMAP half, not over the slide
-    const pw = $("lassoPanel").hidden || sbs ? 0 : $("lassoPanel").offsetWidth + 20, free = Math.max(200, W - pw);
-    const zoom = Math.min(1, Math.log2(Math.min(free / ((x1 - x0) * 1.3 || 1), H / ((y1 - y0) * 1.3 || 1))));
+    const [W, H] = umapPaneSize("ortho"), lp = $("lassoPanel");
+    // side by side, the panel sits over the UMAP pane, not over the slide; otherwise it covers
+    // the right of the slide, or on a phone its lower part
+    const open = !lp.hidden && !umapSbs(), below = open && lp.offsetWidth > W * 0.8;
+    const free = Math.max(200, W - (open && !below ? lp.offsetWidth + 20 : 0)), freeH = Math.max(150, H - (below ? lp.offsetHeight + 50 : 0));
+    const zoom = Math.min(1, Math.log2(Math.min(free / ((x1 - x0) * 1.3 || 1), freeH / ((y1 - y0) * 1.3 || 1))));
     const scale = Math.pow(2, zoom);
-    S.viewState = { ...S.viewState, target: [(x0 + x1) / 2 + (W - free) / 2 / scale, (y0 + y1) / 2, 0], zoom };
+    S.viewState = { ...S.viewState, target: [(x0 + x1) / 2 + (W - free) / 2 / scale, (y0 + y1) / 2 + (H - freeH) / 2 / scale, 0], zoom };
+    autoFit = false;
     deckgl.setProps({ viewState: deckVs() }); updateHud(); requestRender();
   }
 
@@ -2163,11 +2171,16 @@
     syncUmapUI();
   }
 
-  // the size of one pane: the whole picture, or a half of it side by side (the UMAP half
-  // gives its lower part to the circle -> UMAP panel when that is open)
+  // side by side on a screen taller than wide (a phone held upright): the tissue on top and
+  // the UMAP below, rather than two slivers next to each other
+  const sbsStacked = () => { const el = $("viewport"); return el.clientHeight > el.clientWidth; };
+  // the size of one pane: the whole picture, or a half of it side by side. The UMAP half gives
+  // its lower part to the circle -> UMAP panel when that is open; stacked, the panel covers
+  // the whole UMAP pane instead, as a quarter of a phone is too small to read either in.
   function umapPaneSize(id) {
     const el = $("viewport"), W = el.clientWidth || 800, H = el.clientHeight || 600;
     if (!umapSbs()) return [W, H];
+    if (sbsStacked()) return [W, H / 2];
     if (id === "uside") return [W / 2, $("lassoPanel").hidden ? H : H / 2];
     return [W / 2, H];
   }
@@ -2185,13 +2198,17 @@
   }
   function umapApplyViews() {
     const main = $("viewport").parentElement;
-    if (!deckgl || S.mode === "rna") { main.classList.remove("sbs"); return; }
-    const sbs = umapSbs();
+    if (!deckgl || S.mode === "rna") { main.classList.remove("sbs", "stack"); return; }
+    const sbs = umapSbs(), st = sbs && sbsStacked(), lp = !$("lassoPanel").hidden;
     main.classList.toggle("sbs", sbs);
-    main.classList.toggle("lp-open", !$("lassoPanel").hidden);
-    const views = sbs
+    main.classList.toggle("stack", st);
+    main.classList.toggle("lp-open", lp);
+    const views = st
+      ? [new OrthographicView({ id: "ortho", x: 0, y: 0, width: "100%", height: "50%", flipY: true, controller: ORTHO_CTL }),
+         new OrthographicView({ id: "uside", x: 0, y: "50%", width: "100%", height: "50%", flipY: true, controller: ORTHO_CTL })]
+      : sbs
       ? [new OrthographicView({ id: "ortho", x: 0, y: 0, width: "50%", height: "100%", flipY: true, controller: ORTHO_CTL }),
-         new OrthographicView({ id: "uside", x: "50%", y: 0, width: "50%", height: $("lassoPanel").hidden ? "100%" : "50%",
+         new OrthographicView({ id: "uside", x: "50%", y: 0, width: "50%", height: lp ? "50%" : "100%",
                                 flipY: true, controller: ORTHO_CTL })]
       : imageViews();
     deckgl.setProps(S.viewState ? { views, viewState: deckVs() } : { views });
@@ -4727,6 +4744,7 @@
   }
 
   async function init() {
+    sheetEvents();                                  // first, so the controls open even if loading fails
     initDeck();
     lassoInit();
     umapInit();
@@ -4905,10 +4923,16 @@
       buildRnaGeneUI(); renderRna();
     };
     window.addEventListener("resize", () => updateHud());
+    let wasStacked = null;
     if (window.ResizeObserver) new ResizeObserver(() => {
       const el = $("viewport");
       if (!el.clientWidth || !el.clientHeight) return;
-      if (fitPending) fitView();
+      // side by side flips between left | right and top / bottom as the screen turns: re-lay
+      // the panes and frame both afresh, as the old framing no longer fits either
+      const st = sbsStacked(), flipped = wasStacked !== null && st !== wasStacked && umapSbs();
+      wasStacked = st;
+      if (flipped) umapApplyViews();
+      if (fitPending || flipped || (autoFit && S.mode !== "rna")) fitView();   // the RNA panels refit themselves
       if (renderPending) render(); else updateHud();
     }).observe($("viewport"));
 
@@ -4917,6 +4941,45 @@
     const first = S.datasets.find((d) => d.id === want) || S.datasets[0];
     sel.value = first.id;
     await openDataset(first.id);
+  }
+
+  // ---- phones: the controls sheet under the map --------------------------------------------
+  // Tap the handle to open or close it; drag it to any height and it settles at the nearest of
+  // a strip, half the screen or nearly all of it. The handle only shows on narrow screens
+  // (styles.css), so on a desktop none of this ever fires.
+  function sheetEvents() {
+    const app = document.querySelector(".app"), side = $("sidebar"), h = $("sheetHandle");
+    const set = (s) => {
+      app.dataset.sheet = s; side.style.height = "";
+      h.setAttribute("aria-expanded", String(s !== "peek"));
+      if (s === "peek") side.scrollTop = 0;
+    };
+    let drag = null, dragged = false;
+    h.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      h.setPointerCapture(ev.pointerId);
+      drag = { y: ev.clientY, h0: side.offsetHeight, moved: false };
+    });
+    h.addEventListener("pointermove", (ev) => {
+      if (!drag) return;
+      const dy = drag.y - ev.clientY;
+      if (Math.abs(dy) > 6) drag.moved = true;
+      if (drag.moved) side.style.height = `${Math.max(h.offsetHeight, Math.min(window.innerHeight - 60, drag.h0 + dy))}px`;
+    });
+    const end = () => {
+      const D = drag; drag = null;
+      if (!D || !D.moved) return;
+      dragged = true;                                          // the click that follows is not a tap
+      const H = window.innerHeight, now = side.offsetHeight;
+      const stops = { peek: h.offsetHeight, half: H * 0.45, full: H * 0.88 };
+      set(Object.keys(stops).reduce((a, b) => (Math.abs(stops[b] - now) < Math.abs(stops[a] - now) ? b : a)));
+    };
+    h.addEventListener("pointerup", end);
+    h.addEventListener("pointercancel", end);
+    h.addEventListener("click", () => {
+      if (dragged) { dragged = false; return; }
+      set(app.dataset.sheet === "peek" ? "half" : "peek");
+    });
   }
 
   init();

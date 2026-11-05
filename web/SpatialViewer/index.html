@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <title>SODA</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link href="styles.css?v=20261104soda" rel="stylesheet" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <link href="styles.css?v=20261105m1" rel="stylesheet" />
 </head>
 <body>
-  <div class="app">
+  <div class="app" data-sheet="peek">
     <aside id="sidebar" class="sidebar" aria-label="Controls">
+      <!-- phones only (CSS): the controls sit in a sheet under the map; tap or drag this to open it -->
+      <button id="sheetHandle" class="sheet-handle" type="button" aria-controls="sidebar" aria-expanded="false"><i></i><span>Controls</span></button>
       <header class="brand">
         <div class="logos" id="brandLogos"></div>
         <h1 id="brandTitle"></h1>
@@ -264,6 +266,6 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261104b"></script>
+  <script src="viewer.js?v=20261105m1"></script>
 </body>
 </html>
