@@ -11,7 +11,8 @@ tissue and the UMAP and colour both by cluster.
 
 Pipeline (scanpy's defaults, written out): bins with >= MIN_UMI UMI -> log1p CP10k
 -> top 2000 HVGs over the whole section (hvgchunks.select_hvg) -> scale, clip 10
--> PCA 30 -> umap-learn (15 neighbours, min_dist 0.3) -> Leiden (leidenalg,
+-> PCA 30 -> umap-learn (15 neighbours, min_dist 0.3, started from PC1 / PC2 like the
+circle tool's umap-js, which has no spectral start) -> Leiden (leidenalg,
 RB configuration) on umap's fuzzy graph at 0.3 / 0.6 / 1.0. Cluster 0 is the
 largest. Markers: top 10 genes per cluster by log2 fold change of the mean
 expression (cluster vs rest) among genes seen in >= 25% of the cluster's bins.
@@ -40,6 +41,7 @@ N_HVG = 2000
 N_PCS = 30
 N_NEIGHBORS = 15
 MIN_DIST = 0.3
+INIT = "pca"                                            # umap-learn >= 0.5.4
 SEED = 42
 CLIP = 10.0
 RESOLUTIONS = (0.3, 0.6, 1.0)
@@ -53,7 +55,7 @@ LEIDEN_ITERS = 2
 
 
 def _params() -> dict:
-    return {"nHvg": N_HVG, "nPcs": N_PCS, "nNeighbors": N_NEIGHBORS, "minDist": MIN_DIST, "seed": SEED,
+    return {"nHvg": N_HVG, "nPcs": N_PCS, "nNeighbors": N_NEIGHBORS, "minDist": MIN_DIST, "init": INIT, "seed": SEED,
             "normalize": "log1p CP10k", "scale": f"clip {CLIP:g}",
             "cluster": f"leiden RBConfiguration on umap fuzzy graph, {LEIDEN_ITERS} iterations",
             "markers": f"log2 fold change of mean expression vs rest, pct >= {MIN_PCT:g}, lfc > 0"}
@@ -195,7 +197,7 @@ def embed_and_cluster(pcs: np.ndarray, markers_of, libs, key, log=print, t0: flo
     t0 = time.time() if t0 is None else t0
     # random_state makes umap-learn single-threaded: slower, but the same bytes every run
     reducer = umap.UMAP(n_neighbors=N_NEIGHBORS, min_dist=MIN_DIST, n_components=2, metric="euclidean",
-                        random_state=SEED, transform_seed=SEED)
+                        init=INIT, random_state=SEED, transform_seed=SEED)
     emb = reducer.fit_transform(pcs).astype(np.float32)
     log(f"[umap] {key}: UMAP  {time.time() - t0:.0f}s")
 

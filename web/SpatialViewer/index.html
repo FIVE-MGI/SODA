@@ -161,8 +161,8 @@
         <label class="row slim"><span>Dots</span>
           <select id="lassoMode"><option value="bins">One per bin</option><option value="shapes">One per shape (summed)</option></select></label>
         <label class="row slim"><span>Seed</span><input id="lassoSeed" type="text" inputmode="numeric" value="42" /></label>
-        <label class="row slim"><span title="Leiden resolution: a higher number gives more, smaller clusters. 0 = no clustering">Resolution</span>
-          <input id="lassoRes" type="text" inputmode="decimal" value="1.0" title="Leiden resolution: a higher number gives more, smaller clusters. 0 = no clustering" /></label>
+        <label class="row slim"><span title="Leiden resolution. auto = the finest resolution whose clusters reproduce across reseeded and subsampled runs; a number = that resolution (a higher number gives more, smaller clusters); 0 = no clustering">Resolution</span>
+          <input id="lassoRes" type="text" inputmode="decimal" value="auto" title="Leiden resolution. auto = the finest resolution whose clusters reproduce across reseeded and subsampled runs; a number = that resolution (a higher number gives more, smaller clusters); 0 = no clustering" /></label>
         <div class="btnrow">
           <button id="lassoRun">Run UMAP</button>
           <button id="lassoCancel" hidden>Cancel</button>
@@ -264,6 +264,6 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261104b"></script>
+  <script src="viewer.js?v=20261104stab6"></script>
 </body>
 </html>

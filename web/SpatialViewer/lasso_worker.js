@@ -2,8 +2,10 @@
 // drawn shapes plus a row -> shape map; this returns a 2-D embedding of the selected bins
 // (or of one summed profile per shape). Steps, all seeded so a rerun is identical:
 //   gather -> drop low-UMI bins -> cap (stratified sample) -> log1p CP10k ->
-//   top variable genes within the selection -> scale -> randomized PCA -> umap-js
-//   -> Leiden on the UMAP's fuzzy neighbour graph -> marker genes per cluster.
+//   the section's variable genes counted in enough of the bins -> scale ->
+//   randomized PCA (PCs by bin count) ->
+//   umap-js started from PC1 / PC2 -> Leiden on the UMAP's fuzzy neighbour graph, the
+//   resolution chosen by stability unless given -> marker genes per cluster.
 // Marker squares (protein grid, msg.protein) take a shorter road through runProtein: the
 // mat/ chunks' raw means -> x' with the whole section's window -> z-score within the
 // selection -> PCA -> the same UMAP, Leiden, markers and suggested names.
@@ -115,6 +117,147 @@ function fuzzyGraphCSR(umap, N) {
     indptr[i + 1] = indices.length;
   }
   return { indptr, indices: Uint32Array.from(indices), weights: Float64Array.from(weights) };
+}
+
+// PCs and neighbours by the number of bins: a few hundred bins carry only a few real axes,
+// and at 30 PCs the rest is noise the neighbour graph would follow.
+function sizeRule(N) {
+  return N < 1000 ? { pcs: 15, k: 10 } : N <= 5000 ? { pcs: 20, k: 15 } : { pcs: 30, k: 15 };
+}
+
+// umap-js starts from uniform random positions; start from PC1 / PC2 instead, as umap-learn's
+// init="pca" in sectionumap.py does: each axis min-max scaled to [0, 10] plus a 1e-4 jitter so
+// identical bins do not sit on one point. The optimiser holds umap.embedding by reference, so
+// the start is written into it in place after initializeFit (a new array would be ignored).
+function fitUmap(scores, N, k, minDist, rand) {
+  const umap = new UMAP.UMAP({ nComponents: 2, nNeighbors: Math.max(2, Math.min(k, N - 1)), minDist, random: rand });
+  const nEpochs = umap.initializeFit(scores), E = umap.embedding;
+  for (let a = 0; a < 2; a++) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < N; i++) { const v = scores[i][a] || 0; if (v < lo) lo = v; if (v > hi) hi = v; }
+    const s = hi > lo ? 10 / (hi - lo) : 0;
+    for (let i = 0; i < N; i++) E[i][a] = ((scores[i][a] || 0) - lo) * s + 1e-4 * gauss(rand);
+  }
+  for (let e = 0; e < nEpochs; e++) {
+    umap.step();
+    if (e % 10 === 0) progress("UMAP", 0.2 + 0.8 * e / nEpochs);
+  }
+  return umap;
+}
+
+// "auto" = choose the resolution by stability; a number = that resolution (its stability is
+// still measured); 0 = no clusters
+function wantedResolution(msg, P) {
+  const r = msg.resolution !== undefined ? msg.resolution : P.resolution !== undefined ? P.resolution : "auto";
+  return r === "auto" ? "auto" : Number(r) || 0;
+}
+
+// ---- how stable is a clustering ------------------------------------------------------
+// Leiden at each resolution on the run's fixed UMAP graph, with several seeds on the whole
+// graph and on seeded 80% induced subgraphs (bins dropped, graph not rebuilt, so this is
+// optimistic: "stability", not significance). stability = median adjusted Rand index over
+// every pair of a whole-graph run with another run (subgraph runs compared on their own bins).
+// The clusters shown are the medoid whole-graph run (highest mean ARI to the others), so one
+// unlucky seed neither decides the score nor the picture; per cluster, the median best
+// Jaccard overlap of the medoid's cluster with any cluster of each other run. "auto" takes
+// the finest resolution with stability >= minStable and > 1 cluster, i.e. the most detail
+// that reproduces (the coarsest would nearly always win, since 2-3 clusters are trivially
+// stable). If none qualifies, the coarsest resolution is shown, flagged, with the closest
+// candidate named: on a homogeneous patch the honest answer is one population, not the
+// least-bad dozen. The sweep stops after two resolutions in a row below stopBelow: on the
+// test lassos stability never climbed back once it had fallen that far, and the finest
+// resolutions cost the most. Leiden runs 2 iterations, as scanpy and sectionumap.py do. Same
+// graph and seed give the same answer.
+const SWEEP = { res: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2], frac: 0.8, minStable: 0.8, stopBelow: 0.6, iters: 2 };
+const sweepRuns = (N) => (N <= 20000 ? { seeds: 10, subs: 10 } : { seeds: 5, subs: 5 });
+
+// contingency of two labelings (labels 0..n-1) as a dense table
+function contingency(a, b) {
+  let na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { if (a[i] >= na) na = a[i] + 1; if (b[i] >= nb) nb = b[i] + 1; }
+  const t = new Uint32Array(na * nb), ra = new Float64Array(na), rb = new Float64Array(nb);
+  for (let i = 0; i < a.length; i++) { t[a[i] * nb + b[i]]++; ra[a[i]]++; rb[b[i]]++; }
+  return { t, ra, rb, na, nb };
+}
+
+function ari(a, b) {
+  const { t, ra, rb } = contingency(a, b), c2 = (m) => (m * (m - 1)) / 2;
+  let sij = 0, sa = 0, sb = 0;
+  for (let i = 0; i < t.length; i++) if (t[i] > 1) sij += c2(t[i]);
+  ra.forEach((v) => (sa += c2(v))); rb.forEach((v) => (sb += c2(v)));
+  const exp = (sa * sb) / c2(a.length), max = (sa + sb) / 2;
+  return max === exp ? 1 : (sij - exp) / (max - exp);
+}
+
+// for each cluster c of ref: the best Jaccard |c & d| / |c | d| over the clusters d of lab
+function bestJaccard(ref, lab, nCl, into) {
+  const { t, ra, rb, na, nb } = contingency(ref, lab);
+  for (let c = 0; c < Math.min(na, nCl); c++) {
+    if (!ra[c]) continue;
+    let best = 0;
+    for (let d = 0; d < nb; d++) { const n = t[c * nb + d]; if (n) best = Math.max(best, n / (ra[c] + rb[d] - n)); }
+    into[c].push(best);
+  }
+}
+
+// the graph restricted to the bins in keep (ascending), renumbered 0..keep.length-1
+function inducedGraph(g, keep, N) {
+  const at = new Int32Array(N).fill(-1); keep.forEach((v, j) => (at[v] = j));
+  const indptr = new Uint32Array(keep.length + 1), indices = [], weights = [];
+  keep.forEach((v, j) => {
+    for (let p = g.indptr[v]; p < g.indptr[v + 1]; p++) { const u = at[g.indices[p]]; if (u >= 0) { indices.push(u); weights.push(g.weights[p]); } }
+    indptr[j + 1] = indices.length;
+  });
+  return { indptr, indices: Uint32Array.from(indices), weights: Float64Array.from(weights) };
+}
+
+const median = (xs) => { if (!xs.length) return null; const s = xs.slice().sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+// clusters at the wanted resolution ("auto" or a number) with their stability; fills info
+function clusterGraph(g, N, resolution, seed, info) {
+  const list = resolution === "auto" ? SWEEP.res : [resolution], R = sweepRuns(N), r3 = (x) => Math.round(x * 1000) / 1000;
+  const rows = [];
+  for (const [li, res] of list.entries()) {
+    const last2 = rows.slice(-2);
+    if (last2.length === 2 && last2.every((r) => r.stability < SWEEP.stopBelow)) break;
+    progress(`Clustering, resolution ${res}`, li / list.length);
+    const full = [], subs = [];
+    for (let s = 0; s < R.seeds; s++) full.push(leiden(N, g.indptr, g.indices, g.weights, { resolution: res, seed: seed + s, maxIter: SWEEP.iters }));
+    const pick = mulberry32((seed ^ 0x9e3779b9) >>> 0);
+    for (let s = 0; s < R.subs; s++) {
+      const keep = []; for (let i = 0; i < N; i++) if (pick() < SWEEP.frac) keep.push(i);
+      const sub = inducedGraph(g, keep, N);
+      subs.push({ keep, lab: leiden(keep.length, sub.indptr, sub.indices, sub.weights, { resolution: res, seed: seed + s, maxIter: SWEEP.iters }) });
+    }
+    // every whole-graph run against every other run; sc[a] = run a's scores
+    const sc = full.map(() => []), scores = [];
+    for (let a = 0; a < full.length; a++) {
+      for (let b = a + 1; b < full.length; b++) { const x = ari(full[a], full[b]); sc[a].push(x); sc[b].push(x); scores.push(x); }
+      for (const s of subs) { const x = ari(Uint16Array.from(s.keep, (i) => full[a][i]), s.lab); sc[a].push(x); scores.push(x); }
+    }
+    const mean = (xs) => xs.reduce((p, q) => p + q, 0) / (xs.length || 1);
+    let m = 0; for (let a = 1; a < full.length; a++) if (mean(sc[a]) > mean(sc[m])) m = a;
+    const ref = full[m];
+    let nCl = 0; for (let i = 0; i < N; i++) if (ref[i] + 1 > nCl) nCl = ref[i] + 1;
+    const match = Array.from({ length: nCl }, () => []);
+    full.forEach((lab, a) => { if (a !== m) bestJaccard(ref, lab, nCl, match); });
+    subs.forEach((s) => bestJaccard(Uint16Array.from(s.keep, (i) => ref[i]), s.lab, nCl, match));
+    rows.push({ res, nCl, ref, stability: median(scores), perCluster: match.map(median) });
+  }
+  const multi = rows.filter((r) => r.nCl > 1), ok = multi.filter((r) => r.stability >= SWEEP.minStable);
+  const best = resolution !== "auto" ? rows[0] : ok.length ? ok[ok.length - 1] : rows[0];
+  const closest = multi.length ? multi.reduce((a, b) => (b.stability > a.stability ? b : a)) : null;
+  const sizes = new Array(best.nCl).fill(0); best.ref.forEach((c) => sizes[c]++);
+  info.nClusters = best.nCl; info.clusterSizes = sizes; info.resolution = best.res;
+  info.autoResolution = resolution === "auto"; info.stability = r3(best.stability);
+  info.stable = best.nCl > 1 ? best.stability >= SWEEP.minStable : false;
+  info.closest = resolution === "auto" && !ok.length && closest
+    ? { resolution: closest.res, nClusters: closest.nCl, stability: r3(closest.stability) } : null;
+  info.clusterStability = best.perCluster.map((x) => (x === null ? null : r3(x)));
+  info.sweep = rows.map((r) => ({ resolution: r.res, nClusters: r.nCl, stability: r3(r.stability) }));
+  info.stabilityRuns = { seeds: R.seeds, subsamples: R.subs, fraction: SWEEP.frac, minStable: SWEEP.minStable,
+                         stopBelow: SWEEP.stopBelow, leidenIterations: SWEEP.iters, shown: "medoid run" };
+  return best.ref;
 }
 
 // Top 10 genes per cluster by log2 fold change (scanpy's convention: log2 of expm1(mean
@@ -367,26 +510,18 @@ function runProtein(msg) {
     method = "pca";
     for (let i = 0; i < N; i++) { emb[2 * i] = pca.scores[i][0]; emb[2 * i + 1] = pca.scores[i][1] || 0; }
   } else {
-    umap = new UMAP.UMAP({ nComponents: 2, nNeighbors: Math.max(2, Math.min(P.nNeighbors, N - 1)), minDist: P.minDist, random: rand });
-    const nEpochs = umap.initializeFit(pca.scores);
-    for (let e = 0; e < nEpochs; e++) {
-      umap.step();
-      if (e % 10 === 0) progress("UMAP", 0.2 + 0.8 * e / nEpochs);
-    }
+    umap = fitUmap(pca.scores, N, P.nNeighbors, P.minDist, rand);
     const Y = umap.getEmbedding();
     for (let i = 0; i < N; i++) { emb[2 * i] = Y[i][0]; emb[2 * i + 1] = Y[i][1]; }
   }
   info.nGenesUsed = K; info.nPcs = nPcs; info.varFrac = pca.varFrac.slice(0, 2); info.method = method;
+  info.nNeighbors = umap ? Math.max(2, Math.min(P.nNeighbors, N - 1)) : null; info.init = umap ? "pca" : null;
   const out = { emb, rows: Uint32Array.from(rows), shape: Uint16Array.from(shape), info };
 
-  const resolution = Number(msg.resolution !== undefined ? msg.resolution : P.resolution);
+  const resolution = wantedResolution(msg, P);
   if (P.mode === "bins" && umap && resolution) {
-    progress("Clustering", 1);
-    const g = fuzzyGraphCSR(umap, N);
-    const cluster = leiden(N, g.indptr, g.indices, g.weights, { resolution, seed: P.seed });
-    let nCl = 0; for (let i = 0; i < N; i++) if (cluster[i] + 1 > nCl) nCl = cluster[i] + 1;
-    const sizes = new Array(nCl).fill(0); cluster.forEach((c) => sizes[c]++);
-    info.nClusters = nCl; info.clusterSizes = sizes; info.resolution = resolution;
+    const cluster = clusterGraph(fuzzyGraphCSR(umap, N), N, resolution, P.seed, info);
+    const nCl = info.nClusters;
     info.markers = proteinMarkers(Z, XP, N, K, pr.median, cluster, nCl, pr.channels);
     const ms = msg.markerSet;
     if (ms && Array.isArray(ms.types) && ms.types.length) {
@@ -526,37 +661,33 @@ function run(msg) {
   if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} bins with ≥ ${P.minUmi} UMI; the shapes hold ${N}.`);
   if (P.mode === "shapes" && N < 3) throw new Error(`"One dot per shape" needs at least 3 non-empty shapes; there are ${N}.`);
 
-  // log1p CP10k, then gene stats over the selection (zeros included)
+  // log1p CP10k, then gene stats over the selection (zeros included) and in how many bins
+  // each gene is counted at all
   progress("Normalising", 0.05);
   const G = msg.nGenes, val = new Float64Array(d.ct.length);
-  const sum = new Float64Array(G), sq = new Float64Array(G);
+  const sum = new Float64Array(G), sq = new Float64Array(G), det = new Uint32Array(G);
   for (let i = 0; i < N; i++) {
     const f = 1e4 / d.lib[i];
     for (let k = d.ptr[i]; k < d.ptr[i + 1]; k++) {
       const v = Math.log1p(d.ct[k] * f); val[k] = v; sum[d.gi[k]] += v; sq[d.gi[k]] += v * v;
+      if (d.ct[k] > 0) det[d.gi[k]]++;
     }
   }
   const mu = new Float64Array(G), vr = new Float64Array(G);
   for (let g = 0; g < G; g++) { mu[g] = sum[g] / N; vr[g] = Math.max(0, sq[g] / N - mu[g] * mu[g]); }
 
-  // variable genes within the selection: dispersion z-scored inside 20 mean bins
+  // Genes for the layout: the section's variable genes (the hvg/ chunks), minus any counted in
+  // fewer than max(minDetect, min(minDetectFrac * N, minDetectCap)) of the bins. At a few
+  // hundred bins such genes top any dispersion ranking and, scaled to sd 1 below, a handful of
+  // counts would steer the PCs; the cap (30 bins, the smallest cluster worth reporting) keeps
+  // the markers of a small population in a big selection. No re-ranking inside the selection:
+  // on a 30,000-bin test it gave 2 stable clusters that matched the section clusters at ARI
+  // 0.02, against 4 at ARI 0.29 with the section's genes; and every selection now lays out on
+  // the same genes.
   progress("Choosing genes", 0.1);
-  const cand = []; for (let g = 0; g < G; g++) if (mu[g] > 0 && vr[g] > 0) cand.push(g);
-  let genes = cand;
-  if (cand.length > P.nHvg) {
-    const lm = cand.map((g) => Math.log1p(mu[g])), disp = cand.map((g) => Math.log(vr[g] / mu[g]));
-    const lo = Math.min(...lm), hi = Math.max(...lm), w = (hi - lo) / 20 || 1;
-    const bin = lm.map((x) => Math.min(19, Math.floor((x - lo) / w)));
-    const z = new Float64Array(cand.length);
-    for (let b = 0; b < 20; b++) {
-      const ix = []; bin.forEach((v, i) => { if (v === b) ix.push(i); });
-      if (!ix.length) continue;
-      const m = ix.reduce((a, i) => a + disp[i], 0) / ix.length;
-      const s = Math.sqrt(ix.reduce((a, i) => a + (disp[i] - m) ** 2, 0) / ix.length) || 1;
-      ix.forEach((i) => (z[i] = (disp[i] - m) / s));
-    }
-    genes = cand.map((g, i) => [g, z[i]]).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, P.nHvg).map((x) => x[0]).sort((a, b) => a - b);
-  }
+  const minDet = Math.max(P.minDetect !== undefined ? P.minDetect : 5,
+    Math.min(Math.ceil((P.minDetectFrac !== undefined ? P.minDetectFrac : 0.01) * N), P.minDetectCap !== undefined ? P.minDetectCap : 30));
+  const genes = []; for (let g = 0; g < G; g++) if (det[g] >= minDet && vr[g] > 0) genes.push(g);
   const K = genes.length;
   if (K < 3) throw new Error("Too few genes vary inside the shapes to compute a layout.");
   const colOf = new Array(G).fill(-1); genes.forEach((g, j) => (colOf[g] = j));
@@ -574,7 +705,8 @@ function run(msg) {
     wptr[i + 1] = wcol.length;
   }
   progress("PCA", 0.15);
-  const nPcs = Math.max(2, Math.min(P.nPcs, N - 1, K - 1));
+  const size = sizeRule(N);
+  const nPcs = Math.max(2, Math.min(size.pcs, P.nPcs, N - 1, K - 1));
   const pca = randomizedPCA(N, K, wptr, Uint32Array.from(wcol), Float64Array.from(wval), c, nPcs, rand);
 
   let emb = new Float32Array(N * 2), method = "umap", umap = null;
@@ -582,27 +714,20 @@ function run(msg) {
     method = "pca";
     for (let i = 0; i < N; i++) { emb[2 * i] = pca.scores[i][0]; emb[2 * i + 1] = pca.scores[i][1] || 0; }
   } else {
-    umap = new UMAP.UMAP({ nComponents: 2, nNeighbors: Math.max(2, Math.min(P.nNeighbors, N - 1)), minDist: P.minDist, random: rand });
-    const nEpochs = umap.initializeFit(pca.scores);
-    for (let e = 0; e < nEpochs; e++) {
-      umap.step();
-      if (e % 10 === 0) progress("UMAP", 0.2 + 0.8 * e / nEpochs);
-    }
+    umap = fitUmap(pca.scores, N, size.k, P.minDist, rand);
     const Y = umap.getEmbedding();
     for (let i = 0; i < N; i++) { emb[2 * i] = Y[i][0]; emb[2 * i + 1] = Y[i][1]; }
   }
-  info.nGenesUsed = K; info.nPcs = nPcs; info.varFrac = pca.varFrac.slice(0, 2); info.method = method;
+  info.nGenesUsed = K; info.minDetect = minDet; info.nPcs = nPcs;
+  info.nNeighbors = umap ? Math.max(2, Math.min(size.k, N - 1)) : null; info.init = umap ? "pca" : null;
+  info.varFrac = pca.varFrac.slice(0, 2); info.method = method;
   const out = { emb, rows: Uint32Array.from(d.rows), shape: Uint16Array.from(d.shape), info };
 
   // Leiden on the UMAP's own neighbour graph (bins mode only), seeded with the run's seed
-  const resolution = Number(msg.resolution !== undefined ? msg.resolution : P.resolution !== undefined ? P.resolution : 1.0);
+  const resolution = wantedResolution(msg, P);
   if (P.mode === "bins" && umap && resolution) {
-    progress("Clustering", 1);
-    const g = fuzzyGraphCSR(umap, N);
-    const cluster = leiden(N, g.indptr, g.indices, g.weights, { resolution, seed: P.seed });
-    let nCl = 0; for (let i = 0; i < N; i++) if (cluster[i] + 1 > nCl) nCl = cluster[i] + 1;
-    const sizes = new Array(nCl).fill(0); cluster.forEach((c) => sizes[c]++);
-    info.nClusters = nCl; info.clusterSizes = sizes; info.resolution = resolution;
+    const cluster = clusterGraph(fuzzyGraphCSR(umap, N), N, resolution, P.seed, info);
+    const nCl = info.nClusters;
     info.markers = clusterMarkers(d, val, genes, colOf, cluster, nCl, msg.geneNames || null);
     // a suggested name per cluster, when the page found a marker set and the gene names
     const ms = msg.markerSet;

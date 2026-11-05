@@ -1269,8 +1269,12 @@
   // A bin inside two shapes belongs to the one drawn last, never to both.
   const LASSO_COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4",
                         "#f032e6", "#bfef45", "#469990", "#9a6324", "#fabed4", "#dcbeff"];
+  // nPcs caps the worker's PCs-by-bin-count rule (15 / 20 / 30 PCs, 10 / 15 neighbours below
+  // 1,000 / up to 5,000 / above); of the section's variable genes, those counted in fewer than
+  // max(minDetect, min(minDetectFrac x bins, minDetectCap)) bins are left out.
   const LASSO = { minPoints: 50, fewPoints: 300, smallShape: 20, softCap: 20000, cap: 50000, minUmi: 10,
-                  nHvg: 1000, nPcs: 30, nPcsProtein: 15, nNeighbors: 15, minDist: 0.3, minShapesForUmap: 15, umapJs: "1.4.0" };
+                  nPcs: 30, nPcsProtein: 15, nNeighbors: 15, minDist: 0.3, minShapesForUmap: 15, umapJs: "1.4.0",
+                  minDetect: 5, minDetectFrac: 0.01, minDetectCap: 30 };
   const lassoBlank = () => ({ tool: null, shapes: [], next: 1, drawing: null, pos: null, hvg: null,
     chunks: new Map(), assign: null, bin: null, result: null, brush: null, selShape: null, hover: -1,
     worker: null, running: false, lpVs: null,
@@ -1307,7 +1311,8 @@
       ? `Uses the ${e.label} layer: the ${L.hvg.nChannels} markers of the section UMAP, each scaled with the whole ` +
         `section's window (1st to 99.5th percentile), then compared within the shapes.`
       : `Uses the ${e.label} layer. The UMAP can only use the ${L.hvg.nGenes.toLocaleString()} ` +
-        `most variable genes of the whole section; inside the shapes it keeps the ${LASSO.nHvg.toLocaleString()} that vary most.`;
+        `most variable genes of the whole section; inside the shapes it keeps those counted in at least ` +
+        `${LASSO.minDetect}–${LASSO.minDetectCap} of the bins (1% of them, within those limits).`;
     lassoAssign();
   }
 
@@ -1571,6 +1576,19 @@
 
   const lassoChunkOf = (x, y, cp) => `${Math.floor(x / cp)}_${Math.floor(y / cp)}`;
 
+  // how far a run's clusters can be trusted (stability = median ARI over reseeded and 80%
+  // subsampled Leiden runs, lasso_worker.js clusterGraph), with the sweep when there was one
+  function lassoStabilityNote(I) {
+    if (I.stability == null) return "";
+    const sw = I.sweep && I.sweep.length > 1
+      ? ` Sweep (resolution → clusters, stability): ${I.sweep.map((r) => `${r.resolution} → ${r.nClusters} (${r.stability.toFixed(2)})`).join(", ")}.` : "";
+    if (I.stable) return `These clusters reproduce across reseeded and subsampled runs.${sw}`;
+    if (I.closest) return `No resolution gave clusters that reproduce (stability ≥ 0.8), so this shows the coarsest. ` +
+      `Closest: ${I.closest.nClusters} clusters at ${I.closest.resolution} (${I.closest.stability.toFixed(2)}); type that resolution to see them.${sw}`;
+    if (I.nClusters < 2) return `One cluster: no split of these bins reproduces.${sw}`;
+    return `These clusters do not reproduce (stability below 0.8): treat them as a sketch.${sw}`;
+  }
+
   // The marker lists behind the suggested cluster names (config markerSet, default
   // markers/nerve.json next to this page). Fetched once; missing or broken -> no suggestions.
   let markerSetP = null;
@@ -1610,8 +1628,10 @@
     const mode = $("lassoMode").value;
     const seed = Number($("lassoSeed").value);
     if (!Number.isInteger(seed) || seed < 0) { msg("Seed must be a whole number ≥ 0.", true); return; }
-    const resTxt = $("lassoRes").value.trim(), resolution = resTxt === "" ? 0 : Number(resTxt);
-    if (!Number.isFinite(resolution) || resolution < 0 || resolution > 10) { msg("Resolution must be a number from 0 to 10 (0 = no clusters).", true); return; }
+    // "auto" (or empty) = the worker picks the finest resolution whose clusters reproduce
+    const resTxt = $("lassoRes").value.trim(), resolution = resTxt === "" || /^auto$/i.test(resTxt) ? "auto" : Number(resTxt);
+    if (resolution !== "auto" && (!Number.isFinite(resolution) || resolution < 0 || resolution > 10)) { msg("Resolution must be auto or a number from 0 to 10 (0 = no clusters).", true); return; }
+    const clustering = resolution === "auto" || resolution > 0;
     const live = L.shapes.filter((s) => s.bins > 0);
     const total = live.reduce((a, s) => a + s.bins, 0);
     if (!live.length) { msg("Every shape is empty — draw over tissue.", true); return; }
@@ -1654,13 +1674,13 @@
     // gene names for the marker lists (column order of the hvg chunks); markers fall back to
     // column numbers if the file is missing
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
-    const markerSet = mode === "bins" && resolution > 0 ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
+    const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261104a");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261104g");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
-    const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO.cap, minPoints: LASSO.minPoints, nHvg: LASSO.nHvg,
+    const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO.cap, minPoints: LASSO.minPoints,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
-                     resolution };
+                     minDetect: LASSO.minDetect, minDetectFrac: LASSO.minDetectFrac, minDetectCap: LASSO.minDetectCap, resolution };
     const t0 = performance.now();
     L.worker.onmessage = (ev) => {
       const d = ev.data;
@@ -1680,11 +1700,13 @@
       L.brush = null; L.hover = -1; L.lpVs = null; L.selCluster = null; L.clNames = {};
       const I = d.info, drop = I.dropped.reduce((a, b) => a + b, 0);
       msg([`${I.method === "pca" ? "PCA" : "UMAP"} of ${I.nIn.toLocaleString()} ${mode === "bins" ? "bins" : "bins in " + d.rows.length + " shapes"} ` +
-           `in ${L.result.secs.toFixed(1)} s · ${I.nGenesUsed} genes · ${I.nPcs} PCs · seed ${seed}`,
+           `in ${L.result.secs.toFixed(1)} s · ${I.nGenesUsed} genes · ${I.nPcs} PCs${I.nNeighbors ? ` · ${I.nNeighbors} neighbours` : ""} · seed ${seed}`,
            drop ? `Dropped ${drop.toLocaleString()} bins with < ${LASSO.minUmi} UMI.` : "",
            I.sampledFrom ? `Showing ${I.nIn.toLocaleString()} of ${I.sampledFrom.toLocaleString()} bins (seeded sample, stratified by shape).` : "",
-           cluster ? `${I.nClusters} Leiden clusters at resolution ${L.result.resolution}.` :
-             mode === "bins" && resolution > 0 ? "No clusters came back (this worker version does not cluster yet)." : "",
+           cluster ? `${I.nClusters} Leiden clusters at resolution ${L.result.resolution}${I.autoResolution ? " (chosen by stability)" : ""}` +
+             (I.stability != null ? `, stability ${I.stability.toFixed(2)}.` : ".") :
+             mode === "bins" && clustering ? "No clusters came back (this worker version does not cluster yet)." : "",
+           cluster ? lassoStabilityNote(I) : "",
           ].filter(Boolean).join("\n"));
       $("lassoPanel").hidden = false;
       lassoRefresh(); buildLassoUI();
@@ -1821,6 +1843,7 @@
     const warns = [];
     if (I.method === "pca") warns.push(`Fewer than ${LASSO.minShapesForUmap} shapes: a UMAP of so few points is meaningless, so this is PC1 vs PC2 (${(I.varFrac[0] * 100).toFixed(0)}% / ${((I.varFrac[1] || 0) * 100).toFixed(0)}% of variance).`);
     else if (I.mode === "bins" && I.nIn < LASSO.fewPoints) warns.push(`Few points (${I.nIn}): treat this layout as a sketch.`);
+    if (R.cluster && I.stability != null && !I.stable) warns.push(lassoStabilityNote({ ...I, sweep: null }));   // numbers only: safe as HTML
     if (I.sampledFrom) warns.push(`Showing ${I.nIn.toLocaleString()} of ${I.sampledFrom.toLocaleString()} bins (seeded sample, stratified by shape).`);
     $("lpWarn").innerHTML = warns.join("<br>"); $("lpWarn").hidden = !warns.length;
     const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -1853,8 +1876,9 @@
     $("lpFoot").textContent = ($("lpFoot").dataset.brush && L.brush ? $("lpFoot").dataset.brush + " " : "") +
       (L.prot ? `${I.nGenesUsed} markers · intensity scaled to the section's 1st–99.5th percentile, z-scored here · ${I.nPcs} PCs · `
               : `${I.nGenesUsed} variable genes (of the section's ${L.hvg ? L.hvg.nGenes : "?"}) · log1p CP10k · ${I.nPcs} PCs · `) +
-      `${I.method === "umap" ? `umap-js ${LASSO.umapJs}, ${LASSO.nNeighbors} neighbours, min_dist ${LASSO.minDist}, ` : ""}seed ${R.seed}` +
-      `${R.cluster ? ` · Leiden resolution ${R.resolution}, ${I.nClusters} clusters` : ""}. ` +
+      `${I.method === "umap" ? `umap-js ${LASSO.umapJs}, ${I.nNeighbors || LASSO.nNeighbors} neighbours, min_dist ${LASSO.minDist}${I.init ? `, ${I.init.toUpperCase()} start` : ""}, ` : ""}seed ${R.seed}` +
+      `${R.cluster ? ` · Leiden resolution ${R.resolution}${I.autoResolution ? " (auto)" : ""}, ${I.nClusters} clusters` +
+        `${I.stability != null ? `, stability ${I.stability.toFixed(2)}` : ""}` : ""}. ` +
       `Drag a box to select · click a point to pick its ${byCl ? "cluster" : "shape"} · scroll to zoom.`;
   }
 
@@ -1881,14 +1905,19 @@
         ? { modality: "protein", channels: L.hvg ? L.hvg.channels : null, nPcs: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors,
             minDist: LASSO.minDist, cap: LASSO.cap, normalisation: L.hvg ? L.hvg.normalize : null, scaling: "z-score within the shapes, clip 10",
             overlap: "drawn last wins" }
-        : { minUmi: LASSO.minUmi, nHvg: LASSO.nHvg, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
+        : { minUmi: LASSO.minUmi, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
+            minDetect: LASSO.minDetect, minDetectFrac: LASSO.minDetectFrac, minDetectCap: LASSO.minDetectCap,
             cap: LASSO.cap, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
       shapes: L.shapes.map((s) => ({ name: s.name, color: s.hex, kind: s.kind,
                                       points: s.pts.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]),
                                       ...(s.rows ? { rows: Array.from(s.rows) } : {}) })),
-      resolution: Number($("lassoRes").value) || 0,
-      result: R ? { method: R.info.method, points: R.info.nIn, genesUsed: R.info.nGenesUsed, seconds: +R.secs.toFixed(2),
+      resolution: /^\s*(auto)?\s*$/i.test($("lassoRes").value) ? "auto" : Number($("lassoRes").value) || 0,
+      result: R ? { method: R.info.method, points: R.info.nIn, genesUsed: R.info.nGenesUsed, minDetect: R.info.minDetect || null,
+                    nPcs: R.info.nPcs, nNeighbors: R.info.nNeighbors || null, init: R.info.init || null, seconds: +R.secs.toFixed(2),
                     ...(R.cluster ? { resolution: R.resolution, nClusters: R.info.nClusters, clusterSizes: R.info.clusterSizes || null,
+                                      autoResolution: !!R.info.autoResolution, stability: R.info.stability != null ? R.info.stability : null,
+                                      clusterStability: R.info.clusterStability || null, sweep: R.info.sweep || null,
+                                      stabilityRuns: R.info.stabilityRuns || null,
                                       clusterNames: Object.keys(L.clNames).length ? { ...L.clNames } : null,
                                       // suggested names from the marker lists, with the genes found / missing
                                       cellTypes: R.info.celltypes || null,
@@ -1933,7 +1962,7 @@
                                          hex: s.color || LASSO_COLORS[i % LASSO_COLORS.length], bins: 0, shared: 0, lost: 0 }));
     L.next = L.shapes.length + 1; L.selShape = null;
     if (Number.isInteger(j.seed)) $("lassoSeed").value = j.seed;
-    if (Number.isFinite(j.resolution)) $("lassoRes").value = j.resolution;
+    if (Number.isFinite(j.resolution) || j.resolution === "auto") $("lassoRes").value = j.resolution;
     umapLoadState(j.sectionClusters);
     if (j.mode === "bins" || j.mode === "shapes") $("lassoMode").value = j.mode;
     lassoShapesChanged();
