@@ -22,7 +22,8 @@ The options below are in order of effort.
 Visitors need an internet connection in every case: the page loads its drawing library
 (deck.gl) and, for the circle tool, umap-js from `cdn.jsdelivr.net`. The viewer needs a
 browser with WebGL2; it is developed and tested in Chrome. Other browsers have not been
-tested.
+tested. The same link works on phones and tablets: the page lays itself out for the screen
+(see [Browser support](../README.md#browser-support)).
 
 Before anything leaves your computer, go through the
 [checklist at the end](#before-you-upload-checklist).

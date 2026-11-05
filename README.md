@@ -170,9 +170,27 @@ email wbuchser@wustl.edu with any questions about hosting.
 ## Browser support
 
 The viewer needs **WebGL2**. It is developed and tested in **Google Chrome** on desktop.
-Other browsers (Edge, Firefox, Safari) and phones or tablets have not been tested; they
-may work if they support WebGL2. Password-encrypted dataset links need the page to be
-served over `https://` or from `localhost`.
+Other desktop browsers (Edge, Firefox, Safari) have not been tested; they may work if they
+support WebGL2. Password-encrypted dataset links need the page to be served over
+`https://` or from `localhost`.
+
+**Phones and tablets** open the same page and link; the layout follows the screen.
+
+- On a phone held upright the map fills the screen and the controls sit in a sheet under
+  it: tap or drag its handle. Side by side puts the tissue above the UMAP. Tablets and
+  phones on their side keep the sidebar.
+- Touch: pinch to zoom, drag to pan, tap a spot to read it (what hovering shows on a
+  computer). While drawing a shape, one finger draws and two fingers move the picture.
+  "Add to the selection" and "Done drawing" stand in for Shift and Esc.
+- A phone has far less memory and a slower single core than a desktop, so on a touch
+  screen the viewer draws at most 2× the screen's CSS pixels, keeps fewer image tiles,
+  notes when more than 10 stains are on (a phone can run out of memory and reload the
+  page), and Circle → UMAP samples at most 20,000 bins (50,000 on a computer) and keeps
+  the screen on while it runs. A shape file saved on a phone records that limit; rerun on
+  a computer, a selection of more than 20,000 bins is sampled up to 50,000 instead.
+
+The phone layout and touch handling were tested in Chrome's phone emulation.
+<!-- REAL-DEVICE PLACEHOLDER: list the phones and browsers it has been run on. -->
 
 ## Repository layout
 
