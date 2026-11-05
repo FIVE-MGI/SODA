@@ -317,7 +317,7 @@ N_PCS_PROTEIN = 15
 
 def protein_params(channels: list[str], extra: dict | None = None) -> dict:
     return {"nPcs": f"min({N_PCS_PROTEIN}, channels - 1)", "nNeighbors": N_NEIGHBORS, "minDist": MIN_DIST,
-            "seed": SEED, "normalize": "per channel clip((x - p1) / (p99.5 - p1), 0, 1) over the tissue squares",
+            "init": INIT, "seed": SEED, "normalize": "per channel clip((x - p1) / (p99.5 - p1), 0, 1) over the tissue squares",
             "scale": f"z-score per channel, clip {CLIP:g}",
             "cluster": f"leiden RBConfiguration on umap fuzzy graph, {LEIDEN_ITERS} iterations",
             "markers": (f"difference of the mean z-scored x' (cluster - rest, population sd), top {N_MARKERS} "
