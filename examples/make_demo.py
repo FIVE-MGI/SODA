@@ -88,6 +88,12 @@ MX_CHANNELS = ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel", "Synth-Im
                # weaker under a dye-tagged name (a duplicate after the name cleanup); an empty channel
                "Synth-Saturated", "Synth-Axon-488", "open-cy5"]
 MX_FOLD_UM = 150                     # a fold: every channel bright over a square this wide, in the stroma
+# multiplex_tiled.ome.tif: the same image as if stitched from 180 x 150 px camera tiles (edges at
+# x = 70 + k*180, y = 40 + k*150), each tile of two markers a little brighter or dimmer, and one of
+# them with a per-tile background offset too: the tile-seam correction (protgrid.py / seams.py)
+# must find the grid and recover these
+MX_TILE = (180, 150, 70, 40)         # w, h, x0, y0 in px
+MX_TILED = {"Synth-Membrane": False, "Synth-Autofluor": True}    # name -> also an offset
 
 
 def log(*a):
@@ -425,6 +431,35 @@ def make_multiplex(rng, path: Path, seed: int = 0):
                      resolutionunit="CENTIMETER", metadata=md, software="make_demo.py (synthetic)")
     log(f"[demo] {path}  {MX_PX}x{MX_PX} x {len(MX_CHANNELS)} ch uint16  ({time.time() - t0:.0f}s)")
 
+    # the tiled copy (see MX_TILE): per tile a factor a_col * b_row * (1 + 3% noise), columns and
+    # rows alternating brighter / dimmer so every edge is a step, and a background offset
+    w, h, x0, y0 = MX_TILE
+    tc = (np.arange(MX_PX) - x0) // w
+    tr = (np.arange(MX_PX) - y0) // h
+    c0, r0 = int(tc.min()), int(tr.min())
+    ntc, ntr = int(tc.max()) - c0 + 1, int(tr.max()) - r0 + 1
+    truth = {"w": w, "h": h, "x0": x0, "y0": y0, "col0": c0, "row0": r0, "channels": {}}
+    tiled = stack.copy()
+    for nm, offset in MX_TILED.items():
+        i = MX_CHANNELS.index(nm)
+        a_ = 1 + 0.12 * np.where(np.arange(ntc) % 2, 1, -1) * (0.6 + 0.4 * rng.random(ntc))
+        b_ = 1 + 0.10 * np.where(np.arange(ntr) % 2, 1, -1) * (0.6 + 0.4 * rng.random(ntr))
+        gain = b_[:, None] * a_[None, :] * (1 + 0.03 * rng.standard_normal((ntr, ntc)))
+        off = (400 * np.where(np.arange(ntc) % 2, 1, -1)[None, :] * (0.5 + 0.5 * rng.random((ntr, ntc)))
+               if offset else np.zeros((ntr, ntc)))
+        G = gain[(tr - r0)[:, None], (tc - c0)[None, :]]
+        O = off[(tr - r0)[:, None], (tc - c0)[None, :]]
+        tiled[i] = np.clip(stack[i].astype(np.float64) * G + O, 0, 65535).astype(np.uint16)
+        truth["channels"][nm] = {"gain": np.round(gain, 5).tolist(), "offset": np.round(off, 2).tolist()}
+    tpath = path.with_name("multiplex_tiled.ome.tif")
+    md_t = dict(md, UUID=str(uuid.uuid5(uuid.NAMESPACE_URL, f"spatial-viewer-demo-multiplex-tiled-{seed}")),
+                Name="SYNTHETIC demo multiplex, tiled")
+    tifffile.imwrite(str(tpath), tiled, ome=True, photometric="minisblack", tile=(512, 512),
+                     compression="zlib", resolution=(1e4 / MX_MPP, 1e4 / MX_MPP),
+                     resolutionunit="CENTIMETER", metadata=md_t, software="make_demo.py (synthetic)")
+    (path.parent / "truth_multiplex_tiles.json").write_text(json.dumps(truth), encoding="utf-8")
+    log(f"[demo] {tpath}  {w} x {h} px tiles, factors on {', '.join(MX_TILED)}")
+
 
 README = f"""{NOTE}
 
@@ -433,6 +468,8 @@ visiumhd/outs/       Space Ranger (Visium HD) shaped output: binned_outputs/squa
 visiumhd/truth_*.csv region each bin was drawn from (for tests; not read by the app)
 multiplex.ome.tif    {len(MX_CHANNELS)}-channel fluorescence-like OME-TIFF, {MX_PX} x {MX_PX} px, {MX_MPP:g} um/px
 truth_multiplex_fold.json  where the synthetic fold is (for tests; not read by the app)
+multiplex_tiled.ome.tif    the same image with per-tile brightness steps in two markers (camera tiles)
+truth_multiplex_tiles.json the tile grid and the factors / offsets put in (for tests)
 
 Regions: {", ".join(REGIONS[1:])}. Regenerate with the same --seed to get the same data.
 """

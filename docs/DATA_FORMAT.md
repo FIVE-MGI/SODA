@@ -273,7 +273,19 @@ them and repeats the headline numbers (`everythingBright`, `saturatedSquares`, `
   `status` is one of `ok`, `weak`, `saturated`, `flat` (not in the UMAP), `nuclear`
   (tissue mask only). Values are in the 8-bit units of the gene files. `seams`: per axis, the
   channels whose full-resolution column (row) means step sharply at one repeated spacing - a
-  camera tile edge - and that spacing; `flagged` when at least two channels share it.
+  camera tile edge - and that spacing; `flagged` when at least two channels share it. `grid`
+  ({x0, y0, w, h} in px) when the edges sit in the same place in both halves of the slide;
+  `correction` when the square means were corrected for the seams: `corrected` / `notCorrectable`
+  markers, the median excess step at tile edges before / after (percentage points), and
+  `file` = `qc_seams.json`.
+- `qc_seams.json` (only when a correction was made): `grid`, `tiles` ({rows, cols, row0, col0}:
+  tile (r, c) of the grid is entry (r - row0) * cols + (c - col0)), per marker with steps a record
+  (`method` = `gain`, `gain+offset` or `none`, `excessBefore` / `excessAfter`, `controlBefore` /
+  `controlAfter`, `borderLine` (the factors of the pixels next to each edge), `shading` (per
+  orientation the share of edges whose step goes up, and the median step), the reason when not
+  corrected), and `factors`: per corrected marker `g` and `c`
+  per tile (corrected = raw / g - c, in raw image units) and the tiles that were `fitted`. The
+  gene files and `mat/` hold the corrected means; the image tiles are not changed.
 - `qc_flags.bin`: one uint8 per row of `positions.bin`. Bit 1: everything bright (more
   than 80% of the UMAP channels above their 95th percentile over the tissue: folds,
   bubbles, bright edges). Bit 2: more than half of the square's pixels at the detector's

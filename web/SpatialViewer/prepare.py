@@ -124,6 +124,10 @@ def main(argv=None):
                    help="grid layer: the tissue mask thresholds the DAPI square means after a moving average "
                         "over this many µm (default 100 = 7x7 squares of 16 µm); 0 = threshold the raw means "
                         "(keeps only nucleus-dense squares).")
+    e.add_argument("--seam-correct", action="store_true",
+                   help="grid layer: where camera-tile seams are found, correct the square means for "
+                        "brightness / background differences between tiles (seams.py). Seams are always "
+                        "detected and reported in the slide QC; shading shared by every tile is not corrected.")
     e.add_argument("--umap-sample", type=int, default=None,
                    help="grid layer: above this many tissue squares the section UMAP is fitted on a seeded random "
                         "sample of this size and the other squares are placed into it (default 200000; 0 = always "
@@ -177,7 +181,8 @@ def main(argv=None):
         export_static(Path(args.out) / args.id, Path(args.dest), fmt=args.fmt, workers=args.workers, log=log,
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
-                      grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample)
+                      grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample,
+                      seam_correct=args.seam_correct)
         return
 
     if args.kind == "inspect":

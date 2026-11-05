@@ -1235,16 +1235,31 @@
                            `<span title="${esc(sm[k].channels.join(", "))}">${sm[k].channels.length} of ${sm[k].channelsChecked} markers ` +
                            `(${esc(sm[k].channels.slice(0, 4).join(", "))}${sm[k].channels.length > 4 ? " …" : ""})</span> step every ` +
                            `${sm[k].spacingPx} px (~${sm[k].spacingUm} µm) ${k === "columns" ? "across" : "down"} the slide`).join("; ") +
-                         `. Clusters may follow these stripes (bands in the UMAP colours); compare with the image before trusting them.`
+                         (sm.correction ? "." : `. Clusters may follow these stripes (bands in the UMAP colours); compare with the image before trusting them.` +
+                                                (sm.gridProblem ? ` Not corrected: ${esc(sm.gridProblem)}.` :
+                                                 sm.correctionSkipped ? ` Not corrected: ${esc(sm.correctionSkipped)}.` : ""))
                        : `<span title="${esc(sm.rule || "")}">No tile seams found.</span>`) : "",
+      sm && sm.correction ? (() => {
+        const co = sm.correction, nc = co.notCorrectable || [];
+        return `<span class="qc-ok" title="${esc(co.rule || "")}">Seams corrected</span> in ${co.corrected.length} of ` +
+          `${co.corrected.length + nc.length} markers with steps (step at tile edges ${co.excessBeforeMedian} → ` +
+          `${co.excessAfterMedian} points, median). The numbers are corrected; the image is shown as recorded.` +
+          (nc.length ? ` <span class="qc-warn" title="${esc(nc.map((x) => `${x.name}: ${x.reason}`).join("\n"))}">Not correctable</span>: ` +
+                       `${esc(nc.map((x) => x.name).join(", "))} (kept in the UMAP; their clusters may still follow the tiles).` +
+                       (nc.filter((x) => /shading shared/.test(x.reason || "")).length
+                         ? ` For ${nc.filter((x) => /shading shared/.test(x.reason || "")).length} of them the seam is shading ` +
+                           `shared by every field (one side of every field brighter), which needs a flat-field correction (not built yet).` : "") : "");
+      })() : "",
       `<i>${esc(I.note || "")}</i>`,
     ].filter(Boolean);
     $("qcSummary").innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
     $("rowQcOutline").hidden = !((br.n || 0) + (ss.n || 0));
     $("qcChannels").innerHTML = `<table class="qc-tab"><tr><th>Marker</th><th title="Off-tissue level (0–255)">Bg</th>` +
-      `<th title="(99.5th percentile − background) / background">Signal</th><th title="Share of tissue pixels at the detector's limit">Sat.</th><th></th></tr>` +
+      `<th title="(99.5th percentile − background) / background">Signal</th><th title="Share of tissue pixels at the detector's limit">Sat.</th>` +
+      `<th title="Tile seams: corrected (and how), or not correctable">Seams</th><th></th></tr>` +
       ch.map((c) => `<tr class="${c.status === "ok" ? "" : "qc-" + c.status}"><td>${esc(c.name)}</td><td>${c.background.toFixed(1)}</td>` +
-        `<td>${c.signalToBackground.toFixed(0)}</td><td>${c.saturatedPct.toFixed(2)}%</td><td>${esc(QC_STATUS[c.status] || "")}</td></tr>`).join("") +
+        `<td>${c.signalToBackground.toFixed(0)}</td><td>${c.saturatedPct.toFixed(2)}%</td>` +
+        `<td class="${c.seams === "not correctable" ? "qc-warnc" : ""}">${esc(c.seams || "")}</td><td>${esc(QC_STATUS[c.status] || "")}</td></tr>`).join("") +
       `</table>`;
   }
   async function qcSetOutline(on) {

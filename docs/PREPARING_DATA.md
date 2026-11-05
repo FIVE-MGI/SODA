@@ -163,6 +163,21 @@ Everything after that is automatic, so a slide needs no hand-tuning:
   (folds, bubbles, bright edges; a cluster made mostly of them is suggested as
   "Artefact? (fold / edge)"), squares with many saturated pixels, and a check for tile seams.
   UMAPs are per slide: they are not comparable across slides.
+- **Tile seams.** A stitched slide can show steps where the camera fields meet. On our s48
+  (fields of 960 x 720 px) there are three parts: a dark line along the last pixel column / row
+  of every field; shading shared by every field (one side of every field brighter than the
+  other, so the step goes the same way at most edges); and brightness / background differences
+  between fields. The seams are always detected and reported. With `--seam-correct`, when the
+  field grid is found, the border line is measured and left out, the
+  shared shading is measured and reported, and every marker with steps gets one brightness
+  factor (and, if it helps, a background offset) per field, fitted from the pixels on both sides
+  of each field edge. It is kept only if it at least halves the step at field edges without
+  raising it inside the fields; the squares are then recomputed from corrected values. Shared
+  shading is **not** corrected (that needs a flat-field correction, not built yet): markers
+  dominated by it are listed as not correctable, with the reason, and stay in the UMAP. The
+  image itself is shown as recorded. The correction is off by default: on s48 it removed the
+  steps at field edges in 11 of 24 markers but made no measurable difference to the squares,
+  because most of the seam there is the shared shading. Details: `web/SpatialViewer/seams.py`.
 - **Large slides.** Above 200,000 tissue squares the UMAP is fitted on a seeded random
   sample of 200,000 and the other squares are placed into it (`--umap-sample N`; 0 = fit on
   every square, slower).

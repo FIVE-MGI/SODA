@@ -292,6 +292,8 @@ button:disabled:hover { border-color: var(--line); }
 .qc-box { margin-top: 8px; }
 .qc-sum div { margin-top: 3px; word-break: normal; }
 .qc-warn { color: #e0a070; font-weight: 600; }
+.qc-ok { color: #7fd48a; font-weight: 600; }
+.qc-tab td.qc-warnc { color: #e0a070; }
 .ct-badge.qc-warn { color: #ffb44d; border-color: #a0662a; }
 .qc-det summary { cursor: pointer; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .qc-tab { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }

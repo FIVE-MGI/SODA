@@ -72,6 +72,7 @@ from urllib.parse import quote
 import numpy as np
 
 import deid
+import seams
 
 DEFAULT_GRID_UM = 16.0
 NUCLEAR = re.compile(r"^\s*(dapi|hoechst)\b", re.I)                    # = viewer.js NUCLEAR_CHANNEL
@@ -114,22 +115,29 @@ def channel_sums(a, c: int, ye: np.ndarray, xe: np.ndarray, top: int | None = No
     """Sum of channel `c` of zarr array `a` (C, H, W) over every square, one chunk row at a time.
 
     With `top`, also the count of pixels >= top per square (saturation), returned as
-    (sums, counts). With `profiles`, also the mean of every image column and row
-    (for the seam check): (sums, counts, colMean, rowMean)."""
+    (sums, counts). With `profiles`, also the mean of every image column and row, and the same
+    over the top / bottom half of the rows and the left / right half of the columns (seams.find_grid):
+    (sums, counts, (colMean, rowMean, colTop, colBottom, rowLeft, rowRight))."""
     ny, nx = len(ye) - 1, len(xe) - 1
     S = np.zeros((ny, nx), np.float64)
     T = np.zeros((ny, nx), np.int64) if top is not None else None
     rows = a.chunks[1]
     h_used, w_used = int(ye[-1]), int(xe[-1])
-    colsum = np.zeros(w_used, np.float64) if profiles else None
-    rowmean = np.zeros(h_used, np.float64) if profiles else None
+    if profiles:
+        colsum, coltop = np.zeros(w_used, np.float64), np.zeros(w_used, np.float64)
+        rowmean, rowleft, rowright = (np.zeros(h_used, np.float64) for _ in range(3))
+        hmid, wmid = h_used // 2, w_used // 2
     buf, b0, j = None, 0, 0
     for y0 in range(0, h_used, rows):
         y1 = min(y0 + rows, h_used)
         band = np.asarray(a[c, y0:y1, :w_used])
         if profiles:
             colsum += band.sum(0, dtype=np.float64)
+            if y0 < hmid:
+                coltop += band[:hmid - y0].sum(0, dtype=np.float64)
             rowmean[y0:y1] = band.mean(1, dtype=np.float64)
+            rowleft[y0:y1] = band[:, :wmid].mean(1, dtype=np.float64)
+            rowright[y0:y1] = band[:, wmid:].mean(1, dtype=np.float64)
         buf = band if buf is None or len(buf) == 0 else np.concatenate([buf, band])
         j1 = j
         while j1 < ny and ye[j1 + 1] <= y1:
@@ -146,7 +154,8 @@ def channel_sums(a, c: int, ye: np.ndarray, xe: np.ndarray, top: int | None = No
     if T is None:
         return S
     if profiles:
-        return S, T, colsum / max(h_used, 1), rowmean
+        return S, T, (colsum / max(h_used, 1), rowmean, coltop / max(hmid, 1),
+                      (colsum - coltop) / max(h_used - hmid, 1), rowleft, rowright)
     return S, T
 
 
@@ -246,10 +255,6 @@ SAT_SHARE = 0.01              # share of in-tissue pixels at the detector's limi
 SAT_SQUARE = 0.5              # a square with more than this share of its pixels at the limit is flagged
                               # (0.10 flagged 25% of s48's squares: bright stains clip in every dense patch)
 BRIGHT_PCT, BRIGHT_SHARE = 95.0, 0.8   # "everything bright": > 80% of the marker channels above their p95
-SEAM_JUMP_PCT = 99.7          # seam check: a "step" = a jump between neighbouring pixel columns above this percentile
-SEAM_MIN_PX, SEAM_MAX_PX = 200, 4000   # tile spacings looked for, in full-resolution pixels
-SEAM_REPEATS = 8              # a channel shows seams when one spacing between steps repeats this often
-SEAM_CHANNELS = 2             # the slide is flagged when this many channels share that spacing (within 1%)
 FLAG_BRIGHT, FLAG_SAT = 1, 2  # qc_flags.bin bits
 
 
@@ -272,59 +277,6 @@ def normalise_bg_asinh(Vt: np.ndarray, bg: np.ndarray, hi: np.ndarray, cof: floa
     return np.where(ok, np.arcsinh(u / cof) / np.arcsinh(1.0 / cof), 0.0)
 
 
-def _steps(prof: np.ndarray) -> dict | None:
-    """Sharp steps in one channel's column (or row) means at full resolution: the jumps between
-    neighbouring pixel columns above their 99.7th percentile, and the most common spacing between
-    them (to 4 px). A camera tile edge gives the same spacing again and again; anatomy does not."""
-    prof = np.asarray(prof, np.float64)
-    if len(prof) < 4 * SEAM_MIN_PX:
-        return None
-    g = np.abs(np.diff(prof))
-    idx = np.flatnonzero(g > np.percentile(g, SEAM_JUMP_PCT))
-    gaps = np.diff(idx)
-    gaps = gaps[(gaps >= SEAM_MIN_PX) & (gaps <= SEAM_MAX_PX)]
-    if not len(gaps):
-        return None
-    vals, cnt = np.unique(np.round(gaps / 4).astype(np.int64) * 4, return_counts=True)
-    k = int(np.argmax(cnt))
-    return {"spacingPx": int(vals[k]), "repeats": int(cnt[k]), "jumps": int(len(idx))}
-
-
-def seam_check(profiles: list, names: list[str], px_um: float) -> dict | None:
-    """Tile seams: per channel, _steps of its column and row means (full-resolution pixels). A channel
-    shows seams along an axis when one spacing repeats >= SEAM_REPEATS times; the slide is flagged when
-    >= SEAM_CHANNELS channels show the same spacing (within 1%). (s48: CD45 and CD90 step every 960 px
-    across and 720 px down - the 486 x 365 µm camera field - and circle -> UMAP clusters drawn there
-    come out in vertical bands; DAPI barely shows it, so one channel is not enough to look at.)"""
-    if not profiles:
-        return None
-    out = {"rule": f"per channel, sharp steps between neighbouring pixel columns / rows (above the "
-                   f"{SEAM_JUMP_PCT:g}th percentile of the jumps) and their most common spacing; flagged when "
-                   f">= {SEAM_CHANNELS} channels repeat one spacing (within 1%) >= {SEAM_REPEATS} times"}
-    flagged = False
-    for axis, k in (("columns", 0), ("rows", 1)):
-        hits = []
-        for nm, pr in zip(names, profiles):
-            st = _steps(pr[k])
-            if st and st["repeats"] >= SEAM_REPEATS:
-                hits.append((st["spacingPx"], st["repeats"], nm))
-        best = []
-        for sp, _r, _n in hits:
-            grp = [h for h in hits if abs(h[0] - sp) <= 0.01 * sp + 4]
-            if len(grp) > len(best):
-                best = grp
-        res = {"channelsChecked": len(names), "channelsWithSteps": len(hits)}
-        if best:
-            sp = int(np.median([h[0] for h in best]))
-            res.update(spacingPx=sp, spacingUm=round(sp * px_um), channels=[h[2] for h in best],
-                       repeats=int(np.median([h[1] for h in best])))
-        res["flagged"] = len(best) >= SEAM_CHANNELS
-        flagged |= res["flagged"]
-        out[axis] = res
-    out["flagged"] = flagged
-    return out
-
-
 def saturation_top(dtype, channels: list[dict]) -> int:
     """The pixel value that means "at the detector's limit", one per slide: 255 for uint8; for
     uint16 4,095 when no channel goes above it (a 12-bit camera), else 65,535."""
@@ -344,6 +296,14 @@ def bright_squares(Vt: np.ndarray) -> np.ndarray:
     return (Vt > np.percentile(Vt, BRIGHT_PCT, axis=0)).mean(1) > BRIGHT_SHARE
 
 
+def to_8bit(mean: np.ndarray, channel: dict, dtype) -> np.ndarray:
+    """Raw means -> the 8-bit units of the tiles (the channel's `bits` window; not clipped at 255)."""
+    b0, b1 = (float(x) for x in channel["bits"])
+    if str(dtype) == "uint8" and b0 == 0 and b1 == 255:
+        return mean
+    return np.maximum((mean - b0) * (255.0 / max(b1 - b0, 1e-9)), 0.0)
+
+
 def square_means(r, grid_um: float, px_um: float, log=print, workers: int = 4) -> dict:
     """Mean per square and channel (8-bit units) over the whole grid, from FULL-RESOLUTION pixels.
 
@@ -351,7 +311,7 @@ def square_means(r, grid_um: float, px_um: float, log=print, workers: int = 4) -
     display keeps small bright structures), so a mean taken from them overstates every marker:
     on s48, 16 µm, DAPI by ~20% and sparse markers (Ki67) by ~2x. Level 0 is read once per
     channel, a chunk row at a time. Also counts, per square and channel, the pixels at the
-    detector's limit (saturation_top), and every channel's column / row means (seam_check).
+    detector's limit (saturation_top), and every channel's column / row means (seams.find_grid).
     """
     a = r._arrays[0]
     step = grid_um / px_um
@@ -368,19 +328,80 @@ def square_means(r, grid_um: float, px_um: float, log=print, workers: int = 4) -
     V64 = np.empty((ny * nx, len(r.channels)), np.float64)   # for the tissue mask (not rounded to float32)
     SAT = np.empty((ny * nx, len(r.channels)), np.int32)     # pixels at the limit per square
     prof = []
-    for c, (S, T, pc, pr) in enumerate(res):
-        prof.append((pc, pr))
-        mean = (S / npx).ravel()
-        b0, b1 = (float(x) for x in r.channels[c]["bits"])
-        if not (str(a.dtype) == "uint8" and b0 == 0 and b1 == 255):
-            mean = np.maximum((mean - b0) * (255.0 / max(b1 - b0, 1e-9)), 0.0)
+    for c, (S, T, pr) in enumerate(res):
+        prof.append(pr)
+        mean = to_8bit((S / npx).ravel(), r.channels[c], a.dtype)
         V[:, c] = mean
         V64[:, c] = mean
         SAT[:, c] = T.ravel()
     log(f"[grid] full resolution ({px_um:.3f} µm/px, {r.W}x{r.H}), {step:.2f} px squares, {nx}x{ny} = {nx * ny:,} "
         f"squares x {len(r.channels)} channels  {time.time() - t0:.0f}s")
     return {"V": V, "V64": V64, "nx": nx, "ny": ny, "level": 0, "pxUm": float(px_um), "sat": SAT,
-            "npx": npx.ravel(), "tops": tops, "profiles": prof}
+            "npx": npx.ravel(), "tops": tops, "profiles": prof, "ye": ye, "xe": xe}
+
+
+def correct_seams(r, g: dict, seam: dict, keep: np.ndarray, cand: list[int], names: list[str], log=print,
+                  workers: int = 4) -> dict | None:
+    """Tile-seam correction of the square means (seams.py): a second full-resolution pass over the
+    channels `cand` (those with steps), a per-tile factor / offset fit per channel, kept only where
+    it works. Replaces the corrected channels' columns of g["V"] / g["V64"] in place and returns
+    the record for qc.json / qc_seams.json (None without a grid)."""
+    grid = seam.get("grid")
+    if not grid or not cand:
+        return None
+    t0 = time.time()
+    a = r._arrays[0]
+    ye, xe, ny, nx = g["ye"], g["xe"], g["ny"], g["nx"]
+    W, H = int(xe[-1]), int(ye[-1])
+    ev, mv = seams.edge_lines(W, grid["w"], grid["x0"])
+    eh, mh = seams.edge_lines(H, grid["h"], grid["y0"])
+    vlines, is_ev = np.r_[ev, mv].astype(np.int64), np.r_[np.ones(len(ev), bool), np.zeros(len(mv), bool)]
+    hlines, is_eh = np.r_[eh, mh].astype(np.int64), np.r_[np.ones(len(eh), bool), np.zeros(len(mh), bool)]
+    ye_r = seams.fine_edges(ye, np.arange(grid["y0"] % grid["h"], H, grid["h"]))
+    xe_r = seams.fine_edges(xe, np.arange(grid["x0"] % grid["w"], W, grid["w"]))
+    sr, sc, tid = seams.piece_maps(ye, xe, ye_r, xe_r, grid)
+    ntr = int(seams.tile_index(H - 1, grid["h"], grid["y0"]) - seams.tile_index(0, grid["h"], grid["y0"])) + 1
+    ntc = int(seams.tile_index(W - 1, grid["w"], grid["x0"]) - seams.tile_index(0, grid["w"], grid["x0"])) + 1
+    nt = ntr * ntc
+    keep2 = np.asarray(keep, bool).reshape(ny, nx)
+    npx = g["npx"].reshape(ny, nx)
+    top = g["tops"][0]
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        passes = list(ex.map(lambda c: seams.channel_pieces(a, c, ye, xe, ye_r, xe_r, top, vlines, hlines), cand))
+    out = {"grid": grid, "tiles": {"rows": ntr, "cols": ntc, "row0": int(seams.tile_index(0, grid["h"], grid["y0"])),
+                                   "col0": int(seams.tile_index(0, grid["w"], grid["x0"]))},
+           "channels": [], "factors": {}}
+    for c, P in zip(cand, passes):
+        Vp, A, B, E, O = seams.segments(P, keep2, ye, xe, grid, vlines, hlines, is_ev, is_eh)
+        fr = seams.choose(seams.fit_channel(Vp, A, B, E, O, nt, (ntr, ntc)))
+        cor = {}
+        if fr["method"] != "none":
+            gg_, cc = (fr["_g_only"], np.zeros(nt)) if fr["method"] == "gain" else (fr["_g"], fr["_c"])
+            cor[fr["method"]] = np.maximum(seams.corrected_sums(P["S"], ye_r, xe_r, sr, sc, tid, gg_, cc, ny, nx)
+                                           / npx, 0.0)
+        gg, cc, g1 = fr.pop("_g", None), fr.pop("_c", None), fr.pop("_g_only", None)
+        if fr["method"] == "gain":
+            gg = g1
+        rec = {"name": names[c], **fr}
+        if fr["method"] != "none":
+            mean = to_8bit(cor[fr["method"]].ravel(), r.channels[c], a.dtype)
+            g["V"][:, c] = mean
+            g["V64"][:, c] = mean
+            used = np.zeros(nt, bool)
+            used[np.unique(np.r_[A, B])] = True
+            rec["gainSdPct"] = round(float(np.std(np.log(gg[used])) * 100), 1)
+            out["factors"][names[c]] = {"method": fr["method"], "fitted": np.flatnonzero(used).tolist(),
+                                        "g": [round(float(v), 4) for v in gg],
+                                        "c": [round(float(v), 3) for v in (cc if fr["method"] == "gain+offset" else np.zeros(nt))]}
+        out["channels"].append(rec)
+    done = [x["name"] for x in out["channels"] if x["method"] != "none"]
+    out["seconds"] = round(time.time() - t0, 1)
+    log(f"[grid] tile seams ({grid['w']} x {grid['h']} px tiles at {grid['x0']}, {grid['y0']}): corrected "
+        f"{len(done)} of {len(cand)} channels with steps  {out['seconds']:.0f}s")
+    for x in out["channels"]:
+        log(f"[grid]   {x['name']}: {x['method']}, excess step {x['excessBefore']:.2f} -> "
+            f"{x.get('excessAfter', x['excessBefore']):.2f} points" + (f" ({x['reason']})" if x.get("reason") else ""))
+    return out
 
 
 MAT_SCALE = 100              # mat/ chunks store round(v * MAT_SCALE) as uint16 (0.01 of an 8-bit unit)
@@ -448,12 +469,18 @@ def _atomic(p: Path, buf: bytes):
 
 def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, markers: Path | None = None,
                      umap: bool = True, celltypes: bool = True, log=print, force: bool = False,
-                     tissue_smooth_um: float = DEFAULT_TISSUE_SMOOTH_UM, umap_sample: int | None = None) -> dict | None:
+                     tissue_smooth_um: float = DEFAULT_TISSUE_SMOOTH_UM, umap_sample: int | None = None,
+                     seam_correct: bool = False) -> dict | None:
     """Write expr/<key>/ for an image dataset (PyramidReader `r`, manifest `m`) into export folder `out`.
 
     `tissue_smooth_um`: moving-average window (µm) over the square means before the tissue
     threshold; 0 = threshold the raw means (the old, lacy mask). `umap_sample`: fit the section
     UMAP on this many squares and place the rest (None = sectionumap.UMAP_SAMPLE, 0 = fit on all).
+    `seam_correct`: correct the square means for per-tile differences where tile seams are found
+    (seams.py). Off by default: the seams are always detected and reported, but on s48 the per-tile
+    correction removed the steps at tile edges (11 of 24 markers) without a measurable change in
+    the squares (their dependence on the position within a tile: median 1.64% -> 1.64%), because
+    most of the seam there is shading shared by every tile, which it cannot remove.
 
     Returns the manifest's expr entry, or None when the dataset has no pixel size.
     """
@@ -495,6 +522,17 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     sm_txt = f"{size}x{size}-square ({size * grid_um:g} µm) average of the {by} mean" if size > 1 else f"{by} mean"
     log(f"[grid] tissue mask: {sm_txt} > {thr:.2f} (Otsu on log1p over {len(src):,} squares), "
         f"+ {n_filled} squares in {n_holes} enclosed holes of <= {HOLE_MAX} squares: keeps {n:,} ({n / len(src):.0%})")
+
+    # ---- 2b. tile seams: the camera grid, and the square means corrected where that works -----
+    seam = seams.find_grid([g["profiles"][j] for j in written], [names[j] for j in written], float(px_um))
+    with_steps = set(seam["columns"].get("channels", [])) | set(seam["rows"].get("channels", []))
+    cand = [j for j in written if names[j] in with_steps and not NUCLEAR.match(names[j])]
+    seam_fix = correct_seams(r, g, seam, keep, cand, names, log=log) if seam["flagged"] and seam_correct else None
+    if seam["flagged"] and seam.get("grid") and not seam_correct:
+        seam["correctionSkipped"] = "the export did not run the seam correction (prepare.py export --seam-correct)"
+    if seam["flagged"] and not seam.get("grid"):
+        log(f"[grid] tile seams flagged, not corrected: {seam.get('gridProblem')}")
+    V, V64 = g["V"], g["V64"]
 
     # ---- 3. per channel: background, p99.5 above it, signal, saturation --------------------
     # p99.5 leaves out the "everything bright" squares (bright_squares, on the non-nuclear written
@@ -549,7 +587,22 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     flags[bright] |= FLAG_BRIGHT
     sat_sq = (g["sat"][rows][:, written] / g["npx"][rows][:, None]) > SAT_SQUARE
     flags[sat_sq.any(1)] |= FLAG_SAT
-    seams = seam_check([g["profiles"][j] for j in written], wnames, float(px_um))
+    if seam_fix:
+        fixed = {x["name"]: x for x in seam_fix["channels"]}
+        seam["correction"] = {
+            "corrected": [x["name"] for x in seam_fix["channels"] if x["method"] != "none"],
+            "notCorrectable": [{"name": x["name"], "reason": x.get("reason", "")} for x in seam_fix["channels"]
+                               if x["method"] == "none"],
+            "excessBeforeMedian": round(float(np.median([x["excessBefore"] for x in seam_fix["channels"]])), 2),
+            "excessAfterMedian": round(float(np.median([x.get("excessAfter", x["excessBefore"])
+                                                        for x in seam_fix["channels"]])), 2),
+            "file": "qc_seams.json", "imageCorrected": False,
+            "rule": "per tile and marker, a factor (and offset) fitted from the tissue on both sides of every tile "
+                    "edge, kept only if it at least halves the excess step at tile edges without moving mid-tile "
+                    "lines or whole regions (seams.py); the displayed image is not changed"}
+    else:
+        fixed = {}
+    seams_qc = seam
     qc_ch = []
     for k, nm in enumerate(wnames):
         status = ("flat" if flat[k] else "nuclear" if k in marker_cols and k not in embed
@@ -557,7 +610,9 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
         qc_ch.append({"name": nm, "inUmap": k in embed, "status": status,
                       "background": round(float(bg[k]), 3), "p99_5AboveBg": round(float(hi[k]), 3),
                       "signalToBackground": round(float(snr[k]), 2), "saturatedPct": round(float(sat[k]) * 100, 3),
-                      "weak": bool(snr[k] < WEAK_SNR), "saturated": bool(sat[k] > SAT_SHARE)})
+                      "weak": bool(snr[k] < WEAK_SNR), "saturated": bool(sat[k] > SAT_SHARE),
+                      **({"seams": (f"corrected ({fixed[nm]['method']})" if fixed[nm]["method"] != "none"
+                                    else "not correctable")} if nm in fixed else {})})
     n_bright, n_sat = int((flags & FLAG_BRIGHT).astype(bool).sum()), int((flags & FLAG_SAT).astype(bool).sum())
     qc = {"channels": qc_ch,
           "dropped": [{"name": dr["name"], "reason": dr["reason"]} for dr in dropped],
@@ -569,7 +624,7 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
           "saturatedSquares": {"n": n_sat, "share": round(n_sat / n, 5),
                                "rule": f"more than {SAT_SQUARE:.0%} of the square's pixels at the detector's limit "
                                        "in any written channel"},
-          "seams": seams,
+          "seams": seams_qc,
           "rules": {"weak": f"(p99.5 - background) / background < {WEAK_SNR:g}: kept in the UMAP, flagged",
                     "saturated": f"more than {SAT_SHARE:.0%} of the in-tissue pixels at the detector's limit "
                                  f"(255 for 8-bit images; 4,095 or 65,535 for 16-bit): kept, flagged",
@@ -583,7 +638,8 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     satd = [f"{c['name']} {c['saturatedPct']:.1f}%" for c in qc_ch if c["saturated"]]
     log(f"[grid] QC: weak {', '.join(weak) or 'none'}; saturated {', '.join(satd) or 'none'}; "
         f"everything-bright squares {n_bright:,}; squares with saturated pixels {n_sat:,}; "
-        f"seams {'FLAGGED' if seams and seams['flagged'] else 'not flagged'}")
+        f"seams {'FLAGGED' if seams_qc['flagged'] else 'not flagged'}"
+        + (f", corrected in {len(seams_qc['correction']['corrected'])} channels" if seams_qc.get("correction") else ""))
 
     # ---- files ---------------------------------------------------------------------------
     step_full = grid_um / float(px_um)
@@ -606,6 +662,11 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     deid.assert_clean(qc, "grid qc.json")
     _atomic(d / "qc.json", json.dumps(qc, separators=(",", ":")).encode("utf-8"))
     _atomic(d / "qc_flags.bin", flags.tobytes())
+    if seam_fix:
+        deid.assert_clean(seam_fix, "grid qc_seams.json")
+        _atomic(d / "qc_seams.json", json.dumps(seam_fix, separators=(",", ":")).encode("utf-8"))
+    elif (d / "qc_seams.json").exists():
+        (d / "qc_seams.json").unlink()                 # a re-export without a correction: no stale factors
     mat = write_mat_chunks(d, pos, Vt[:, embed], [wnames[k] for k in embed], bg[embed], hi[embed],
                            float(px_um), log=log) if embed else None
 
@@ -621,7 +682,8 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
              "normalize": NORMALIZE,
              "qc": {"file": "qc.json", "flags": "qc_flags.bin", "everythingBright": n_bright, "saturatedSquares": n_sat,
                     "weak": weak, "saturated": [c["name"] for c in qc_ch if c["saturated"]],
-                    "seamsFlagged": bool(seams and seams["flagged"])},
+                    "seamsFlagged": bool(seams_qc["flagged"]),
+                    "seamsCorrected": (seams_qc.get("correction") or {}).get("corrected", [])},
              "dropped": dropped}
     if mat:
         entry["mat"] = mat
