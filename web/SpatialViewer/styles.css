@@ -191,7 +191,7 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 3
 .modal .pending { color: var(--muted); margin: 10px 0 4px; }
 
 /* ---- circle -> UMAP ---------------------------------------------------------- */
-.draw-pad { position: absolute; inset: 0; cursor: crosshair; z-index: 5; }
+.draw-pad { position: absolute; inset: 0; cursor: crosshair; z-index: 5; touch-action: none; }   /* a finger draws, not scrolls */
 button.on { border-color: var(--accent); background: #1f3550; }
 .lasso-shapes .lshape { display: grid; grid-template-columns: 12px 1fr auto; gap: 6px; align-items: center;
   font-size: 12px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
@@ -207,7 +207,7 @@ button.on { border-color: var(--accent); background: #1f3550; }
 .lasso-panel .lp-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); }
 .lasso-panel .lp-btns button { padding: 1px 8px; margin-left: 4px; }
 .lasso-panel .lp-warn { background: #3a2f12; color: #f6d68a; font-size: 12px; padding: 5px 10px; }
-.lasso-panel .lp-host { position: relative; flex: 1; min-height: 0; cursor: crosshair; }
+.lasso-panel .lp-host { position: relative; flex: 1; min-height: 0; cursor: crosshair; touch-action: none; }
 .lasso-panel .lp-box { position: absolute; border: 1px dashed #fff; background: rgba(255,255,255,.08); pointer-events: none; z-index: 2; }
 .lasso-panel .lp-legend { padding: 4px 10px 0; max-height: 90px; margin: 0; }
 .lasso-panel .lp-foot { color: var(--muted); font-size: 11px; padding: 4px 10px 8px; }
@@ -373,7 +373,7 @@ label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
 .sheet-handle { display: none; }
 @media (max-width: 700px) {
   .app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
-  .main { grid-row: 1; min-height: 0; }
+  .main { grid-row: 1; min-height: 0; overflow: hidden; }   /* the view buttons must not spill onto the sheet */
   .sidebar { grid-row: 2; height: 45vh; height: 45dvh; border-right: 0; border-top: 1px solid var(--line);
     padding: 0 12px calc(12px + env(safe-area-inset-bottom)); overscroll-behavior: contain; }
   .app[data-sheet="peek"] .sidebar { height: calc(44px + env(safe-area-inset-bottom)); overflow: hidden; }
@@ -396,6 +396,33 @@ label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
   .view-switch .seg button { padding: 7px 11px; }
   .lasso-panel { top: auto; left: 6px; right: 6px; bottom: 40px; width: auto; height: 50%; }
 }
+/* ---- touch screens (any size): no hover, no Shift or Esc, and fingers not a mouse pointer ---- */
+@media not all and (pointer: coarse) { .touch-only { display: none !important; } }
+@media (pointer: coarse) {
+  .mouse-only { display: none !important; }
+  /* shown on hover on a computer; a finger never hovers */
+  .gr-row .gr-btns, .gr-row .cond .rmc { visibility: visible; }
+  /* targets a fingertip can hit: about 34px where a mouse needs 24 */
+  button:not(.linkish):not(.sg):not(.rmc), select { min-height: 34px; }
+  .linkish { padding: 6px 0; }
+  input[type=checkbox] { width: 20px; height: 20px; }
+  input[type=range] { height: 28px; }
+  .rs input[type=range]::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -2px; }
+  .rs input[type=range]::-moz-range-thumb { width: 18px; height: 18px; }
+  .results div { padding: 10px 8px; }
+  .chan { padding: 6px; }
+  .cl-row, .lasso-shapes .lshape, .gr-row { padding: 6px 4px; }
+  .view-switch .seg button { padding-top: 9px; padding-bottom: 9px; }
+  .lasso-panel .lp-btns button { padding: 4px 10px; }
+}
+/* touch: "Done drawing" in place of Esc, and the tooltip a tap brings up */
+.draw-done { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 8; padding: 9px 16px;
+  font-weight: 600; background: #1f3550; border-color: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.5); }
+.tap-tip { position: absolute; z-index: 9; max-width: 260px; padding: 6px 9px; font-size: 12px; line-height: 1.45; white-space: pre-line;
+  background: rgba(20,24,34,.95); border: 1px solid var(--line); border-radius: 6px; pointer-events: none;
+  transform: translate(-50%, calc(-100% - 14px)); }
+.tap-tip.below { transform: translate(-50%, 14px); }   /* near the top edge: under the finger instead */
+
 /* a phone on its side: too short for a sheet, so a narrower sidebar */
 @media (min-width: 701px) and (max-height: 500px) {
   :root { --sidebar-w: 300px; }

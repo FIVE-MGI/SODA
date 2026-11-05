@@ -740,6 +740,29 @@
     sb.querySelector(".lbl").textContent = um ? (len >= 1000 ? `${len / 1000} mm` : `${len} µm`) : `${len} px`;
   }
 
+  function tooltipFor(info) {
+    if (info.layer && info.layer.id.includes("ucloud") && info.index >= 0) return umapTooltip(umapRowAt(info.layer.id, info.index));
+    if (!info.object || !info.object.properties) return null;
+    const p = info.object.properties;
+    const name = p.name || (p.classification && p.classification.name) || p.label || p.id;
+    return name ? { text: String(name) } : null;
+  }
+  // touch: the hover readout (coordinates, the linked bin in the other pane) and the tooltip,
+  // for the spot tapped. The tip stays until the next tap or until the view moves.
+  function tapInspect(info) {
+    const tip = $("tapTip");
+    if (S.mode !== "rna" && info.coordinate && !(info.viewport && info.viewport.id === "uside")) updateHud(info.coordinate);
+    if (S.mode !== "rna") umapHover(info);
+    const t = tooltipFor(info);
+    tip.hidden = !t;
+    if (!t) return;
+    tip.textContent = t.text;
+    // centred over the finger, but kept inside the map at the sides and the top
+    const W = $("viewport").clientWidth, half = tip.offsetWidth / 2;
+    tip.style.left = `${Math.max(half + 6, Math.min(W - half - 6, info.x))}px`; tip.style.top = `${info.y}px`;
+    tip.classList.toggle("below", info.y < tip.offsetHeight + 24);
+  }
+
   const ORTHO_CTL = { inertia: 200, scrollZoom: { speed: 0.01, smooth: false }, doubleClickZoom: true, keyboard: false };
   function imageViews() {
     return [new OrthographicView({ id: "ortho", flipY: true, controller: ORTHO_CTL })];
@@ -776,6 +799,7 @@
       getCursor: ({ isDragging }) => (isDragging ? "grabbing" : "crosshair"),
       onViewStateChange: ({ viewState, viewId }) => {
         autoFit = false;
+        $("tapTip").hidden = true;                   // it pointed at a spot that has just moved
         if (S.mode === "rna" && S.rna) { S.rna.vs = viewState; deckgl.setProps({ viewState: rnaViewStates() }); return; }
         if (viewId === "uside") { S.umap.sideVs = viewState; deckgl.setProps({ viewState: deckVs() }); return; }
         const zoomed = !S.viewState || Math.abs(S.viewState.zoom - viewState.zoom) > 1e-6;
@@ -789,7 +813,9 @@
         umapHover(info);
       },
       // Tier A: click a region polygon to filter expression to it; click elsewhere clears.
-      onClick: (info) => {
+      onClick: (info, ev) => {
+        // a finger has no hover: a tap shows what hovering the same spot would
+        if (ev && (ev.pointerType === "touch" || (ev.srcEvent && ev.srcEvent.pointerType === "touch"))) tapInspect(info);
         if (S.mode === "rna") return;
         // a dot coloured by cluster: clicking it highlights its cluster, in either view
         if (info && info.layer && info.layer.id.includes("ucloud")) {
@@ -808,13 +834,7 @@
         if (rid) selectRegion(rid);
         else if (S.region.selected) selectRegion(null);
       },
-      getTooltip: (info) => {
-        if (info.layer && info.layer.id.includes("ucloud") && info.index >= 0) return umapTooltip(umapRowAt(info.layer.id, info.index));
-        if (!info.object || !info.object.properties) return null;
-        const p = info.object.properties;
-        const name = p.name || (p.classification && p.classification.name) || p.label || p.id;
-        return name ? { text: String(name) } : null;
-      },
+      getTooltip: tooltipFor,
     });
     window.addEventListener("keydown", (e) => {
       if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;   // typing a name, not fitting
@@ -1379,8 +1399,55 @@
     lassoAssign();
   }
 
+  // ---- two fingers on a drawing pad move the picture under it -------------------------------
+  // While a drawing tool is on, its pad sits over the map, so the map never sees those fingers.
+  // One finger draws; a second ends that stroke (dropStroke) and the pair pans and pinch-zooms
+  // the pane they are on instead. Listens in the capture phase so that, while two fingers are
+  // down, the pad's own drawing handlers never see them.
+  function padPinch(pad, dropStroke) {
+    const pts = new Map();
+    let P = null;                                    // the pinch: pane, its start view, the world point under the fingers
+    const local = (ev) => { const r = $("viewport").getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+    const centre = () => {
+      const [a, b] = [...pts.values()];
+      return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, Math.hypot(a[0] - b[0], a[1] - b[1])];
+    };
+    pad.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType !== "touch") return;
+      pts.set(ev.pointerId, local(ev));
+      if (pts.size < 2) return;
+      ev.stopImmediatePropagation();
+      if (P || pts.size > 2) return;
+      dropStroke();
+      const [mx, my, d] = centre(), vps = deckgl.getViewports();
+      const vp = vps.find((v) => mx >= v.x && mx < v.x + v.width && my >= v.y && my < v.y + v.height) || vps[0];
+      P = { vp, vs0: vp.id === "uside" ? S.umap.sideVs : S.viewState, w: vp.unproject([mx - vp.x, my - vp.y]), d0: Math.max(d, 1) };
+    }, true);
+    pad.addEventListener("pointermove", (ev) => {
+      if (!pts.has(ev.pointerId)) return;
+      pts.set(ev.pointerId, local(ev));
+      if (!P) return;
+      ev.stopImmediatePropagation();
+      if (pts.size < 2) return;
+      const [mx, my, d] = centre(), { vp, vs0, w, d0 } = P;
+      const lo = Number.isFinite(vs0.minZoom) ? vs0.minZoom : -Infinity, hi = Number.isFinite(vs0.maxZoom) ? vs0.maxZoom : Infinity;
+      const zoom = Math.max(lo, Math.min(hi, vs0.zoom + Math.log2(d / d0))), s = Math.pow(2, zoom);
+      // keep the world point that started under the fingers under them (every pane here is flipY)
+      const target = [w[0] - (mx - vp.x - vp.width / 2) / s, w[1] - (my - vp.y - vp.height / 2) / s, 0];
+      deckgl.props.onViewStateChange({ viewState: { ...vs0, target, zoom }, viewId: vp.id });
+    }, true);
+    const up = (ev) => {
+      if (!pts.delete(ev.pointerId)) return;
+      if (P) ev.stopImmediatePropagation();
+      if (!pts.size) P = null;                         // the last finger lifted: the next touch draws again
+    };
+    pad.addEventListener("pointerup", up, true);
+    pad.addEventListener("pointercancel", up, true);
+  }
+
   function lassoPadEvents() {
     const pad = $("drawPad");
+    padPinch(pad, () => { S.lasso.drawing = null; requestRender(); });
     const world = (ev) => {
       const r = $("viewport").getBoundingClientRect();
       return deckgl.getViewports()[0].unproject([ev.clientX - r.left, ev.clientY - r.top]).slice(0, 2);
@@ -1723,7 +1790,9 @@
     const host = $("lpHost"), box = $("lpBox");
     let start = null;
     const local = (ev) => { const r = host.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
-    host.addEventListener("pointerdown", (ev) => { if (ev.button !== 0 || !S.lasso.result) return; start = local(ev); host.setPointerCapture(ev.pointerId); });
+    host.addEventListener("pointerdown", (ev) => { if (ev.button !== 0 || !S.lasso.result || start) return; start = local(ev); host.setPointerCapture(ev.pointerId); });
+    // a second finger (a pinch, which the panel's own deck zooms) or the browser taking the touch over
+    host.addEventListener("pointercancel", () => { start = null; box.hidden = true; });
     host.addEventListener("pointermove", (ev) => {
       if (!start) return;
       const p = local(ev);
@@ -2663,6 +2732,7 @@
     const boxPts = (a, b) => [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]];
     const outline = () => (D.kind === "box" ? (D.pts.length > 1 ? boxPts(D.pts[0], D.pts[1]) : []) : D.pts);
     const draw = () => { svg.innerHTML = D ? `<polygon points="${outline().map((p) => p.join(",")).join(" ")}" />` : ""; };
+    padPinch(pad, () => { D = null; draw(); });
     pad.addEventListener("pointerdown", (ev) => {
       const U = S.umap; if (!U.tool || ev.button !== 0) return;
       pad.setPointerCapture(ev.pointerId);
@@ -2670,7 +2740,8 @@
       // side by side: the pane the drag starts in decides which layout is being selected
       const vp = deckgl.getViewports().find((v) => p[0] >= v.x && p[0] < v.x + v.width && p[1] >= v.y && p[1] < v.y + v.height)
         || deckgl.getViewports()[0];
-      D = { kind: U.tool, pts: [p], add: ev.shiftKey, vp }; draw();
+      // no Shift on a phone: the "Add to the selection" box does the same
+      D = { kind: U.tool, pts: [p], add: ev.shiftKey || $("selAdd").checked, vp }; draw();
     });
     pad.addEventListener("pointermove", (ev) => {
       if (!D) return;
@@ -4749,6 +4820,7 @@
     lassoInit();
     umapInit();
     gateInit();
+    touchInit();
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
       group: cfgSets[id].group, base: cfgSets[id].base }));
@@ -4980,6 +5052,23 @@
       if (dragged) { dragged = false; return; }
       set(app.dataset.sheet === "peek" ? "half" : "peek");
     });
+  }
+
+  // ---- touch screens: what a keyboard does on a desktop ---------------------------------------
+  // "Done drawing" stands in for Esc while a drawing pad is up (the button is touch-only in
+  // styles.css). A pad going up with the controls sheet at full height also drops the sheet
+  // to its strip, as the map is then too small to draw on.
+  function touchInit() {
+    const done = $("drawDone"), pads = [$("drawPad"), $("selPad")], handle = $("sheetHandle");
+    const sync = () => {
+      const was = done.hidden;
+      done.hidden = pads.every((p) => p.hidden);
+      if (was && !done.hidden && document.querySelector(".app").dataset.sheet === "full" &&
+          getComputedStyle(handle).display !== "none") handle.click();
+    };
+    const mo = new MutationObserver(sync);
+    for (const p of pads) mo.observe(p, { attributes: true, attributeFilter: ["hidden"] });
+    done.onclick = () => { lassoSetTool(null); umapSetTool(null); };
   }
 
   init();

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>SODA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <link href="styles.css?v=20261105m1" rel="stylesheet" />
+  <link href="styles.css?v=20261105m2" rel="stylesheet" />
 </head>
 <body>
   <div class="app" data-sheet="peek">
@@ -147,6 +147,7 @@
           <button id="selFree" title="Hold and draw around the dots (Shift adds to the selection, Esc stops)">Freehand</button>
           <button id="selClear" title="Remove the selection and the highlighted cluster">Clear selection</button>
         </div>
+        <label class="row slim check touch-only"><input id="selAdd" type="checkbox" /><span>Add to the selection (Shift on a computer)</span></label>
         <div id="selMsg" class="meta sel-msg"></div>
         <div id="lassoOff" class="meta lasso-off" hidden>Circle → UMAP (a new UMAP of only the area you draw) needs a newer export of this dataset for marker squares (prepare.py export writes its mat/ folder).</div>
         <div class="btnrow"><button id="selToShape" hidden title="Add the selected bins to Circle → UMAP below as one more shape">Use selection as a shape</button></div>
@@ -209,7 +210,8 @@
       </section>
 
       <section class="panel help">
-        <div>Scroll to zoom · drag to pan · <kbd>R</kbd> fit</div>
+        <div class="mouse-only">Scroll to zoom · drag to pan · <kbd>R</kbd> fit</div>
+        <div class="touch-only">Pinch to zoom · drag to pan · tap a spot to read it · <b>Fit</b> shows it all. While drawing, two fingers move the picture.</div>
         <div id="apiInfo" class="meta"></div>
         <div class="colophon" id="colophon"></div>
       </section>
@@ -246,6 +248,8 @@
       </div>
       <div id="scalebar" class="scalebar"><div class="bar"></div><span class="lbl"></span></div>
       <div id="status" class="status" hidden></div>
+      <div id="tapTip" class="tap-tip" hidden></div>
+      <button id="drawDone" class="draw-done touch-only" type="button" hidden>✓ Done drawing</button>
       <form id="login" class="login" hidden autocomplete="off">
         <h3>SODA</h3>
         <p id="loginMsg">This server needs a password.</p>
@@ -266,6 +270,6 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261105m1"></script>
+  <script src="viewer.js?v=20261105m2"></script>
 </body>
 </html>
