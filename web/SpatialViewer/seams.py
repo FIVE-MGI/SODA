@@ -5,7 +5,10 @@ Each tile can come out a little brighter or dimmer than its neighbours, separate
 marker (each is imaged in its own cycle), so the image has sharp steps at tile edges that have
 nothing to do with the tissue, and clusters can follow them. On s48 (16 µm squares) the column
 means of CD45 jump 12.6% at a tile edge against 0.65% between other neighbouring columns, the
-tiles are 960 x 720 px (486 x 365 µm), and circle -> UMAP clusters drawn there came out in bands.
+tiles are 960 x 720 px (486 x 365 µm). (On s48 the clusters did not follow the tiles: the
+dependence of cluster labels on the position within a tile was no higher than on a fake 1,000 x
+750 px grid, over the whole slide and in 12 circle-sized regions; bands once seen in a circle ->
+UMAP were ~1.5-2 tiles apart, not tile-aligned.)
 
 1. Find the grid (find_grid), from the column / row means of every channel at full resolution
    (protgrid.channel_sums profiles): the sharpest jumps between neighbouring columns, the most

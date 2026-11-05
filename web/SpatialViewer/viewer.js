@@ -1235,7 +1235,7 @@
                            `<span title="${esc(sm[k].channels.join(", "))}">${sm[k].channels.length} of ${sm[k].channelsChecked} markers ` +
                            `(${esc(sm[k].channels.slice(0, 4).join(", "))}${sm[k].channels.length > 4 ? " …" : ""})</span> step every ` +
                            `${sm[k].spacingPx} px (~${sm[k].spacingUm} µm) ${k === "columns" ? "across" : "down"} the slide`).join("; ") +
-                         (sm.correction ? "." : `. Clusters may follow these stripes (bands in the UMAP colours); compare with the image before trusting them.` +
+                         (sm.correction ? "." : `. Clusters can follow such steps: if a cluster pattern repeats at this spacing, compare it with the image before trusting it.` +
                                                 (sm.gridProblem ? ` Not corrected: ${esc(sm.gridProblem)}.` :
                                                  sm.correctionSkipped ? ` Not corrected: ${esc(sm.correctionSkipped)}.` : ""))
                        : `<span title="${esc(sm.rule || "")}">No tile seams found.</span>`) : "",
