@@ -416,13 +416,16 @@ def write_mat_chunks(d: Path, pos: np.ndarray, V: np.ndarray, names: list[str], 
     gene files hold one channel for every square - so, like hvg/ for counts:
 
         mat/index.json      {chunkPx, chunkUm, scale, channels, normalize, bg, hi, cofactor, median,
-                             chunks: [{tx, ty, n, bytes}]}
+                             nSquares, mean, sd, rawMean, chunks: [{tx, ty, n, bytes}]}
         mat/<tx>_<ty>.bin   little-endian: u32 nSquares, u32 row[nSquares] (index into positions.bin),
                             u16 value[nSquares * nChannels] (square-major, round(v * scale), clipped at 65535)
 
     `V` = squares x channels (positions.bin order), raw means; `bg` / `hi` each channel's whole-slide
     background and p99.5 above it, so a circle is scaled as the section UMAP was (normalise_bg_asinh,
     "normalize": NORMALIZE). `median` = each channel's median x over the section (the markers' pct).
+    `mean` / `sd` (of x) and `rawMean` (of v) over every square of the slide, from the stored
+    (rounded) values, so a shape can be compared with the rest of the slide and its clusters'
+    markers and suggested names read against the slide, not only against the other squares drawn.
     Exports before 2026-11 carry p1 / p99_5 instead and no "normalize" (x' = clip((v - p1) / (p99.5 - p1), 0, 1)).
     """
     V = np.asarray(V, np.float64)
@@ -435,6 +438,8 @@ def write_mat_chunks(d: Path, pos: np.ndarray, V: np.ndarray, names: list[str], 
     ty = np.floor(xy[:, 1] / chunk_px).astype(np.int64)
     rows = np.arange(len(xy))
     q = np.minimum(np.rint(np.maximum(V, 0.0) * MAT_SCALE), 65535).astype("<u2")
+    vq = q.astype(np.float64) / MAT_SCALE                # what the browser reads back
+    xq = normalise_bg_asinh(vq, bg, hi, cofactor)
     md = Path(d) / "mat"
     md.mkdir(parents=True, exist_ok=True)
     order = np.lexsort((rows, ty, tx))
@@ -451,7 +456,8 @@ def write_mat_chunks(d: Path, pos: np.ndarray, V: np.ndarray, names: list[str], 
     r6 = lambda a: [round(float(x), 6) for x in a]
     index = {"chunkPx": chunk_px, "chunkUm": chunk_um, "scale": MAT_SCALE, "nChannels": len(names),
              "channels": list(names), "normalize": NORMALIZE, "bg": r6(bg), "hi": r6(hi), "cofactor": cofactor,
-             "median": r6(med),
+             "median": r6(med), "nSquares": int(len(xy)),
+             "mean": r6(xq.mean(axis=0)), "sd": r6(xq.std(axis=0)), "rawMean": r6(vq.mean(axis=0)),
              "normalizeRule": "x = asinh(max(v - bg, 0) / hi / cofactor) / asinh(1 / cofactor), "
                               "bg and hi over the whole slide",
              "chunks": chunks}

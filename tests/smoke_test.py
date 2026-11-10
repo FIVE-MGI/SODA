@@ -578,6 +578,18 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
         c.ok(not bad, f"{key}: mat chunks: {bad[:5]}")
         c.ok((seen == 1).all(), f"{key}: mat chunks must hold every square exactly once")
         c.ok(all(len(mi.get(k, [])) == K for k in ("bg", "hi", "median")), f"{key}: mat bg / hi / median per channel")
+        # slide-wide mean / sd of x and mean raw value: what a shape is compared with (viewer lassoRoiCompare)
+        if c.ok(all(len(mi.get(k, [])) == K for k in ("mean", "sd", "rawMean")) and mi.get("nSquares") == n,
+                f"{key}: mat mean / sd / rawMean per channel and nSquares"):
+            vq = np.zeros((n, K))
+            for e in mi.get("chunks", []):
+                b = (d / "mat" / f"{e['tx']}_{e['ty']}.bin").read_bytes()
+                m = int(np.frombuffer(b[:4], "<u4")[0])
+                vq[np.frombuffer(b[4:4 + 4 * m], "<u4")] = np.frombuffer(b[4 + 4 * m:], "<u2").reshape(m, K) / sc
+            cof, bgv, hiv = mi["cofactor"], np.array(mi["bg"]), np.array(mi["hi"])
+            xq = np.where(hiv > 0, np.arcsinh(np.maximum(vq - bgv, 0) / np.where(hiv > 0, hiv, 1) / cof) / np.arcsinh(1 / cof), 0)
+            c.ok(np.allclose(mi["mean"], xq.mean(0), atol=2e-6) and np.allclose(mi["sd"], xq.std(0), atol=2e-6)
+                 and np.allclose(mi["rawMean"], vq.mean(0), atol=2e-6), f"{key}: mat mean / sd / rawMean differ from the chunks")
         c.eq(mi.get("normalize"), "bg-asinh-v1", f"{key}: mat normalize")
         c.ok(all(h > 0 for h in mi.get("hi", [])), f"{key}: mat hi must be > 0 for embedded channels")
     gr = L.get("grid") or {}

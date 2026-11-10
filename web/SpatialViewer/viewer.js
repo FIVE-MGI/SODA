@@ -1467,7 +1467,8 @@
     $("lassoNote").textContent = prot
       ? `Uses the ${e.label} layer: the ${L.hvg.nChannels} markers of the section UMAP, each scaled as the whole ` +
         (L.hvg.normalize === "bg-asinh-v1" ? `slide was (background taken off, divided by its 99.5th percentile, asinh), `
-                                           : `section was (1st to 99.5th percentile), `) + `then compared within the shapes.`
+                                           : `section was (1st to 99.5th percentile), `) +
+        `then compared within the shapes for the UMAP. Each shape is also compared with the rest of the slide.`
       : `Uses the ${e.label} layer. The UMAP can only use the ${L.hvg.nGenes.toLocaleString()} ` +
         `most variable genes of the whole section; inside the shapes it keeps those counted in at least ` +
         `${LASSO.minDetect}–${LASSO.minDetectCap} of the bins (1% of them, within those limits).`;
@@ -1727,6 +1728,8 @@
             (L.prot ? "" : ` · ${R.info.dropped[i].toLocaleString()} under ${LASSO.minUmi} UMI`) + `</small>`);
         const n = R ? R.info.kept[i] : s.bins;
         if (n > 0 && n < LASSO.smallShape) notes.push(`<small class="warn">too few bins for this shape to mean much</small>`);
+        const rr = L.prot && L.roi && L.roi.sig === lassoSig() && L.roi.key === S.exprKey ? L.roi.rows.find((x) => x.shape === i) : null;
+        if (rr) notes.push(`<small class="roi">${roiLine(rr)}</small>`);
       }
       if (s.missing) notes.push(`<small class="bad">data missing for part of this shape</small>`);
       const nt = notes.join("");
@@ -1772,7 +1775,10 @@
       $("lassoMsg").textContent = L.prot ? toProtWords(m) : m;
     }
     $("lassoRun").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
+    $("lassoCompare").hidden = !L.prot;
+    $("lassoCompare").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoSaveCsv").disabled = !R;
+    buildRoiTable();
   }
 
   function lassoCancel() {
@@ -1845,6 +1851,175 @@
     return protMarkerSetP;
   }
 
+  // ---- each shape against the rest of the slide (marker squares) ---------------------
+  // A circle's own UMAP can only tell its squares apart from each other: a marker that is high
+  // in every square drawn (CD45 over an immune-rich circle) differs nowhere inside it. So each
+  // shape is also set against the rest of the slide, marker by marker, from the slide-wide
+  // mean and sd that mat/index.json carries (older exports: worked out once from every chunk).
+  const lassoSig = () => S.lasso.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
+
+  // the chunks with these keys, from the cache or the server (6 at a time)
+  async function lassoFetch(keys) {
+    const L = S.lasso, have = new Set(L.hvg.chunks.map((c) => `${c.tx}_${c.ty}`)), bufs = [], missing = [];
+    let next = 0;
+    const one = async () => {
+      while (next < keys.length) {
+        const k = keys[next++];
+        if (L.chunks.has(k)) { bufs.push(L.chunks.get(k)); continue; }
+        if (!have.has(k)) { missing.push(k); continue; }
+        try { const b = await S.src.buf(`expr/${S.exprKey}/${L.prot ? "mat" : "hvg"}/${k}.bin`); L.chunks.set(k, b); bufs.push(b); }
+        catch (e) { missing.push(k); }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, one));
+    return { bufs, missing };
+  }
+
+  // x of a raw square mean v, channel j: the slide's own scaling (= lasso_worker.js xpOf)
+  function protXp(H) {
+    if (H.normalize === "bg-asinh-v1") {
+      const cof = H.cofactor || 0.2, a1 = Math.asinh(1 / cof);
+      return (v, j) => (H.hi[j] > 0 ? Math.asinh(Math.max(v - H.bg[j], 0) / H.hi[j] / cof) / a1 : 0);
+    }
+    return (v, j) => { const lo = H.p1[j], rg = H.p99_5[j] - lo; return rg > 0 ? Math.min(1, Math.max(0, (v - lo) / rg)) : 0; };
+  }
+
+  // each square of mat chunks: fn(row, values (Uint16, / scale), offset)
+  function protEach(bufs, K, fn) {
+    for (const buf of bufs) {
+      const n = new DataView(buf).getUint32(0, true);
+      const row = new Uint32Array(buf.slice(4, 4 + 4 * n)), q = new Uint16Array(buf.slice(4 + 4 * n, 4 + 4 * n + 2 * n * K));
+      for (let i = 0; i < n; i++) fn(row[i], q, i * K);
+    }
+  }
+
+  // The slide's mean and sd of x, and mean raw intensity, per marker. { error } when an older
+  // export would need more than a phone should download, or some chunks would not load.
+  async function lassoSlideStats(say) {
+    const L = S.lasso, H = L.hvg, K = H.nChannels;
+    if (Array.isArray(H.mean) && Array.isArray(H.sd) && Array.isArray(H.rawMean))
+      return { mean: H.mean, sd: H.sd, rawMean: H.rawMean, n: H.nSquares || H.chunks.reduce((a, c) => a + c.n, 0), from: "index" };
+    if (L.slideStats && L.slideStats.key === S.exprKey) return L.slideStats;
+    const mb = H.chunks.reduce((a, c) => a + c.bytes, 0) / 1e6;
+    if (TOUCH && mb > 30) return { error: "This export has no slide-wide averages, and working them out needs more than a phone should download: compare on a computer, or re-export." };
+    say(`This export has no slide-wide averages yet: reading every square once (${mb.toFixed(0)} MB)…`);
+    const all = H.chunks.map((c) => `${c.tx}_${c.ty}`);
+    let { missing } = await lassoFetch(all);
+    // a busy server can drop a few of hundreds of requests: those again, twice (the rest are cached)
+    for (let t = 0; t < 2 && missing.length; t++) missing = (await lassoFetch(missing)).missing;
+    if (missing.length) return { error: `${missing.length} of ${all.length} chunks would not load, so the slide-wide averages are unknown: try again.` };
+    const bufs = all.map((k) => L.chunks.get(k));
+    const xp = protXp(H), sc = H.scale, sx = new Float64Array(K), sxx = new Float64Array(K), sv = new Float64Array(K);
+    let n = 0;
+    protEach(bufs, K, (r, q, at) => {
+      n++;
+      for (let j = 0; j < K; j++) { const v = q[at + j] / sc, x = xp(v, j); sx[j] += x; sxx[j] += x * x; sv[j] += v; }
+    });
+    const mean = Array.from(sx, (a) => a / n);
+    L.slideStats = { key: S.exprKey, mean, sd: mean.map((m, j) => Math.sqrt(Math.max(sxx[j] / n - m * m, 0))),
+                     rawMean: Array.from(sv, (a) => a / n), n, from: "chunks" };
+    return L.slideStats;
+  }
+
+  // per shape (and all shapes together): mean x and raw intensity inside, the same for the rest of
+  // the slide, z = (inside - rest) / the slide's sd, and the ratio of raw means. Every square of
+  // the shape counts (no sampling); a square in two shapes belongs to the one drawn last, as in the UMAP.
+  function lassoRoiCompare(bufs, st) {
+    const L = S.lasso, H = L.hvg, K = H.nChannels, xp = protXp(H), sc = H.scale, nS = L.shapes.length;
+    const n = new Float64Array(nS + 1), sx = new Float64Array((nS + 1) * K), sv = new Float64Array((nS + 1) * K);
+    protEach(bufs, K, (r, q, at) => {
+      const s = L.assign[r]; if (s === LASSO_NONE || s >= nS) return;
+      n[s]++; n[nS]++;
+      for (let j = 0; j < K; j++) { const v = q[at + j] / sc, x = xp(v, j); sx[s * K + j] += x; sv[s * K + j] += v; sx[nS * K + j] += x; sv[nS * K + j] += v; }
+    });
+    const live = L.shapes.map((_, i) => i).filter((i) => n[i] > 0);
+    const rows = [...live, ...(live.length > 1 ? [nS] : [])].map((i) => {
+      const k = n[i], rest = Math.max(st.n - k, 1), x = [], raw = [], xRest = [], rawRest = [], z = [], fold = [];
+      for (let j = 0; j < K; j++) {
+        x.push(sx[i * K + j] / k); raw.push(sv[i * K + j] / k);
+        xRest.push((st.mean[j] * st.n - sx[i * K + j]) / rest); rawRest.push((st.rawMean[j] * st.n - sv[i * K + j]) / rest);
+        z.push(st.sd[j] > 0 ? (x[j] - xRest[j]) / st.sd[j] : 0);
+        fold.push(rawRest[j] > 0 ? raw[j] / rawRest[j] : null);
+      }
+      return { shape: i === nS ? -1 : i, n: k, x, raw, xRest, rawRest, z, fold };
+    });
+    L.roi = { sig: lassoSig(), key: S.exprKey, channels: H.channels, nSlide: st.n, from: st.from, rows };
+    if (L.roiPick === undefined || !rows.some((r) => r.shape === L.roiPick)) L.roiPick = rows.length ? rows[0].shape : null;
+  }
+
+  // "Compare with the slide" on its own: the chunks under the shapes and the table, no UMAP
+  async function lassoCompareOnly() {
+    const L = S.lasso;
+    if (L.running || !L.prot || !L.hvg || !L.assign) return;
+    const msg = (t, err) => { $("lassoMsg").textContent = t; $("lassoMsg").style.color = err ? "#ff8f8f" : ""; };
+    if (!L.shapes.some((s) => s.bins > 0)) { msg("Draw a shape over tissue first.", true); return; }
+    const keys = new Set();
+    for (let i = 0; i < L.assign.length; i++) if (L.assign[i] !== LASSO_NONE) keys.add(lassoChunkOf(L.pos[2 * i], L.pos[2 * i + 1], L.hvg.chunkPx));
+    L.running = true; buildLassoUI();
+    try {
+      msg(`Fetching ${keys.size} data chunk(s)…`);
+      const { bufs, missing } = await lassoFetch([...keys]);
+      const st = await lassoSlideStats(msg);
+      if (st.error) { msg(st.error, true); return; }
+      lassoRoiCompare(bufs, st);
+      msg(missing.length ? `Compared with the rest of the slide; ${missing.length} chunk(s) could not be loaded, so part of a shape is missing.` : "Compared with the rest of the slide.");
+    } finally { L.running = false; buildLassoUI(); }
+  }
+
+  // raised / lowered only when the raw ratio and z (background off, asinh) agree on the direction
+  const roiAgree = (r, j) => r.fold[j] == null || (r.z[j] > 0) === (r.fold[j] > 1);
+
+  function roiTxt(r, j) {
+    const f = r.fold[j];
+    return f == null ? `z ${r.z[j] >= 0 ? "+" : ""}${r.z[j].toFixed(1)}` : f >= 10 ? `×${f.toFixed(0)}` : `×${f.toFixed(1)}`;
+  }
+
+  // one line per shape in the list: the markers that set it apart most
+  function roiLine(r) {
+    const ch = S.lasso.roi.channels, ord = ch.map((_, j) => j).sort((a, b) => r.z[b] - r.z[a]);
+    const up = ord.filter((j) => r.z[j] >= 0.5 && roiAgree(r, j)).slice(0, 4), down = ord.filter((j) => r.z[j] <= -0.5 && roiAgree(r, j)).reverse().slice(0, 2);
+    if (!up.length && !down.length) return "vs rest of slide: no marker differs by half a standard deviation";
+    return "vs rest of slide:" + (up.length ? " ↑ " + up.map((j) => `${escHtml(ch[j])} ${roiTxt(r, j)}`).join(", ") : "") +
+      (down.length ? `${up.length ? " ·" : ""} ↓ ` + down.map((j) => `${escHtml(ch[j])} ${roiTxt(r, j)}`).join(", ") : "");
+  }
+
+  // the full table for the picked shape, every marker, most raised first
+  function buildRoiTable() {
+    const L = S.lasso, box = $("lassoRoi");
+    const R = L.roi && L.roi.sig === lassoSig() && L.roi.key === S.exprKey ? L.roi : null;
+    box.hidden = !L.prot || !R || !R.rows.length;
+    if (box.hidden) return;
+    const nameOf = (i) => (i === -1 ? "All shapes together" : L.shapes[i] ? L.shapes[i].name : `Shape ${i + 1}`);
+    const sel = $("lassoRoiPick");
+    sel.innerHTML = "";
+    for (const r of R.rows) { const o = document.createElement("option"); o.value = r.shape; o.textContent = `${nameOf(r.shape)} (${r.n.toLocaleString()} squares)`; sel.appendChild(o); }
+    sel.value = L.roiPick;
+    const r = R.rows.find((x) => x.shape === L.roiPick) || R.rows[0];
+    const ord = R.channels.map((_, j) => j).sort((a, b) => r.z[b] - r.z[a]);
+    $("lassoRoiTable").innerHTML = `<table><thead><tr><th>Marker</th><th title="Mean intensity of the shape's squares (0-255, as the image)">Inside</th>` +
+      `<th title="Mean intensity of every other tissue square on the slide">Rest</th><th title="Inside / rest">Ratio</th>` +
+      `<th title="(inside - rest) in the slide's standard deviations, on the scaled values the UMAP uses">z</th></tr></thead><tbody>` +
+      ord.map((j) => `<tr class="${Math.abs(r.z[j]) < 0.25 || !roiAgree(r, j) ? "dim" : r.z[j] > 0 ? "up" : "down"}"><td>${escHtml(R.channels[j])}</td>` +
+        `<td>${protVal(r.raw[j])}</td><td>${protVal(r.rawRest[j])}</td><td>${r.fold[j] == null ? "–" : r.fold[j].toFixed(2)}</td>` +
+        `<td>${r.z[j] >= 0 ? "+" : ""}${r.z[j].toFixed(2)}</td></tr>`).join("") + `</tbody></table>`;
+    $("lassoRoiNote").textContent = `${r.n.toLocaleString()} squares inside, ${(R.nSlide - r.n).toLocaleString()} in the rest of the slide` +
+      (R.from === "chunks" ? " (slide averages worked out in this browser: the export predates them). " : ". ") +
+      `Ratio = mean intensity inside / rest. z = the difference on the scale the UMAP uses (${L.hvg.normalize === "bg-asinh-v1" ? "background off, asinh" : "1st–99.5th percentile window"}), ` +
+      "in the slide's standard deviations. Grey: under 0.25, or ratio and z disagree on the direction.";
+  }
+
+  function lassoSaveRoiCsv() {
+    const L = S.lasso, R = L.roi; if (!R) return;
+    const q = (t) => `"${String(t).replace(/"/g, '""')}"`, f = (x, d) => (x == null ? "" : (+x).toFixed(d));
+    const lines = ["dataset,layer,shape,squares_inside,squares_rest,marker,mean_inside,mean_rest,ratio,z_vs_rest,scaled_inside,scaled_rest"];
+    for (const r of R.rows) {
+      const nm = r.shape === -1 ? "All shapes together" : L.shapes[r.shape].name;
+      R.channels.forEach((c, j) => lines.push([S.dsId, S.exprKey, q(nm), r.n, R.nSlide - r.n, q(c), f(r.raw[j], 3), f(r.rawRest[j], 3),
+        f(r.fold[j], 4), f(r.z[j], 4), f(r.x[j], 5), f(r.xRest[j], 5)].join(",")));
+    }
+    lassoDownload(`${S.dsId}_${S.exprKey}_shapes_vs_slide.csv`, lines.join("\n") + "\n", "text/csv");
+  }
+
   async function lassoRun() {
     const L = S.lasso;
     if (L.running || !L.hvg || !L.assign) return;
@@ -1863,7 +2038,7 @@
     if (mode === "shapes" && live.length < 3) { msg(`"One per shape" needs at least 3 non-empty shapes; there are ${live.length}.`, true); return; }
 
     // the chunks under the shapes, and which shapes each one feeds
-    const cp = L.hvg.chunkPx, have = new Set(L.hvg.chunks.map((c) => `${c.tx}_${c.ty}`));
+    const cp = L.hvg.chunkPx;
     const need = new Map();
     for (let i = 0; i < L.assign.length; i++) {
       const s = L.assign[i]; if (s === LASSO_NONE) continue;
@@ -1875,18 +2050,7 @@
     L.running = true; $("lassoCancel").hidden = false; buildLassoUI();
     lassoWake(true);
     msg(`Fetching ${need.size} data chunk(s)…`);
-    const keys = [...need.keys()], bufs = [], missing = [];
-    let next = 0;
-    const one = async () => {
-      while (next < keys.length) {
-        const k = keys[next++];
-        if (L.chunks.has(k)) { bufs.push(L.chunks.get(k)); continue; }
-        if (!have.has(k)) { missing.push(k); continue; }
-        try { const b = await S.src.buf(`expr/${S.exprKey}/${L.prot ? "mat" : "hvg"}/${k}.bin`); L.chunks.set(k, b); bufs.push(b); }
-        catch (e) { missing.push(k); }
-      }
-    };
-    await Promise.all(Array.from({ length: 6 }, one));
+    const { bufs, missing } = await lassoFetch([...need.keys()]);
     if (!L.running) return;                         // cancelled while fetching
     if (missing.length) {
       missing.forEach((k) => need.get(k).forEach((s) => (L.shapes[s].missing = true)));
@@ -1901,7 +2065,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261109m");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261110r");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
@@ -1932,15 +2096,24 @@
              (I.stability != null ? `, stability ${I.stability.toFixed(2)}.` : ".") :
              mode === "bins" && clustering ? "No clusters came back (this worker version does not cluster yet)." : "",
            cluster ? lassoStabilityNote(I) : "",
+           L.prot && L.roiError ? `Not compared with the rest of the slide: ${L.roiError}` : "",
           ].filter(Boolean).join("\n"));
       $("lassoPanel").hidden = false;
       lassoRefresh(); buildLassoUI();
       requestAnimationFrame(() => { lpDeck && lpDeck.setProps({ width: "100%", height: "100%" }); fitLassoPanel(); lassoFrameShapes(); });
     };
-    msg("Computing…");
     const H = L.hvg;
+    let st = null;
+    if (L.prot) {
+      st = await lassoSlideStats(msg);
+      if (!L.running) return;                       // cancelled meanwhile
+      if (st.error) { L.roiError = st.error; st = null; }
+      else { L.roiError = null; lassoRoiCompare(bufs, st); buildLassoUI(); }
+    }
+    msg("Computing…");
     const protein = L.prot ? { channels: H.channels, p1: H.p1, p99_5: H.p99_5, median: H.median, scale: H.scale,
-                               normalize: H.normalize || null, bg: H.bg, hi: H.hi, cofactor: H.cofactor } : null;
+                               normalize: H.normalize || null, bg: H.bg, hi: H.hi, cofactor: H.cofactor,
+                               mean: st ? st.mean : null, sd: st ? st.sd : null } : null;
     const flags = L.prot && S.qc.flags && S.qc.key === S.exprKey ? S.qc.flags : null;   // for the "Artefact?" name
     L.worker.postMessage({ chunks: bufs, rowShape: L.assign, nShapes: L.shapes.length, nGenes: L.hvg.nGenes, params, resolution,
                            geneNames: L.hvgGenes || null, markerSet, protein, flags });
@@ -2085,14 +2258,21 @@
       const sizes = I.clusterSizes || (() => { const z = new Array(I.nClusters).fill(0); for (const c of R.cluster) if (c < z.length) z[c]++; return z; })();
       const ct = I.celltypes && Array.isArray(I.celltypes.clusters) ? I.celltypes : null;
       const sug = (c) => (ct && ct.clusters[c]) || null;
+      const vsSlide = !!I.markersVsSlide && L.mkVs !== "shapes";
+      $("lpMkVs").hidden = !I.markersVsSlide;
+      $("lpMkVs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === (vsSlide ? "slide" : "shapes")));
       clusterLegend($("lpLegend"), {
-        n: I.nClusters, sizes, markers: I.markers || [], picked: L.selCluster,
+        n: I.nClusters, sizes, markers: (vsSlide ? I.markersVsSlide : I.markers) || [], picked: L.selCluster,
+        markerTitle: L.prot ? (vsSlide
+          ? "Top markers against the whole slide (the cluster's mean, in the slide's standard deviations; share of its squares above the marker's typical level):\n"
+          : "Top markers against the other squares drawn (how much higher than in the rest of the shapes, in their standard deviations; share of its squares above the marker's typical level):\n") : null,
         name: (c) => L.clNames[c] || `Cluster ${c}`,
         onPick: (c) => lassoPickCluster(c),
         onRename: (c, t) => { if (t) L.clNames[c] = t; renderLassoPanel(); },
         suggest: ct ? sug : null,
         markerInfo: () => ({ ...ctMarkerInfo(ct, L.prot
-          ? `Scored on the ${I.nIn.toLocaleString()} squares of this run, on the ${L.hvg ? L.hvg.nChannels : ""} markers of the section UMAP.`
+          ? `Scored on the ${I.nIn.toLocaleString()} squares of this run, on the ${L.hvg ? L.hvg.nChannels : ""} markers of the section UMAP, ` +
+            (ct && ct.scale === "slide" ? "each against the whole slide's average and spread." : "each against the other squares drawn (this export has no slide-wide averages).")
           : `Scored on the ${I.nIn.toLocaleString()} bins of this run, using only the section's ` +
             `${L.hvg ? L.hvg.nGenes.toLocaleString() : ""} most variable genes: marker genes outside them are listed as not found.`) }),
         onAccept: (c, t) => { L.clNames[c] = t; renderLassoPanel(); },
@@ -2104,6 +2284,7 @@
         },
       });
     } else {
+      $("lpMkVs").hidden = true;
       $("lpLegend").innerHTML = L.shapes.map((s, i) => I.kept[i] ? `<div class="leg"><i style="background:${s.hex}"></i><span>${esc(s.name)}</span><small>${I.kept[i].toLocaleString()} ${wd().bins}</small></div>` : "").join("");
     }
     $("lpFoot").textContent = ($("lpFoot").dataset.brush && L.brush ? $("lpFoot").dataset.brush + " " : "") +
@@ -2155,6 +2336,7 @@
                                       // suggested names from the marker lists, with the genes found / missing
                                       cellTypes: R.info.celltypes || null,
                                       markers: R.info.markers || null,
+                                      markersVsSlide: R.info.markersVsSlide || null,
                                       // bin row (positions.bin order, never a barcode) and its cluster
                                       rows: Array.from(R.rows), cluster: Array.from(R.cluster) } : {}) } : null,
       // the whole-section clustering, if one is shown: its resolution and any names given to clusters
@@ -2209,6 +2391,10 @@
     $("lassoFree").onclick = () => lassoSetTool("free");
     $("lassoClear").onclick = () => { S.lasso.shapes = []; S.lasso.next = 1; S.lasso.selShape = null; lassoShapesChanged(); };
     $("lassoRun").onclick = lassoRun;
+    $("lassoCompare").onclick = lassoCompareOnly;
+    $("lassoRoiPick").onchange = (e) => { S.lasso.roiPick = Number(e.target.value); buildRoiTable(); };
+    $("lassoRoiCsv").onclick = lassoSaveRoiCsv;
+    $("lpMkVs").onclick = (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.lasso.mkVs = v; renderLassoPanel(); };
     $("lassoCancel").onclick = () => { lassoCancel(); $("lassoMsg").textContent = "Cancelled."; buildLassoUI(); };
     $("lassoMode").onchange = () => { if (S.lasso.result) lassoRun(); };
     $("lassoSaveJson").onclick = lassoSaveJson;
@@ -3039,7 +3225,8 @@
       const nm = row.querySelector(".nm");
       nm.textContent = o.name(c);                                 // typed by the user: never as HTML
       row.title = mk.length
-        ? (prot ? `Top markers (how much higher than in the rest of the section, in standard deviations; ` +
+        ? (o.markerTitle ? o.markerTitle
+           : prot ? `Top markers (how much higher than in the rest of the section, in standard deviations; ` +
                   `share of the cluster's squares above that marker's typical level):\n`
                 : `Top marker genes (log fold change vs the rest, share of bins with the gene):\n`) +
           mk.slice(0, 10).map((m) => `${markerName(m)}  ${m.lfc != null ? (+m.lfc).toFixed(2) : ""}  ${m.pct != null ? Math.round(m.pct * 100) + "%" : ""}`).join("\n") +

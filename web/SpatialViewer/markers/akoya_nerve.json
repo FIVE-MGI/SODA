@@ -1,7 +1,7 @@
 {
   "name": "Peripheral nerve, protein panel",
   "note": "Starting lists of protein markers for cell types in and around peripheral nerve, for multiplexed immunofluorescence (Akoya / PhenoCycler-style panels). Review and edit them for your panel and tissue: the suggested names are only as good as these lists. Names are matched case-insensitively against channel names; channels missing from a panel are reported.",
-  "version": 1,
+  "version": 2,
   "modality": "protein",
   "types": [
     { "name": "Perineurium", "genes": ["CD104", "CD49f"] },
@@ -15,6 +15,7 @@
     { "name": "Regulatory T cell", "genes": ["FoxP3", "CD4"] },
     { "name": "B cell", "genes": ["CD19", "CD79a", "CD21"] },
     { "name": "Plasma cell", "genes": ["CD138", "CD38"] },
-    { "name": "Proliferating", "genes": ["Ki67"] }
+    { "name": "Proliferating", "genes": ["Ki67"] },
+    { "name": "Immune (CD45+)", "genes": ["CD45"] }
   ]
 }

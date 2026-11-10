@@ -379,7 +379,9 @@ function ctSummarise(score, scored, types, cl, nCl, binMin, set, why) {
 
 // ---- marker squares (protein grid) -------------------------------------------------
 // The same rule as celltypes.write_celltypes_protein (keep the two identical), on the run's
-// squares: z = (x - mean) / sd per channel over the squares (population sd; sd 0 = "flat");
+// squares: z = (x - mean) / sd per channel (population sd; sd 0 = "flat"), mean and sd those of the
+// whole slide when the export carries them (sec: mat/index.json mean / sd), else of the run's squares -
+// so an all-immune circle still reads as immune, which against its own squares it cannot;
 // score = mean z over the type's channels found (>= the type's "min", else the list's
 // "minChannels", else 1); bin threshold 0.5; the cluster summary as for genes. Channel names
 // are matched after normName, each list name also under its aliases (set.aliases).
@@ -397,16 +399,20 @@ function normName(s) {
   return s.replace(/[\s_\-.]/g, "").toLowerCase();
 }
 const typeMin = (set, t) => Number(t.min != null ? t.min : set.minChannels != null ? set.minChannels : PROTEIN_CT.minChannels);
-function cellTypesProtein(X, N, K, cl, nCl, set, names, flags) {
+function cellTypesProtein(X, N, K, cl, nCl, set, names, flags, sec) {
   const first = new Map(), aliases = set.aliases || {};
   names.forEach((g, j) => { const k = normName(g); if (!first.has(k)) first.set(k, j); });
   const z = new Map();
   const zOf = (j) => {
     if (z.has(j)) return z.get(j);
-    let m = 0; for (let i = 0; i < N; i++) m += X[i * K + j];
-    m /= N;
-    let v = 0; for (let i = 0; i < N; i++) v += (X[i * K + j] - m) ** 2;
-    const sd = Math.sqrt(v / N);
+    let m, sd;
+    if (sec) { m = sec.mean[j]; sd = sec.sd[j]; }
+    else {
+      m = 0; for (let i = 0; i < N; i++) m += X[i * K + j];
+      m /= N;
+      let v = 0; for (let i = 0; i < N; i++) v += (X[i * K + j] - m) ** 2;
+      sd = Math.sqrt(v / N);
+    }
     let col = null;
     if (sd > 0) { col = new Float64Array(N); for (let i = 0; i < N; i++) col[i] = (X[i * K + j] - m) / sd; }
     z.set(j, col); return col;
@@ -441,6 +447,7 @@ function cellTypesProtein(X, N, K, cl, nCl, set, names, flags) {
     }
   }
   out.modality = "protein";
+  out.scale = sec ? "slide" : "run";
   return out;
 }
 
@@ -461,6 +468,30 @@ function proteinMarkers(Z, XP, N, K, med, cl, nCl, names) {
       const diff = sz[c * K + j] / size[c] - (tot[j] - sz[c * K + j]) / rest;
       if (diff > 0) rows.push([j, diff, ab[c * K + j] / size[c]]);
     }
+    rows.sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+    out.push(rows.slice(0, 10).map(([j, lfc, pct]) => ({ gene: names[j], gi: j, lfc: r3(lfc), pct: r3(pct) })));
+  }
+  return out;
+}
+
+// The same per cluster, but against the whole slide: the cluster's mean z with the slide's mean and
+// sd (sec), lfc > 0 only. What a cluster has that the rest of the slide lacks - a marker high in
+// every square drawn (CD45 over an immune circle) leads here and is absent from proteinMarkers.
+function proteinMarkersVsSlide(XP, N, K, med, sec, cl, nCl, names) {
+  const sz = new Float64Array(nCl * K), ab = new Float64Array(nCl * K), size = new Float64Array(nCl);
+  for (let i = 0; i < N; i++) {
+    const c = cl[i]; size[c]++;
+    for (let j = 0; j < K; j++) {
+      const x = XP[i * K + j];
+      if (sec.sd[j] > 0) sz[c * K + j] += (x - sec.mean[j]) / sec.sd[j];
+      if (x > med[j]) ab[c * K + j]++;
+    }
+  }
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+  const out = [];
+  for (let c = 0; c < nCl; c++) {
+    const rows = [];
+    for (let j = 0; j < K; j++) { const z = sz[c * K + j] / Math.max(size[c], 1); if (z > 0) rows.push([j, z, ab[c * K + j] / Math.max(size[c], 1)]); }
     rows.sort((a, b) => b[1] - a[1] || a[0] - b[0]);
     out.push(rows.slice(0, 10).map(([j, lfc, pct]) => ({ gene: names[j], gi: j, lfc: r3(lfc), pct: r3(pct) })));
   }
@@ -556,11 +587,14 @@ function runProtein(msg) {
     const cluster = clusterGraph(fuzzyGraphCSR(umap, N), N, resolution, P.seed, info);
     const nCl = info.nClusters;
     info.markers = proteinMarkers(Z, XP, N, K, pr.median, cluster, nCl, pr.channels);
+    // the slide's mean / sd per channel: from mat/index.json, or worked out by the page for older exports
+    const sec = Array.isArray(pr.mean) && Array.isArray(pr.sd) && pr.mean.length === K && pr.sd.length === K ? { mean: pr.mean, sd: pr.sd } : null;
+    if (sec) info.markersVsSlide = proteinMarkersVsSlide(XP, N, K, pr.median, sec, cluster, nCl, pr.channels);
     const ms = msg.markerSet;
     if (ms && Array.isArray(ms.types) && ms.types.length) {
       progress("Suggesting cell types", 1);
       const fl = msg.flags ? Uint8Array.from(rows, (r) => msg.flags[r] || 0) : null;
-      info.celltypes = cellTypesProtein(XP, N, K, cluster, nCl, ms, pr.channels, fl);
+      info.celltypes = cellTypesProtein(XP, N, K, cluster, nCl, ms, pr.channels, fl, sec);
     }
     out.cluster = cluster;
   }

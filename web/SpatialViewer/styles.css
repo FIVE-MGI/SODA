@@ -442,3 +442,19 @@ label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
   .brand h1 { white-space: normal; }
   select, input[type=text], .login input { font-size: 16px; }
 }
+
+/* ---- Circle -> UMAP: each shape vs the rest of the slide ---------------------------- */
+.lasso-shapes .lshape small.roi { color: #cfe3ff; }
+.lasso-roi { margin-top: 8px; }
+.lasso-roi .btnrow select { flex: 1; min-width: 0; }
+.roi-table { max-height: 260px; overflow-y: auto; margin-top: 4px; }
+.roi-table table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.roi-table th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; text-align: right; padding: 2px 4px; }
+.roi-table td { text-align: right; padding: 1px 4px; border-top: 1px solid var(--line); }
+.roi-table th:first-child, .roi-table td:first-child { text-align: left; }
+.roi-table tr.up td:last-child { color: #8fe3a0; }
+.roi-table tr.down td:last-child { color: #ff9f9f; }
+.roi-table tr.dim td { color: var(--muted); }
+.lasso-panel .lp-mkvs { padding: 4px 10px 0; font-size: 11px; color: var(--muted); }
+.lasso-panel .lp-mkvs .seg button { padding: 1px 8px; font-size: 11px; }
+#lassoRun, #lassoCompare, #lassoRoiCsv { white-space: nowrap; }

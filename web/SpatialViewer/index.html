@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>SODA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <link href="styles.css?v=20261109m" rel="stylesheet" />
+  <link href="styles.css?v=20261110r" rel="stylesheet" />
 </head>
 <body>
   <div class="app" data-sheet="peek">
@@ -175,9 +175,17 @@
           <input id="lassoRes" type="text" inputmode="decimal" value="auto" title="Leiden resolution. auto = the finest resolution whose clusters reproduce across reseeded and subsampled runs; a number = that resolution (a higher number gives more, smaller clusters); 0 = no clustering" /></label>
         <div class="btnrow">
           <button id="lassoRun">Run UMAP</button>
+          <button id="lassoCompare" hidden title="Compare each shape with the rest of the slide, marker by marker (no UMAP). Run UMAP does this too.">Compare with slide</button>
           <button id="lassoCancel" hidden>Cancel</button>
         </div>
         <div id="lassoMsg" class="meta lasso-msg"></div>
+        <div id="lassoRoi" class="lasso-roi" hidden>
+          <h3 class="sub-h">Shape vs the rest of the slide</h3>
+          <div class="btnrow"><select id="lassoRoiPick" title="Which shape to compare"></select>
+            <button id="lassoRoiCsv" title="Every shape and marker: mean inside, mean in the rest of the slide, ratio, z">Save table (CSV)</button></div>
+          <div id="lassoRoiTable" class="roi-table"></div>
+          <div id="lassoRoiNote" class="meta"></div>
+        </div>
         <div class="btnrow">
           <button id="lassoSaveJson" title="Shapes, layer, seed and every parameter: rerun it later">Save JSON</button>
           <button id="lassoSaveCsv" title="bin row, shape, UMAP x/y (no barcodes)">Save CSV</button>
@@ -244,6 +252,7 @@
         </div>
         <div id="lpWarn" class="lp-warn" hidden></div>
         <div id="lpHost" class="lp-host"><div id="lpBox" class="lp-box" hidden></div></div>
+        <div id="lpMkVs" class="lp-mkvs" hidden>Markers against <span class="seg"><button data-v="slide" title="What each cluster has more of than the rest of the slide">the slide</button><button data-v="shapes" title="What tells the clusters apart inside the shapes">the other drawn squares</button></span></div>
         <div id="lpLegend" class="legend lp-legend"></div>
         <div id="lpFoot" class="lp-foot"></div>
       </div>
@@ -277,6 +286,6 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261109m"></script>
+  <script src="viewer.js?v=20261110r"></script>
 </body>
 </html>

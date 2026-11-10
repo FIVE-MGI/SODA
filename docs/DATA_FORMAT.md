@@ -225,6 +225,7 @@ same 500 µm chunks:
   {"chunkPx": 987, "chunkUm": 500.0, "scale": 100, "nChannels": 26,
    "channels": ["CD104", "CD45", ...], "normalize": "bg-asinh-v1",
    "bg": [...], "hi": [...], "cofactor": 0.2, "median": [...],
+   "nSquares": 1084213, "mean": [...], "sd": [...], "rawMean": [...],
    "chunks": [{"tx": 0, "ty": 3, "n": 970, "bytes": 54324}, ...]}
   ```
 
@@ -234,6 +235,12 @@ same 500 µm chunks:
   bright, so a fold cannot set it), so the circle tool scales a selection exactly
   as the section UMAP was: x = asinh(max(v − bg, 0) / hi / cofactor) / asinh(1 / cofactor).
   `median` = each channel's median x over the section (the `pct` of the cluster markers).
+  `mean` / `sd` = each channel's mean and (population) standard deviation of x, and `rawMean`
+  its mean raw value v, over all `nSquares` squares of the slide, from the stored (rounded)
+  values. The circle tool compares each shape with the rest of the slide from these, and
+  reads its clusters' markers and suggested names against the slide. Exports made before
+  10 November 2026 lack them; the viewer then works them out once from every chunk (a
+  computer only; a phone skips it).
   Exports made before November 2026 have no `normalize`, and `p1` / `p99_5` instead of
   `bg` / `hi` (x′ = clip((v − p1) / (p99.5 − p1), 0, 1)); the viewer reads both.
 - `<tx>_<ty>.bin`: every square of the chunk (chunk of a square as for `hvg/`):

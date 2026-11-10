@@ -376,6 +376,22 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   shape, and says so. The page estimates about one second per 1,000 bins.
 - A bin inside two shapes belongs to the one drawn last.
 - Leiden clusters of the result at a resolution you choose (0 = none).
+- **Marker squares (Akoya and other multi-channel images)** use the `mat/` files instead, and
+  add a comparison with the rest of the slide, because a UMAP of only the shapes cannot show
+  what the shapes have in common (a marker high in every square drawn, such as CD45 over an
+  immune-rich area, differs nowhere inside them):
+  - **Each shape vs the rest of the slide.** Under each shape, the markers most raised and
+    lowered compared with every other tissue square of the slide; below the shapes, the full
+    table for one shape (or all shapes together): mean intensity inside and in the rest, their
+    ratio, and z (the difference on the scale the UMAP uses, in the slide's standard
+    deviations). Every square of the shape counts, also above the 50,000 sample. **Compare
+    with slide** does only this, without a UMAP; **Save table (CSV)** writes every shape and
+    marker.
+  - **Cluster markers against the slide or against the other drawn squares.** A switch in the
+    UMAP panel. Against the slide (the default) lists what each cluster has more of than the
+    slide as a whole; against the other drawn squares lists what tells the clusters apart.
+  - **Suggested names** are scored against the whole slide, so an all-immune circle is named
+    immune.
 - "Save JSON" stores the shapes, layer, seed and every parameter so a result can be redone;
   "Save CSV" saves bin row, shape and UMAP coordinates (no barcodes).
 - It works with exported data only, not with the live tile server.
