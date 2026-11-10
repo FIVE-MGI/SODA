@@ -203,10 +203,10 @@ function bestJaccard(ref, lab, nCl, into) {
 
 // the graph restricted to the bins in keep (ascending), renumbered 0..keep.length-1
 function inducedGraph(g, keep, N) {
-  const at = new Int32Array(N).fill(-1); keep.forEach((v, j) => (at[v] = j));
+  const NONE = 0xFFFFFFFF, at = new Uint32Array(N).fill(NONE); keep.forEach((v, j) => (at[v] = j));
   const indptr = new Uint32Array(keep.length + 1), indices = [], weights = [];
   keep.forEach((v, j) => {
-    for (let p = g.indptr[v]; p < g.indptr[v + 1]; p++) { const u = at[g.indices[p]]; if (u >= 0) { indices.push(u); weights.push(g.weights[p]); } }
+    for (let p = g.indptr[v]; p < g.indptr[v + 1]; p++) { const u = at[g.indices[p]]; if (u !== NONE) { indices.push(u); weights.push(g.weights[p]); } }
     indptr[j + 1] = indices.length;
   });
   return { indptr, indices: Uint32Array.from(indices), weights: Float64Array.from(weights) };
