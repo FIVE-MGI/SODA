@@ -13,6 +13,9 @@ this file:
     python web/SpatialViewer/prepare.py tiff   --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
     python web/SpatialViewer/prepare.py export --id demo_visiumhd  --out demo/cache --dest demo/export --markers examples/demo_markers.json
     python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json
+    python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export_sample --fmt jpg --markers examples/demo_protein_markers.json --umap-sample 600
+    python web/SpatialViewer/prepare.py tiff   --id demo_tiled --src demo/raw/multiplex_tiled.ome.tif --out demo/cache
+    python web/SpatialViewer/prepare.py export --id demo_tiled --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json --no-umap --seam-correct
 
 and then checks the static tree the viewer reads: manifest.json, a tile for every
 channel / level / position, expr/<key>/positions.bin, genes.json and the per-gene
@@ -20,8 +23,16 @@ files, the hvg/ chunks (layout in web/SpatialViewer/hvgchunks.py), the umap/ fol
 (web/SpatialViewer/sectionumap.py) including that the clusters are spatially coherent
 and match the regions the demo was drawn from, and that `deid.py check` passes.
 For the multiplex image it checks the protein grid layer (web/SpatialViewer/protgrid.py,
-expr/grid020um/) the same way: files, row counts, values, umap/ and celltypes.json, and
-that its clusters are coherent and follow the drawn regions.
+expr/grid016um/) the same way: files, row counts, values, umap/ and celltypes.json, and
+that its clusters are coherent and follow the drawn regions; and the slide QC (qc.json,
+qc_flags.bin) on the demo's built-in problems: an empty "open" channel and a weaker
+duplicate (both not written), a saturated channel (flagged), a fold (its squares flagged
+"everything bright"). The second multiplex export fits the UMAP on a 600-square sample and
+places the rest (sectionumap.UMAP_SAMPLE path); its clusters must agree with the first.
+demo_tiled is the same image with per-tile steps in two markers: the export must find the
+tile grid, correct those two markers (seams.py) and recover the factors that were put in.
+It also checks the built-in marker lists and that the channel-name cleanup is the same
+in celltypes.py and lasso_worker.js.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -48,7 +59,7 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "web" / "SpatialViewer"
-VIS, MX = "demo_visiumhd", "demo_multiplex"
+VIS, MX, TL = "demo_visiumhd", "demo_multiplex", "demo_tiled"
 NO_CLUSTER = 0xFFFF
 CLUSTER_MODULES = ("umap", "igraph", "leidenalg")
 # a barcode or a local path must never reach the export
@@ -93,6 +104,11 @@ def demo_commands(root: Path) -> list[list[str]]:
         [prep, "export", "--id", VIS, "--out", cache, "--dest", export, "--markers", "examples/demo_markers.json"],
         [prep, "export", "--id", MX, "--out", cache, "--dest", export, "--fmt", "jpg",
          "--markers", "examples/demo_protein_markers.json"],
+        [prep, "export", "--id", MX, "--out", cache, "--dest", f"{r}/export_sample", "--fmt", "jpg",
+         "--markers", "examples/demo_protein_markers.json", "--umap-sample", str(SAMPLE)],
+        [prep, "tiff", "--id", TL, "--src", f"{raw}/multiplex_tiled.ome.tif", "--out", cache],
+        [prep, "export", "--id", TL, "--out", cache, "--dest", export, "--fmt", "jpg",
+         "--markers", "examples/demo_protein_markers.json", "--no-umap", "--seam-correct"],
     ]
 
 
@@ -118,7 +134,7 @@ def run(args: list[str], log_path: Path) -> float:
 
 def clean(root: Path):
     """Remove only what this test itself writes, so nothing stale gets checked."""
-    for p in [root / "raw"] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX)]:
+    for p in [root / "raw", root / "export_sample" / MX] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL)]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -452,18 +468,26 @@ def check_multiplex(c: Checker, root: Path, clustering: bool) -> dict:
     check_manifest_common(c, m, MX, "jpg")
     c.eq(m.get("kind"), "tiff", "multiplex manifest kind")
     c.eq((m["image"]["width"], m["image"]["height"]), (2000, 2000), "multiplex image size")
-    c.eq([ch["name"] for ch in m["image"]["channels"]],
-         ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel", "Synth-Immune", "Synth-Autofluor"],
-         "multiplex channel names (from the OME-XML)")
+    c.eq([ch["name"] for ch in m["image"]["channels"]], MX_ALL, "multiplex channel names (from the OME-XML)")
     c.ok(abs((m.get("pixelSizeUm") or 0) - 0.5) < 1e-6, f"multiplex pixelSizeUm {m.get('pixelSizeUm')}")
     check_tiles(c, out, m, "jpg")
     layers = m.get("expr") or []
-    c.eq([L.get("key") for L in layers], ["grid020um"], "multiplex expr layers (the protein grid only)")
-    return check_grid(c, out, layers[0], clustering) if layers else {}
+    c.eq([L.get("key") for L in layers], [GRID_KEY], "multiplex expr layers (the protein grid only)")
+    if not layers:
+        return {}
+    res = check_grid(c, out, layers[0], clustering)
+    res["qc"] = check_qc(c, root, out, layers[0])
+    if clustering:
+        res["sample"] = check_sample(c, root, layers[0])
+    return res
 
 
-GRID_UM, MX_MPP, MX_CHANNELS = 20.0, 0.5, ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel",
-                                           "Synth-Immune", "Synth-Autofluor"]
+GRID_UM, GRID_KEY, MX_MPP = 16.0, "grid016um", 0.5
+MX_ALL = ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel", "Synth-Immune", "Synth-Autofluor",
+          "Synth-Saturated", "Synth-Axon-488", "open-cy5"]
+# written to the grid layer: open-cy5 is dropped by name, Synth-Axon-488 as a weaker duplicate of Synth-Axon
+MX_CHANNELS = [x for x in MX_ALL if x not in ("Synth-Axon-488", "open-cy5")]
+SAMPLE = 600                                                    # --umap-sample of the second multiplex export
 
 
 def demo_regions(pos_px: np.ndarray) -> np.ndarray:
@@ -484,7 +508,7 @@ def demo_regions(pos_px: np.ndarray) -> np.ndarray:
 def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     key = L["key"]
     d = out / "expr" / key
-    step = GRID_UM / MX_MPP                                     # 40 px squares
+    step = GRID_UM / MX_MPP                                     # 32 px squares
     print(f"  expr {key} (protein grid):")
     for k in ("label", "kind", "binSizeUm", "nBins", "nGenes", "micronsPerPixel", "spotDiameterPx",
               "imageScale", "channels"):
@@ -504,7 +528,8 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     g = pos / step - 0.5
     c.ok(np.abs(g - np.rint(g)).max() < 1e-4, f"{key}: positions are not square centres of the {step:g} px grid")
     c.ok(len({p.tobytes() for p in pos}) == n, f"{key}: duplicate positions")
-    c.ok(200 < n < 2500, f"{key}: {n} tissue squares of 2500 (mask kept too few / everything)")
+    total = round(2000 / step) ** 2
+    c.ok(total * 0.08 < n < total, f"{key}: {n} tissue squares of {total} (mask kept too few / everything)")
 
     genes = read_json(d / "genes.json")
     c.eq([x["n"] for x in genes], MX_CHANNELS, f"{key}: genes.json = the channels, in order")
@@ -552,10 +577,13 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
                     bad.append(f"{p.name}: {nm} values differ from gene/{enc(nm)}.bin"); break
         c.ok(not bad, f"{key}: mat chunks: {bad[:5]}")
         c.ok((seen == 1).all(), f"{key}: mat chunks must hold every square exactly once")
-        c.ok(all(len(mi.get(k, [])) == K for k in ("p1", "p99_5", "median")), f"{key}: mat p1 / p99_5 / median per channel")
+        c.ok(all(len(mi.get(k, [])) == K for k in ("bg", "hi", "median")), f"{key}: mat bg / hi / median per channel")
+        c.eq(mi.get("normalize"), "bg-asinh-v1", f"{key}: mat normalize")
+        c.ok(all(h > 0 for h in mi.get("hi", [])), f"{key}: mat hi must be > 0 for embedded channels")
     gr = L.get("grid") or {}
-    # default tissue rule: Otsu after a 100 µm (5 x 5 square) moving average of the DAPI means
-    c.eq((gr.get("tissueSmoothUm"), gr.get("tissueSmoothSquares")), (100.0, 5), f"{key}: grid tissue smoothing")
+    # default tissue rule: Otsu after a 100 µm (7 x 7 squares of 16 µm = 112 µm) moving average of the DAPI means
+    c.eq((gr.get("tissueSmoothUm"), gr.get("tissueSmoothSquares")), (112.0, 7), f"{key}: grid tissue smoothing")
+    c.eq(gr.get("level"), 0, f"{key}: square means from full resolution (level 0)")
     c.ok("moving average" in gr.get("tissueRule", ""), f"{key}: grid tissueRule {gr.get('tissueRule')!r}")
     if "DAPI" in V and "tissueThreshold" in gr and gr.get("tissueSmoothSquares", 1) <= 1:
         # raw rule only: with smoothing the threshold applies to the averaged means, not to each square's
@@ -566,7 +594,10 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     truth = demo_regions(pos)
     if "Synth-Axon" in V:
         fa = truth == "fascicle"
-        ratio = V["Synth-Axon"][fa].mean() / max(V["Synth-Axon"][~fa].mean(), 1e-9)
+        # the demo's fold (every channel bright) is not tissue to compare with: left out
+        fold = (np.fromfile(str(d / "qc_flags.bin"), dtype=np.uint8) & 1) > 0 if (d / "qc_flags.bin").exists() \
+            else np.zeros(n, bool)
+        ratio = V["Synth-Axon"][fa & ~fold].mean() / max(V["Synth-Axon"][~fa & ~fold].mean(), 1e-9)
         c.ok(fa.any() and ratio > 3, f"{key}: Synth-Axon only {ratio:.1f}x higher in fascicle squares")
     print(f"    positions.bin {n:,} squares, {len(genes)} gene files; regions: "
           + ", ".join(f"{r} {k}" for r, k in zip(*np.unique(truth, return_counts=True))))
@@ -653,15 +684,247 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     return res
 
 
+def check_qc(c: Checker, root: Path, out: Path, L: dict) -> dict:
+    """Slide QC (protgrid.py qc.json / qc_flags.bin) on the demo's built-in problems."""
+    key = L["key"]
+    d = out / "expr" / key
+    print(f"  expr {key} slide QC:")
+    qc = read_json(d / "qc.json") if (d / "qc.json").exists() else None
+    if not c.ok(qc is not None and isinstance(L.get("qc"), dict), f"{key}: no qc.json or manifest qc entry"):
+        return {}
+    n = L["nBins"]
+    dropped = {x["name"]: x["reason"] for x in L.get("dropped", [])}
+    c.ok("open" in dropped.get("open-cy5", ""), f"{key}: open-cy5 not dropped by name: {dropped.get('open-cy5')!r}")
+    c.ok("duplicate" in dropped.get("Synth-Axon-488", ""),
+         f"{key}: Synth-Axon-488 not dropped as a duplicate: {dropped.get('Synth-Axon-488')!r}")
+    c.ok("Synth-Axon" not in dropped, f"{key}: the stronger Synth-Axon must be kept")
+    ch = {x["name"]: x for x in qc.get("channels", [])}
+    c.eq(list(ch), MX_CHANNELS, f"{key}: qc.json channels = the written channels")
+    sat = ch.get("Synth-Saturated", {})
+    c.ok(sat.get("saturated") and sat.get("saturatedPct", 0) > 1, f"{key}: Synth-Saturated not flagged saturated: {sat}")
+    c.ok(sat.get("inUmap"), f"{key}: a saturated channel stays in the UMAP")
+    others = [nm for nm, x in ch.items() if x.get("saturated") and nm != "Synth-Saturated"]
+    c.ok(not others, f"{key}: channels wrongly flagged saturated: {others}")
+    c.eq(L["qc"].get("saturated"), ["Synth-Saturated"], f"{key}: manifest qc.saturated")
+    c.eq(qc.get("rules", {}).get("limit"), [65535], f"{key}: detector limit of the uint16 demo")
+    c.ok(all(x["background"] >= 0 and x["p99_5AboveBg"] >= 0 for x in ch.values()), f"{key}: qc background / p99.5 < 0")
+    fl = np.fromfile(str(d / "qc_flags.bin"), dtype=np.uint8)
+    c.eq(len(fl), n, f"{key}: qc_flags.bin rows")
+    c.eq(int(((fl & 1) > 0).sum()), qc["everythingBright"]["n"], f"{key}: everything-bright count vs qc_flags.bin")
+    fold = read_json(root / "raw" / "truth_multiplex_fold.json")
+    pos = f32(d / "positions.bin", 2)
+    s = fold["sizePx"]
+    inside = ((pos[:, 0] > fold["x0"]) & (pos[:, 0] < fold["x0"] + s) & (pos[:, 1] > fold["y0"]) & (pos[:, 1] < fold["y0"] + s))
+    core = ((pos[:, 0] > fold["x0"] + 32) & (pos[:, 0] < fold["x0"] + s - 32)
+            & (pos[:, 1] > fold["y0"] + 32) & (pos[:, 1] < fold["y0"] + s - 32))
+    br = (fl & 1) > 0
+    hit = float(br[core].mean()) if core.any() else 0.0
+    out_rate = float(br[~inside].mean())
+    c.ok(core.sum() >= 20 and hit > 0.8, f"{key}: fold squares flagged everything bright: {hit:.0%} of {int(core.sum())}")
+    c.ok(out_rate < 0.02, f"{key}: {out_rate:.1%} of squares outside the fold flagged everything bright")
+    c.ok(isinstance(qc.get("seams"), dict) and "flagged" in qc["seams"], f"{key}: qc.json seams check missing")
+    c.ok(not qc["seams"]["flagged"], f"{key}: the demo has no camera tiles, but seams were flagged: {qc['seams']}")
+    c.ok("correction" not in qc["seams"] and not (d / "qc_seams.json").exists(), f"{key}: untiled demo was 'corrected'")
+    c.ok("not comparable across slides" in qc.get("note", ""), f"{key}: qc.json note")
+    res = {"foldFlagged": round(hit, 3), "outsideFlagged": round(out_rate, 4), "saturatedPct": sat.get("saturatedPct")}
+    ud = d / "umap"
+    if (ud / "celltypes.json").exists():
+        ct = read_json(ud / "celltypes.json")
+        idx = read_json(ud / "index.json")
+        art = []
+        for cl in idx["clusterings"]:
+            lab = np.fromfile(str(ud / cl["file"]), dtype="<u2").astype(np.int64)
+            for sg in ct["clusterings"][f"{cl['resolution']:g}"]:
+                m = lab == sg["cluster"]
+                share = float(br[m].mean()) if m.any() else 0.0
+                if abs(share - sg.get("artefact", -1)) > 1e-3:
+                    art.append(f"r{cl['resolution']} c{sg['cluster']}: artefact {sg.get('artefact')} vs {share:.3f}")
+                if (share > 0.5) != bool(sg.get("artefactRule")):
+                    art.append(f"r{cl['resolution']} c{sg['cluster']}: artefactRule {sg.get('artefactRule')} at share {share:.2f}")
+        c.ok(not art, f"{key}: artefact rule: {art[:4]}")
+        named = [(cl, sg["cluster"]) for cl, v in ct["clusterings"].items() for sg in v if sg.get("artefactRule")]
+        c.ok(named, f"{key}: no cluster suggested as an artefact (the fold should make one)")
+        res["artefactClusters"] = len(named)
+    print(f"    dropped {sorted(dropped)}; saturated {L['qc'].get('saturated')}; fold squares flagged {hit:.0%}, "
+          f"outside {out_rate:.1%}; artefact clusters {res.get('artefactClusters')}")
+    return res
+
+
+def check_tiled(c: Checker, root: Path) -> dict:
+    """demo_tiled: the grid found, the two stepped markers corrected, the factors recovered."""
+    out = root / "export" / TL
+    m = read_json(out / "manifest.json")
+    L = (m.get("expr") or [{}])[0]
+    d = out / "expr" / L.get("key", GRID_KEY)
+    truth = read_json(root / "raw" / "truth_multiplex_tiles.json")
+    qc = read_json(d / "qc.json")
+    sm = qc.get("seams") or {}
+    gr = sm.get("grid") or {}
+    c.ok(sm.get("flagged") and gr, f"demo_tiled: tile grid not found: {sm.get('gridProblem')} {sm.get('columns')} {sm.get('rows')}")
+    if not gr:
+        return {}
+    w, h = truth["w"], truth["h"]
+    c.eq((gr["w"], gr["h"]), (w, h), "demo_tiled: tile size")
+    off = lambda a, b, p: min(abs(a - b) % p, p - abs(a - b) % p)
+    c.ok(off(gr["x0"], truth["x0"], w) <= 2 and off(gr["y0"], truth["y0"], h) <= 2,
+         f"demo_tiled: tile offset {gr['x0']}, {gr['y0']} vs {truth['x0']}, {truth['y0']}")
+    cor = sm.get("correction") or {}
+    c.eq(sorted(cor.get("corrected", [])), sorted(truth["channels"]), "demo_tiled: corrected markers")
+    fx = read_json(d / "qc_seams.json")
+    chans = {x["name"]: x for x in fx["channels"]}
+    res = {}
+    for nm, t in truth["channels"].items():
+        x = chans.get(nm, {})
+        c.ok(x.get("excessAfter", 99) <= 0.5 * x.get("excessBefore", 0),
+             f"demo_tiled: {nm} excess step {x.get('excessBefore')} -> {x.get('excessAfter')}")
+        f = fx["factors"].get(nm)
+        if not c.ok(f is not None, f"demo_tiled: no factors for {nm}"):
+            continue
+        tl = fx["tiles"]
+        g = np.array(f["g"]).reshape(tl["rows"], tl["cols"])
+        fit = np.zeros(tl["rows"] * tl["cols"], bool)
+        fit[f["fitted"]] = True                                 # tiles with tissue on their edges
+        fit = fit.reshape(tl["rows"], tl["cols"])
+        gt = np.array(t["gain"])
+        # the same tiles in both: tile (row, col) = index + row0 / col0
+        rr = np.arange(tl["rows"]) + tl["row0"] - truth["row0"]
+        cc = np.arange(tl["cols"]) + tl["col0"] - truth["col0"]
+        okr, okc = (rr >= 0) & (rr < gt.shape[0]), (cc >= 0) & (cc < gt.shape[1])
+        g, fit, gt = g[np.ix_(okr, okc)], fit[np.ix_(okr, okc)], gt[np.ix_(rr[okr], cc[okc])]
+        fitted = fit
+        e = np.log(g[fitted]) - np.log(gt[fitted])
+        e -= np.median(e)                                       # only ratios between tiles are defined
+        res[nm] = {"tiles": int(fitted.sum()), "medianErrPct": round(float(np.median(np.abs(e)) * 100), 2),
+                   "p90ErrPct": round(float(np.percentile(np.abs(e), 90) * 100), 2), "method": x.get("method")}
+        if not t["offset"] or not np.any(t["offset"]):
+            # a factor only: the factors themselves must come back (with an offset too, a smooth
+            # marker cannot tell the two apart - seams.py - and only the image test below applies)
+            c.ok(fitted.sum() >= 20 and res[nm]["medianErrPct"] <= 6,
+                 f"demo_tiled: {nm} factors not recovered: {res[nm]}")
+        # the image test: the corrected squares must match the same image without tiles
+        # (demo_multiplex, same squares) far better than the tile differences put in
+        pa = f32(root / "export" / MX / "expr" / GRID_KEY / "positions.bin", 2)
+        pb = f32(d / "positions.bin", 2)
+        if not c.ok(len(pa) == len(pb) and np.array_equal(pa, pb), "demo_tiled: squares differ from demo_multiplex"):
+            continue
+        plain = f32(root / "export" / MX / "expr" / GRID_KEY / "gene" / f"{enc(nm)}.bin", 3)[:, 2]
+        fixed = f32(d / "gene" / f"{enc(nm)}.bin", 3)[:, 2]
+        sel = (plain > np.median(plain)) & (fixed > 0)
+        lr = np.log(fixed[sel] / plain[sel])
+        rsd = float(1.4826 * np.median(np.abs(lr - np.median(lr))))
+        tcol = ((pb[sel, 0] - truth["x0"]) // w).astype(int) - truth["col0"]
+        trow = ((pb[sel, 1] - truth["y0"]) // h).astype(int) - truth["row0"]
+        lg = np.log(np.array(t["gain"])[trow, tcol])
+        inj = float(1.4826 * np.median(np.abs(lg - np.median(lg))))
+        res[nm].update(residualSdPct=round(rsd * 100, 2), injectedSdPct=round(inj * 100, 2))
+        # edges pin each tile only to its neighbours, so small errors add up across the slide: on
+        # this demo the factors come back within ~5-6%, and the corrected squares keep less than
+        # 55% of the tile variation put in (measured 0.19-0.52 while building, 2026-11-05)
+        c.ok(rsd <= 0.55 * inj, f"demo_tiled: {nm} corrected squares still differ from the untiled image by "
+                               f"{rsd:.1%} (tile factors put in: {inj:.1%})")
+    others = [x["name"] for x in fx["channels"] if x["name"] not in truth["channels"] and x["method"] != "none"]
+    c.ok(not others, f"demo_tiled: markers without steps were corrected: {others}")
+    print(f"    grid {gr['w']} x {gr['h']} px at {gr['x0']}, {gr['y0']}; corrected {cor.get('corrected')}; "
+          f"recovered factors: {res}")
+    return res
+
+
+def check_sample(c: Checker, root: Path, L: dict) -> dict:
+    """The second multiplex export: UMAP fitted on SAMPLE squares, the rest placed."""
+    key = L["key"]
+    a = root / "export" / MX / "expr" / key / "umap"
+    b = root / "export_sample" / MX / "expr" / key / "umap"
+    print(f"  expr {key} UMAP on a {SAMPLE}-square sample:")
+    if not c.ok((b / "index.json").exists(), f"{key}: export_sample has no umap/index.json"):
+        return {}
+    ia, ib = read_json(a / "index.json"), read_json(b / "index.json")
+    n = ia["nBins"]
+    c.eq((ib.get("nBins"), ib.get("nEmbedded"), ib.get("fitOn")), (n, n, SAMPLE), f"{key}: sample nBins / nEmbedded / fitOn")
+    c.ok("fitted on" in ib["params"].get("fit", "") and ia["params"].get("fit") == "all rows",
+         f"{key}: params.fit {ib['params'].get('fit')!r} / {ia['params'].get('fit')!r}")
+    co = f32(b / "coords.bin", 2)
+    c.ok(len(co) == n and np.isfinite(co).all(), f"{key}: sample coords.bin rows / NaN")
+    out = {}
+    for ca, cb in zip(ia["clusterings"], ib["clusterings"]):
+        la = np.fromfile(str(a / ca["file"]), dtype="<u2").astype(np.int64)
+        lb = np.fromfile(str(b / cb["file"]), dtype="<u2").astype(np.int64)
+        sizes = np.bincount(lb, minlength=cb["n"])
+        c.ok(len(lb) == n and (lb < cb["n"]).all() and sizes.tolist() == cb["sizes"] and (np.diff(sizes) <= 0).all(),
+             f"{key}: sample {cb['file']}: labels / sizes / order")
+        out[ca["resolution"]] = round(ari(la, lb), 3)
+    best = max(out.values(), default=0)
+    c.ok(best > 0.4, f"{key}: clusters from the sample disagree with the full fit (ARI {out})")
+    print(f"    fitOn {ib.get('fitOn')} of {n}; ARI vs fitting on all: {out}")
+    return {"ari": out}
+
+
+def check_marker_lists(c: Checker):
+    """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
+    sys.path.insert(0, str(APP))
+    try:
+        import celltypes
+        import seams  # noqa: F401  (used below)
+    finally:
+        sys.path.pop(0)
+    for name, prot in (("protein_generic.json", True), ("rna_generic.json", False), ("akoya_nerve.json", True),
+                       ("nerve.json", False)):
+        ms = read_json(APP / "markers" / name)
+        ok = (isinstance(ms.get("types"), list) and ms["types"]
+              and all(t.get("name") and t.get("genes") for t in ms["types"])
+              and (ms.get("modality") == "protein") == prot)
+        c.ok(ok, f"markers/{name}: types / modality")
+    pg = read_json(APP / "markers" / "protein_generic.json")
+    c.eq(pg.get("minChannels"), 2, "protein_generic.json minChannels")
+    c.eq(sorted(t["name"] for t in pg["types"] if t.get("min") == 1), ["Immune rich", "Lymphatic", "Proliferating"],
+         "protein_generic.json one-marker types")
+    al = pg.get("aliases", {})
+    c.ok(all(k in {g for t in pg["types"] for g in t["genes"]} for k in al), "protein_generic.json: alias of a name not in any type")
+    cases = {"GFAP-488": "gfap", "CD11c FFPE": "cd11c", "01_CD45": "cd45", "CD45 (Opal520)": "cd45", "CD3_AF647": "cd3",
+             "NF-L": "nfl", "PD-1": "pd1", "Ki-67": "ki67", "CD138": "cd138", "CD8 Cy5.5": "cd8", "12 - CD4": "cd4",
+             "Pan-CytokeratinGFAP": "pancytokeratingfap", "HLA-DR": "hladr"}
+    bad = {k: celltypes.norm_name(k) for k, v in cases.items() if celltypes.norm_name(k) != v}
+    c.ok(not bad, f"celltypes.norm_name: {bad}")
+    m = celltypes.match_channels([{"name": "T", "genes": ["CD3", "CD4"]}], ["01_CD3e", "CD4-488"], {"CD3": ["CD3e"]})
+    c.eq(m[0]["cols"], [0, 1], "celltypes.match_channels with aliases and tags")
+    # the JS copy (lasso_worker.js normName) must use the same tag list
+    js = (APP / "lasso_worker.js").read_text(encoding="utf-8")
+    py = (APP / "celltypes.py").read_text(encoding="utf-8")
+    tag = lambda txt: re.search(r"fitc\|tritc\|pe\|apc\|ffpe\|([0-9|]+)\)", txt)
+    tj, tp = tag(js), tag(py)
+    c.ok(tj and tp and tj.group(1) == tp.group(1), "lasso_worker.js normName tags differ from celltypes.norm_name")
+    print(f"    marker lists ok; norm_name {len(cases) - len(bad)}/{len(cases)} cases")
+
+    # the seam check on profiles with a known answer: camera tiles 480 px wide, 360 px high
+    import seams
+    rng = np.random.default_rng(0)
+    W, H = 9600, 7200
+    smooth = lambda n: np.convolve(rng.normal(0, 1, n + 400), np.ones(200) / 200, mode="valid")[:n] * 20 + 60
+    tile = lambda n, sp: (1 + 0.15 * rng.normal(0, 1, n // sp + 1))[np.arange(n) // sp]   # each tile its own gain
+    prof = lambda n, sp: smooth(n) * (tile(n, sp) if sp else 1) + rng.normal(0, 0.3, n)
+    six = lambda cw, rw: (cw, rw, cw, cw, rw, rw)                 # whole slide and halves alike
+    plain = [six(prof(W, 0), prof(H, 0)) for _ in range(4)]
+    tiled = [six(prof(W, 480), prof(H, 360)) for _ in range(3)] + plain[:1]
+    nm = ["A", "B", "C", "D"]
+    sp, sn = seams.find_grid(tiled, nm, 0.5), seams.find_grid(plain, nm, 0.5)
+    c.ok(sp["flagged"] and sp["columns"].get("spacingPx") in (476, 480, 484) and sp["rows"].get("spacingPx") in (356, 360, 364),
+         f"protgrid.seam_check missed synthetic 480 x 360 px tiles: {sp}")
+    c.ok(not sn["flagged"], f"protgrid.seam_check flagged a slide without tiles: {sn}")
+    print(f"    seam check: tiles found at {sp['columns'].get('spacingPx')} x {sp['rows'].get('spacingPx')} px; "
+          f"none on the plain profiles")
+
+
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
-    texts = [p for ds in (VIS, MX) for p in (export / ds).rglob("*")
+    texts = [p for ds in (VIS, MX, TL) for p in (export / ds).rglob("*")
              if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
+    texts += [p for p in (root / "export_sample" / MX).rglob("*") if p.is_file() and p.suffix == ".json"]
     bc = [p for p in texts if BARCODE.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not bc, f"export text files contain barcodes: {bc[:3]}")
     lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not lp, f"export text files contain local paths: {lp[:3]}")
-    args = ["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX)]
+    args = ["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX), str(export / TL)]
+    if (root / "export_sample" / MX).exists():
+        args.append(str(root / "export_sample" / MX))
     print(f"$ python {' '.join(args)}", flush=True)
     p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        text=True, encoding="utf-8", errors="replace")
@@ -692,6 +955,7 @@ def main(argv=None) -> int:
         log_path.write_text("", encoding="utf-8")
         for cmd in demo_commands(root):
             label = Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"
+            label += " (sample)" if "--umap-sample" in cmd else ""
             timings[label] = run(cmd, log_path)
 
     c = Checker()
@@ -699,7 +963,11 @@ def main(argv=None) -> int:
     print("checks: demo_visiumhd")
     summary = check_visium(c, root, clustering)
     print("checks: demo_multiplex")
-    summary["grid020um"] = check_multiplex(c, root, clustering)
+    summary[GRID_KEY] = check_multiplex(c, root, clustering)
+    print("checks: demo_tiled (tile seams)")
+    summary["tiles"] = check_tiled(c, root)
+    print("checks: marker lists and name cleanup")
+    check_marker_lists(c)
     print("checks: publishable")
     check_publishable(c, root, log_path)
     timings["checks"] = time.time() - t0

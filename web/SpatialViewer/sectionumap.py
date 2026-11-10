@@ -11,14 +11,17 @@ tissue and the UMAP and colour both by cluster.
 
 Pipeline (scanpy's defaults, written out): bins with >= MIN_UMI UMI -> log1p CP10k
 -> top 2000 HVGs over the whole section (hvgchunks.select_hvg) -> scale, clip 10
--> PCA 30 -> umap-learn (15 neighbours, min_dist 0.3) -> Leiden (leidenalg,
+-> PCA 30 -> umap-learn (15 neighbours, min_dist 0.3, started from PC1 / PC2 like the
+circle tool's umap-js, which has no spectral start) -> Leiden (leidenalg,
 RB configuration) on umap's fuzzy graph at 0.3 / 0.6 / 1.0. Cluster 0 is the
 largest. Markers: top 10 genes per cluster by log2 fold change of the mean
 expression (cluster vs rest) among genes seen in >= 25% of the cluster's bins.
 
 Protein grid layers (protgrid.py) go through the same UMAP / Leiden / renumbering /
 file writing (embed_and_cluster, write_umap_files) from a dense matrix of marker means
-instead: write_feature_umap; their index.json says "modality": "protein".
+instead: write_feature_umap; their index.json says "modality": "protein". Above
+UMAP_SAMPLE rows they are fitted on a seeded sample and the rest placed with umap's
+transform (index.json "fitOn"; params "fit" says how).
 
 Everything is seeded, so the same cache gives the same bytes. umap-learn, igraph
 and leidenalg are imported lazily: without them the step is skipped and the rest
@@ -40,6 +43,7 @@ N_HVG = 2000
 N_PCS = 30
 N_NEIGHBORS = 15
 MIN_DIST = 0.3
+INIT = "pca"                                            # umap-learn >= 0.5.4
 SEED = 42
 CLIP = 10.0
 RESOLUTIONS = (0.3, 0.6, 1.0)
@@ -53,7 +57,7 @@ LEIDEN_ITERS = 2
 
 
 def _params() -> dict:
-    return {"nHvg": N_HVG, "nPcs": N_PCS, "nNeighbors": N_NEIGHBORS, "minDist": MIN_DIST, "seed": SEED,
+    return {"nHvg": N_HVG, "nPcs": N_PCS, "nNeighbors": N_NEIGHBORS, "minDist": MIN_DIST, "init": INIT, "seed": SEED,
             "normalize": "log1p CP10k", "scale": f"clip {CLIP:g}",
             "cluster": f"leiden RBConfiguration on umap fuzzy graph, {LEIDEN_ITERS} iterations",
             "markers": f"log2 fold change of mean expression vs rest, pct >= {MIN_PCT:g}, lfc > 0"}
@@ -119,16 +123,50 @@ def _graph(graph: sparse.spmatrix, ig):
     return G
 
 
-def _leiden(G, resolution: float, la) -> np.ndarray:
-    part = la.find_partition(G, la.RBConfigurationVertexPartition, weights="weight",
-                             resolution_parameter=resolution, n_iterations=LEIDEN_ITERS, seed=SEED)
-    lab = np.asarray(part.membership, dtype=np.int64)
-    # renumber: 0 = largest, ties broken by the old id so the order is stable
+def _renumber(lab: np.ndarray) -> np.ndarray:
+    """0 = largest cluster, ties broken by the old id so the order is stable."""
     sizes = np.bincount(lab)
     order = np.argsort(-sizes, kind="stable")
     remap = np.empty_like(order)
     remap[order] = np.arange(len(order))
     return remap[lab]
+
+
+def _leiden(G, resolution: float, la) -> np.ndarray:
+    part = la.find_partition(G, la.RBConfigurationVertexPartition, weights="weight",
+                             resolution_parameter=resolution, n_iterations=LEIDEN_ITERS, seed=SEED)
+    return _renumber(np.asarray(part.membership, dtype=np.int64))
+
+
+def sample_rows(n: int, size: int | None) -> np.ndarray | None:
+    """Sorted, seeded random rows to fit the UMAP on, or None to fit on all `n`
+    (size None = UMAP_SAMPLE; 0 or >= n = all)."""
+    size = UMAP_SAMPLE if size is None else int(size)
+    if size <= 0 or n <= size:
+        return None
+    return np.sort(np.random.default_rng(SEED).choice(n, size=size, replace=False))
+
+
+def _sample_neighbours(reducer, X: np.ndarray, k: int) -> np.ndarray:
+    """Indices (into the fitted sample) of the k nearest sampled rows of each row of X: umap's own
+    search index when it has one (the one transform used), else an exact search."""
+    idx = getattr(reducer, "_knn_search_index", None)
+    if idx is not None:
+        try:
+            return np.asarray(idx.query(X, k=k, epsilon=0.12)[0], dtype=np.int64)
+        except Exception:                               # older pynndescent: fall through
+            pass
+    from sklearn.neighbors import NearestNeighbors
+    return NearestNeighbors(n_neighbors=k).fit(reducer._raw_data).kneighbors(X, return_distance=False)
+
+
+def _majority(lab_s: np.ndarray, nn: np.ndarray) -> np.ndarray:
+    """Per row, the most common label among its neighbours (lowest label on ties)."""
+    k = int(lab_s.max()) + 1
+    votes = np.zeros((len(nn), k), np.int32)
+    rows = np.repeat(np.arange(len(nn)), nn.shape[1])
+    np.add.at(votes, (rows, lab_s[nn].ravel()), 1)
+    return votes.argmax(1).astype(np.int64)
 
 
 def _markers(Xn: sparse.csr_matrix, lab: np.ndarray, k: int, genes: list[str]) -> list[list[dict]]:
@@ -184,25 +222,46 @@ def _reusable(ud, params: dict, key, log) -> dict | None:
     return None
 
 
-def embed_and_cluster(pcs: np.ndarray, markers_of, libs, key, log=print, t0: float | None = None):
+def embed_and_cluster(pcs: np.ndarray, markers_of, libs, key, log=print, t0: float | None = None,
+                      sample: np.ndarray | None = None):
     """UMAP of `pcs` (rows x components) + Leiden at every resolution on umap's fuzzy graph.
 
     `markers_of(lab, k)` gives the marker lists of one clustering. Returns the 2-D
     embedding (float32) and, per resolution, the index.json entry and the labels.
     Shared by the RNA (write_section_umap) and protein (write_feature_umap) layers.
+
+    `sample` (sorted rows, sample_rows): fit the UMAP and Leiden on those rows only; every
+    other row is placed into the same map with umap's transform and takes the cluster most
+    common among its SAMPLE_K nearest sampled rows (PCA space). Clusters are then renumbered
+    by their size over all rows.
     """
     umap, ig, la = libs
     t0 = time.time() if t0 is None else t0
     # random_state makes umap-learn single-threaded: slower, but the same bytes every run
     reducer = umap.UMAP(n_neighbors=N_NEIGHBORS, min_dist=MIN_DIST, n_components=2, metric="euclidean",
-                        random_state=SEED, transform_seed=SEED)
-    emb = reducer.fit_transform(pcs).astype(np.float32)
-    log(f"[umap] {key}: UMAP  {time.time() - t0:.0f}s")
+                        init=INIT, random_state=SEED, transform_seed=SEED)
+    rest = nn = None
+    if sample is None:
+        emb = reducer.fit_transform(pcs).astype(np.float32)
+        log(f"[umap] {key}: UMAP  {time.time() - t0:.0f}s")
+    else:
+        emb = np.empty((len(pcs), 2), np.float32)
+        emb[sample] = reducer.fit_transform(pcs[sample]).astype(np.float32)
+        log(f"[umap] {key}: UMAP fitted on {len(sample):,} of {len(pcs):,} rows  {time.time() - t0:.0f}s")
+        rest = np.setdiff1d(np.arange(len(pcs)), sample, assume_unique=True)
+        emb[rest] = reducer.transform(pcs[rest]).astype(np.float32)
+        nn = _sample_neighbours(reducer, pcs[rest], SAMPLE_K)
+        log(f"[umap] {key}: {len(rest):,} rows placed with transform  {time.time() - t0:.0f}s")
 
     clusterings, labels = [], []
     G = _graph(reducer.graph_, ig)
     for res in RESOLUTIONS:
         lab = _leiden(G, res, la)
+        if sample is not None:
+            full = np.empty(len(pcs), np.int64)
+            full[sample] = lab
+            full[rest] = _majority(lab, nn)
+            lab = _renumber(full)
         k = int(lab.max()) + 1
         sizes = np.bincount(lab, minlength=k)
         clusterings.append({"resolution": res, "file": f"clusters_r{res:.1f}.bin", "n": k,
@@ -311,11 +370,16 @@ def write_section_umap(er, d, log=print, force: bool = False) -> dict | None:
 # means per grid square instead of counts. Same UMAP / Leiden / renumbering / files.
 # ---------------------------------------------------------------------------------------
 N_PCS_PROTEIN = 15
+UMAP_SAMPLE = 200_000        # protein layers with more rows: fit on a seeded sample of this many, place the rest
+SAMPLE_K = 15                # placed rows take the majority cluster of this many nearest sampled rows
 
 
-def protein_params(channels: list[str], extra: dict | None = None) -> dict:
+def protein_params(channels: list[str], extra: dict | None = None, fit: str = "all rows") -> dict:
     return {"nPcs": f"min({N_PCS_PROTEIN}, channels - 1)", "nNeighbors": N_NEIGHBORS, "minDist": MIN_DIST,
-            "seed": SEED, "normalize": "per channel clip((x - p1) / (p99.5 - p1), 0, 1) over the tissue squares",
+            "init": INIT, "seed": SEED,
+            "normalize": "per channel asinh(max(v - bg, 0) / hi / 0.2) / asinh(5); bg = off-tissue median, "
+                         "hi = p99.5 of v - bg over the tissue squares (protgrid.normalise_bg_asinh)",
+            "fit": fit,
             "scale": f"z-score per channel, clip {CLIP:g}",
             "cluster": f"leiden RBConfiguration on umap fuzzy graph, {LEIDEN_ITERS} iterations",
             "markers": (f"difference of the mean z-scored x' (cluster - rest, population sd), top {N_MARKERS} "
@@ -354,16 +418,24 @@ def protein_markers(xp: np.ndarray, lab: np.ndarray, k: int, names: list[str], c
 
 
 def write_feature_umap(d, xp: np.ndarray, names: list[str], embed_cols, marker_cols, key: str,
-                       log=print, force: bool = False, extra_params: dict | None = None) -> dict | None:
+                       log=print, force: bool = False, extra_params: dict | None = None,
+                       sample: int | None = None) -> dict | None:
     """expr/<key>/umap/ for a dense layer whose every positions.bin row is embedded.
 
-    `xp` = rows x channels, already x' in [0, 1] (protgrid.normalise). The embedding
-    uses the columns `embed_cols` (z-scored, PCA to min(15, n - 1)); the cluster markers
-    rank `marker_cols`. Returns the manifest entry, or None when skipped.
+    `xp` = rows x channels, already normalised (protgrid.normalise_bg_asinh: 0 at background,
+    1 at p99.5). The embedding uses the columns `embed_cols` (z-scored, PCA to min(15, n - 1));
+    the cluster markers rank `marker_cols`. `sample`: above this many rows the UMAP is fitted on
+    a seeded sample and the rest placed (None = UMAP_SAMPLE, 0 = always all rows).
+    Returns the manifest entry, or None when skipped.
     """
     ud = d / "umap"
     embed_cols = [int(c) for c in embed_cols]
-    params = protein_params([names[c] for c in embed_cols], extra_params)
+    rows_fit = sample_rows(len(xp), sample)
+    fit = ("all rows" if rows_fit is None else
+           f"UMAP fitted on {len(rows_fit)} rows (seeded random sample), the rest placed with umap transform; "
+           f"Leiden on the sample's graph, the rest take the most common cluster of their {SAMPLE_K} nearest "
+           "sampled rows (PCA space); clusters renumbered by size over all rows")
+    params = protein_params([names[c] for c in embed_cols], extra_params, fit)
     if not force:
         old = _reusable(ud, params, key, log)
         if old:
@@ -380,8 +452,11 @@ def write_feature_umap(d, xp: np.ndarray, names: list[str], embed_cols, marker_c
     pcs = _pca(sparse.csr_matrix(np.ascontiguousarray(xp[:, embed_cols], dtype=np.float64)), n_pcs)
     log(f"[umap] {key}: {n:,} rows, {len(embed_cols)} channels, PCA {pcs.shape[1]}  {time.time() - t0:.0f}s")
     emb, clusterings, labels = embed_and_cluster(
-        pcs, lambda lab, k: protein_markers(xp, lab, k, names, marker_cols), libs, key, log, t0)
-    return write_umap_files(ud, {"nBins": n, "nEmbedded": n, "modality": "protein"}, params,
+        pcs, lambda lab, k: protein_markers(xp, lab, k, names, marker_cols), libs, key, log, t0, sample=rows_fit)
+    head = {"nBins": n, "nEmbedded": n, "modality": "protein"}
+    if rows_fit is not None:
+        head["fitOn"] = int(len(rows_fit))
+    return write_umap_files(ud, head, params,
                             emb, clusterings, labels, n, np.arange(n), libs, key, log, t0)
 
 

@@ -1,0 +1,23 @@
+{
+  "name": "Generic tissue",
+  "note": "The default list for spatial transcriptomics (Visium / Visium HD) when no list is given. Written from widely used textbook marker genes, not copied from a marker database. A bin can hold several cells, so the names describe neighbourhoods ('T-cell rich'), not single cells. Gene names are matched case-insensitively, so the same file works for human (PECAM1) and mouse (Pecam1). A type needs at least 2 of its genes in the data to be scored. For a tissue-specific list (e.g. markers/nerve.json) pass --markers.",
+  "version": 1,
+  "types": [
+    { "name": "T-cell rich", "genes": ["CD3D", "CD3E", "CD2", "CD3G", "IL7R", "TRAC"] },
+    { "name": "B-cell rich", "genes": ["MS4A1", "CD79A", "CD79B", "CD19", "PAX5"] },
+    { "name": "Plasma-cell rich", "genes": ["JCHAIN", "MZB1", "IGKC", "SDC1", "XBP1"] },
+    { "name": "Myeloid / macrophage rich", "genes": ["CD68", "CD163", "C1QA", "C1QB", "CSF1R", "LYZ", "CD14"] },
+    { "name": "NK rich", "genes": ["NKG7", "GNLY", "KLRD1", "NCAM1"] },
+    { "name": "Neutrophil rich", "genes": ["S100A8", "S100A9", "CSF3R", "FCGR3B"] },
+    { "name": "Mast-cell rich", "genes": ["TPSAB1", "TPSB2", "CPA3", "KIT"] },
+    { "name": "Vascular", "genes": ["PECAM1", "VWF", "CDH5", "CLDN5", "EMCN"] },
+    { "name": "Lymphatic", "genes": ["LYVE1", "PROX1", "PDPN", "CCL21"] },
+    { "name": "Smooth muscle / pericyte", "genes": ["ACTA2", "MYH11", "TAGLN", "RGS5", "PDGFRB", "DES"] },
+    { "name": "Epithelial", "genes": ["EPCAM", "KRT8", "KRT18", "KRT19", "CDH1"] },
+    { "name": "Neural / glial", "genes": ["NEFL", "NEFM", "TUBB3", "UCHL1", "MPZ", "PMP22", "S100B", "SOX10"] },
+    { "name": "Stromal / fibroblast", "genes": ["COL1A1", "COL1A2", "DCN", "LUM", "PDGFRA", "COL3A1"] },
+    { "name": "Adipocyte", "genes": ["ADIPOQ", "PLIN1", "LEP", "CIDEC"] },
+    { "name": "Skeletal muscle", "genes": ["ACTA1", "CKM", "MYH1", "MYH2", "DES"] },
+    { "name": "Proliferating", "genes": ["MKI67", "TOP2A", "CENPF", "PCNA"] }
+  ]
+}

@@ -137,12 +137,50 @@ renderings are used only when a marker has no grey file. All files must have the
 width and height.
 
 On `export`, a multi-channel fluorescence image (TIFF or Akoya, with a pixel size) also gets a
-grid layer: the mean of each marker per 20 µm square (`--grid-um`), with a UMAP and clusters.
+grid layer: the mean of each marker per 16 µm square (`--grid-um`; 8 gives about four times the
+squares and files), with a UMAP and clusters. The means are taken from full-resolution pixels
+(the coarser pyramid levels keep the brightest pixel for display and would overstate markers).
 Only tissue squares are kept. The tissue mask: DAPI (or Hoechst) square means, averaged over
-100 µm (5 x 5 squares, `--tissue-smooth-um`), Otsu threshold on log1p, enclosed holes of up to
+100 µm (7 x 7 squares, `--tissue-smooth-um`), Otsu threshold on log1p, enclosed holes of up to
 4 squares filled. `--tissue-smooth-um 0` thresholds the raw square means instead, which keeps
 only nucleus-dense squares and drops axon and collagen stretches. The rule and window are
 recorded in the layer's `grid` block in `manifest.json` and in `umap/index.json`.
+
+Everything after that is automatic, so a slide needs no hand-tuning:
+
+- **Channel cleanup.** Channels named open / blank / empty / unused / none are dropped. Two
+  channels with the same marker name (ignoring case, `01_` prefixes and dye tags such as
+  `-488` or `FFPE`) are reduced to the one with the stronger signal. A channel that is flat
+  over the tissue is kept in the files but left out of the UMAP; so is DAPI.
+- **Normalisation, per channel and per slide** (pieces on one slide were stained together):
+  the background (median of the off-tissue squares) is taken off, the result is divided by
+  the channel's 99.5th percentile over the tissue (folds and other everything-bright squares
+  left out of that percentile), then put through asinh (cofactor 0.2), so
+  a few very bright squares cannot dominate. Then z-scores, PCA and UMAP as for genes.
+- **Slide QC** (`expr/<layer>/qc.json`, shown in the viewer under the layer): weak stains
+  (signal under 15x background: kept, flagged), saturated stains (more than 1% of tissue
+  pixels at the detector's limit: kept, flagged), squares where nearly every marker is bright
+  (folds, bubbles, bright edges; a cluster made mostly of them is suggested as
+  "Artefact? (fold / edge)"), squares with many saturated pixels, and a check for tile seams.
+  UMAPs are per slide: they are not comparable across slides.
+- **Tile seams.** A stitched slide can show steps where the camera fields meet. On our s48
+  (fields of 960 x 720 px) there are three parts: a dark line along the last pixel column / row
+  of every field; shading shared by every field (one side of every field brighter than the
+  other, so the step goes the same way at most edges); and brightness / background differences
+  between fields. The seams are always detected and reported. With `--seam-correct`, when the
+  field grid is found, the border line is measured and left out, the
+  shared shading is measured and reported, and every marker with steps gets one brightness
+  factor (and, if it helps, a background offset) per field, fitted from the pixels on both sides
+  of each field edge. It is kept only if it at least halves the step at field edges without
+  raising it inside the fields; the squares are then recomputed from corrected values. Shared
+  shading is **not** corrected (that needs a flat-field correction, not built yet): markers
+  dominated by it are listed as not correctable, with the reason, and stay in the UMAP. The
+  image itself is shown as recorded. The correction is off by default: on s48 it removed the
+  steps at field edges in 11 of 24 markers but made no measurable difference to the squares,
+  because most of the seam there is the shared shading. Details: `web/SpatialViewer/seams.py`.
+- **Large slides.** Above 200,000 tissue squares the UMAP is fitted on a seeded random
+  sample of 200,000 and the other squares are placed into it (`--umap-sample N`; 0 = fit on
+  every square, slower).
 
 ## H&E or other brightfield image on its own
 
@@ -277,14 +315,25 @@ A cluster number says nothing about what the cluster is. After clustering, the e
 scores every bin against lists of known marker genes and suggests a name for each cluster,
 with a confidence you can see, accept or overrule.
 
-The lists are in `web/SpatialViewer/markers/nerve.json`: marker genes for twelve cell types
-found in and around peripheral nerve (myelinating and non-myelinating Schwann cells,
+By default the export uses general lists that work for any tissue:
+`web/SpatialViewer/markers/rna_generic.json` (genes, for Visium) and
+`web/SpatialViewer/markers/protein_generic.json` (protein panels). They name
+neighbourhoods rather than single cells ("T-cell rich", "Vascular", "Neural / glial"), because
+a bin or square holds several cells. They were written from widely used textbook markers, not
+copied from a marker database. The protein list also has an alias table (CD45 = PTPRC,
+Pan-Cytokeratin = panCK, NF-L = NEFL, ...), and channel names are matched ignoring case, `01_`
+prefixes and dye tags; a protein type needs at least 2 of its markers on the panel (CD45,
+lymphatic and Ki67 types need 1), otherwise it is listed as absent.
+
+Tissue-specific lists can be passed instead: `markers/nerve.json` has marker genes for twelve
+cell types found in and around peripheral nerve (myelinating and non-myelinating Schwann cells,
 perineurial cells, fibroblasts, endothelial cells, pericytes / smooth muscle, macrophages,
-mast cells, T / NK cells, B / plasma cells, adipocytes, skeletal muscle). **Edit them for
-your tissue**, or write your own file in the same shape and pass it with
-`prepare.py export --markers my_markers.json`. Gene names are matched without regard to
-case, so one file serves human and mouse. In the browser the circle tool uses the file
-named by `markerSet` in `config.js` (default `markers/nerve.json`).
+mast cells, T / NK cells, B / plasma cells, adipocytes, skeletal muscle), and
+`markers/akoya_nerve.json` the protein version. **Edit them for your tissue**, or write your
+own file in the same shape and pass it with `prepare.py export --markers my_markers.json`.
+Gene names are matched without regard to case, so one file serves human and mouse. In the
+browser the circle tool uses the list the export used for protein layers, and for genes the
+file named by `markerSet` in `config.js` (default `markers/rna_generic.json`).
 
 How a name is suggested:
 

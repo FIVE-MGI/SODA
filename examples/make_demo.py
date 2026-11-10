@@ -19,7 +19,9 @@ writes
         binned_outputs/square_016um/...  (the 8 um bins summed 2 x 2)
     <out>/visiumhd/truth_square_008um.csv  barcode -> region the bin was drawn from
     <out>/visiumhd/truth_square_016um.csv  (used by tests/smoke_test.py, not by the app)
-    <out>/multiplex.ome.tif              2000 x 2000, 6-channel uint16 OME-TIFF, 0.5 um/px
+    <out>/multiplex.ome.tif              2000 x 2000, 9-channel uint16 OME-TIFF, 0.5 um/px
+                                         (with the slide-QC cases: a saturated channel, a weaker
+                                         duplicate of Synth-Axon, an empty "open" channel, a fold)
 
 The made-up section is a nerve-like cross-section: a lobed tissue outline with an
 edge band, loose stroma, five round "fascicles" each wrapped in a "perineurium" rim,
@@ -81,7 +83,17 @@ DEPTH = {STROMA: 110, FASC: 140, RIM: 100, VESSEL: 160, FAT: 30, EDGE: 70}   # m
 # ---- multiplex image ----------------------------------------------------------------
 MX_PX = 2000
 MX_MPP = 0.5                         # 1 mm field, same layout scaled down
-MX_CHANNELS = ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel", "Synth-Immune", "Synth-Autofluor"]
+MX_CHANNELS = ["DAPI", "Synth-Membrane", "Synth-Axon", "Synth-Vessel", "Synth-Immune", "Synth-Autofluor",
+               # slide-QC cases (protgrid.py): clipped at 65,535 over ~3% of the tissue; the same axons
+               # weaker under a dye-tagged name (a duplicate after the name cleanup); an empty channel
+               "Synth-Saturated", "Synth-Axon-488", "open-cy5"]
+MX_FOLD_UM = 150                     # a fold: every channel bright over a square this wide, in the stroma
+# multiplex_tiled.ome.tif: the same image as if stitched from 180 x 150 px camera tiles (edges at
+# x = 70 + k*180, y = 40 + k*150), each tile of two markers a little brighter or dimmer, and one of
+# them with a per-tile background offset too: the tile-seam correction (protgrid.py / seams.py)
+# must find the grid and recover these
+MX_TILE = (180, 150, 70, 40)         # w, h, x0, y0 in px
+MX_TILED = {"Synth-Membrane": False, "Synth-Autofluor": True}    # name -> also an offset
 
 
 def log(*a):
@@ -381,12 +393,32 @@ def make_multiplex(rng, path: Path, seed: int = 0):
     auto = ndimage.gaussian_filter(rng.standard_normal(lab.shape).astype(np.float32), 40)
     auto = (auto - auto.min()) / (np.ptp(auto) + 1e-6) * tissue + 0.6 * (lab == MEMBRANE)
 
+    # the fold: the MX_FOLD_UM-wide window with the most stroma (on a 50 px block grid), every
+    # channel raised there as tissue folded onto itself is
+    k = int(round(MX_FOLD_UM / MX_MPP / 50))
+    blk = (lab == STROMA).reshape(MX_PX // 50, 50, MX_PX // 50, 50).mean((1, 3))
+    win = ndimage.uniform_filter(blk, size=k, mode="constant")
+    by, bx = np.unravel_index(int(np.argmax(win)), win.shape)
+    y0, x0 = max(0, (by - k // 2) * 50), max(0, (bx - k // 2) * 50)
+    fold = np.zeros(lab.shape, np.float32)
+    fold[y0:y0 + k * 50, x0:x0 + k * 50] = 1.3
+
     stack = np.empty((len(MX_CHANNELS), MX_PX, MX_PX), np.uint16)
     for i, a in enumerate((dapi, membrane, axon, vessel, immune, auto)):
         hi = float(np.percentile(a[tissue], 99.7)) or 1.0
-        v = 180 + np.clip(a / hi, 0, 1.6) * 22000
+        v = 180 + (np.clip(a / hi, 0, 1.6) + fold) * 22000
         v += rng.normal(0, 60, v.shape)
         stack[i] = np.clip(v, 0, 65535).astype(np.uint16)
+    sat = immune + 0.5 * vessel
+    v = 180 + sat / (float(np.percentile(sat[tissue], 97)) or 1.0) * 65535 + fold * 22000
+    stack[6] = np.clip(v + rng.normal(0, 60, v.shape), 0, 65535).astype(np.uint16)
+    v = 180 + np.clip(axon / (float(np.percentile(axon[tissue], 99.7)) or 1.0), 0, 1.6) * 5000 + fold * 5000
+    stack[7] = np.clip(v + rng.normal(0, 60, v.shape), 0, 65535).astype(np.uint16)
+    stack[8] = np.clip(180 + rng.normal(0, 60, lab.shape), 0, 65535).astype(np.uint16)
+    log(f"[demo] multiplex: fold {MX_FOLD_UM} um at x {x0}, y {y0} px")
+    # where the fold is, for tests/smoke_test.py (not read by the app)
+    (path.parent / "truth_multiplex_fold.json").write_text(
+        json.dumps({"x0": int(x0), "y0": int(y0), "sizePx": int(k * 50)}), encoding="utf-8")
     log(f"[demo] multiplex: {n:,} cells")
     path.parent.mkdir(parents=True, exist_ok=True)
     # fixed UUID: tifffile would otherwise use uuid1 (clock + this machine's MAC address)
@@ -399,6 +431,35 @@ def make_multiplex(rng, path: Path, seed: int = 0):
                      resolutionunit="CENTIMETER", metadata=md, software="make_demo.py (synthetic)")
     log(f"[demo] {path}  {MX_PX}x{MX_PX} x {len(MX_CHANNELS)} ch uint16  ({time.time() - t0:.0f}s)")
 
+    # the tiled copy (see MX_TILE): per tile a factor a_col * b_row * (1 + 3% noise), columns and
+    # rows alternating brighter / dimmer so every edge is a step, and a background offset
+    w, h, x0, y0 = MX_TILE
+    tc = (np.arange(MX_PX) - x0) // w
+    tr = (np.arange(MX_PX) - y0) // h
+    c0, r0 = int(tc.min()), int(tr.min())
+    ntc, ntr = int(tc.max()) - c0 + 1, int(tr.max()) - r0 + 1
+    truth = {"w": w, "h": h, "x0": x0, "y0": y0, "col0": c0, "row0": r0, "channels": {}}
+    tiled = stack.copy()
+    for nm, offset in MX_TILED.items():
+        i = MX_CHANNELS.index(nm)
+        a_ = 1 + 0.12 * np.where(np.arange(ntc) % 2, 1, -1) * (0.6 + 0.4 * rng.random(ntc))
+        b_ = 1 + 0.10 * np.where(np.arange(ntr) % 2, 1, -1) * (0.6 + 0.4 * rng.random(ntr))
+        gain = b_[:, None] * a_[None, :] * (1 + 0.03 * rng.standard_normal((ntr, ntc)))
+        off = (400 * np.where(np.arange(ntc) % 2, 1, -1)[None, :] * (0.5 + 0.5 * rng.random((ntr, ntc)))
+               if offset else np.zeros((ntr, ntc)))
+        G = gain[(tr - r0)[:, None], (tc - c0)[None, :]]
+        O = off[(tr - r0)[:, None], (tc - c0)[None, :]]
+        tiled[i] = np.clip(stack[i].astype(np.float64) * G + O, 0, 65535).astype(np.uint16)
+        truth["channels"][nm] = {"gain": np.round(gain, 5).tolist(), "offset": np.round(off, 2).tolist()}
+    tpath = path.with_name("multiplex_tiled.ome.tif")
+    md_t = dict(md, UUID=str(uuid.uuid5(uuid.NAMESPACE_URL, f"spatial-viewer-demo-multiplex-tiled-{seed}")),
+                Name="SYNTHETIC demo multiplex, tiled")
+    tifffile.imwrite(str(tpath), tiled, ome=True, photometric="minisblack", tile=(512, 512),
+                     compression="zlib", resolution=(1e4 / MX_MPP, 1e4 / MX_MPP),
+                     resolutionunit="CENTIMETER", metadata=md_t, software="make_demo.py (synthetic)")
+    (path.parent / "truth_multiplex_tiles.json").write_text(json.dumps(truth), encoding="utf-8")
+    log(f"[demo] {tpath}  {w} x {h} px tiles, factors on {', '.join(MX_TILED)}")
+
 
 README = f"""{NOTE}
 
@@ -406,6 +467,9 @@ visiumhd/image.tif   H&E-like RGB image, {IMG_PX} x {IMG_PX} px, {MPP:g} um/px
 visiumhd/outs/       Space Ranger (Visium HD) shaped output: binned_outputs/square_008um and square_016um
 visiumhd/truth_*.csv region each bin was drawn from (for tests; not read by the app)
 multiplex.ome.tif    {len(MX_CHANNELS)}-channel fluorescence-like OME-TIFF, {MX_PX} x {MX_PX} px, {MX_MPP:g} um/px
+truth_multiplex_fold.json  where the synthetic fold is (for tests; not read by the app)
+multiplex_tiled.ome.tif    the same image with per-tile brightness steps in two markers (camera tiles)
+truth_multiplex_tiles.json the tile grid and the factors / offsets put in (for tests)
 
 Regions: {", ".join(REGIONS[1:])}. Regenerate with the same --seed to get the same data.
 """

@@ -29,6 +29,7 @@ recomputes the UMAP, and takes seconds.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -37,7 +38,7 @@ import numpy as np
 import deid
 from hvgchunks import _BARCODE, MIN_UMI
 
-DEFAULT_MARKERS = Path(__file__).resolve().parent / "markers" / "nerve.json"
+DEFAULT_MARKERS = Path(__file__).resolve().parent / "markers" / "rna_generic.json"
 MIN_GENES = 2
 MIN_DETECT = 0.005          # share of the scored bins a marker gene must be counted in
 # 0.5 left 44% of the 8 um bins of s2 without a type and called clear MBP/MPZ clusters "maybe"
@@ -254,29 +255,100 @@ def write_celltypes(er, d, markers: Path | None = None, log=print) -> dict | Non
 # ---------------------------------------------------------------------------------------
 # Protein rule: grid squares of a multiplexed immunofluorescence image (protgrid.py)
 # ---------------------------------------------------------------------------------------
-DEFAULT_PROTEIN_MARKERS = Path(__file__).resolve().parent / "markers" / "akoya_nerve.json"
-PROTEIN_MIN_CHANNELS = 1
+DEFAULT_PROTEIN_MARKERS = Path(__file__).resolve().parent / "markers" / "protein_generic.json"
+PROTEIN_MIN_CHANNELS = 1     # a list without "minChannels" (akoya_nerve.json): one channel per type is enough
 PROTEIN_BIN_MIN = 0.5
+ARTEFACT_SHARE = 0.5         # a cluster with more than this share of "everything bright" squares ...
+ARTEFACT_NAME = "Artefact? (fold / edge)"   # ... is suggested as this, whatever its markers say
+FLAG_BRIGHT = 1              # = protgrid.FLAG_BRIGHT
+
+# Channel-name cleanup for matching (= lasso_worker.js normName): a leading index ("01_",
+# "12 - "), then trailing fluorophore / block tags after a separator ("-488", "_Opal520",
+# " (Atto550)", " AF647", " FFPE"), then case, spaces, "-", "_" and "." are ignored.
+_LEAD = re.compile(r"^\s*\d+\s*[_\-.:)]\s*")
+_TAG = re.compile(r"(?:[\s_\-]+|\s*\()(?:opal\s*\d+|atto\s*\d+|af\s*\d+|alexa(?:\s*fluor)?\s*\d+|cy\s*\d(?:\.\d)?|"
+                  r"fitc|tritc|pe|apc|ffpe|405|488|514|520|532|546|555|568|570|594|620|647|650|660|680|690|700|750|780|790)\)?\s*$", re.I)
+_SEP = re.compile(r"[\s_\-.]")
 
 
-def rule_text_protein() -> str:
-    return (f"Protein rule. Each square: x' = its mean intensity per marker channel, clipped to the channel's "
-            f"1st..99.5th percentile over the tissue squares and scaled to 0..1; z-scored over the squares "
-            f"(population sd) and averaged over the type's channels (no log / CP10k, no rare-channel drop). "
+def norm_name(s: str) -> str:
+    s = _LEAD.sub("", str(s))
+    while True:
+        t = _TAG.sub("", s)
+        if t == s or not t.strip():
+            break
+        s = t
+    return _SEP.sub("", s).lower()
+
+
+def match_channels(types: list[dict], channels: list[str], aliases: dict | None = None) -> list[dict]:
+    """match_genes for protein panels: names compared after norm_name, each list name also
+    under its aliases (the marker set's "aliases": {name: [other names]}); first channel wins."""
+    first: dict[str, int] = {}
+    for i, c in enumerate(channels):
+        first.setdefault(norm_name(c), i)
+    aliases = aliases or {}
+    out = []
+    for t in types:
+        cols, found, missing = [], [], []
+        for g in t["genes"]:
+            j = next((first[k] for k in [norm_name(g)] + [norm_name(a) for a in aliases.get(g, [])] if k in first), None)
+            if j is None or j in cols:
+                missing.append({"gene": g, "reason": "absent"})
+            else:
+                cols.append(j)
+                found.append(channels[j])
+        out.append({"name": t["name"], "cols": cols, "genes": found, "missing": missing})
+    return out
+
+
+def type_min(ms: dict, t: dict) -> int:
+    """Channels a type needs on the panel to be scored: its own "min", else the list's
+    "minChannels", else PROTEIN_MIN_CHANNELS."""
+    return int(t.get("min", ms.get("minChannels", PROTEIN_MIN_CHANNELS)))
+
+
+def rule_text_protein(ms: dict | None = None) -> str:
+    mins = sorted({type_min(ms or {}, t) for t in (ms or {}).get("types", [])}) or [PROTEIN_MIN_CHANNELS]
+    need = (f">= {mins[0]} channel{'s' if mins[0] > 1 else ''} present" if len(mins) == 1 else
+            f">= {ms.get('minChannels', PROTEIN_MIN_CHANNELS)} channels present (some types, marked with their own "
+            f"minimum, need fewer)")
+    return (f"Protein rule. Each square: x = its mean intensity per marker channel with the slide's background "
+            f"taken off, divided by the channel's 99.5th percentile over the tissue and put through asinh "
+            f"(0 = background, 1 = the 99.5th percentile); z-scored over the squares (population sd) and "
+            f"averaged over the type's channels (no log / CP10k, no rare-channel drop). "
             f"The square's type is the best-scoring one if its score >= {PROTEIN_BIN_MIN:g}, else none. "
+            f"Channel names are matched ignoring case, number prefixes, fluorophore tags and listed aliases. "
             f"A channel the panel lacks is 'absent'; one that is flat over the tissue is left out as 'flat'. "
-            f"A type needs >= {PROTEIN_MIN_CHANNELS} channel present to be scored. "
+            f"A type needs {need} to be scored. "
             f"Per cluster, pct = share of its squares of each type (none counts in the denominator). "
             f"high: top pct >= {HIGH:g} and >= 2x the second; medium: >= {MEDIUM:g}; low: >= {LOW:g} "
-            f"(shown as 'maybe'); otherwise Unclear.")
+            f"(shown as 'maybe'); otherwise Unclear. A cluster with more than {ARTEFACT_SHARE:.0%} of its squares "
+            f"flagged 'everything bright' (folds, bubbles, edges) is suggested as '{ARTEFACT_NAME}'.")
+
+
+def flag_artefacts(summary: list[dict], lab: np.ndarray, flags) -> list[dict]:
+    """Per cluster: the share of its squares flagged everything-bright; above ARTEFACT_SHARE the
+    suggestion becomes ARTEFACT_NAME (confidence "low": shown as a warning, never auto-accepted)."""
+    if flags is None:
+        return summary
+    br = (np.asarray(flags) & FLAG_BRIGHT).astype(bool)
+    for s in summary:
+        m = lab == s["cluster"]
+        share = float(br[m].mean()) if m.any() else 0.0
+        s["artefact"] = round(share, 3)
+        if share > ARTEFACT_SHARE:
+            s.update(suggest=ARTEFACT_NAME, confidence="low", artefactRule=True)
+    return summary
 
 
 def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, markers: Path | None = None,
-                            key: str = "", log=print) -> dict | None:
+                            key: str = "", log=print, flags=None) -> dict | None:
     """umap/celltypes.json + umap/celltype.bin for a protein layer (protgrid.py).
 
-    `xp` = squares x channels of x' (every positions.bin row is embedded), `channels`
-    their names, `usable[j]` False for a channel that is flat over the tissue.
+    `xp` = squares x channels of x (every positions.bin row is embedded), `channels`
+    their names, `usable[j]` False for a channel that is flat over the tissue, `flags`
+    protgrid's qc_flags (uint8 per square) for the artefact rule, or None.
     Needs umap/index.json from sectionumap.write_feature_umap.
     """
     d = Path(d)
@@ -292,7 +364,8 @@ def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, mark
         log(f"[celltypes] {key}: marker list {rel} has no \"modality\": \"protein\" - skipped "
             f"(pass a protein list with --markers, e.g. markers/akoya_nerve.json)")
         return None
-    matched = match_genes(ms["types"], channels)
+    matched = match_channels(ms["types"], channels, ms.get("aliases"))
+    mins = [type_min(ms, t) for t in ms["types"]]
     names = [t["name"] for t in matched]
     if len(names) >= NO_TYPE:
         raise SystemExit(f"[celltypes] {len(names)} types: celltype.bin holds at most {NO_TYPE}")
@@ -313,14 +386,15 @@ def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, mark
         cols = [c for c in t["cols"] if c in z]
         used = [g for g, c in zip(t["genes"], t["cols"]) if c in z]
         flat = [g for g, c in zip(t["genes"], t["cols"]) if c not in z]
-        if len(cols) >= PROTEIN_MIN_CHANNELS:
+        if len(cols) >= mins[ti]:
             score[:, ti] = np.mean([z[c] for c in cols], axis=0)
             scored[ti] = True
         e = {"name": t["name"], "genes": used,
-             "missing": t["missing"] + [{"gene": g, "reason": "flat"} for g in flat], "scored": bool(scored[ti])}
+             "missing": t["missing"] + [{"gene": g, "reason": "flat"} for g in flat], "scored": bool(scored[ti]),
+             "min": mins[ti]}
         if not scored[ti]:
             e["reason"] = (f"{len(used)} of {len(used) + len(e['missing'])} channels measurable here, "
-                           f"needs {PROTEIN_MIN_CHANNELS}")
+                           f"needs {mins[ti]}")
         types.append(e)
     best = best_type(score, scored, PROTEIN_BIN_MIN)
 
@@ -329,10 +403,11 @@ def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, mark
         lab = np.fromfile(ud / c["file"], dtype="<u2").astype(np.int64)
         if len(lab) != n or (lab == NO_CLUSTER).any() or int(lab.max()) + 1 != c["n"]:
             raise SystemExit(f"[celltypes] {key}: {c['file']} does not match index.json")
-        clusterings[f"{c['resolution']:g}"] = summarise_clusters(lab, best, score, scored, names)
+        clusterings[f"{c['resolution']:g}"] = flag_artefacts(summarise_clusters(lab, best, score, scored, names),
+                                                            lab, flags)
 
     out = {"markerSet": {"name": ms.get("name"), "version": ms.get("version"), "file": rel},
-           "modality": "protein", "types": types, "rule": rule_text_protein(), "clusterings": clusterings}
+           "modality": "protein", "types": types, "rule": rule_text_protein(ms), "clusterings": clusterings}
     deid.assert_clean(out, "umap/celltypes.json")
     txt = json.dumps(out, separators=(",", ":"))
     ct = best.astype(np.uint8)                       # every square is embedded: no 255 rows
