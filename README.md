@@ -189,8 +189,8 @@ support WebGL2. Password-encrypted dataset links need the page to be served over
   the screen on while it runs. A shape file saved on a phone records that limit; rerun on
   a computer, a selection of more than 20,000 bins is sampled up to 50,000 instead.
 
-The phone layout and touch handling were tested in Chrome's phone emulation.
-<!-- REAL-DEVICE PLACEHOLDER: list the phones and browsers it has been run on. -->
+The phone layout and touch handling were tested in Chrome's phone emulation and on an
+iPhone, opening a password-protected Azure deployment.
 
 ## Repository layout
 
