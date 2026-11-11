@@ -290,7 +290,13 @@
   async function getJSON(url, plain) {
     const r = plain ? await dataFetch(url) : await apiFetch(url);
     if (!r.ok) throw new Error(`${r.status} ${url}`);
-    return r.json();
+    const t = await r.text();
+    try { return JSON.parse(t); } catch (e) {
+      // Python's json writes NaN, which JSON.parse refuses (umap/index.json "bounds" of
+      // exports made before that was fixed): read those as null rather than lose the file
+      if (/\bNaN\b/.test(t)) return JSON.parse(t.replace(/\bNaN\b/g, "null"));
+      throw e;
+    }
   }
   async function getF32(url, plain) {
     const r = plain ? await dataFetch(url) : await apiFetch(url);
@@ -1625,7 +1631,7 @@
   // is active, everything outside it dims.
   function lassoRefresh() {
     const L = S.lasso;
-    if (!L.assign || !L.pos) { L.bin = null; requestRender(); renderLassoPanel(); return; }
+    if (!L.assign || !L.pos) { L.bin = null; lassoSyncSel(); requestRender(); renderLassoPanel(); return; }
     const a = L.assign, pos = L.pos, R = L.result;
     let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== LASSO_NONE) n++;
     const positions = new Float32Array(2 * n), colors = new Uint8Array(4 * n), rgb = L.shapes.map(lassoRgb);
@@ -1646,8 +1652,17 @@
     L.bin = { n, data: { length: n, attributes: { getPosition: { value: positions, size: 2 }, getFillColor: { value: colors, size: 4, normalized: true } } },
               key: `${n}|${Date.now()}` };
     umapDirty();                                   // a picked shape / brush also lights the main UMAP
+    if (S.umap) syncUmapUI();                      // the chip names the pick
+    lassoSyncSel();
     requestRender();
     renderLassoPanel();
+  }
+  // the panel's own line under the plot: what is picked, Show on slide, Clear
+  function lassoSyncSel() {
+    const t = lassoPickTxt();
+    $("lpSel").hidden = !t;
+    $("lpSelTxt").textContent = t.replace(/^Circle → UMAP: /, "");
+    $("lpHint").hidden = !!t || !(S.lasso && S.lasso.result) || !!S.lasso.hinted;
   }
 
   // (row, shape) -> lit? for the current brush / picked shape; null when nothing is picked
@@ -1665,6 +1680,14 @@
       return (row) => { const j = R.idxOfRow.get(row); return j !== undefined && R.cluster[j] === L.selCluster; };
     }
     return null;
+  }
+  function lassoPickTxt() {
+    const L = S.lasso, R = L && L.result;
+    if (!L) return "";
+    if (L.brush) { let k = 0; for (const b of L.brush) k += b; return `Circle → UMAP: ${k.toLocaleString()} point${k === 1 ? "" : "s"} selected`; }
+    if (L.selShape !== null && L.shapes[L.selShape]) return `Circle → UMAP: ${L.shapes[L.selShape].name}`;
+    if (L.selCluster !== null && R) return `Circle → UMAP: ${L.clNames[L.selCluster] || `cluster ${L.selCluster}`}`;
+    return "";
   }
   const lassoByCluster = () => { const R = S.lasso && S.lasso.result; return !!(R && R.cluster && S.lasso.lpColor === "cluster"); };
 
@@ -1813,6 +1836,8 @@
     const sw = I.sweep && I.sweep.length > 1
       ? ` Sweep (resolution → clusters, stability): ${I.sweep.map((r) => `${r.resolution} → ${r.nClusters} (${r.stability.toFixed(2)})`).join(", ")}.` : "";
     if (I.stable) return `These clusters reproduce across reseeded and subsampled runs.${sw}`;
+    if (I.nClusters < 2) return `No split of these bins into clusters reproduces (stability ≥ 0.8), so they read as one population.` +
+      (I.closest ? ` Closest: ${I.closest.nClusters} clusters at ${I.closest.resolution} (${I.closest.stability.toFixed(2)}); type that resolution to see them.` : "") + sw;
     if (I.closest) return `No resolution gave clusters that reproduce (stability ≥ 0.8), so this shows the coarsest. ` +
       `Closest: ${I.closest.nClusters} clusters at ${I.closest.resolution} (${I.closest.stability.toFixed(2)}); type that resolution to see them.${sw}`;
     if (I.nClusters < 2) return `One cluster: no split of these bins reproduces.${sw}`;
@@ -2065,7 +2090,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261110r");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261110u");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
@@ -2086,12 +2111,14 @@
                    resolution: cluster ? (d.info.resolution != null ? d.info.resolution : resolution) : null,
                    secs: (performance.now() - t0) / 1000, id: Date.now() };
       if (cluster && !d.info.nClusters) { let m = 0; for (const c of cluster) if (c !== LASSO_NONE && c + 1 > m) m = c + 1; d.info.nClusters = m; }
-      L.brush = null; L.hover = -1; L.lpVs = null; L.selCluster = null; L.clNames = {};
+      L.brush = null; L.selShape = null; L.hover = -1; L.lpVs = null; L.selCluster = null; L.clNames = {};
       const I = d.info, drop = I.dropped.reduce((a, b) => a + b, 0);
       msg([`${I.method === "pca" ? "PCA" : "UMAP"} of ${I.nIn.toLocaleString()} ${mode === "bins" ? "bins" : "bins in " + d.rows.length + " shapes"} ` +
            `in ${L.result.secs.toFixed(1)} s · ${I.nGenesUsed} genes · ${I.nPcs} PCs${I.nNeighbors ? ` · ${I.nNeighbors} neighbours` : ""} · seed ${seed}`,
-           drop ? `Dropped ${drop.toLocaleString()} bins with < ${LASSO.minUmi} UMI.` : "",
+           drop ? (L.prot ? `Left out ${drop.toLocaleString()} low-signal squares (no marker above ${Math.round((I.lowSignalX || 0.2) * 100)}% of its range: rims and gaps).`
+                          : `Dropped ${drop.toLocaleString()} bins with < ${LASSO.minUmi} UMI.`) : "",
            I.sampledFrom ? `Showing ${I.nIn.toLocaleString()} of ${I.sampledFrom.toLocaleString()} bins (seeded sample, stratified by shape).` : "",
+           cluster && I.nClusters < 2 ? `Leiden found one cluster (resolution ${L.result.resolution}).` :
            cluster ? `${I.nClusters} Leiden clusters at resolution ${L.result.resolution}${I.autoResolution ? " (chosen by stability)" : ""}` +
              (I.stability != null ? `, stability ${I.stability.toFixed(2)}.` : ".") :
              mode === "bins" && clustering ? "No clusters came back (this worker version does not cluster yet)." : "",
@@ -2137,25 +2164,40 @@
         if (i !== L.hover) { L.hover = i; requestRender(); renderLassoPanel(); }
       },
     });
-    // drag = box select; a click picks the point's shape; a click on nothing clears
-    const host = $("lpHost"), box = $("lpBox");
-    let start = null;
+    // drag = select (a box, or a loop with the Lasso tool; Shift or "+" adds to what is
+    // selected); a click picks the point's shape or cluster; a click on nothing clears
+    const host = $("lpHost"), box = $("lpBox"), svg = $("lpSvg");
+    let start = null, path = null, add = false;
     const local = (ev) => { const r = host.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
-    host.addEventListener("pointerdown", (ev) => { if (ev.button !== 0 || !S.lasso.result || start) return; start = local(ev); host.setPointerCapture(ev.pointerId); });
+    const free = () => S.lasso.lpTool === "free";
+    const clearDraw = () => { box.hidden = true; svg.innerHTML = ""; };
+    host.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0 || !S.lasso.result || start) return;
+      start = local(ev); path = [start]; add = ev.shiftKey || !!S.lasso.lpAdd;
+      host.setPointerCapture(ev.pointerId);
+    });
     // a second finger (a pinch, which the panel's own deck zooms) or the browser taking the touch over
-    host.addEventListener("pointercancel", () => { start = null; box.hidden = true; });
+    host.addEventListener("pointercancel", () => { start = null; path = null; clearDraw(); });
     host.addEventListener("pointermove", (ev) => {
       if (!start) return;
       const p = local(ev);
+      if (free()) {
+        const q = path[path.length - 1];
+        if (Math.hypot(p[0] - q[0], p[1] - q[1]) >= 3) path.push(p);
+        svg.innerHTML = `<polygon points="${path.map((x) => x.join(",")).join(" ")}" />`;
+        return;
+      }
       Object.assign(box.style, { left: `${Math.min(p[0], start[0])}px`, top: `${Math.min(p[1], start[1])}px`,
         width: `${Math.abs(p[0] - start[0])}px`, height: `${Math.abs(p[1] - start[1])}px` });
       box.hidden = false;
     });
     host.addEventListener("pointerup", (ev) => {
       if (!start) return;
-      const p = local(ev), s = start, L = S.lasso, R = L.result; start = null; box.hidden = true;
+      const p = local(ev), s = start, L = S.lasso, R = L.result, loop = free() ? path : null;
+      start = null; path = null; clearDraw();
       if (!R) return;
-      if (Math.hypot(p[0] - s[0], p[1] - s[1]) < 4) {
+      let far = 0; for (const q of loop || [p]) far = Math.max(far, Math.hypot(q[0] - s[0], q[1] - s[1]));
+      if (far < 4) {
         const hit = lpDeck.pickObject({ x: p[0], y: p[1], radius: 6 });
         if (hit && hit.layer && hit.layer.id.startsWith("lp-pts")) {
           if (lassoByCluster()) lassoPickCluster(R.cluster[hit.index]); else lassoPickShape(R.shape[hit.index]);
@@ -2163,16 +2205,22 @@
         else { L.brush = null; L.selShape = null; L.selCluster = null; lassoRefresh(); buildLassoUI(); }
         return;
       }
+      if (loop && loop.length < 3) return;
       const vp = lpDeck.getViewports()[0];
-      const [x0, x1] = [Math.min(p[0], s[0]), Math.max(p[0], s[0])], [y0, y1] = [Math.min(p[1], s[1]), Math.max(p[1], s[1])];
-      const n = R.emb.length / 2, mask = new Uint8Array(n);
-      let k = 0;
+      if (!vp) return;                              // not drawn yet
+      const pts = loop || [s, p];
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      const n = R.emb.length / 2, keep = add && L.brush && L.brush.length === n;
+      const mask = keep ? L.brush.slice() : new Uint8Array(n);
       for (let j = 0; j < n; j++) {
         const [sx, sy] = vp.project([R.emb[2 * j], R.emb[2 * j + 1]]);
-        if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) { mask[j] = 1; k++; }
+        if (!(sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1)) continue;
+        if (!loop || inPoly(sx, sy, loop)) mask[j] = 1;
       }
-      L.brush = k ? mask : null; L.selShape = null; L.selCluster = null;
-      $("lpFoot").dataset.brush = k ? `${k.toLocaleString()} point(s) selected — lit on the slide. Click empty space to clear.` : "";
+      let k = 0; for (let j = 0; j < n; j++) k += mask[j];
+      L.brush = k ? mask : null; L.selShape = null; L.selCluster = null; L.hinted = true;
+      $("lpFoot").dataset.brush = k ? `${k.toLocaleString()} point(s) selected — lit on the slide.` : "";
       lassoRefresh(); buildLassoUI();
     });
     return lpDeck;
@@ -2293,11 +2341,12 @@
       `${I.method === "umap" ? `umap-js ${LASSO.umapJs}, ${I.nNeighbors || LASSO.nNeighbors} neighbours, min_dist ${LASSO.minDist}${I.init ? `, ${I.init.toUpperCase()} start` : ""}, ` : ""}seed ${R.seed}` +
       `${R.cluster ? ` · Leiden resolution ${R.resolution}${I.autoResolution ? " (auto)" : ""}, ${I.nClusters} clusters` +
         `${I.stability != null ? `, stability ${I.stability.toFixed(2)}` : ""}` : ""}. ` +
-      `Drag a box to select · click a point to pick its ${byCl ? "cluster" : "shape"} · scroll to zoom.`;
+      `Drag ${L.lpTool === "free" ? "a loop" : "a box"} to select (Shift or + adds) · click a point to pick its ${byCl ? "cluster" : "shape"} · ` +
+      `Show on slide frames the picked squares · scroll to zoom.`;
   }
 
   function lassoPickCluster(c) {
-    const L = S.lasso;
+    const L = S.lasso; L.hinted = true;
     L.selCluster = c === null || c === undefined || L.selCluster === c ? null : c;
     L.brush = null; L.selShape = null;
     lassoRefresh(); buildLassoUI();
@@ -2406,7 +2455,24 @@
       const c = e.target.dataset && e.target.dataset.c; if (!c) return;
       S.lasso.lpColor = c; S.lasso.selCluster = null; lassoRefresh();
     };
-    $("lpClose").onclick = () => { $("lassoPanel").hidden = true; };
+    $("lpClose").onclick = () => { $("lassoPanel").hidden = true; lassoClearPick(); };
+    $("lpSelShow").onclick = () => { const L = S.lasso, g = lassoLitRows(); if (g) showRowsOnSlide((r) => L.assign[r] !== LASSO_NONE && g(r, L.assign[r]), L.pos); };
+    $("lpSelClear").onclick = () => lassoClearPick();
+    $("lpTool").onclick = (e) => {
+      const t = e.target.dataset && e.target.dataset.t; if (!t) return;
+      S.lasso.lpTool = t; $("lpTool").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+    };
+    $("lpAdd").onclick = () => { S.lasso.lpAdd = !S.lasso.lpAdd; $("lpAdd").classList.toggle("on", S.lasso.lpAdd); };
+    // the panel's plot follows its box: side by side, the phone drawer, a resized window
+    if (window.ResizeObserver) {
+      let last = "";
+      new ResizeObserver(() => {
+        const host = $("lpHost"), k = `${host.clientWidth}x${host.clientHeight}`;
+        if (k === last || !host.clientWidth || !host.clientHeight) return;
+        last = k;
+        if (lpDeck && S.lasso && S.lasso.result) { lpDeck.setProps({ width: "100%", height: "100%" }); fitLassoPanel(); }
+      }).observe($("lpHost"));
+    }
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || !S.lasso) return;
       if (S.lasso.tool) lassoSetTool(null);
@@ -2657,7 +2723,7 @@
   // force: the person asked to watch the flight (Play), so it runs even with reduced motion
   async function umapSetView(v, force) {
     const U = S.umap;
-    if (!U || U.anim || v === U.view || (v !== "tissue" && !umapAvail())) return;
+    if (!U || U.anim || v === U.view || (v !== "tissue" && (!U.key || !umapAvail()))) return;
     if (v !== "tissue") {
       try {
         await umapLoad();
@@ -2759,10 +2825,11 @@
     // gating preview: the squares above the cut-off light up in the UMAP (on the slide the
     // preview draws its own outlines)
     if (where !== "tissue" && gatePreviewOn()) { const v = S.gate.vals.get(S.gate.cur), t = S.gate.cut.get(S.gate.cur).v; return (r) => v[r] > t; }
-    // a shape, brushed points or a cluster picked in Circle -> UMAP light up in the UMAP too
-    // (on the slide the circle tool draws its own highlight)
+    // a shape, brushed points or a cluster picked in Circle -> UMAP light up in the UMAP too;
+    // on the slide the circle tool draws its own highlight, and the section's cluster colours
+    // under it dim (same palette: undimmed, panel cluster 0 and section cluster 0 read as one)
     const L = S.lasso;
-    if (where !== "tissue" && L && L.assign && L.assign.length * 2 === U.pos.length) {
+    if (L && L.assign && L.assign.length * 2 === U.pos.length && (where !== "tissue" || umapByCat())) {
       const f = lassoLitRows();
       if (f) return (r) => L.assign[r] !== LASSO_NONE && f(r, L.assign[r]);
     }
@@ -2923,7 +2990,8 @@
         tgt[3 * j] = emb ? ux : pos[2 * j]; tgt[3 * j + 1] = emb ? U.uxy[2 * r + 1] : pos[2 * j + 1]; tgt[3 * j + 2] = emb ? 1 : 0;
       }
       let c;
-      if (byCl) c = clusterRgb(U.cl[r]);
+      if (lit && !l) c = UMAP_GREY;               // a faded cluster colour still read as the cluster in a dense UMAP
+      else if (byCl) c = clusterRgb(U.cl[r]);
       else if (byCt) c = ctRgb(U.ct[r]);
       else if (byPh) c = gateRuleRgb(calls[r]);
       else if (mix && mix.t[r] >= 0) c = [mix.rgb[3 * r], mix.rgb[3 * r + 1], mix.rgb[3 * r + 2]];
@@ -3061,7 +3129,7 @@
   function umapTooltip(r) {
     if (r < 0) return null;
     const U = S.umap, parts = [], prot = isProt();
-    if (U.cl) parts.push(U.cl[r] === UMAP_NONE ? (prot ? "No cluster (not in the UMAP)" : "No cluster (under 10 UMI)") : umapName(U.cl[r]));
+    if (U.cl) parts.push(U.cl[r] === UMAP_NONE ? (prot ? "No cluster (low signal: not in the UMAP)" : "No cluster (too few counts)") : umapName(U.cl[r]));
     if (umapByType() && U.ct[r] !== CT_OUT) parts.push(`Suggested type: ${ctName(U.ct[r])}`);
     if (gateOn() && S.gate.calls && r < S.gate.N) parts.push(`Phenotype: ${gatePhName(S.gate.calls[r])}`);
     if (!umapByCat()) {
@@ -3086,8 +3154,62 @@
   }
   function umapClearSel() {
     const U = S.umap;
-    U.sel = null; U.selN = 0; U.pick = null; U.ctPick = null; U.phPick = null;
-    umapDirty(); syncUmapUI(); render();
+    if (U) { U.sel = null; U.selN = 0; U.pick = null; U.ctPick = null; U.phPick = null; }
+    lassoClearPick();
+    if (U) { umapDirty(); syncUmapUI(); }
+    render();
+  }
+  // a brush, picked shape or picked cluster of Circle -> UMAP
+  function lassoClearPick() {
+    const L = S.lasso;
+    if (!L || (!L.brush && L.selShape === null && L.selCluster === null)) return false;
+    L.brush = null; L.selShape = null; L.selCluster = null; lassoRefresh(); buildLassoUI();
+    return true;
+  }
+
+  // ---- "Show on slide": from a UMAP pick back to the tissue ------------------------------------
+  // Frames the lit squares on the slide. From the UMAP view the dots fly back to the tissue,
+  // ending on them; side by side and on the tissue the tissue pane moves. Tiny picks are
+  // framed with some room (at least 30 squares across) so their neighbourhood shows too.
+  function slideBoxVs(x0, y0, x1, y1) {
+    const e = currentExpr(), sq = (e && e.spotDiameterPx) || 8, minW = sq * 30;
+    if (x1 - x0 < minW) { const m = (x0 + x1) / 2; x0 = m - minW / 2; x1 = m + minW / 2; }
+    if (y1 - y0 < minW) { const m = (y0 + y1) / 2; y0 = m - minW / 2; y1 = m + minW / 2; }
+    const [W, H] = umapPaneSize("ortho"), lp = $("lassoPanel");
+    // the Circle -> UMAP panel covers the right of the slide (on a phone its lower part):
+    // frame the squares in what is left
+    const open = !lp.hidden && !umapSbs(), below = open && lp.offsetWidth > W * 0.8;
+    const free = Math.max(200, W - (open && !below ? lp.offsetWidth + 20 : 0)), freeH = Math.max(150, H - (below ? lp.offsetHeight + 50 : 0));
+    const zoom = Math.min(2, Math.log2(Math.min(free / ((x1 - x0) * 1.2 || 1), freeH / ((y1 - y0) * 1.2 || 1))));
+    const scale = Math.pow(2, zoom), base = (S.umap && S.umap.view === "umap" ? S.umap.tissueVs : S.viewState) || imageFitVs();
+    return { ...base, target: [(x0 + x1) / 2 + (W - free) / 2 / scale, (y0 + y1) / 2 + (H - freeH) / 2 / scale, 0], zoom };
+  }
+  // test(row) -> lit?; pos = the rows' slide positions. Returns how many were framed.
+  function showRowsOnSlide(test, pos) {
+    if (!test || !pos) return 0;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
+    for (let r = 0; r < pos.length / 2; r++) {
+      if (!test(r)) continue;
+      const x = pos[2 * r], y = pos[2 * r + 1];
+      if (!(x === x)) continue;
+      n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    if (!n) return 0;
+    const vs = slideBoxVs(x0, y0, x1, y1), U = S.umap;
+    autoFit = false;
+    if (U && U.view === "umap") { U.tissueVs = vs; umapSetView("tissue"); return n; }
+    S.viewState = vs;
+    deckgl.setProps({ viewState: deckVs() }); updateHud(); requestRender();
+    return n;
+  }
+  // whatever is lit: the section selection / cluster / type / phenotype, else the circle tool's pick
+  function showLitOnSlide() {
+    const U = S.umap, L = S.lasso;
+    const f = U && U.pos ? umapLit("tissue") : null;
+    if (f) return showRowsOnSlide(f, U.pos);
+    const g = L && L.assign && lassoLitRows();
+    if (g) return showRowsOnSlide((r) => L.assign[r] !== LASSO_NONE && g(r, L.assign[r]), L.pos);
+    return 0;
   }
 
   // ---- box / freehand selection, in any view ---------------------------------------------
@@ -3535,20 +3657,22 @@
       ? (nEmb ? (nEmb >= e.nBins ? `All ${e.nBins.toLocaleString()} tissue squares` : `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} tissue squares`) +
                 ` (${e.binSizeUm ? `${e.binSizeUm} µm` : "each"} across) are in the UMAP, placed by how alike their markers are. ` : "") +
         `Switch between Tissue, Side by side and UMAP at the top left of the picture; markers, clusters and selections stay.`
-      : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} bins (those with at least 10 UMI) are in the UMAP. ` : "") +
+      : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} bins (those with at least 10 UMI${m.minHvgDetected ? ` and ${m.minHvgDetected} variable genes` : ""}) are in the UMAP. ` : "") +
         `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`;
     const ctLit = umapCtLit(), phLit = umapPhLit(), has = !!(U.sel || U.pick !== null || ctLit || phLit);
-    $("selClear").disabled = !has;
+    const lpTxt = !has ? lassoPickTxt() : "";
+    $("selClear").disabled = !has && !lpTxt;
+    $("selShow").hidden = !has && !lpTxt;
     $("selToShape").hidden = !U.sel || $("panelLasso").hidden;
-    const selTxt = U.sel ? `${U.selN.toLocaleString()} ${W.bins} selected` : U.pick !== null ? `${umapName(U.pick)} highlighted`
+    const selTxt = U.sel ? `${U.selN.toLocaleString()} ${U.selN === 1 ? W.bin : W.bins} selected` : U.pick !== null ? `${umapName(U.pick)} highlighted`
       : ctLit ? `${ctName(U.ctPick)} highlighted` : phLit ? `${gatePhName(U.phPick)} highlighted` : "";
     $("selMsg").textContent = U.sel
       ? `${selTxt}, lit in every view` + (U.uxy && U.selEmb < U.selN
-        ? ` (${U.selEmb.toLocaleString()} of them are in the UMAP; the others ${prot ? "are not" : "have under 10 UMI"}).` : ".")
+        ? ` (${U.selEmb.toLocaleString()} of them are in the UMAP; the others ${prot ? "are low signal (rims, gaps)" : "have too few counts"}).` : ".")
       : U.pick !== null || ctLit || phLit ? `${selTxt} in every view.`
       : `Draw a box or a loop around dots, on the tissue or the UMAP, to light the same ${W.bins} in both.`;
-    $("selChip").hidden = !has;
-    $("selChipTxt").textContent = selTxt;
+    $("selChip").hidden = !has && !lpTxt;
+    $("selChipTxt").textContent = selTxt || lpTxt;
     gateCountsRefresh();
   }
 
@@ -3595,6 +3719,8 @@
     $("selFree").onclick = () => umapStartTool("free");
     $("selClear").onclick = umapClearSel;
     $("selChipClear").onclick = umapClearSel;
+    $("selChipShow").onclick = showLitOnSlide;
+    $("selShow").onclick = showLitOnSlide;
     $("selToShape").onclick = umapSelToShape;
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || !S.umap) return;

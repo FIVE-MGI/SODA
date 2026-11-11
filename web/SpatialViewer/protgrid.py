@@ -51,7 +51,8 @@ Normalization (per channel, per slide - pieces on one slide were stained togethe
   bg = median over the off-tissue squares (background); hi = p99.5 of (v - bg) over the tissue
   squares, leaving out the "everything bright" ones (bright_squares: folds would set it);
   x = asinh(max(v - bg, 0) / hi / 0.2) / asinh(5)   (0 at background, 1 at p99.5, no upper clip).
-Embedding (sectionumap.write_feature_umap): x -> z-score (clip 10) -> PCA min(15, channels - 1) ->
+Embedding (sectionumap.write_feature_umap): squares with an embedded channel at x >= LOW_SIGNAL_X;
+CLR of u = max(v - bg, 0) / hi (clr_features) -> z-score (clip 10) -> PCA min(15, channels - 1) ->
 UMAP (15 neighbours, min_dist 0.3, seed 42; above sectionumap.UMAP_SAMPLE squares fitted on a seeded
 sample, the rest placed with transform) -> Leiden 0.3 / 0.6 / 1.0, cluster 0 = largest. Markers:
 difference of the mean z of x (cluster - rest); pct = share of the cluster's squares whose x is
@@ -249,6 +250,23 @@ def normalise(V: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 # ---- normalization (2026-11): background off, / p99.5, asinh -----------------------------
 NORMALIZE = "bg-asinh-v1"     # mat/index.json "normalize": lasso_worker.js xpOf switches on it
 COFACTOR = 0.2                # asinh cofactor, in units of the channel's p99.5 above background
+# What the UMAP and Leiden see (not what is shown or how markers are ranked: those stay on x).
+# Every marker of a square rises and falls with its overall brightness (cell density, section
+# thickness, the tissue edge): on x the first PC was that brightness (48% of the variance, r =
+# -0.999 with the square's total) and the clusters were brightness bands. The centred log-ratio
+# of u = max(v - bg, 0) / hi, log(u + CLR_EPS) minus the square's mean, keeps which markers are
+# up relative to each other and drops the overall level. On s48 that split the perineurium,
+# endothelium, myeloid, T-cell, B-cell and Ki67 squares into their own clusters, where before
+# they shared bright clusters (audit 2026-11-10; eps 0.02 and 0.2 did worse).
+CLR_EPS = 0.1
+# The log-ratio is taken against the square's mean over the embedded channels: with only a few
+# channels one bright marker moves that mean as much as the brightness does (the 6-channel
+# synthetic demo lost ARI 0.43 -> 0.34 with it). Smaller panels keep x as the UMAP's input.
+CLR_MIN_CHANNELS = 10
+# A square with no embedded marker at x >= LOW_SIGNAL_X (about 10% of its p99.5 above
+# background) is a rim, gap or empty square: its log-ratios are noise, and on s48 such squares
+# (26%) formed clusters with no marker. They stay on the slide but are not embedded or clustered.
+LOW_SIGNAL_X = 0.2
 BG_MIN_OFF = 1000             # off-tissue squares needed for the background; fewer -> 1st pct in tissue
 WEAK_SNR = 15.0               # (p99.5 - bg) / bg below this: "weak" (kept, flagged)
 SAT_SHARE = 0.01              # share of in-tissue pixels at the detector's limit above this: "saturated"
@@ -266,6 +284,15 @@ def background(V: np.ndarray, keep: np.ndarray) -> tuple[np.ndarray, str]:
     if off.sum() >= BG_MIN_OFF:
         return np.median(V[off], axis=0), "median of the off-tissue squares"
     return np.percentile(V[keep], P_LO, axis=0), "1st percentile of the tissue squares (too little background)"
+
+
+def clr_features(Vt: np.ndarray, bg: np.ndarray, hi: np.ndarray, eps: float = CLR_EPS) -> np.ndarray:
+    """The UMAP's input for protein squares: centred log-ratio of u = max(v - bg, 0) / hi.
+    lasso_worker.js runProtein computes the same (keep the two identical)."""
+    h = np.where(hi > 0, hi, 1.0)
+    u = np.where(hi > 0, np.maximum(Vt.astype(np.float64) - bg, 0) / h, 0.0)
+    L = np.log(u + eps)
+    return (L - L.mean(1, keepdims=True)).astype(np.float32)
 
 
 def normalise_bg_asinh(Vt: np.ndarray, bg: np.ndarray, hi: np.ndarray, cof: float = COFACTOR) -> np.ndarray:
@@ -687,6 +714,8 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
                       "holesFilled": n_filled, "squares": nx * ny},
              "normalize": NORMALIZE,
              "qc": {"file": "qc.json", "flags": "qc_flags.bin", "everythingBright": n_bright, "saturatedSquares": n_sat,
+                    "lowSignalSquares": int((~(x[:, embed] >= LOW_SIGNAL_X).any(1)).sum()) if embed else n,
+                    "lowSignalRule": f"no embedded marker at x >= {LOW_SIGNAL_X:g}",
                     "weak": weak, "saturated": [c["name"] for c in qc_ch if c["saturated"]],
                     "seamsFlagged": bool(seams_qc["flagged"]),
                     "seamsCorrected": (seams_qc.get("correction") or {}).get("corrected", [])},
@@ -695,13 +724,24 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
         entry["mat"] = mat
 
     if umap:
+        feats = clr_features(Vt[:, embed], bg[embed], hi[embed]) if len(embed) >= CLR_MIN_CHANNELS else None
+        keep = np.flatnonzero((x[:, embed] >= LOW_SIGNAL_X).any(1)) if embed else np.arange(0)
+        log(f"[grid] {n - len(keep):,} of {n:,} squares low signal (no embedded marker at x >= {LOW_SIGNAL_X:g}): "
+            "not embedded or clustered")
         # reuse an earlier umap/ only if it was made from these very numbers
-        h = hashlib.sha256(np.ascontiguousarray(x[:, embed]).tobytes()).hexdigest()[:16]
-        u = sectionumap.write_feature_umap(d, x, wnames, embed, marker_cols, key, log=log, force=force,
-                                           sample=umap_sample,
+        hh = hashlib.sha256(np.ascontiguousarray(feats).tobytes() if feats is not None else b"")
+        hh.update(np.ascontiguousarray(keep.astype("<i8")).tobytes())
+        h = hh.hexdigest()[:16]
+        # markers: the embedded channels (a nuclear stain only says how many nuclei, not which cells)
+        u = sectionumap.write_feature_umap(d, x, wnames, embed, embed, key, log=log, force=force,
+                                           sample=umap_sample, features=feats, keep=keep,
                                            extra_params={"gridUm": grid_um, "tissueRule": rule,
                                                          "tissueSmoothUm": size * grid_um if size > 1 else 0,
                                                          "normalize": NORMALIZE, "cofactor": COFACTOR,
+                                                         "embedFeatures": (f"centred log-ratio of max(v - bg, 0) / hi + {CLR_EPS:g}"
+                                                                           if feats is not None else
+                                                                           f"x (fewer than {CLR_MIN_CHANNELS} channels)"),
+                                                         "lowSignal": f"no embedded marker at x >= {LOW_SIGNAL_X:g}: not embedded",
                                                          "input": h})
         if u:
             entry["umap"] = u

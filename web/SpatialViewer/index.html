@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>SODA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <link href="styles.css?v=20261110r" rel="stylesheet" />
+  <link href="styles.css?v=20261110u" rel="stylesheet" />
 </head>
 <body>
   <div class="app" data-sheet="peek">
@@ -157,7 +157,7 @@
         <label class="row slim check touch-only"><input id="selAdd" type="checkbox" /><span>Add to the selection (Shift on a computer)</span></label>
         <div id="selMsg" class="meta sel-msg"></div>
         <div id="lassoOff" class="meta lasso-off" hidden>Circle → UMAP (a new UMAP of only the area you draw) needs a newer export of this dataset for marker squares (prepare.py export writes its mat/ folder).</div>
-        <div class="btnrow"><button id="selToShape" hidden title="Add the selected bins to Circle → UMAP below as one more shape">Use selection as a shape</button></div>
+        <div class="btnrow"><button id="selShow" hidden title="Frame the lit squares on the slide (from the UMAP view, the dots fly back to the tissue)">Show on slide</button><button id="selToShape" hidden title="Add the selected bins to Circle → UMAP below as one more shape">Use selection as a shape</button></div>
       </section>
 
       <section class="panel" id="panelLasso" hidden>
@@ -243,15 +243,16 @@
         <button id="flyPlay" class="fly-play" title="Watch every bin move from its place on the tissue to its place in the UMAP">▶ Play tissue → UMAP</button>
         <label class="fly-speed" title="How long the dots take to fly between the tissue and the UMAP (Play and the view buttons)">Speed
           <select id="flySpeed"><option value="1300">Normal · 1.3 s</option><option value="4000">Slow · 4 s</option><option value="8000">Very slow · 8 s</option><option value="15000">Slowest · 15 s</option></select></label>
-        <span id="selChip" class="sel-chip" hidden><span id="selChipTxt"></span><button id="selChipClear">Clear selection</button></span>
+        <span id="selChip" class="sel-chip" hidden><span id="selChipTxt"></span><button id="selChipShow" title="Frame these squares on the slide">Show on slide</button><button id="selChipClear">Clear selection</button></span>
       </div>
       <div id="lassoPanel" class="lasso-panel" hidden>
         <div class="lp-head">
           <b id="lpTitle">UMAP of drawn shapes</b>
-          <span class="lp-btns"><span id="lpColorBy" class="seg" hidden><button data-c="shape" title="Colour the dots by the shape they came from">Shape</button><button data-c="cluster" title="Colour the dots by Leiden cluster">Cluster</button></span><button id="lpFit" title="Fit">Fit</button><button id="lpClose" title="Hide">×</button></span>
+          <span class="lp-btns"><span id="lpTool" class="seg" title="How a drag selects dots"><button data-t="box" class="on" title="Drag a rectangle over the dots">Box</button><button data-t="free" title="Draw a loop around the dots">Lasso</button></span><button id="lpAdd" title="Add to the selection (Shift on a computer)">+</button><span id="lpColorBy" class="seg" hidden><button data-c="shape" title="Colour the dots by the shape they came from">Shape</button><button data-c="cluster" title="Colour the dots by Leiden cluster">Cluster</button></span><button id="lpFit" title="Fit">Fit</button><button id="lpClose" title="Hide">×</button></span>
         </div>
         <div id="lpWarn" class="lp-warn" hidden></div>
-        <div id="lpHost" class="lp-host"><div id="lpBox" class="lp-box" hidden></div></div>
+        <div id="lpHost" class="lp-host"><div id="lpBox" class="lp-box" hidden></div><svg id="lpSvg" class="lp-svg"></svg><div id="lpHint" class="lp-hint" hidden>Drag around dots to light the same squares on the slide</div></div>
+        <div id="lpSel" class="lp-sel" hidden><span id="lpSelTxt"></span><button id="lpSelShow" title="Frame these squares on the slide">Show on slide</button><button id="lpSelClear" title="Remove the highlight (Esc)">Clear</button></div>
         <div id="lpMkVs" class="lp-mkvs" hidden>Markers against <span class="seg"><button data-v="slide" title="What each cluster has more of than the rest of the slide">the slide</button><button data-v="shapes" title="What tells the clusters apart inside the shapes">the other drawn squares</button></span></div>
         <div id="lpLegend" class="legend lp-legend"></div>
         <div id="lpFoot" class="lp-foot"></div>
@@ -286,6 +287,6 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261110r"></script>
+  <script src="viewer.js?v=20261110u"></script>
 </body>
 </html>

@@ -160,16 +160,18 @@ function wantedResolution(msg, P) {
 // every pair of a whole-graph run with another run (subgraph runs compared on their own bins).
 // The clusters shown are the medoid whole-graph run (highest mean ARI to the others), so one
 // unlucky seed neither decides the score nor the picture; per cluster, the median best
-// Jaccard overlap of the medoid's cluster with any cluster of each other run. "auto" takes
-// the finest resolution with stability >= minStable and > 1 cluster, i.e. the most detail
-// that reproduces (the coarsest would nearly always win, since 2-3 clusters are trivially
-// stable). If none qualifies, the coarsest resolution is shown, flagged, with the closest
+// Jaccard overlap of the medoid's cluster with any cluster of each other run. "auto" takes,
+// among resolutions with > 1 cluster and stability >= minStable, the most stable one; a finer
+// resolution wins a tie (within tieStable), so of several equally reproducible answers the more
+// detailed is shown. (Taking simply the finest stable one over-split planted populations in
+// the synthetic tests: ARI 0.65-0.79 against 1.0 for the most stable.) If none qualifies, the coarsest resolution is shown, flagged, with the closest
 // candidate named: on a homogeneous patch the honest answer is one population, not the
 // least-bad dozen. The sweep stops after two resolutions in a row below stopBelow: on the
 // test lassos stability never climbed back once it had fallen that far, and the finest
 // resolutions cost the most. Leiden runs 2 iterations, as scanpy and sectionumap.py do. Same
 // graph and seed give the same answer.
-const SWEEP = { res: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2], frac: 0.8, minStable: 0.8, stopBelow: 0.6, iters: 2 };
+const CLR_EPS = 0.1, LOW_SIGNAL_X = 0.2, CLR_MIN_CHANNELS = 10;   // = protgrid.CLR_EPS, LOW_SIGNAL_X, CLR_MIN_CHANNELS
+const SWEEP = { res: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2], frac: 0.8, minStable: 0.8, tieStable: 0.02, stopBelow: 0.6, iters: 2 };
 const sweepRuns = (N) => (N <= 20000 ? { seeds: 10, subs: 10 } : { seeds: 5, subs: 5 });
 
 // contingency of two labelings (labels 0..n-1) as a dense table
@@ -246,7 +248,9 @@ function clusterGraph(g, N, resolution, seed, info) {
     rows.push({ res, nCl, ref, stability: median(scores), perCluster: match.map(median) });
   }
   const multi = rows.filter((r) => r.nCl > 1), ok = multi.filter((r) => r.stability >= SWEEP.minStable);
-  const best = resolution !== "auto" ? rows[0] : ok.length ? ok[ok.length - 1] : rows[0];
+  const maxStable = ok.reduce((m, r) => Math.max(m, r.stability), -1);
+  const top = ok.filter((r) => r.stability >= maxStable - SWEEP.tieStable).pop();   // rows run coarse -> fine
+  const best = resolution !== "auto" ? rows[0] : top || rows[0];
   const closest = multi.length ? multi.reduce((a, b) => (b.stability > a.stability ? b : a)) : null;
   const sizes = new Array(best.nCl).fill(0); best.ref.forEach((c) => sizes[c]++);
   info.nClusters = best.nCl; info.clusterSizes = sizes; info.resolution = best.res;
@@ -256,7 +260,7 @@ function clusterGraph(g, N, resolution, seed, info) {
     ? { resolution: closest.res, nClusters: closest.nCl, stability: r3(closest.stability) } : null;
   info.clusterStability = best.perCluster.map((x) => (x === null ? null : r3(x)));
   info.sweep = rows.map((r) => ({ resolution: r.res, nClusters: r.nCl, stability: r3(r.stability) }));
-  info.stabilityRuns = { seeds: R.seeds, subsamples: R.subs, fraction: SWEEP.frac, minStable: SWEEP.minStable,
+  info.stabilityRuns = { seeds: R.seeds, subsamples: R.subs, fraction: SWEEP.frac, minStable: SWEEP.minStable, tieStable: SWEEP.tieStable,
                          stopBelow: SWEEP.stopBelow, leidenIterations: SWEEP.iters, shown: "medoid run" };
   return best.ref;
 }
@@ -515,6 +519,21 @@ function runProtein(msg) {
   sel.sort((a, b) => a.row - b.row);           // row order before anything seeded (see run)
   const nShapes = msg.nShapes, found = new Array(nShapes).fill(0), dropped = new Array(nShapes).fill(0);
   sel.forEach((r) => found[r.shape]++);
+  // x' with the whole section's window, so a circle reads the slide as the section UMAP did
+  // = protgrid.normalise_bg_asinh ("normalize": "bg-asinh-v1"); older exports: the p1..p99.5 window.
+  // uOf = the linear version, 0 at background, 1 at p99.5 (the CLR features below start from it).
+  const cof = pr.cofactor || 0.2, asinh1 = Math.asinh(1 / cof), bgAsinh = pr.normalize === "bg-asinh-v1";
+  const uOf = bgAsinh
+    ? (r, j) => { const hi = pr.hi[j]; return hi > 0 ? Math.max(r.q[r.at + j] / pr.scale - pr.bg[j], 0) / hi : 0; }
+    : (r, j) => { const lo = pr.p1[j], rg = pr.p99_5[j] - lo; return rg > 0 ? Math.min(1, Math.max(0, (r.q[r.at + j] / pr.scale - lo) / rg)) : 0; };
+  const xpOf = bgAsinh ? (r, j) => Math.asinh(uOf(r, j) / cof) / asinh1 : uOf;
+  // squares with no marker at x' >= LOW_SIGNAL_X are rims and gaps: left out of the dots and
+  // clusters, as the section UMAP leaves them out (protgrid.LOW_SIGNAL_X)
+  let sel2 = sel;
+  if (P.mode === "bins") {
+    sel2 = sel.filter((r) => { for (let j = 0; j < K; j++) if (xpOf(r, j) >= LOW_SIGNAL_X) return true; dropped[r.shape]++; return false; });
+  }
+  sel.length = 0; for (const r of sel2) sel.push(r);
   let keep = sel.map((_, i) => i), sampledFrom = 0;
   if (P.mode === "bins" && sel.length > P.cap) {
     sampledFrom = sel.length;
@@ -522,30 +541,28 @@ function runProtein(msg) {
   }
   const kept = new Array(nShapes).fill(0);
   keep.forEach((i) => kept[sel[i].shape]++);
-  // x' with the whole section's window, so a circle reads the slide as the section UMAP did
-  // = protgrid.normalise_bg_asinh ("normalize": "bg-asinh-v1"); older exports: the p1..p99.5 window
-  const asinh1 = Math.asinh(1 / (pr.cofactor || 0.2));
-  const xpOf = pr.normalize === "bg-asinh-v1"
-    ? (r, j) => {
-      const hi = pr.hi[j], v = r.q[r.at + j] / pr.scale;
-      return hi > 0 ? Math.asinh(Math.max(v - pr.bg[j], 0) / hi / pr.cofactor) / asinh1 : 0;
-    }
-    : (r, j) => {
-      const lo = pr.p1[j], rg = pr.p99_5[j] - lo, v = r.q[r.at + j] / pr.scale;
-      return rg > 0 ? Math.min(1, Math.max(0, (v - lo) / rg)) : 0;
-    };
-  let rows, shape, XP, N;
+  let rows, shape, XP, UL, N;
   if (P.mode === "shapes") {                   // one mean profile per non-empty shape
     const live = kept.map((n, s) => (n ? s : -1)).filter((s) => s >= 0), at = new Map(live.map((s, i) => [s, i]));
-    N = live.length; XP = new Float64Array(N * K);
-    for (const i of keep) { const r = sel[i], a = at.get(r.shape); for (let j = 0; j < K; j++) XP[a * K + j] += xpOf(r, j); }
-    live.forEach((s, a) => { for (let j = 0; j < K; j++) XP[a * K + j] /= kept[s]; });
+    N = live.length; XP = new Float64Array(N * K); UL = new Float64Array(N * K);
+    for (const i of keep) { const r = sel[i], a = at.get(r.shape); for (let j = 0; j < K; j++) { XP[a * K + j] += xpOf(r, j); UL[a * K + j] += uOf(r, j); } }
+    live.forEach((s, a) => { for (let j = 0; j < K; j++) { XP[a * K + j] /= kept[s]; UL[a * K + j] /= kept[s]; } });
     rows = live.slice(); shape = live.slice();
   } else {
-    N = keep.length; XP = new Float64Array(N * K); rows = new Array(N); shape = new Array(N);
-    keep.forEach((i, a) => { const r = sel[i]; rows[a] = r.row; shape[a] = r.shape; for (let j = 0; j < K; j++) XP[a * K + j] = xpOf(r, j); });
+    N = keep.length; XP = new Float64Array(N * K); UL = new Float64Array(N * K); rows = new Array(N); shape = new Array(N);
+    keep.forEach((i, a) => { const r = sel[i]; rows[a] = r.row; shape[a] = r.shape; for (let j = 0; j < K; j++) { XP[a * K + j] = xpOf(r, j); UL[a * K + j] = uOf(r, j); } });
   }
-  const info = { found, dropped, kept, sampledFrom, nIn: N, modality: "protein" };
+  // the layout's input: centred log-ratio of u, log(u + CLR_EPS) minus the square's mean
+  // (protgrid.clr_features): which markers are up relative to each other, not how bright the
+  // square is overall (on x' the first PC was overall brightness and clusters were its bands)
+  // (fewer than CLR_MIN_CHANNELS channels: one bright marker moves the square's mean too much; x' as before)
+  const useClr = K >= CLR_MIN_CHANNELS;
+  if (!useClr) UL = XP;
+  for (let i = 0; useClr && i < N; i++) {
+    let m = 0; for (let j = 0; j < K; j++) { const l = Math.log(UL[i * K + j] + CLR_EPS); UL[i * K + j] = l; m += l; }
+    m /= K; for (let j = 0; j < K; j++) UL[i * K + j] -= m;
+  }
+  const info = { found, dropped, kept, sampledFrom, nIn: N, modality: "protein", features: useClr ? "clr" : "x", clrEps: CLR_EPS, lowSignalX: LOW_SIGNAL_X };
   if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} squares; the shapes hold ${N}.`);
   if (P.mode === "shapes" && N < 3) throw new Error(`"One dot per shape" needs at least 3 non-empty shapes; there are ${N}.`);
 
@@ -559,7 +576,13 @@ function runProtein(msg) {
     let v = 0; for (let i = 0; i < N; i++) v += (XP[i * K + j] - m) ** 2;
     const sd = Math.sqrt(v / N);
     if (sd > 0) varying++;
-    for (let i = 0; i < N; i++) { const zz = sd > 0 ? (XP[i * K + j] - m) / sd : 0; Z[i * K + j] = zz; Zc[i * K + j] = Math.min(10, zz); }
+    for (let i = 0; i < N; i++) Z[i * K + j] = sd > 0 ? (XP[i * K + j] - m) / sd : 0;
+    // the layout's columns: z of the CLR features, clipped at 10 as the section's
+    let mf = 0; for (let i = 0; i < N; i++) mf += UL[i * K + j];
+    mf /= N;
+    let vf = 0; for (let i = 0; i < N; i++) vf += (UL[i * K + j] - mf) ** 2;
+    const sf = Math.sqrt(vf / N);
+    for (let i = 0; i < N; i++) Zc[i * K + j] = sf > 0 && sd > 0 ? Math.min(10, (UL[i * K + j] - mf) / sf) : 0;
   }
   if (varying < 2) throw new Error("Fewer than 2 markers vary inside the shapes: nothing to lay out.");
   // dense PCA through the sparse routine: every entry present, columns already centred
@@ -586,7 +609,8 @@ function runProtein(msg) {
   if (P.mode === "bins" && umap && resolution) {
     const cluster = clusterGraph(fuzzyGraphCSR(umap, N), N, resolution, P.seed, info);
     const nCl = info.nClusters;
-    info.markers = proteinMarkers(Z, XP, N, K, pr.median, cluster, nCl, pr.channels);
+    // one cluster has no "rest of the selection" to compare with (vs the slide still works)
+    info.markers = nCl > 1 ? proteinMarkers(Z, XP, N, K, pr.median, cluster, nCl, pr.channels) : [[]];
     // the slide's mean / sd per channel: from mat/index.json, or worked out by the page for older exports
     const sec = Array.isArray(pr.mean) && Array.isArray(pr.sd) && pr.mean.length === K && pr.sd.length === K ? { mean: pr.mean, sd: pr.sd } : null;
     if (sec) info.markersVsSlide = proteinMarkersVsSlide(XP, N, K, pr.median, sec, cluster, nCl, pr.channels);
@@ -680,8 +704,8 @@ function randomizedPCA(N, K, ptr, col, val, c, k, rand) {
     const sc = new Float64Array(N);
     for (let a = 0; a < l; a++) { const q = Q[a], w = u[a]; for (let i = 0; i < N; i++) sc[i] += q[i] * w; }
     let big = 0; for (let i = 0; i < N; i++) if (Math.abs(sc[i]) > Math.abs(big)) big = sc[i];
-    const sgn = big < 0 ? -1 : 1;
-    for (let i = 0; i < N; i++) scores[i][j] = sgn * sc[i];
+    const sgn = big < 0 ? -1 : 1, sv = Math.sqrt(Math.max(vals[j], 0));
+    for (let i = 0; i < N; i++) scores[i][j] = sgn * sc[i] * sv;
   }
   const total = vals.reduce((a, b) => a + Math.max(0, b), 0);
   return { scores, varFrac: vals.slice(0, kk).map((v) => Math.max(0, v) / (total || 1)) };
@@ -796,7 +820,7 @@ function run(msg) {
   if (P.mode === "bins" && umap && resolution) {
     const cluster = clusterGraph(fuzzyGraphCSR(umap, N), N, resolution, P.seed, info);
     const nCl = info.nClusters;
-    info.markers = clusterMarkers(d, val, genes, colOf, cluster, nCl, msg.geneNames || null);
+    info.markers = nCl > 1 ? clusterMarkers(d, val, genes, colOf, cluster, nCl, msg.geneNames || null) : [[]];
     // a suggested name per cluster, when the page found a marker set and the gene names
     const ms = msg.markerSet;
     if (ms && Array.isArray(ms.types) && ms.types.length && msg.geneNames) {
