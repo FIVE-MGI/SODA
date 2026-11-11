@@ -1,4 +1,4 @@
-"""Visium / Visium HD expression -> per-gene point layers.
+"""Visium / Visium HD bins and segmented cells (Xenium ...) -> per-gene point layers.
 
 Space Ranger writes the count matrix CSC by barcode (matrix/indptr runs over
 barcodes), so pulling ONE gene means scanning every non-zero. `build_expr`
@@ -11,6 +11,7 @@ Cache layout  <dataset>/expr/<key>.zarr
     indices   (nnz,) int32     -> row of xy
     data      (nnz,) float32   UMI count
     totals    (G,)   float32   per-gene sum (for ranking the picker)
+    barcodes  (B,)   bytes     barcode (cell id for cells) of each row of xy, to match user files by
     attrs: genes [..], binSizeUm, spotDiameterPx, micronsPerPixel, ...
 
 Positions are whatever frame Space Ranger's `pxl_*_in_fullres` uses, i.e. the
@@ -169,22 +170,70 @@ def build_expr(layer: dict, out_dir: Path, image_scale: float = 1.0, log=print,
     if not spot_px and layer.get("binSizeUm") and sf.get("microns_per_pixel"):
         spot_px = layer["binSizeUm"] / float(sf["microns_per_pixel"]) * image_scale
 
-    zdir = Path(out_dir) / "expr" / f"{key}.zarr"
+    meta = {"key": key, "label": layer["label"], "nBins": int(B), "nGenes": int(len(names)),
+            "binSizeUm": layer.get("binSizeUm"), "spotDiameterPx": spot_px,
+            "micronsPerPixel": (float(sf["microns_per_pixel"]) / image_scale) if sf.get("microns_per_pixel") else None,
+            "imageScale": image_scale}
+    _write_layer(Path(out_dir), xy, csr, names, meta, barcodes)
+    log(f"[expr] {key}: written ({time.time() - t0:.1f}s)")
+    return meta
+
+
+def _write_layer(out_dir: Path, xy: np.ndarray, csr, names: list[str], meta: dict, barcodes=None) -> None:
+    """expr/<key>.zarr from bin positions (B, 2 px, NaN = none), a genes x bins CSR and the
+    barcode / cell id of each row (in xy order)."""
+    zdir = Path(out_dir) / "expr" / f"{meta['key']}.zarr"
     g = zarr.open_group(str(zdir), mode="w")
     comp = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
-    g.create_dataset("xy", data=xy, chunks=(1 << 20, 2), compressor=comp, overwrite=True)
+    g.create_dataset("xy", data=np.asarray(xy, np.float32), chunks=(1 << 20, 2), compressor=comp, overwrite=True)
     g.create_dataset("indptr", data=csr.indptr.astype(np.int64), compressor=comp, overwrite=True)
     g.create_dataset("indices", data=csr.indices.astype(np.int32), chunks=(1 << 20,), compressor=comp, overwrite=True)
     g.create_dataset("data", data=csr.data.astype(np.float32), chunks=(1 << 20,), compressor=comp, overwrite=True)
     totals = np.asarray(csr.sum(axis=1)).ravel().astype(np.float32)
     g.create_dataset("totals", data=totals, compressor=comp, overwrite=True)
-    g.attrs["genes"] = names
-    meta = {"key": key, "label": layer["label"], "nBins": int(B), "nGenes": int(len(names)),
-            "binSizeUm": layer.get("binSizeUm"), "spotDiameterPx": spot_px,
-            "micronsPerPixel": (float(sf["microns_per_pixel"]) / image_scale) if sf.get("microns_per_pixel") else None,
-            "imageScale": image_scale}
+    if barcodes is not None:
+        # in xy order: user clusters / UMAPs (userclusters.py) are matched to rows by barcode
+        if len(barcodes) != len(xy):
+            raise ValueError(f"{len(barcodes)} barcodes for {len(xy)} rows")
+        g.create_dataset("barcodes", data=np.array([str(b).encode() for b in barcodes], dtype="S"),
+                         chunks=(1 << 20,), compressor=comp, overwrite=True)
+    g.attrs["genes"] = list(names)
     g.attrs.update(meta)
-    log(f"[expr] {key}: written ({time.time() - t0:.1f}s)")
+
+
+def build_cell_layer(out_dir: Path, xy_um, pixel_size_um: float, X, genes, key: str = "cells",
+                     label: str = "Cells", cell_diameter_um: float | None = None, log=print,
+                     extra: dict | None = None, barcodes=None) -> dict:
+    """A cell-segmented platform's cells as an expression layer, in exactly the bin format.
+
+    Platform-neutral (Xenium today; CosMx / MERSCOPE adapters can call it as is):
+    `xy_um` (n, 2) cell centroids in µm in the image frame (NaN = no position), `pixel_size_um`
+    µm per full-resolution pixel, `X` an (n cells x genes) sparse count matrix, `genes` its
+    column names. Positions become full-resolution pixels (µm / pixel size); every cell is a
+    "bin" of the layer, so gene files, binqc/, hvg/, umap/ and the viewer work on it unchanged.
+    `cell_diameter_um` (e.g. from the median cell area) sets the drawn dot; default 10 µm.
+    `barcodes`: the cell ids, in row order (stored as the layer's `barcodes`, so users can
+    attach their own clusters to cells).
+    Returns the manifest entry (`kind: "cells"`).
+    """
+    from scipy import sparse
+    t0 = time.time()
+    if not pixel_size_um or pixel_size_um <= 0:
+        raise ValueError("a cells layer needs the pixel size (µm per pixel)")
+    X = sparse.csr_matrix(X, dtype=np.float32)
+    n, G = X.shape
+    if len(genes) != G:
+        raise ValueError(f"{len(genes)} gene names for a matrix with {G} columns")
+    xy = np.asarray(xy_um, np.float64).reshape(n, 2) / float(pixel_size_um)
+    gm = X.T.tocsr()                                  # genes x cells, as the bin layers
+    gm.sort_indices()
+    d_um = float(cell_diameter_um) if cell_diameter_um and cell_diameter_um > 0 else 10.0
+    meta = {"key": key, "label": label, "kind": "cells", "nBins": int(n), "nGenes": int(G),
+            "binSizeUm": None, "cellDiameterUm": round(d_um, 2),
+            "spotDiameterPx": d_um / float(pixel_size_um), "micronsPerPixel": float(pixel_size_um),
+            "imageScale": 1.0, **(extra or {})}
+    _write_layer(Path(out_dir), xy.astype(np.float32), gm, list(genes), meta, barcodes)
+    log(f"[expr] {key}: {n:,} cells x {G} genes, nnz {gm.nnz:,}, dot {d_um:.1f} µm ({time.time() - t0:.1f}s)")
     return meta
 
 

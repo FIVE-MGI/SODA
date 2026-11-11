@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>SODA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <link href="styles.css?v=20261110u" rel="stylesheet" />
+  <link href="styles.css?v=20261111x2" rel="stylesheet" />
   <link href="volcano.css?v=20261111a" rel="stylesheet" />
 </head>
 <body>
@@ -72,6 +72,23 @@
           <label class="row slim check" id="rowQcOutline" hidden><input id="qcOutline" type="checkbox" /><span title="Orange rings: everything bright (folds, bubbles, edges). Magenta rings: many pixels at the detector's limit.">Outline flagged squares</span></label>
           <details class="qc-det"><summary>Each marker</summary><div id="qcChannels"></div></details>
         </div>
+      </section>
+
+      <!-- Molecules (Xenium ...): every decoded transcript of the genes picked here, one colour each
+           (molecules/ in the export). Hidden for datasets without them. -->
+      <section class="panel" id="panelMolecules" hidden>
+        <h2>Molecules <span id="molCount" class="count"></span></h2>
+        <div class="search">
+          <input id="molSearch" type="text" placeholder="Search gene… (Enter adds top hit)" autocomplete="off" />
+          <div id="molResults" class="results" hidden></div>
+        </div>
+        <div id="molList" class="list"></div>
+        <label class="row slim"><span>Dot size ×</span>
+          <input id="molSize" type="range" min="0.5" max="4" step="0.1" value="1"></label>
+        <label class="row slim"><span>Dot opacity</span>
+          <input id="molOpacity" type="range" min="0.1" max="1" step="0.05" value="0.9"></label>
+        <div id="molNote" class="meta"></div>
+        <div id="molMeta" class="meta"></div>
       </section>
 
       <!-- Counting tools for marker (protein) square layers; hidden for sequencing data.
@@ -300,6 +317,6 @@
   <script src="config.js?v=20261002e"></script>
   <script src="qc.js?v=20261111a"></script>
   <script src="volcano.js?v=20261111a"></script>
-  <script src="viewer.js?v=20261111r"></script>
+  <script src="viewer.js?v=20261111x6"></script>
 </body>
 </html>

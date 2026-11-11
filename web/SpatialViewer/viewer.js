@@ -86,6 +86,7 @@
     // Tier A region linking: meta from the manifest, ids aligned to positions.bin,
     // and a quantized-xy -> region-id lookup so a gene point finds its region.
     region: { meta: null, ids: null, lookup: null, selected: null, overlayKey: null },
+    mol: molBlank(),       // molecules (Xenium ...): the gene list and the genes shown as dots
     lasso: null,           // circle -> UMAP: shapes, the bins under them, the last result
     umap: null,            // whole-section UMAP + Leiden: tissue <-> UMAP switch, clusters, selection
     viewState: null,
@@ -141,6 +142,7 @@
       overlay: (file) => getJSON(u(`overlays/${file}`), true),
       json: (p) => getJSON(u(p), true),
       buf: async (p) => { const r = await dataFetch(u(p)); if (!r.ok) throw new Error(`${r.status} ${p}`); return r.arrayBuffer(); },
+      mol: async (p) => { const r = await dataFetch(u(`molecules/${p}`)); if (!r.ok) throw new Error(`${r.status} molecules/${p}`); return r.arrayBuffer(); },
     };
   }
   function apiSource(dsId) {
@@ -153,6 +155,7 @@
       positions: (key) => getF32(apiUrl(`datasets/${dsId}/expr/${key}/positions`)),
       region: (key) => getU16(apiUrl(`datasets/${dsId}/expr/${key}/region`)),
       overlay: (key) => getJSON(apiUrl(`datasets/${dsId}/overlays/${key}`)),
+      mol: async (p) => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/${p}`)); if (!r.ok) throw new Error(`${r.status} molecules/${p}`); return r.arrayBuffer(); },
     };
   }
   // ---- private container: short-lived read-only access token --------------------
@@ -537,7 +540,8 @@
     if (S.mode !== "image" || (S.geneBlend !== "heatmap" && !umap) || !on.length || umapByCat()) { el.hidden = true; return; }
     const e = currentExpr();
     // in the UMAP every dot is one bin, so the key talks about bins rather than squares
-    const um = umap ? wd().bin : `${(e && e.binSizeUm) ? `${e.binSizeUm.toLocaleString()} µm` : "each"} square`;
+    const um = umap ? wd().bin : (e && e.kind === "cells") ? `${e.cellDiameterUm ? `${e.cellDiameterUm.toFixed(0)} µm` : "cell-sized"} square`
+      : `${(e && e.binSizeUm) ? `${e.binSizeUm.toLocaleString()} µm` : "each"} square`;
     if (isProt()) {
       const none = umap ? " Grey dots: below the left handle of every marker shown." : "";
       const names = on.map((g) => g.name).join(", ");
@@ -622,6 +626,161 @@
     });
   }
 
+  // ---- molecules: every decoded transcript of a picked gene (Xenium ...) --------------------
+  // molecules/index.json lists the genes and their counts; molecules/gene/<NAME>.bin holds
+  // uint16 qx, qy per molecule, quantised over the image (x = qx * scale[0], y = qy * scale[1]).
+  // A file is in random order, so any prefix is a uniform sample of the gene: with the whole
+  // section in view only the first k are drawn (k from a budget of dots on screen, in powers of
+  // two so zooming redraws only when the sample doubles), zoomed in all of them. One
+  // ScatterplotLayer per gene, one colour each, drawn over the cells / bins.
+  const MOL_COLORS = cfg.moleculeColors || ["#ff3355", "#33ddff", "#ffdd33", "#66ff66", "#ff9933", "#cc88ff",
+    "#ff66cc", "#ffffff", "#3399ff", "#bbff33", "#ff5555", "#00e0b0"];
+  const MAX_MOL_GENES = Math.max(1, Math.min(cfg.maxMoleculeGenes || 12, 24));
+  // dots in view at once over all genes shown: a desktop GPU draws a few million smoothly
+  const MOL_BUDGET = cfg.moleculeBudget || (TOUCH ? 1.5e6 : 6e6);
+  // ... and no more than about one dot per 4 screen pixels: zoomed out, a dense gene then
+  // reads as density rather than a solid fill
+  const MOL_PER_PX = cfg.moleculesPerPixel || 0.25;
+  const MOL_RADIUS_UM = 0.8;                       // drawn dot; a transcript is a diffraction-limited spot
+  function molBlank() { return { index: null, genes: [], size: 1, opacity: 0.9, sig: "", loading: new Set() }; }
+  function molReset() {
+    S.mol = molBlank();
+    $("panelMolecules").hidden = true; $("molList").innerHTML = ""; $("molNote").textContent = "";
+    $("molSize").value = 1; $("molOpacity").value = S.mol.opacity;
+  }
+  async function molOnDataset() {
+    const meta = S.m && S.m.molecules;
+    if (!meta || !S.src || !S.src.mol) return;
+    try {
+      const idx = JSON.parse(new TextDecoder().decode(await S.src.mol("index.json")));
+      idx.genes.sort((a, b) => b.c - a.c || a.n.localeCompare(b.n));
+      S.mol.index = idx;
+      $("panelMolecules").hidden = false;
+      $("molMeta").textContent = `${idx.n.toLocaleString()} molecules of ${idx.nGenes.toLocaleString()} genes` +
+        (idx.qvMin != null ? `, quality ≥ ${idx.qvMin}` : "") + ". Controls left out.";
+      buildMolUI();
+    } catch (e) { status(`Could not load the molecule list: ${e.message}`, true); }
+  }
+  function showMolResults(q) {
+    const box = $("molResults"), idx = S.mol.index;
+    if (!idx) { box.hidden = true; return; }
+    q = q.trim().toLowerCase();
+    const hits = [];
+    const exact = q ? idx.genes.find((g) => g.n.toLowerCase() === q) : null;
+    if (exact) hits.push(exact);
+    for (const g of idx.genes) {                   // nothing typed: the most abundant genes
+      if (g !== exact && (!q || g.n.toLowerCase().startsWith(q))) hits.push(g);
+      if (hits.length >= 40) break;
+    }
+    if (q && hits.length < 40) for (const g of idx.genes) {
+      const n = g.n.toLowerCase();
+      if (!n.startsWith(q) && n.includes(q)) hits.push(g);
+      if (hits.length >= 40) break;
+    }
+    box.innerHTML = "";
+    hits.forEach((g, i) => {
+      const d = document.createElement("div");
+      const on = S.mol.genes.some((x) => x.name === g.n);
+      d.innerHTML = `<span>${escHtml(g.n)}</span><small>${on ? "shown · " : ""}${g.c.toLocaleString()}</small>`;
+      if (i === 0) d.classList.add("hot");
+      d.onmousedown = (e) => { e.preventDefault(); addMolGene(g.n); };
+      box.appendChild(d);
+    });
+    box.hidden = hits.length === 0;
+  }
+  async function addMolGene(name) {
+    const M = S.mol, idx = M.index;
+    if (!idx || M.loading.has(name) || M.genes.some((g) => g.name === name)) return;
+    $("molResults").hidden = true; $("molSearch").value = "";
+    const ent = idx.genes.find((g) => g.n === name);
+    if (!ent || !ent.c) { status(`${name}: no molecules in this section`, true); setTimeout(() => status(null), 3500); return; }
+    if (M.genes.length >= MAX_MOL_GENES) {
+      status(`Up to ${MAX_MOL_GENES} genes' molecules at once. Remove one to add ${name}.`, true);
+      setTimeout(() => status(null), 4000);
+      return;
+    }
+    status(`Loading ${ent.c.toLocaleString()} ${name} molecules…`);
+    M.loading.add(name);
+    try {
+      const q = new Uint16Array(await S.src.mol(`gene/${encodeURIComponent(name)}.bin`));
+      const n = q.length >> 1, [sx, sy] = idx.scale, pos = new Float32Array(2 * n);
+      for (let i = 0; i < n; i++) { pos[2 * i] = q[2 * i] * sx; pos[2 * i + 1] = q[2 * i + 1] * sy; }
+      const used = new Set(M.genes.map((g) => g.hex));
+      const hex = MOL_COLORS.find((c) => !used.has(c)) || MOL_COLORS[M.genes.length % MOL_COLORS.length];
+      M.genes.push({ name, n, pos, hex, rgb: hexToRgb255(hex), visible: true, data: null });
+      buildMolUI(); render();
+    } catch (e) { status(`Could not load ${name} molecules: ${e.message}`, true); return; }
+    finally { M.loading.delete(name); }
+    status(null);
+  }
+  function buildMolUI() {
+    const M = S.mol, list = $("molList");
+    $("molCount").textContent = `(${M.genes.length} / ${MAX_MOL_GENES})`;
+    list.innerHTML = "";
+    for (const g of M.genes) {
+      const row = document.createElement("div");
+      row.className = "chan" + (g.visible ? "" : " off");
+      row.innerHTML = `
+        <input class="cb" type="checkbox" ${g.visible ? "checked" : ""} title="${g.n.toLocaleString()} molecules" />
+        <input class="col" type="color" value="${g.hex}" />
+        <span class="name" title="${escHtml(g.name)}: ${g.n.toLocaleString()} molecules">${escHtml(g.name)} <small class="muted">${g.n.toLocaleString()}</small></span>
+        <button class="rm x" title="remove">×</button>`;
+      row.querySelector(".x").onclick = () => { M.genes = M.genes.filter((x) => x !== g); buildMolUI(); render(); };
+      row.querySelector(".col").oninput = (e) => { g.hex = e.target.value; g.rgb = hexToRgb255(g.hex); requestRender(); };
+      const cb = row.querySelector(".cb");
+      cb.onchange = () => { g.visible = cb.checked; row.classList.toggle("off", !cb.checked); render(); };
+      row.querySelector(".name").onclick = () => { cb.checked = !cb.checked; cb.onchange(); };
+      list.appendChild(row);
+    }
+  }
+  // share of the image in view (the slide pane): how thinly a prefix may be drawn
+  function molVisibleFrac() {
+    const vs = S.viewState, img = S.m && S.m.image;
+    if (!vs || !img || !Number.isFinite(vs.zoom)) return 1;
+    const [w, h] = umapSbs() ? umapPaneSize("ortho") : [$("viewport").clientWidth, $("viewport").clientHeight];
+    const s = Math.pow(2, vs.zoom), hw = (w || 1000) / s / 2, hh = (h || 1000) / s / 2;
+    const x0 = Math.max(0, vs.target[0] - hw), x1 = Math.min(img.width, vs.target[0] + hw);
+    const y0 = Math.max(0, vs.target[1] - hh), y1 = Math.min(img.height, vs.target[1] + hh);
+    return Math.min(1, Math.max(1e-9, (Math.max(0, x1 - x0) * Math.max(0, y1 - y0)) / (img.width * img.height)));
+  }
+  function molDrawCounts() {
+    const on = S.mol.genes.filter((g) => g.visible);
+    const [w, h] = umapSbs() ? umapPaneSize("ortho") : [$("viewport").clientWidth, $("viewport").clientHeight];
+    const budget = Math.min(MOL_BUDGET, Math.max(2e5, MOL_PER_PX * (w || 1000) * (h || 1000)));
+    const want = budget / Math.max(1, on.length) / molVisibleFrac();
+    return on.map((g) => [g, want >= g.n ? g.n : Math.min(g.n, Math.pow(2, Math.floor(Math.log2(Math.max(4096, want)))))]);
+  }
+  function molLayers() {
+    const M = S.mol;
+    if (!M || !M.genes.length || inUmap()) { if (M) M.sig = ""; return []; }
+    const um = S.m.pixelSizeUm || 0.2125;
+    const r = (MOL_RADIUS_UM / um) * M.size;
+    const counts = molDrawCounts();
+    M.sig = counts.map(([g, k]) => `${g.name}:${k}`).join("|");
+    const thin = counts.filter(([g, k]) => k < g.n);
+    $("molNote").textContent = thin.length
+      ? `Zoomed out: drawing a random ${thin.length === counts.length && counts.length > 1 ? "sample of each gene" : "sample"} (` +
+        thin.map(([g, k]) => `${g.name} 1 in ${Math.round(g.n / k).toLocaleString()}`).join(", ") + "). Zoom in to see every molecule."
+      : (counts.length ? "Every molecule of the genes shown is drawn." : "");
+    return counts.map(([g, k]) => {
+      // the same data object while k holds: deck then keeps the uploaded buffer
+      if (!g.data || g.data.length !== k) g.data = { length: k, attributes: { getPosition: { value: g.pos.subarray(0, 2 * k), size: 2 } } };
+      return new ScatterplotLayer({
+        id: `mol-${S.dsId}-${g.name}`, data: g.data,
+        getFillColor: [g.rgb[0], g.rgb[1], g.rgb[2], 255], updateTriggers: { getFillColor: [g.hex] },
+        radiusUnits: "common", getRadius: r, radiusMinPixels: 1 * M.size, radiusMaxPixels: 8 * M.size,
+        stroked: false, filled: true, opacity: M.opacity, parameters: NORMAL,
+      });
+    });
+  }
+  // a view change redraws the molecules only when a gene's drawn sample changes size
+  function molViewChanged() {
+    const M = S.mol;
+    if (!M || !M.genes.length || inUmap()) return;
+    const sig = molDrawCounts().map(([g, k]) => `${g.name}:${k}`).join("|");
+    if (sig !== M.sig) requestRender();
+  }
+
   function overlayLayer(o) {
     if (!o.on || !o.data) return null;
     return new GeoJsonLayer({
@@ -672,6 +831,7 @@
         for (const g of S.genes) if (g.visible !== false) layers.push(geneLayer(g));
       }
     }
+    layers.push(...molLayers());
     drawDensityKey();
     updateRegionReadout();
     for (const o of S.overlays) { const l = overlayLayer(o); if (l) layers.push(l); }
@@ -848,6 +1008,7 @@
         // the heat map's squares have a screen-space floor, so their size in world
         // units changes with the zoom
         if (zoomed && ((S.geneBlend === "heatmap" && S.genes.length) || gatePreviewOn())) requestRender();
+        molViewChanged();
       },
       onHover: (info) => {
         if (info.coordinate && !(info.viewport && info.viewport.id === "uside")) updateHud(info.coordinate);
@@ -1087,7 +1248,14 @@
   const isProt = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "protein"); };
   const WORDS_RNA = { bin: "bin", bins: "bins", Bins: "Bins", gene: "gene", genes: "genes", Gene: "Gene", Genes: "Genes" };
   const WORDS_PROT = { bin: "square", bins: "squares", Bins: "Squares", gene: "marker", genes: "markers", Gene: "Marker", Genes: "Markers" };
-  const wd = () => (isProt() ? WORDS_PROT : WORDS_RNA);
+  // Cells of a segmented platform (Xenium "cells" layer): the bin machinery, said as cells, and
+  // counts are transcripts rather than UMI.
+  const isCells = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "cells"); };
+  const WORDS_CELL = { bin: "cell", bins: "cells", Bins: "Cells", gene: "gene", genes: "genes", Gene: "Gene", Genes: "Genes" };
+  const wd = () => (isProt() ? WORDS_PROT : isCells() ? WORDS_CELL : WORDS_RNA);
+  const countUnit = () => (isCells() ? "transcripts" : "UMI");
+  const toCellWords = (t) => t.replace(/\bbins\b/g, "cells").replace(/\bbin\b/g, "cell")
+    .replace(/\bBins\b/g, "Cells").replace(/\bBin\b/g, "Cell").replace(/\bUMI\b/g, "transcripts");
   // a marker's value in a square: mean intensity on the image's own 0-255 scale
   const protVal = (v) => (v ? (v >= 10 ? v.toFixed(0) : v.toFixed(1)) : "0");
   // Static labels in index.html are the sequencing wording. For a protein layer they are
@@ -1112,14 +1280,15 @@
   ];
   const wordingOrig = new Map();
   function syncWording() {
-    const prot = isProt();
+    const prot = isProt(), cells = isCells();
     for (const [sel, prop, txt] of WORDING) {
       const el = document.querySelector(sel); if (!el) continue;
       const k = sel + "|" + prop;
       if (!wordingOrig.has(k)) wordingOrig.set(k, el[prop]);
       const orig = wordingOrig.get(k);
-      el[prop] = prot ? (txt == null ? toProtWords(orig) : txt) : orig;
+      el[prop] = prot ? (txt == null ? toProtWords(orig) : txt) : cells ? toCellWords(orig) : orig;
     }
+    if (cells) $("geneTitle").textContent = "Genes per cell";
     // squares are always drawn as squares: the round-spot "Normal" view has no meaning here
     $("rowGeneBlend").hidden = prot;
     $("lassoOff").hidden = !prot || !!(currentExpr() || {}).mat;
@@ -1160,7 +1329,7 @@
       const d = document.createElement("div");
       const on = S.genes.some((x) => x.name === g.n);
       d.innerHTML = prot ? `<span>${g.n}</span><small>${on ? "shown" : ""}</small>`
-        : `<span>${g.n}</span><small>${Math.round(g.t).toLocaleString()} UMI</small>`;
+        : `<span>${g.n}</span><small>${Math.round(g.t).toLocaleString()} ${countUnit()}</small>`;
       if (i === 0) d.classList.add("hot");
       d.onmousedown = (e) => { e.preventDefault(); addGene(g.n); };
       box.appendChild(d);
@@ -1215,14 +1384,14 @@
       row.querySelector(".x").onclick = () => { S.genes = S.genes.filter((x) => x !== g); buildGeneUI(); render(); };
       const slider = rangeSlider(row.querySelector(".range"), {
         min: 0, max: top, step: top > 50 ? 1 : 0.5, lo: g.min, hi: g.max,
-        color: () => g.hex, fmt: (v) => (g.prot ? `${v}` : `${v} UMI`),
+        color: () => g.hex, fmt: (v) => (g.prot ? `${v}` : `${v} ${countUnit()}`),
         onChange: (a, b) => { g.min = a; g.max = b; recolorGene(g); requestRender(); },
       });
       if (g.prot) row.querySelector(".range").title = "Mean intensity per square (0–255, as the image). " +
         "Squares at or below the left handle stay clear; at the right handle and above, full colour.";
       row.querySelector(".col").oninput = (e) => { g.hex = e.target.value; slider.repaint(); recolorGene(g); requestRender(); };
       const cb = row.querySelector(".cb");
-      cb.title = g.prot ? `${g.n.toLocaleString()} squares` : `${g.n.toLocaleString()} bins > 0`;
+      cb.title = g.prot ? `${g.n.toLocaleString()} squares` : `${g.n.toLocaleString()} ${wd().bins} > 0`;
       cb.onchange = () => {
         g.visible = cb.checked;
         row.classList.toggle("off", !cb.checked);
@@ -1508,7 +1677,7 @@
         `then compared within the shapes for the UMAP. Each shape is also compared with the rest of the slide.`
       : `Uses the ${e.label} layer. The UMAP can only use the ${L.hvg.nGenes.toLocaleString()} ` +
         `most variable genes of the whole section; inside the shapes it keeps those counted in at least ` +
-        `${LASSO.minDetect}–${LASSO.minDetectCap} of the bins (1% of them, within those limits).`;
+        `${LASSO.minDetect}–${LASSO.minDetectCap} of the ${wd().bins} (1% of them, within those limits).`;
     lassoAssign();
   }
 
@@ -1788,7 +1957,7 @@
       }
       if (s.missing) notes.push(`<small class="bad">data missing for part of this shape</small>`);
       const nt = notes.join("");
-      row.innerHTML = `<i style="background:${s.hex}"></i><div><span class="nm"></span>${L.prot ? toProtWords(nt) : nt}</div>` +
+      row.innerHTML = `<i style="background:${s.hex}"></i><div><span class="nm"></span>${L.prot ? toProtWords(nt) : isCells() ? toCellWords(nt) : nt}</div>` +
         `<span class="lbtns"><button class="ren" title="rename / label">✎</button><button class="rm" title="remove">×</button></span>`;
       const nm = row.querySelector(".nm");
       nm.textContent = s.name;                     // typed by the user: never as HTML
@@ -1829,7 +1998,7 @@
       const secs = Math.round(Math.min(total, LASSO_CAP) * 0.00095);
       if (TOUCH && total > 5000) m += ` On a phone this takes about ${secs}-${3 * secs} s: keep this page open until it finishes.`;
       else if (total > LASSO.softCap) m += ` This will take about ${secs} s.`;
-      $("lassoMsg").textContent = L.prot ? toProtWords(m) : m;
+      $("lassoMsg").textContent = L.prot ? toProtWords(m) : isCells() ? toCellWords(m) : m;
     }
     $("lassoRun").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoCompare").hidden = !L.prot;
@@ -2084,7 +2253,7 @@
     const L = S.lasso;
     if (L.running || !L.hvg || !L.assign) return;
     const qcKeep = binQc && !L.prot ? binQc.keepMask() : null, qcState = binQc && !L.prot ? binQc.state() : null, qcTxt = qcKeep ? binQc.describe() : "", qcNote = L.qcNote || "";
-    const msg = (t, err) => { $("lassoMsg").textContent = L.prot ? toProtWords(t) : t; $("lassoMsg").style.color = err ? "#ff8f8f" : ""; };
+    const msg = (t, err) => { $("lassoMsg").textContent = L.prot ? toProtWords(t) : isCells() ? toCellWords(t) : t; $("lassoMsg").style.color = err ? "#ff8f8f" : ""; };
     const mode = $("lassoMode").value;
     const seed = Number($("lassoSeed").value);
     if (!Number.isInteger(seed) || seed < 0) { msg("Seed must be a whole number ≥ 0.", true); return; }
@@ -2332,7 +2501,7 @@
     }));
     lpDeck.setProps({ layers, viewState: L.lpVs || { target: [0, 0, 0], zoom: 0 } });
     const I = R.info;
-    $("lpTitle").textContent = `${I.method === "pca" ? "PCA (PC1 vs PC2)" : "UMAP"} of drawn shapes · ${R.info.mode === "bins" ? "one dot per bin" : "one dot per shape"}`;
+    $("lpTitle").textContent = `${I.method === "pca" ? "PCA (PC1 vs PC2)" : "UMAP"} of drawn shapes · ${R.info.mode === "bins" ? `one dot per ${wd().bin}` : "one dot per shape"}`;
     const warns = [];
     if (I.method === "pca") warns.push(`Fewer than ${LASSO.minShapesForUmap} shapes: a UMAP of so few points is meaningless, so this is PC1 vs PC2 (${(I.varFrac[0] * 100).toFixed(0)}% / ${((I.varFrac[1] || 0) * 100).toFixed(0)}% of variance).`);
     else if (I.mode === "bins" && I.nIn < LASSO.fewPoints) warns.push(`Few points (${I.nIn}): treat this layout as a sketch.`);
@@ -3712,7 +3881,7 @@
       ? (nEmb ? (nEmb >= e.nBins ? `All ${e.nBins.toLocaleString()} tissue squares` : `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} tissue squares`) +
                 ` (${e.binSizeUm ? `${e.binSizeUm} µm` : "each"} across) are in the UMAP, placed by how alike their markers are. ` : "") +
         `Switch between Tissue, Side by side and UMAP at the top left of the picture; markers, clusters and selections stay.`
-      : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} bins (those with at least 10 UMI${m.minHvgDetected ? ` and ${m.minHvgDetected} variable genes` : ""}) are in the UMAP. ` : "") +
+      : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} (those with at least 10 ${countUnit()}${m.minHvgDetected ? ` and ${m.minHvgDetected} variable genes` : ""}) are in the UMAP. ` : "") +
         `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`;
     const ctLit = umapCtLit(), phLit = umapPhLit(), has = !!(U.sel || U.pick !== null || ctLit || phLit);
     const lpTxt = !has ? lassoPickTxt() : "";
@@ -5260,6 +5429,7 @@
     S.genes = []; S.tissue.positions = null; S.heat = null;
     S.region = { meta: null, ids: null, lookup: null, selected: null, overlayKey: null };
     lassoReset();
+    molReset();
     if (binQc) binQc.reset();
     umapReset();
     S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
@@ -5324,7 +5494,8 @@
     // the per-channel marker list and no transcript panel.
     // An image dataset can also carry protein squares (Akoya grid): it keeps its marker
     // list and gets the expression panel too, worded for markers (see syncWording).
-    const isVisium = S.m.kind === "visium" || ex.some((e) => e.kind !== "protein");
+    // Xenium is an imaging platform: its stains stay a marker list even with a cells layer.
+    const isVisium = S.m.kind === "visium" || (S.m.kind !== "xenium" && ex.some((e) => e.kind !== "protein"));
     const hasProt = !isVisium && ex.length > 0;
     $("panelGenes").hidden = !isVisium && !hasProt;
     $("chanList").hidden = isVisium;
@@ -5350,7 +5521,7 @@
       const o = document.createElement("option"); o.value = e.key;
       o.textContent = e.kind === "protein"
         ? `${e.label} · ${e.nBins.toLocaleString()} squares · ${e.nGenes.toLocaleString()} markers`
-        : `${e.label} · ${e.nBins.toLocaleString()} bins · ${e.nGenes.toLocaleString()} genes`;
+        : `${e.label} · ${e.nBins.toLocaleString()} ${e.kind === "cells" ? "cells" : "bins"} · ${e.nGenes.toLocaleString()} genes`;
       sel.appendChild(o);
     }
     const isPhoto = img.channels.length === 3 && img.channels.every((c) => /^(red|green|blue)$/i.test(c.name));
@@ -5367,6 +5538,7 @@
     fitView();
     render();
     status(null);
+    await molOnDataset();
     if (shownEx.length) { sel.value = shownEx[0].key; await setExprKey(shownEx[0].key); }
     // Tier A: turn the region overlay on so it's clickable without hunting for the toggle.
     if (S.region.overlayKey) {
@@ -5476,6 +5648,20 @@
     $("genePalette").onchange = (e) => { S.genePalette = e.target.value; S.heat = null; render(); };
     syncGeneMode();
     $("pointScale").oninput = (e) => { S.pointScale = +e.target.value; requestRender(); };
+    $("molSearch").oninput = (e) => showMolResults(e.target.value);
+    $("molSearch").onfocus = (e) => showMolResults(e.target.value);
+    $("molSearch").onblur = () => setTimeout(() => ($("molResults").hidden = true), 150);
+    $("molSearch").onkeydown = (e) => {
+      if (e.key === "Enter" || e.keyCode === 13) {
+        e.preventDefault();
+        const hot = $("molResults").querySelector(".hot span") || $("molResults").querySelector("div span");
+        if (hot) addMolGene(hot.textContent);
+        else if (e.target.value.trim()) { status(`No gene named "${e.target.value.trim()}" among the molecules`, true); setTimeout(() => status(null), 3500); }
+      }
+      if (e.key === "Escape") $("molResults").hidden = true;
+    };
+    $("molSize").oninput = (e) => { S.mol.size = +e.target.value; requestRender(); };
+    $("molOpacity").oninput = (e) => { S.mol.opacity = +e.target.value; requestRender(); };
     $("tissueBins").onchange = async (e) => { S.tissue.on = e.target.checked; if (S.tissue.on && !S.tissue.positions) await loadTissue(); render(); };
     $("qcOutline").onchange = (e) => qcSetOutline(e.target.checked);
     // The description is held with the data, not in this page. Anything written

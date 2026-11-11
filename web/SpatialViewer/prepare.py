@@ -3,6 +3,8 @@ r"""Build the viewer cache for one dataset.
     python prepare.py akoya  --src <folder of NN_Marker_Sample_gray.tif> --id sample1 --out <cache folder>
     python prepare.py tiff   --src <stack.tif|qptiff|ome.tif>            --id x        --out <cache folder>
     python prepare.py visium --image <hires.tif> --outs <spaceranger outs> --id sample1_visiumhd --out <cache folder>
+    python prepare.py xenium --src <xenium output folder> --id x1 --out <cache folder>
+           (stains; cells -> a "cells" expression layer; transcripts -> the molecules layer)
 
 Common options: --label, --pixel-size (µm/px), --tile, --geojson "Label=path" (repeatable),
 --rgb-split (keep RGB files as three channels instead of max-projecting).
@@ -30,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pyramid
-from expr import build_expr, find_visium_layers
+from expr import build_cell_layer, build_expr, find_visium_layers
 
 
 def log(*a):
@@ -147,8 +149,14 @@ def main(argv=None):
     r.add_argument("--tmp", help="local folder for the temporary gene-major arrays of big files (needs ~8 bytes per non-zero)")
     i = sub.add_parser("inspect", help="print channels / levels / dtype of a TIFF or qptiff without building")
     i.add_argument("--src", required=True)
-    x = sub.add_parser("xenium", help="Xenium output folder: morphology_focus stains (+ Custom_annotation.geojson if present)")
-    x.add_argument("--src", required=True)
+    x = sub.add_parser("xenium", help="Xenium output folder: morphology_focus stains, cells (cells.csv.gz + "
+                                      "cell_feature_matrix) as a 'cells' expression layer, transcripts as the "
+                                      "molecules layer (+ Custom_annotation.geojson if present)")
+    x.add_argument("--src", required=True, help="the Xenium output folder (the one holding morphology_focus/)")
+    x.add_argument("--no-cells", action="store_true", help="skip the cells layer")
+    x.add_argument("--no-transcripts", action="store_true", help="skip the molecules layer")
+    x.add_argument("--qv-min", type=float, default=20.0,
+                   help="molecules: keep transcripts with quality value >= this (default 20, Xenium's own cut)")
     common(x)
     v = sub.add_parser("visium", help="Space Ranger outs + the full-res image it was run on")
     v.add_argument("--image", required=True, help="the --image TIFF given to spaceranger (RGB or grey)")
@@ -219,6 +227,8 @@ def main(argv=None):
         import re as _re
         import tifffile as _tf
         folder = Path(args.src)
+        if not (folder / "morphology_focus").is_dir() and (folder / "data" / "morphology_focus").is_dir():
+            folder = folder / "data"                      # an archive's <name>/data/ layout
         files = sorted((folder / "morphology_focus").glob("*.ome.tif*"))
         if not files:
             sys.exit(f"no morphology_focus/*.ome.tif in {folder}")
@@ -234,6 +244,14 @@ def main(argv=None):
         src = pyramid.TiffFileSource(pairs)
         if args.pixel_size is None and px:
             manifest["pixelSizeUm"] = float(px[0])
+        import xenium as _xen
+        xpx = _xen.pixel_size(folder)
+        if args.pixel_size is None and xpx:
+            old = manifest["pixelSizeUm"]
+            if old and abs(old - xpx) / xpx > 0.01:
+                log(f"[xenium] pixel size: experiment.xenium says {xpx:.4f} µm/px, the OME metadata {old:.4f}; "
+                    f"using experiment.xenium's (cells and transcripts are placed with it)")
+            manifest["pixelSizeUm"] = xpx
         ann = folder / "Custom_annotation.geojson"
         if ann.exists() and not args.geojson:
             args.geojson = [f"Annotations={ann}"]
@@ -273,6 +291,29 @@ def main(argv=None):
         manifest["image"] = pyramid.build_image(src, ds_dir, tile=args.tile, log=log)
     finally:
         src.close()
+
+    if args.kind == "xenium":
+        import xenium as _xen
+        inp = _xen.find_inputs(folder)
+        um = manifest["pixelSizeUm"]
+        size = (manifest["image"]["width"], manifest["image"]["height"])
+        if not um:
+            log("[xenium] WARNING no pixel size (experiment.xenium / OME): cells and transcripts skipped; "
+                "give --pixel-size")
+        else:
+            if not args.no_cells:
+                cells = _xen.read_cells(inp, log=log)
+                if cells:
+                    area = cells["medianAreaUm2"]
+                    diam = 2.0 * (area / 3.141592653589793) ** 0.5 if area else None
+                    meta = build_cell_layer(ds_dir, cells["xy_um"], um, cells["X"], cells["genes"], key="cells",
+                                            label="Cells", cell_diameter_um=diam, log=log,
+                                            extra={"platform": "xenium"}, barcodes=cells["barcodes"])
+                    manifest["expr"].append(meta)
+            if not args.no_transcripts:
+                mol = _xen.write_transcripts(inp, ds_dir, size, um, qv_min=args.qv_min, log=log)
+                if mol:
+                    manifest["molecules"] = mol
 
     if args.kind == "visium":
         layers = find_visium_layers(Path(args.outs))

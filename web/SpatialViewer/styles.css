@@ -112,6 +112,8 @@ button:hover { border-color: var(--accent); }
 .chan .max { grid-area: range; display: grid; grid-template-columns: 1fr 34px; gap: 6px; align-items: center; }
 .chan .max span { color: var(--muted); font-size: 11px; text-align: right; }
 .chan button.rm { padding: 0 6px; line-height: 18px; font-size: 12px; }
+#molList .chan .name small { color: var(--muted); font-size: 10px; margin-left: 4px; }
+#molList .chan .name { cursor: pointer; }
 
 .search { position: relative; margin: 6px 0; }
 .results { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; max-height: 240px; overflow-y: auto;

@@ -11,6 +11,7 @@ API (all GET):
     /api/datasets/{id}/expr/{key}/gene/{name}       float32 [x,y,v]* for bins with v>0
     /api/datasets/{id}/expr/{key}/positions         float32 [x,y]*  every in-tissue bin
     /api/datasets/{id}/overlays/{key}               GeoJSON
+    /api/datasets/{id}/molecules/{path}             molecules/index.json, molecules/gene/<NAME>.bin (Xenium)
 
 The repo's web/ folder is served at / so http://host:8760/SpatialViewer/ works
 as a single process; the Azure-hosted copy of the page can point here with
@@ -223,6 +224,18 @@ def positions(ds_id: str, key: str):
     return Response(content=np.ascontiguousarray(xy, dtype="<f4").tobytes(),
                     media_type="application/octet-stream",
                     headers={"X-Count": str(len(xy)), "Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/datasets/{ds_id}/molecules/{path:path}")
+def molecules_file(ds_id: str, path: str):
+    """molecules/index.json and molecules/gene/<NAME>.bin (Xenium ...), as written by prepare."""
+    m = manifest(ds_id)
+    base = (Path(m["_dir"]) / "molecules").resolve()
+    f = (base / path).resolve()
+    if base not in f.parents or not f.is_file():
+        raise HTTPException(404, "no such molecules file")
+    return FileResponse(f, media_type="application/json" if f.suffix == ".json" else "application/octet-stream",
+                        headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/api/datasets/{ds_id}/overlays/{key}")

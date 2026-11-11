@@ -12,6 +12,8 @@
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
+    <dest>/<id>/molecules/index.json, gene/<NAME>.bin   imaging platforms (Xenium): every transcript,
+                                                uint16 x, y per molecule, one file per gene (molecules.py)
     <dest>/<id>/overlays/<file>.geojson
 
 Upload the <id> folder to any static host (Azure blob, S3, a web server) and
@@ -33,6 +35,7 @@ import numpy as np
 import binqc
 import celltypes as celltypes_mod
 import hvgchunks
+import molecules
 import protgrid
 import regions
 import sectionumap
@@ -229,6 +232,10 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
             p.write_bytes(np.ascontiguousarray(xyv, dtype="<f4").tobytes())
             n += 1
         log(f"[export] expr {key}: {n:,} gene files")
+
+    # ---- molecules (Xenium ...): per-gene point files, already in their static format ----
+    if m.get("molecules"):
+        molecules.export_molecules(ds_dir, out, log=log)
 
     # ---- protein grid layer (image datasets): marker means per square ----------
     grid_layer = None
