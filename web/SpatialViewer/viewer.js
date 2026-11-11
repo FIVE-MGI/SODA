@@ -1490,6 +1490,7 @@
     lassoCancel(); L.result = null; L.brush = null; L.selShape = null; L.selCluster = null; L.chunks = new Map(); L.hvgGenes = null;
     $("lassoPanel").hidden = true;
     if (window.SodaVolcano) window.SodaVolcano.reset();
+    if (window.SodaPlots) window.SodaPlots.reset();
     const prot = !!(e && e.kind === "protein" && e.mat);
     const ok = S.src && S.src.kind === "static" && e && (e.hvg || prot) && S.mode !== "rna";
     $("panelLasso").hidden = !ok;
@@ -1837,6 +1838,7 @@
     $("lassoSaveCsv").disabled = !R;
     buildRoiTable();
     if (window.SodaVolcano) window.SodaVolcano.refresh();
+    if (window.SodaPlots) window.SodaPlots.refresh();
   }
 
   function lassoCancel() {
@@ -2537,6 +2539,11 @@
         return c ? { n: c.n, res: c.resolution, sizes: c.sizes || null, names: (S.umap.names && S.umap.names[c.resolution]) || {} } : null;
       },
       loadSectionClusters: async () => { await umapSetRes(S.umap.res); return S.umap.cl ? { cl: S.umap.cl, res: S.umap.clRes } : null; },
+    });
+    // heatmap / dot plot / violin (plots.js, plots_worker.js): handed only what they need from here
+    if (window.SodaPlots) window.SodaPlots.init({
+      state: () => S, touch: TOUCH, download: lassoDownload, addGene, addRnaGene, rnaColorBy: setColorBy, fetchChunks: lassoFetch, chunkOf: lassoChunkOf,
+      qc: () => binQc, clusterings: umapClusterings, clusterRgb, catRgb: (i) => liftForDark(catColor(i)), lightRows: umapLightRows,
     });
     buildLassoUI();
   }
@@ -3256,6 +3263,17 @@
     S.viewState = vs;
     deckgl.setProps({ viewState: deckVs() }); updateHud(); requestRender();
     return n;
+  }
+  // any set of rows (mask: 1 = lit), e.g. a group of the heatmap: lit as a selection where the layer has a UMAP, framed either way
+  async function umapLightRows(mask, n) {
+    const U = S.umap;
+    if (!umapAvail()) return showRowsOnSlide((r) => mask[r] === 1, S.lasso && S.lasso.pos);
+    await umapLoad();
+    if (S.umap !== U || !U.pos || mask.length * 2 !== U.pos.length) return 0;
+    let emb = 0; for (let r = 0; r < mask.length; r++) if (mask[r] && U.uxy[2 * r] === U.uxy[2 * r]) emb++;
+    U.sel = mask; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null; U.phPick = null;
+    umapDirty(); syncUmapUI(); render();
+    return showLitOnSlide();
   }
   // whatever is lit: the section selection / cluster / type / phenotype, else the circle tool's pick
   function showLitOnSlide() {
@@ -4919,6 +4937,7 @@
     await setColorBy(pick ? pick.name : "");
     buildRnaGeneUI();
     status(null);
+    if (window.SodaPlots) window.SodaPlots.reset();
   }
 
   async function setColorBy(name) {
