@@ -203,6 +203,21 @@ support WebGL2. Password-encrypted dataset links need the page to be served over
 The phone layout and touch handling were tested in Chrome's phone emulation and on an
 iPhone, opening a password-protected Azure deployment.
 
+**If the image does not appear** (most often on a phone), the page now says why in the
+status line: tiles the data store refused, tiles that did not download or decode, no
+WebGL2 (iOS before 15, or Lockdown Mode), or graphics memory the browser took back. Tiles
+that failed are asked for again by themselves, and again when the page comes back to the
+front. For the rest, add `&diag=1` to the address after signing in as usual
+(`.../index.html?ds=<id>&diag=1`): a panel lists the browser and iOS version, WebGL2 and
+its limits, one manifest and one tile fetched the way the viewer fetches them, each way of
+decoding that tile, whether it reaches a texture and draws, what the map holds, and the
+first errors caught. **Copy** puts the report on the clipboard. It never shows the
+password or the access token: everything after `?` in an address is dropped. `&decode=img`
+(or `&decode=plain`) makes the viewer decode tiles through an `<img>` element (or without
+createImageBitmap's options), to compare on a device where the default fails.
+`tests/phone_browser_test.js` runs these cases in Playwright's WebKit and Chromium; that
+WebKit is the engine, not iOS Safari, so a real iPhone is still the only proof for one.
+
 ## Repository layout
 
 ```
@@ -212,6 +227,8 @@ deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
 examples/make_demo.py synthetic demo data
 tests/smoke_test.py   end-to-end test
+tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
+tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)
 tools/label_editor.html  place UMAP cluster labels by hand (writes labelPositions for config.js)
 ```
 

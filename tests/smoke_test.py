@@ -40,6 +40,11 @@ whose barcodes end in "-1-0" instead of "-1" and lack a tenth of the bins, and a
 Checked: the match rate and rule, index.json / manifest names and sources, the files, labels
 and colours, markers and suggested names per user group; then a partial match (warning, import
 goes ahead), no match and a merged two-sample file (both fail loudly, nothing changed).
+Last, the page itself: every local script and
+stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
+loads before viewer.js, viewer.js still has its three tile decoders in order and reports
+tile and graphics failures, and, when node is installed, tests/diag_test.js passes (the
+panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright).
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -1156,6 +1161,46 @@ def check_marker_lists(c: Checker):
           f"none on the plain profiles")
 
 
+def check_viewer_page(c: Checker, root: Path, log_path: Path):
+    """The page's files hang together, and the tile path keeps its fallbacks and its error reports."""
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    refs = re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)
+    local = [r for r in refs if not re.match(r"https?:", r)]
+    for r in local:
+        name, _, query = r.partition("?")
+        if name != "config.js":                      # config.js is each deployment's own file (git-ignored)
+            c.ok((APP / name).exists(), f"index.html names {name}, which is not in web/SpatialViewer")
+        c.ok(re.fullmatch(r"v=[\w.-]+", query) is not None, f"index.html: {name} has no ?v= string")
+    names = [r.partition("?")[0] for r in refs]
+    c.ok("diag.js" in names and "viewer.js" in names and names.index("diag.js") < names.index("viewer.js"),
+         "index.html must load diag.js before viewer.js (it catches start-up errors)")
+    js = (APP / "viewer.js").read_text(encoding="utf-8")
+    order = [js.find(k) for k in ('["createImageBitmap", (b) => createImageBitmap(b, {',
+                                  '["createImageBitmap without options"', '["an img element"')]
+    c.ok(all(i > 0 for i in order) and order == sorted(order), "viewer.js: the three tile decoders are missing or out of order")
+    for needle, what in (("onError: drawProblem", "deck errors go to the status line"),
+                         ('addEventListener("webglcontextlost"', "a lost graphics context is reported"),
+                         ("getTileData: [S.dsId, tileEpoch]", "failed tiles are asked for again"),
+                         ("onTileError: () => {}", "tile errors are handled in getTileData (reported by fetchTile)"),
+                         ("Math.min(cfg.tileCacheSize || touchMax, touchMax)", "config.js cannot lift the touch tile-cache limit")):
+        c.ok(needle in js, f"viewer.js: {what} ({needle!r} not found)")
+    dj = (APP / "diag.js").read_text(encoding="utf-8")
+    c.ok('get("diag") !== "1"' in dj, "diag.js: the panel must stay off without ?diag=1")
+    node = shutil.which("node")
+    if not node:
+        print("    node not found: tests/diag_test.js skipped")
+        return
+    p = subprocess.run([node, str(REPO / "tests" / "diag_test.js"), str(root / "export")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print("    " + (p.stdout.strip().splitlines()[-1] if p.stdout.strip() else "(no output)"))
+    c.eq(p.returncode, 0, "node tests/diag_test.js (exit code)")
+    for f in ("viewer.js", "diag.js"):
+        q = subprocess.run([node, "--check", str(APP / f)], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        c.eq(q.returncode, 0, f"node --check {f}")
+
+
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
     texts = [p for ds in (VIS, MX, TL) for p in (export / ds).rglob("*")
@@ -1220,6 +1265,8 @@ def main(argv=None) -> int:
     summary["userClusters"] = check_user(c, root, clustering, log_path)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
+    print("checks: the page (index.html, viewer.js tile path, diag.js)")
+    check_viewer_page(c, root, log_path)
     print("checks: publishable")
     check_publishable(c, root, log_path)
     timings["checks"] = time.time() - t0
