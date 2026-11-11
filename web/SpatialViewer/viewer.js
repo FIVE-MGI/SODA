@@ -98,9 +98,14 @@
   // detail nobody can see at arm's length. 2x is as sharp to the eye.
   const DEVICE_PX = TOUCH ? Math.min(window.devicePixelRatio || 1, 2) : true;
   const tileCache = new Map();   // "ds/c/z/x/y" -> ImageBitmap (LRU)
-  // On touch the decoded tiles kept for a quick return get ~256 MB (4 bytes a pixel), not 1500 tiles
-  const tileCacheMax = () => cfg.tileCacheSize ||
-    (TOUCH && S.m ? Math.max(32, Math.floor(256e6 / (4 * S.m.image.tileSize * S.m.image.tileSize))) : 1500);
+  // On touch the decoded tiles kept for a quick return get ~256 MB (4 bytes a pixel), not 1500 tiles.
+  // config.js's tileCacheSize is a desktop number (the example ships 400 = 1.6 GB of 1024 px
+  // tiles), so on touch it can only lower that limit, never raise it.
+  const tileCacheMax = () => {
+    if (!(TOUCH && S.m)) return cfg.tileCacheSize || 1500;
+    const touchMax = Math.max(32, Math.floor(256e6 / (4 * S.m.image.tileSize * S.m.image.tileSize)));
+    return Math.min(cfg.tileCacheSize || touchMax, touchMax);
+  };
   // On touch each stain's tile layer keeps at most this many tiles (GPU textures) between them,
   // rather than deck's five screens' worth per stain
   const TOUCH_TILE_BUDGET = 96;
@@ -115,11 +120,21 @@
   // ---- helpers ----------------------------------------------------------------
   const hexToRgb01 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
   const hexToRgb255 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  // A problem that stays true (no WebGL2, graphics memory taken back, tiles that fail) is
+  // kept in stickyErr: the many status(null) calls that end a "Loading…" fall back to it
+  // instead of wiping the one line that says why the map is black.
+  let stickyErr = null;
   function status(msg, err) {
     const el = $("status");
+    if (!msg && stickyErr) { msg = stickyErr; err = true; }
     if (!msg) { el.hidden = true; return; }
     el.textContent = msg; el.hidden = false; el.classList.toggle("err", !!err);
   }
+  function stickyStatus(msg, ms) {
+    stickyErr = msg; status(msg, true);
+    if (ms) setTimeout(() => { if (stickyErr === msg) { stickyErr = null; if ($("status").textContent === msg) status(null); } }, ms);
+  }
+  const noQuery = (t) => String(t).replace(/\?[^\s)"']*/g, "");   // never show a token: drop "?..." from anything printed
   function apiUrl(p) { return `${API}/api/${p}`; }
 
   // ---- data sources -------------------------------------------------------------
@@ -318,14 +333,117 @@
     const fmt = S.src.kind === "static" ? (S.m.tileFormat || "png") : TILE_FMT;
     return S.src.tileUrl(c, z, x, y, fmt);
   }
+  // ---- tiles: decode with a fallback, and say so when one fails ----------------------
+  // A tile is decoded with createImageBitmap, as before. Where that is missing or refuses
+  // the tile, the same bytes are tried without the options and then through an <img>
+  // element, and the first way that works is kept for the rest of the visit (so only the
+  // first tile pays for the failed attempt). ?decode=plain or ?decode=img starts at that
+  // step, to compare them on a phone.
+  const TILE_DECODERS = [
+    ["createImageBitmap", (b) => createImageBitmap(b, { premultiplyAlpha: "none", colorSpaceConversion: "none" })],
+    ["createImageBitmap without options", (b) => createImageBitmap(b)],
+    ["an img element", (b) => new Promise((resolve, reject) => {
+      const img = new Image(), u = URL.createObjectURL(b);
+      img.onload = () => { URL.revokeObjectURL(u); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(u); reject(new Error("the picture could not be decoded")); };
+      img.src = u;
+    })],
+  ];
+  let tileDecoder = typeof createImageBitmap !== "function" || params.get("decode") === "img" ? 2
+    : params.get("decode") === "plain" ? 1 : 0;
+  async function decodeTile(blob) {
+    let first = null;
+    for (let i = tileDecoder; i < TILE_DECODERS.length; i++) {
+      try {
+        const img = await TILE_DECODERS[i][1](blob);
+        if (!img || !img.width) throw new Error("the picture came back empty");
+        if (i > tileDecoder) {
+          diagNote("decode", `${TILE_DECODERS[tileDecoder][0]} failed (${first && first.message}); using ${TILE_DECODERS[i][0]}`);
+          tileDecoder = i;
+        }
+        return img;
+      } catch (e) { first = first || e; }
+    }
+    throw Object.assign(new Error(`this browser could not decode an image tile (${first && first.message})`), { tileDecode: true });
+  }
+  // Failures used to be dropped without a word: a phone showed a black map and no reason.
+  // The first one of a dataset goes to the status line in plain words; every one is kept
+  // for the ?diag=1 panel (diag.js), which never prints the part of an address after "?".
+  const diagNote = (kind, msg) => { try { window.__sodaDiag.note(kind, msg); } catch (e) { /* diag.js not loaded */ } };
+  let tileProblems = 0, tileMsg = null;
+  function tileProblem(what, where) {
+    diagNote("tile", `${what}${where ? " - " + String(where).split("?")[0] : ""}`);
+    tilesFailed = true; retryTilesSoon();
+    if (tileProblems++) return;
+    const again = !!tileRetry;                 // no retry left: the line stays until the page is reloaded or another dataset opens
+    tileMsg = `Part of the image could not be shown: ${noQuery(what)}. ` +
+      (again ? "Trying again…" : "Reload the page; if it stays, add &diag=1 to the address for details.");
+    stickyStatus(tileMsg, again ? 30000 : 0);
+  }
+  // A tile that failed for a real reason stays blank in deck until it is asked for again, so
+  // one dropped connection (a phone changing networks, or coming back from the lock screen)
+  // left holes for the rest of the visit. Ask again: a few times with a growing wait, and
+  // whenever the page comes back to the front or the network returns. tileEpoch is in the
+  // tile layers' updateTriggers, so raising it makes deck reload its tiles (the ones that
+  // did arrive come straight from tileCache).
+  let tileEpoch = 0, tileRetry = null, tileRetries = 0, tilesFailed = false;
+  function retryTilesSoon(ms) {
+    if (tileRetry || !tilesFailed) return;
+    if (ms == null) { if (tileRetries >= 4) return; ms = 2000 * Math.pow(3, tileRetries++); }   // 2 s, 6 s, 18 s, 54 s
+    tileRetry = setTimeout(() => {
+      tileRetry = null; tilesFailed = false; tileProblems = 0; tileEpoch++;
+      if (stickyErr && stickyErr === tileMsg) { stickyErr = null; if ($("status").textContent === tileMsg) status(null); }
+      render();
+    }, ms);
+  }
+  const retryTilesNow = () => { if (!tilesFailed) return; clearTimeout(tileRetry); tileRetry = null; tileRetries = 0; retryTilesSoon(1000); };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) retryTilesNow(); });
+  window.addEventListener("online", retryTilesNow);
+  // The map itself cannot draw: no WebGL2, a layer deck could not build, or the browser
+  // took the graphics memory back (phones do when memory runs short; luma.gl cannot rebuild
+  // its textures on a restored context, so the way back is a reload).
+  let drawProblems = 0, noGraphics = false;
+  function drawProblem(err, layer) {
+    const msg = noQuery((err && err.message) || err).slice(0, 160);
+    console.error(err);
+    diagNote("draw", `${layer && layer.id ? layer.id + ": " : ""}${msg}`);
+    if (drawProblems++ || noGraphics) return;        // without graphics the line already says why
+    stickyStatus(`The map could not be drawn (${msg}). Reload the page; if it stays, add &diag=1 to the address for details.`, 20000);
+  }
+  function checkWebGL2() {
+    let gl2 = null;
+    try { gl2 = document.createElement("canvas").getContext("webgl2"); } catch (e) { /* treated as missing */ }
+    if (gl2) { const lose = gl2.getExtension("WEBGL_lose_context"); if (lose) lose.loseContext(); return; }
+    noGraphics = true;
+    diagNote("draw", "no WebGL2 context");
+    stickyStatus("This browser cannot draw the map: WebGL2 (3D graphics) is off or missing. On an iPhone or iPad: update to iOS 15 or newer, " +
+      "and if Lockdown Mode is on, turn it off for this site (Safari: Website Settings for this page).");
+  }
+  function watchContext(device) {
+    const canvas = device && device.canvasContext && device.canvasContext.canvas;
+    if (!canvas || !canvas.addEventListener) return;
+    canvas.addEventListener("webglcontextlost", () => {
+      noGraphics = true;
+      diagNote("draw", "the graphics context was lost (webglcontextlost)");
+      tileCache.clear();
+      stickyStatus("The browser took back the map's graphics memory (a phone does this when memory runs short). " +
+        "Reload the page to draw it again; fewer stains on at once keeps it from happening.");
+    });
+  }
   function fetchTile(c, backendZ, x, y, signal) {
     const key = `${S.dsId}/${c}/${backendZ}/${x}/${y}`;
     const hit = tileCache.get(key);
     if (hit) { tileCache.delete(key); tileCache.set(key, hit); return Promise.resolve(hit); }
-    const req = S.src.kind === "static" ? dataFetch(tileUrl(c, backendZ, x, y), { signal }) : apiFetch(tileUrl(c, backendZ, x, y), { signal });
+    const url = tileUrl(c, backendZ, x, y);
+    const req = S.src.kind === "static" ? dataFetch(url, { signal }) : apiFetch(url, { signal });
     return req
-      .then((r) => (r.ok && r.status !== 204 ? r.blob() : null))
-      .then((b) => (b ? createImageBitmap(b, { premultiplyAlpha: "none", colorSpaceConversion: "none" }) : null))
+      .then((r) => {
+        if (r.ok && r.status !== 204) return r.blob();
+        if (!r.ok) tileProblem(r.status === 401 || r.status === 403 ? `the data store refused the image tiles (${r.status}; the sign-in may have run out)`
+          : r.status === 404 ? "image tiles are missing on the server (404)" : `the server answered ${r.status} for image tiles`, url);
+        return null;
+      })
+      .then((b) => (b ? decodeTile(b) : null))
       .then((bmp) => {
         if (bmp) {
           tileCache.set(key, bmp);
@@ -333,6 +451,12 @@
           while (tileCache.size > tileCacheMax()) tileCache.delete(tileCache.keys().next().value);
         }
         return bmp;
+      })
+      .catch((e) => {
+        // an abort is deck moving on, not a failure (the caller re-throws it to deck)
+        if (!(e && (e.name === "AbortError" || (signal && signal.aborted))))
+          tileProblem(e && e.tileDecode ? e.message : `image tiles could not be downloaded (${(e && e.message) || e}; the network, or a content blocker)`, url);
+        throw e;
       });
   }
 
@@ -355,7 +479,7 @@
       // settings. Without them here deck keeps the sublayers it already built, so
       // moving a window slider changed nothing on screen until you panned.
       updateTriggers: {
-        getTileData: [S.dsId],
+        getTileData: [S.dsId, tileEpoch],
         renderSubLayers: [ch.lo, ch.hi, ch.hex, op],
       },
       getTileData: ({ index, signal }) => {
@@ -876,12 +1000,23 @@
         else if (S.region.selected) selectRegion(null);
       },
       getTooltip: tooltipFor,
+      onError: drawProblem,
+      onDeviceInitialized: watchContext,
     });
+    checkWebGL2();
     window.addEventListener("keydown", (e) => {
       if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;   // typing a name, not fitting
       if (e.key === "r" || e.key === "R") fitView();
     });
-    window.__spatialViewer = { deck: deckgl, state: S, render, fitView };   // for debugging from the console
+    window.__spatialViewer = { deck: deckgl, state: S, render, fitView,       // for debugging from the console
+      // for diag.js (?diag=1): fetch the way the viewer does (its token or password applied), and how tiles are being handled
+      diag: () => ({
+        kind: S.src && S.src.kind, tokenFlow: !!(TOKEN_URL && token), tokenLeftMin: token ? Math.round((token.expires - Date.now()) / 60000) : null,
+        fetch: (url, o) => (S.src && S.src.kind === "api" ? apiFetch(url, o) : dataFetch(url, o)),
+        tileUrl, manifestUrl: !S.src ? null : S.src.kind === "api" ? apiUrl(`datasets/${S.dsId}`)
+          : S.src.tileUrl(0, 0, 0, 0, "png").replace(/tiles\/0\/0\/0\/0\.png/, "manifest.json"),
+        decoder: TILE_DECODERS[tileDecoder][0], decoders: TILE_DECODERS, cached: tileCache.size, cacheMax: tileCacheMax(), touch: TOUCH,
+      }) };
   }
 
   // ---- dual-handle range slider (QuPath "min display / max display") ------------------
@@ -988,6 +1123,7 @@
       const d = cx.getImageData(0, 0, w, h).data;
       const raw = new Float32Array(256);                      // one bin per 8-bit value
       for (let i = 0; i < d.length; i += 4) { const v = d[i]; if (v > 0) raw[v] += 1; }
+      oc.width = oc.height = 0;      // WebKit counts canvas memory until GC and caps the total: hand it back now
 
       // Spread each value bin across the columns it occupies on the stretched axis and
       // divide by that width, so the bars show density rather than piling every dark
@@ -5255,6 +5391,8 @@
     status("Opening dataset…");
     S.dsId = id;
     tileCache.clear();
+    tileProblems = 0; drawProblems = 0; tileRetries = 0; tilesFailed = false;
+    if (stickyErr && stickyErr === tileMsg) stickyErr = null;
     S.channels = []; S.overlays = []; S.m = null;
     deckgl.setProps({ layers: [] });           // drop the previous dataset's layers right away
     S.genes = []; S.tissue.positions = null; S.heat = null;
