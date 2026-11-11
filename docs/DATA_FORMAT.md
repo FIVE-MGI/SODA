@@ -112,7 +112,7 @@ The prepare cache's own manifest also has a `source` block with local file paths
 | `binQc` | only if `binqc/` was written (RNA layers of 8 µm or more, and classic spots; exports from 11 November 2026): the files and ranges of the per-bin QC values, see below |
 | `hvg` | only if `hvg/` was written: `{"nGenes", "chunkPx", "chunks", "bytes"}` |
 | `mat` | protein grid layers (`"kind": "protein"`) only, if `mat/` was written: `{"nChannels", "chunkPx", "chunks", "bytes"}` |
-| `umap` | only if `umap/` was written: `{"nEmbedded", "clusterings": [{"resolution", "n"}], "default"}` |
+| `umap` | only if `umap/` was written: `{"nEmbedded", "clusterings": [{"resolution", "name", "source", "n"}], "default"}`; with the lab's own results also `id` per clustering and `"embedding": "user"` (see umap/ below) |
 
 ## Tiles: `tiles/<c>/<z>/<x>/<y>.<tileFormat>`
 
@@ -373,6 +373,46 @@ Written under the same conditions as `hvg/`, when the clustering packages are in
   and the fraction of the cluster's bins expressing the gene, among genes expressed in
   ≥ 25 % of the cluster. Only genes with `lfc > 0` are listed.
 
+  Each SODA clustering also carries `"name": "Leiden 0.6"` and `"source": "soda"` (exports
+  from 11 November 2026; older ones have neither, and the viewer names them by resolution).
+
+#### The lab's own UMAP and clusterings (`userclusters.py`)
+
+An export made with `--user-layer` and `--user-umap` / `--user-obs` / `--user-h5ad`
+([PREPARING_DATA.md](PREPARING_DATA.md#your-own-umap-and-clusters-seurat-scanpy)) writes into
+the same folder:
+
+- `clusters_user<N>.bin`, one per imported clustering (N = 1, 2, ...): uint16 per row, the
+  index into that clustering's `categories`, `65535` = not assigned (a row the user's file did
+  not have, or had as NA). Not tied to `coords.bin`: a row can be assigned and not embedded,
+  or the reverse.
+- `coords.bin`: the user's embedding when one was given (NaN for rows without one), else
+  SODA's, unchanged.
+- `index_soda.json`, `coords_soda.bin`: SODA's own `index.json` and `coords.bin`, kept so an
+  export without user files restores them and so the suggested cell types are scored on SODA's
+  embedded bins. The viewer does not read them. With `--user-replace` SODA's
+  `clusters_r*.bin` stay on disk but are not listed.
+
+`index.json` then has, in addition:
+
+| Field | Meaning |
+|---|---|
+| `clusterings[]` with `"source": "user"` | listed first; `id` (`"user1"` ...), `name` (the column name, de-identified), `file`, `n`, `categories` (the group names, in the user's order: a categorical's own order, else numbers first, then text), `colors` (`#rrggbb` per category, only if the user gave a palette), `sizes` (rows per category), `nAssigned`, `markers` (as above, over the assigned rows with counts). No `resolution` |
+| `clusterings[]` with `"source": "soda"` | SODA's own, as above; left out with `--user-replace` |
+| `default` | index of the clustering shown first: the first user one |
+| `embedding` | `{"source": "user", "name": "<obsm key or the two column names>"}` or `{"source": "soda"}` |
+| `nEmbedded`, `bounds` | of `coords.bin` as written (the user's embedding when there is one) |
+| `userImport` | `layer`, `kind` (`csv` / `h5ad`), `barcodes`: one report per input file (`inFile`, `considered`, `matched`, `rate`, `offImage` = matched but outside a `--crop`, `methods` = how many matched exactly / by suffix / by prefix / by both, `otherSample` = left out by `--user-barcode-prefix` / `-suffix`), `sodaClusterings` (`kept`, `replaced` or `none`), `markers` (the rule) |
+
+The manifest's `umap` entry lists every clustering as `{"id"?, "resolution"?, "name", "source",
+"n"}` and has `"embedding": "user"` when the coordinates are the user's. In `celltypes.json`
+(next section) a user clustering's suggestions are keyed by its `id` instead of the
+resolution, and cover only its assigned rows that SODA embedded.
+
+The viewer keys a clustering by `id` when present, else by `resolution`; it lists them by
+`name`, names groups after `categories` (a name given with ✎ wins) and colours them with
+`colors` when present.
+
 ## Single-cell / single-nucleus RNA-seq datasets
 
 `prepare.py rnaseq` writes a different, smaller layout straight into the export folder:
@@ -427,5 +467,5 @@ your own trusted content there.
 For reference: `prepare.py` writes `<cache>/<id>/manifest.json`, `image.zarr/` (an
 OME-NGFF 0.4 multiscale image with `omero` channel metadata, readable by napari and
 other OME-Zarr tools), `expr/<key>.zarr/` (a gene-major sparse count matrix plus bin
-positions) and `overlays/`. `server.py` and `prepare.py export` read it. It holds the
+positions and, from 11 November 2026, the barcode of each bin, by which `userclusters.py` matches a lab's own clusters) and `overlays/`. `server.py` and `prepare.py export` read it. It holds the
 full-resolution raw image and local file paths, so it should stay on your machine.
