@@ -233,7 +233,10 @@ same 500 µm chunks:
   `bg` / `hi` = each channel's whole-slide background (median of the off-tissue squares) and
   99.5th percentile above it over the tissue (leaving out the squares flagged everything
   bright, so a fold cannot set it), so the circle tool scales a selection exactly
-  as the section UMAP was: x = asinh(max(v − bg, 0) / hi / cofactor) / asinh(1 / cofactor).
+  as the section did: x = asinh(max(v − bg, 0) / hi / cofactor) / asinh(1 / cofactor) for
+  markers and gating, and for the layout the centred log-ratio of u = max(v − bg, 0) / hi,
+  log(u + 0.1) minus the square's mean (protgrid.clr_features); squares with no channel at
+  x ≥ 0.2 are left out (low signal).
   `median` = each channel's median x over the section (the `pct` of the cluster markers).
   `mean` / `sd` = each channel's mean and (population) standard deviation of x, and `rawMean`
   its mean raw value v, over all `nSquares` squares of the slide, from the stored (rounded)
@@ -304,7 +307,9 @@ Written under the same conditions as `hvg/`, when the clustering packages are in
 (see [PREPARING_DATA.md](PREPARING_DATA.md#clustering-and-the-whole-section-umap)).
 
 - `coords.bin`: float32 pairs `x, y` (UMAP coordinates) per row; `NaN, NaN` for bins
-  that were not embedded (< 10 UMI).
+  that were not embedded: RNA bins with < 10 UMI or with fewer than 3 of the variable genes
+  detected; protein squares at background in every embedded marker. Such bins have no
+  profile to place (hundreds of them are one identical point).
 - `clusters_r<res>.bin`, one per resolution (`clusters_r0.3.bin`, `clusters_r0.6.bin`,
   `clusters_r1.0.bin`): uint16 cluster per row, `0` = the largest cluster,
   `65535` (0xFFFF) = not embedded.
@@ -313,9 +318,10 @@ Written under the same conditions as `hvg/`, when the clustering packages are in
   | Field | Meaning |
   |---|---|
   | `nBins` | rows in `positions.bin` |
-  | `nEmbedded` | bins with ≥ `minUmi` UMI that were embedded |
-  | `minUmi` | 10 |
-  | `bounds` | `[xmin, ymin, xmax, ymax]` of the embedding |
+  | `nEmbedded` | bins that were embedded (RNA: ≥ `minUmi` UMI and ≥ `minHvgDetected` variable genes) |
+  | `minUmi` | 10 (RNA) |
+  | `minHvgDetected` | 3 (RNA; absent in older exports, where every bin ≥ `minUmi` was embedded) |
+  | `bounds` | `[xmin, ymin, xmax, ymax]` of the embedding (never NaN: the file is strict JSON) |
   | `params` | every parameter of the pipeline (HVGs, PCs, neighbours, min_dist, seed, normalisation, clustering, markers) |
   | `versions` | versions of umap-learn, leidenalg, igraph and numpy used |
   | `clusterings` | per resolution: `resolution`, `file`, `n` clusters, `sizes` (bins per cluster), `markers` |

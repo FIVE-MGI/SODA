@@ -11,7 +11,7 @@ scores the circle tool's bins with the same rule (lasso_worker.js), so keep them
     expr/<key>/umap/celltype.bin     uint8 per positions.bin row: index into types,
                                      254 = embedded but no type, 255 = not embedded
 
-Rule, on the bins embedded in the UMAP (>= MIN_UMI UMI):
+Rule, on the bins embedded in the UMAP (>= MIN_UMI UMI and >= sectionumap.MIN_HVG_DETECTED variable genes):
   a marker gene is missing with reason "absent" when the layer has no gene of that name
   (case-insensitive), "rare" when it is counted (> 0) in < MIN_DETECT of those bins - a single
   UMI of a gene almost never seen z-scores so high that it alone would decide the bin;
@@ -197,8 +197,11 @@ def write_celltypes(er, d, markers: Path | None = None, log=print) -> dict | Non
     lib_all = np.bincount(indices, weights=data, minlength=len(xy)).astype(np.float32)
     del indices, data
     bins = np.flatnonzero(on_image & (lib_all >= MIN_UMI))
-    if not np.array_equal(row_of[bins], emb_rows):
-        raise SystemExit(f"[celltypes] {key}: embedded rows in coords.bin do not match bins >= {MIN_UMI} UMI")
+    # the embedded bins: >= MIN_UMI UMI, less those with too few variable genes (sectionumap)
+    inb = np.isin(row_of[bins], emb_rows)
+    if int(inb.sum()) != len(emb_rows):
+        raise SystemExit(f"[celltypes] {key}: embedded rows in coords.bin are not all bins >= {MIN_UMI} UMI")
+    bins = bins[inb]
     pos_of = np.full(len(xy), -1, np.int64)
     pos_of[bins] = np.arange(len(bins))
     lib = lib_all[bins].astype(np.float64)
@@ -346,7 +349,8 @@ def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, mark
                             key: str = "", log=print, flags=None) -> dict | None:
     """umap/celltypes.json + umap/celltype.bin for a protein layer (protgrid.py).
 
-    `xp` = squares x channels of x (every positions.bin row is embedded), `channels`
+    `xp` = squares x channels of x (one row per positions.bin row; squares at background in
+    every embedded channel are not in the UMAP and get 255 in celltype.bin), `channels`
     their names, `usable[j]` False for a channel that is flat over the tissue, `flags`
     protgrid's qc_flags (uint8 per square) for the artefact rule, or None.
     Needs umap/index.json from sectionumap.write_feature_umap.
@@ -370,8 +374,11 @@ def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, mark
     if len(names) >= NO_TYPE:
         raise SystemExit(f"[celltypes] {len(names)} types: celltype.bin holds at most {NO_TYPE}")
     n = len(xp)
-    if index.get("nBins") != n or index.get("nEmbedded") != n:
+    if index.get("nBins") != n:
         raise SystemExit(f"[celltypes] {key}: umap/index.json does not cover the {n} squares")
+    emb = np.isfinite(np.fromfile(ud / "coords.bin", dtype="<f4").reshape(-1, 2)[:, 0])
+    if len(emb) != n or int(emb.sum()) != index.get("nEmbedded"):
+        raise SystemExit(f"[celltypes] {key}: umap/coords.bin does not match index.json")
 
     z = {}
     for j in sorted({c for t in matched for c in t["cols"]}):
@@ -401,21 +408,22 @@ def write_celltypes_protein(d, xp: np.ndarray, channels: list[str], usable, mark
     clusterings = {}
     for c in index["clusterings"]:
         lab = np.fromfile(ud / c["file"], dtype="<u2").astype(np.int64)
-        if len(lab) != n or (lab == NO_CLUSTER).any() or int(lab.max()) + 1 != c["n"]:
+        if len(lab) != n or ((lab == NO_CLUSTER) != ~emb).any() or int(lab[emb].max()) + 1 != c["n"]:
             raise SystemExit(f"[celltypes] {key}: {c['file']} does not match index.json")
-        clusterings[f"{c['resolution']:g}"] = flag_artefacts(summarise_clusters(lab, best, score, scored, names),
-                                                            lab, flags)
+        le = lab[emb]
+        clusterings[f"{c['resolution']:g}"] = flag_artefacts(
+            summarise_clusters(le, best[emb], score[emb], scored, names), le, None if flags is None else flags[emb])
 
     out = {"markerSet": {"name": ms.get("name"), "version": ms.get("version"), "file": rel},
            "modality": "protein", "types": types, "rule": rule_text_protein(ms), "clusterings": clusterings}
     deid.assert_clean(out, "umap/celltypes.json")
     txt = json.dumps(out, separators=(",", ":"))
-    ct = best.astype(np.uint8)                       # every square is embedded: no 255 rows
+    ct = np.where(emb, best, NOT_EMBEDDED).astype(np.uint8)
     for name, buf in (("celltype.bin", ct.tobytes()), ("celltypes.json", txt.encode("utf-8"))):
         tmp = ud / (name + ".part")
         tmp.write_bytes(buf)
         tmp.replace(ud / name)
-    n_typed = int((best < NO_TYPE).sum())
+    n_typed = int((ct < NO_TYPE).sum())
     log(f"[celltypes] {key}: protein, {int(scored.sum())}/{len(names)} types scored, {n_typed:,}/{n:,} squares "
         f"typed, " + ", ".join(f"r{r}: {sum(x['confidence'] == 'high' for x in v)} high"
                                for r, v in clusterings.items()) + f"  {time.time() - t0:.1f}s")

@@ -24,15 +24,17 @@ container behind a password. No database and no always-on server are needed.
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
-  and the same bins light up in the other.
+  (box or freehand) and the same bins light up in the other. **Show on slide** takes any
+  selection, picked cluster or cell type back to the tissue and frames it there.
 - **Suggested cluster names.** Each cluster gets a suggested cell type from editable
   marker lists, with a confidence and the runner-up shown; accept it, accept all
   high-confidence ones, or type your own. General lists for any tissue (genes and protein
   panels, with common marker-name aliases) are used by default; peripheral nerve lists are
   included too.
 - **Circle → UMAP.** Draw circles or freehand shapes on the tissue and get a UMAP, with
-  optional Leiden clusters, of just the bins inside, computed in the browser. Save the
-  shapes and every parameter to redo it later.
+  optional Leiden clusters, of just the bins inside, computed in the browser. Drag a box or
+  a loop over dots in its UMAP (Shift or **+** adds more) to light those bins on the slide,
+  and **Show on slide** to frame them. Save the shapes and every parameter to redo it later.
 - **Multiplexed protein images (Akoya / PhenoCycler and other multi-channel TIFFs).** The
   slide is cut into 16 µm squares holding each marker's mean intensity (from full-resolution
   pixels), and the squares get everything above: UMAP, Leiden clusters, suggested names from

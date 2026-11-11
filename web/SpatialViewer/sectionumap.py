@@ -29,6 +29,7 @@ of the export carries on.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import time
@@ -51,6 +52,7 @@ DEFAULT_RES = 1                                         # index into RESOLUTIONS
 N_MARKERS = 10
 MIN_PCT = 0.25
 NO_CLUSTER = 0xFFFF
+MIN_HVG_DETECTED = 3   # RNA bins with fewer variable genes detected are near-identical points: left out
 # scanpy's default. Iterating to convergence (-1) took 15-35x longer on 16 um bins
 # for under 1% more modularity and the same cluster count.
 LEIDEN_ITERS = 2
@@ -251,6 +253,13 @@ def embed_and_cluster(pcs: np.ndarray, markers_of, libs, key, log=print, t0: flo
         rest = np.setdiff1d(np.arange(len(pcs)), sample, assume_unique=True)
         emb[rest] = reducer.transform(pcs[rest]).astype(np.float32)
         nn = _sample_neighbours(reducer, pcs[rest], SAMPLE_K)
+        # transform gives NaN for a row whose nearest sampled rows are all at distance 0 (e.g.
+        # identical all-background squares): no graph edges to place it by. Those take the
+        # median place of the same sampled neighbours that decide their cluster.
+        bad = np.flatnonzero(~np.isfinite(emb[rest]).all(1))
+        if len(bad):
+            emb[rest[bad]] = np.median(emb[sample][nn[bad]], axis=1)
+            log(f"[umap] {key}: {len(bad)} placed rows had no place from transform: put at their neighbours' median")
         log(f"[umap] {key}: {len(rest):,} rows placed with transform  {time.time() - t0:.0f}s")
 
     clusterings, labels = [], []
@@ -282,16 +291,25 @@ def write_umap_files(ud, head: dict, params: dict, emb: np.ndarray, clusterings:
     umap, ig, la = libs
     t0 = time.time() if t0 is None else t0
     n = len(emb)
+    fin = np.isfinite(emb).all(1)
+    if not fin.all():                                  # should not happen (see embed_and_cluster)
+        log(f"[umap] {key}: {int((~fin).sum())} rows without a place: written as not embedded")
+        emb = emb.copy(); emb[~fin] = np.nan
+        labels = [np.where(fin, lab, -1) for lab in labels]
+        head = {**head, "nEmbedded": int(fin.sum())}
+    if not fin.any():
+        raise SystemExit(f"[umap] {key}: no row has a place in the UMAP")
+    e = emb[fin]
     index = {**head,
-             "bounds": [round(float(v), 4) for v in (emb[:, 0].min(), emb[:, 1].min(),
-                                                     emb[:, 0].max(), emb[:, 1].max())],
+             "bounds": [round(float(v), 4) for v in (e[:, 0].min(), e[:, 1].min(), e[:, 0].max(), e[:, 1].max())],
              "params": params,
              "versions": {"umap-learn": getattr(umap, "__version__", "?"),
                           "leidenalg": getattr(la, "__version__", getattr(la, "version", "?")),
                           "igraph": getattr(ig, "__version__", "?"), "numpy": np.__version__},
              "clusterings": clusterings, "default": DEFAULT_RES}
     deid.assert_clean(index, "umap/index.json")
-    txt = json.dumps(index, separators=(",", ":"))
+    # allow_nan=False: Python would write NaN, which a browser's JSON.parse refuses
+    txt = json.dumps(index, separators=(",", ":"), allow_nan=False)
     if _BARCODE.search(txt):
         raise SystemExit("[umap] REFUSING to write index.json: it contains a barcode")
 
@@ -301,7 +319,7 @@ def write_umap_files(ud, head: dict, params: dict, emb: np.ndarray, clusterings:
     files = {"coords.bin": np.ascontiguousarray(coords, dtype="<f4").tobytes()}
     for c, lab in zip(clusterings, labels):
         cl = np.full(n_rows, NO_CLUSTER, np.uint16)
-        cl[rows] = lab
+        cl[rows] = np.where(lab >= 0, lab, NO_CLUSTER)
         files[c["file"]] = cl.astype("<u2").tobytes()
     files["index.json"] = txt.encode("utf-8")           # last: its presence means the folder is complete
     total = 0
@@ -324,14 +342,6 @@ def write_section_umap(er, d, log=print, force: bool = False) -> dict | None:
     """
     key = er.meta.get("key")
     ud = d / "umap"
-    if not force:
-        old = _reusable(ud, _params(), key, log)
-        if old:
-            return old
-    libs = _clustering_libs(key, log)
-    if libs is None:
-        return None
-
     t0 = time.time()
     xy = er.xy
     on_image = ~np.isnan(xy[:, 0])
@@ -350,18 +360,38 @@ def write_section_umap(er, d, log=print, force: bool = False) -> dict | None:
         log(f"[umap] {key}: only {int(ok.sum())} bins with >= {MIN_UMI} UMI, skipped")
         return None
     cols = select_hvg(X, lib, ok, N_HVG)
+    # a bin with (almost) no variable gene has no profile: such bins pile up on one point and
+    # Leiden cuts that pile into clusters of nothing
+    det = np.diff(X[:, cols].tocsr().indptr)
+    few = ok & (det < MIN_HVG_DETECTED)
+    ok &= ~few
     bins = np.flatnonzero(ok)
+    # reuse an earlier umap/ only if it was made from these very bins and counts
+    h = hashlib.sha256()
+    for a in (bins.astype("<i8"), lib[bins].astype("<f4"), np.asarray(cols, "<i8"), det[bins].astype("<i8")):
+        h.update(np.ascontiguousarray(a).tobytes())
+    params = {**_params(), "minHvgDetected": MIN_HVG_DETECTED, "input": h.hexdigest()[:16]}
+    if not force:
+        old = _reusable(ud, params, key, log)
+        if old:
+            return old
+    libs = _clustering_libs(key, log)
+    if libs is None:
+        return None
     Xn = (sparse.diags(1e4 / lib[bins]) @ X[bins]).tocsr().astype(np.float32)
     Xn.data = np.log1p(Xn.data)
     del X
     n = len(bins)
-    log(f"[umap] {key}: {n:,} bins >= {MIN_UMI} UMI, {len(cols)} HVGs  {time.time() - t0:.0f}s")
+    log(f"[umap] {key}: {n:,} bins >= {MIN_UMI} UMI, {len(cols)} HVGs"
+        + (f", {int(few.sum()):,} bins with < {MIN_HVG_DETECTED} of them detected left out" if few.any() else "")
+        + f"  {time.time() - t0:.0f}s")
 
     pcs = _pca(Xn[:, cols].tocsr(), N_PCS)
     log(f"[umap] {key}: PCA {pcs.shape[1]}  {time.time() - t0:.0f}s")
     emb, clusterings, labels = embed_and_cluster(
         pcs, lambda lab, k: _markers(Xn, lab, k, er.genes), libs, key, log, t0)
-    return write_umap_files(ud, {"nBins": n_rows, "nEmbedded": n, "minUmi": MIN_UMI}, _params(),
+    return write_umap_files(ud, {"nBins": n_rows, "nEmbedded": n, "minUmi": MIN_UMI,
+                                 "minHvgDetected": MIN_HVG_DETECTED}, params,
                             emb, clusterings, labels, n_rows, row_of[bins], libs, key, log, t0)
 
 
@@ -419,45 +449,58 @@ def protein_markers(xp: np.ndarray, lab: np.ndarray, k: int, names: list[str], c
 
 def write_feature_umap(d, xp: np.ndarray, names: list[str], embed_cols, marker_cols, key: str,
                        log=print, force: bool = False, extra_params: dict | None = None,
-                       sample: int | None = None) -> dict | None:
+                       sample: int | None = None, features: np.ndarray | None = None,
+                       keep: np.ndarray | None = None) -> dict | None:
     """expr/<key>/umap/ for a dense layer whose every positions.bin row is embedded.
 
     `xp` = rows x channels, already normalised (protgrid.normalise_bg_asinh: 0 at background,
     1 at p99.5). The embedding uses the columns `embed_cols` (z-scored, PCA to min(15, n - 1));
-    the cluster markers rank `marker_cols`. `sample`: above this many rows the UMAP is fitted on
-    a seeded sample and the rest placed (None = UMAP_SAMPLE, 0 = always all rows).
+    the cluster markers rank `marker_cols`. `features` (rows x embedded channels): embed these
+    instead of xp[:, embed_cols] (protgrid.clr_features); `keep`: the rows to embed (default:
+    rows above background in some embedded channel). `sample`: above this many rows the UMAP is
+    fitted on a seeded sample and the rest placed (None = UMAP_SAMPLE, 0 = always all rows).
     Returns the manifest entry, or None when skipped.
     """
     ud = d / "umap"
     embed_cols = [int(c) for c in embed_cols]
-    rows_fit = sample_rows(len(xp), sample)
+    # a square at or below background in every embedded channel has no profile: hundreds of
+    # them are one identical point, which umap cannot place and Leiden splits into clusters of
+    # nothing. They stay on the slide, unclustered (like RNA bins under MIN_UMI).
+    if keep is None:
+        keep = np.flatnonzero((xp[:, embed_cols] > 0).any(1)) if embed_cols else np.arange(0)
+    keep = np.asarray(keep, dtype=np.int64)
+    rows_fit = sample_rows(len(keep), sample)
     fit = ("all rows" if rows_fit is None else
            f"UMAP fitted on {len(rows_fit)} rows (seeded random sample), the rest placed with umap transform; "
            f"Leiden on the sample's graph, the rest take the most common cluster of their {SAMPLE_K} nearest "
            "sampled rows (PCA space); clusters renumbered by size over all rows")
-    params = protein_params([names[c] for c in embed_cols], extra_params, fit)
+    params = {**protein_params([names[c] for c in embed_cols], extra_params, fit)}
+    params.setdefault("lowSignal", "at background in every embedded channel: not embedded")
     if not force:
         old = _reusable(ud, params, key, log)
         if old:
             return old
-    n = len(xp)
-    if n < 50 or len(embed_cols) < 2:
-        log(f"[umap] {key}: {n} rows x {len(embed_cols)} channels - too few to embed, skipped")
+    n, ne = len(xp), len(keep)
+    if ne < 50 or len(embed_cols) < 2:
+        log(f"[umap] {key}: {ne} rows x {len(embed_cols)} channels - too few to embed, skipped")
         return None
     libs = _clustering_libs(key, log)
     if libs is None:
         return None
     t0 = time.time()
     n_pcs = min(N_PCS_PROTEIN, len(embed_cols) - 1)
-    pcs = _pca(sparse.csr_matrix(np.ascontiguousarray(xp[:, embed_cols], dtype=np.float64)), n_pcs)
-    log(f"[umap] {key}: {n:,} rows, {len(embed_cols)} channels, PCA {pcs.shape[1]}  {time.time() - t0:.0f}s")
+    xk = xp[keep]
+    fk = features[keep] if features is not None else xk[:, embed_cols]
+    pcs = _pca(sparse.csr_matrix(np.ascontiguousarray(fk, dtype=np.float64)), n_pcs)
+    log(f"[umap] {key}: {ne:,} of {n:,} rows ({n - ne:,} low signal left out), "
+        f"{len(embed_cols)} channels, PCA {pcs.shape[1]}  {time.time() - t0:.0f}s")
     emb, clusterings, labels = embed_and_cluster(
-        pcs, lambda lab, k: protein_markers(xp, lab, k, names, marker_cols), libs, key, log, t0, sample=rows_fit)
-    head = {"nBins": n, "nEmbedded": n, "modality": "protein"}
+        pcs, lambda lab, k: protein_markers(xk, lab, k, names, marker_cols), libs, key, log, t0, sample=rows_fit)
+    head = {"nBins": n, "nEmbedded": ne, "modality": "protein"}
     if rows_fit is not None:
         head["fitOn"] = int(len(rows_fit))
     return write_umap_files(ud, head, params,
-                            emb, clusterings, labels, n, np.arange(n), libs, key, log, t0)
+                            emb, clusterings, labels, n, keep, libs, key, log, t0)
 
 
 def _entry(index: dict) -> dict:
