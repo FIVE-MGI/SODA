@@ -292,6 +292,7 @@ def check_layer(c: Checker, root: Path, out: Path, L: dict, clustering: bool) ->
         c.ok(share > 0.8, f"{key}: only {share:.0%} of MARKER_FASC1 counts lie in fascicle bins")
 
     hv = check_hvg(c, d, L, pos, lib, dense)
+    check_binqc(c, d, L, lib, dense, [g["n"] for g in genes])
     res = {"bins": n, "medianUmi": float(np.median(lib))}
     if clustering:
         res.update(check_umap(c, d, L, pos, lib, truth, bin_um / 0.32))
@@ -301,6 +302,45 @@ def check_layer(c: Checker, root: Path, out: Path, L: dict, clustering: bool) ->
               "(pip install -r web/SpatialViewer/requirements-clustering.txt)")
     res["hvgGenes"] = hv
     return res
+
+
+def check_binqc(c: Checker, d: Path, L: dict, lib, dense, gene_names) -> None:
+    """binqc/ (web/SpatialViewer/binqc.py): per row total counts, genes detected, % MT,
+    recomputed here from the gene files."""
+    key, q = L["key"], L.get("binQc")
+    if not c.ok(q and (d / "binqc").is_dir(), f"{key}: manifest binQc / binqc/ missing"):
+        return
+    n = len(lib)
+    c.eq(q.get("nRows"), n, f"{key}: binQc.nRows")
+    mets = {m["key"]: m for m in q.get("metrics", [])}
+    for k in ("total", "genes"):
+        c.ok(k in mets, f"{key}: binQc has no {k} metric")
+    tot = np.fromfile(d / "binqc" / mets["total"]["file"], dtype="<f4")
+    c.eq(len(tot), n, f"{key}: binqc total.bin rows")
+    c.ok(np.allclose(tot, lib, rtol=1e-5, atol=1e-3), f"{key}: binqc total != sum of the gene files per bin")
+    ng = np.zeros(n, np.int64)
+    for rows, v in dense.values():
+        np.add.at(ng, rows[v > 0], 1)
+    gdt = "<u2" if mets["genes"]["dtype"] == "uint16" else "<u4"
+    gq = np.fromfile(d / "binqc" / mets["genes"]["file"], dtype=gdt)
+    c.ok(len(gq) == n and (gq == ng).all(), f"{key}: binqc genes detected != genes with a count per bin")
+    for k, a in (("total", tot), ("genes", gq)):
+        c.ok(abs(mets[k]["min"] - float(a.min())) < 1e-3 and abs(mets[k]["max"] - float(a.max())) < 1e-3,
+             f"{key}: binQc {k} min/max vs the file")
+    mt = [g for g in gene_names if g.upper().startswith("MT-")]
+    if mt:
+        pm = np.fromfile(d / "binqc" / mets["pctMt"]["file"], dtype="<f4")
+        mts = np.zeros(n)
+        for g in mt:
+            if g in dense:
+                np.add.at(mts, dense[g][0], dense[g][1])
+        want = np.where(lib > 0, 100 * mts / np.maximum(lib, 1e-12), 0)
+        c.ok(np.allclose(pm, want, atol=1e-3), f"{key}: binqc pct_mt != MT- share per bin")
+    else:
+        c.ok("pctMt" not in mets and not (d / "binqc" / "pct_mt.bin").exists(),
+             f"{key}: pct_mt written although the layer has no MT- genes")
+    print(f"    binqc: {len(mets)} metrics, median {np.median(tot):.0f} UMI, {np.median(gq):.0f} genes"
+          + ("" if mt else ", no MT- genes (no % MT)"))
 
 
 def check_hvg(c: Checker, d: Path, L: dict, pos, lib, dense) -> int:

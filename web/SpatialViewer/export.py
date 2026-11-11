@@ -6,6 +6,7 @@
     <dest>/<id>/expr/<key>/positions.bin        float32 [x,y]*
     <dest>/<id>/expr/<key>/gene/<NAME>.bin      float32 [x,y,v]*   (NAME percent-encoded like encodeURIComponent)
     <dest>/<id>/expr/<key>/hvg/...              bin-major top-variable genes in spatial chunks (hvgchunks.py)
+    <dest>/<id>/expr/<key>/binqc/...            per-bin total counts, genes detected, % MT (binqc.py)
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
@@ -29,6 +30,7 @@ from urllib.parse import quote
 
 import numpy as np
 
+import binqc
 import celltypes as celltypes_mod
 import hvgchunks
 import protgrid
@@ -166,6 +168,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     layer_regions: dict[str, list] = {}
     layer_hvg: dict[str, dict] = {}
     layer_umap: dict[str, dict] = {}
+    layer_binqc: dict[str, dict] = {}
 
     # ---- expression --------------------------------------------------------
     for layer in m.get("expr", []):
@@ -183,6 +186,11 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                 layer_regions[key] = table
                 log(f"[export] expr {key}: {len(table)} regions, "
                     f"{int(np.count_nonzero(ids)):,}/{len(ids):,} bins assigned")
+        # per-bin QC (total counts, genes detected, % MT) for the QC filter; same 8 um floor
+        if not layer.get("binSizeUm") or layer["binSizeUm"] >= 8:
+            q = binqc.write_bin_qc(er, d, log=log)
+            if q:
+                layer_binqc[key] = q
         # circle -> UMAP: bin-major top-variable genes. Not for the 2 um grid: too sparse to embed.
         if hvg and (not layer.get("binSizeUm") or layer["binSizeUm"] >= 8):
             h = hvgchunks.write_hvg_chunks(er, d, layer.get("micronsPerPixel"), log=log)
@@ -262,6 +270,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                       for layer in m.get("expr", [])]
     if layer_hvg:
         sm["expr"] = [({**layer, "hvg": layer_hvg[layer["key"]]} if layer["key"] in layer_hvg else layer)
+                      for layer in sm.get("expr", [])]
+    if layer_binqc:
+        sm["expr"] = [({**layer, "binQc": layer_binqc[layer["key"]]} if layer["key"] in layer_binqc else layer)
                       for layer in sm.get("expr", [])]
     if layer_umap:
         sm["expr"] = [({**layer, "umap": layer_umap[layer["key"]]} if layer["key"] in layer_umap else layer)

@@ -2,8 +2,8 @@
 
 This is the layout that `prepare.py export` (images, spatial expression) and
 `prepare.py rnaseq` (single-cell UMAPs) write, and that the viewer reads. It is derived
-from `export.py`, `hvgchunks.py`, `sectionumap.py`, `regions.py`, `rnaseq.py` and
-`viewer.js`. You only need it if you want to write the files with your own tools or
+from `export.py`, `hvgchunks.py`, `binqc.py`, `sectionumap.py`, `regions.py`, `rnaseq.py`,
+`viewer.js` and `qc.js`. You only need it if you want to write the files with your own tools or
 read them from another program.
 
 General rules:
@@ -15,8 +15,8 @@ General rules:
 - **Coordinates** of bins, regions and overlays are in **full-resolution image pixels**
   of the image the pyramid was built from (after any `--crop` and `--flip`): x to the
   right, y down, origin at the top-left corner of the image.
-- A **row** means a position in `expr/<key>/positions.bin`. `region.bin`, `hvg/` and
-  `umap/` all refer to bins by row. No file contains a barcode.
+- A **row** means a position in `expr/<key>/positions.bin`. `region.bin`, `binqc/`, `hvg/`
+  and `umap/` all refer to bins by row. No file contains a barcode.
 - File names made from gene names use JavaScript's `encodeURIComponent` (Python:
   `urllib.parse.quote(name, safe="-_.!~*'()")`). Known issue: for a name that actually
   changes under encoding (a space, `/`, `|`, `+` ...), the file on disk contains a literal
@@ -33,6 +33,7 @@ General rules:
   expr/<key>/positions.bin
   expr/<key>/gene/<NAME>.bin
   expr/<key>/region.bin                  only if an overlay has polygons
+  expr/<key>/binqc/{total.bin, genes.bin, pct_mt.bin}   per-bin QC values (RNA layers, exports from 11 Nov 2026)
   expr/<key>/hvg/{genes.json, index.json, <tx>_<ty>.bin}
   expr/<key>/mat/{index.json, <tx>_<ty>.bin}   protein grid layers only (instead of hvg/)
   expr/<key>/umap/{index.json, coords.bin, clusters_r<res>.bin}
@@ -108,6 +109,7 @@ The prepare cache's own manifest also has a `source` block with local file paths
 | `imageScale` | the `--image-scale` used |
 | `regions` | only with a region overlay: `[{"id": 1, "name": "Cortex", "nBins": 5123}, ...]`, ids as in `region.bin`, regions with no bins left out |
 | `regionOverlay` | only with a region overlay: the overlay `file` the ids refer to |
+| `binQc` | only if `binqc/` was written (RNA layers of 8 µm or more, and classic spots; exports from 11 November 2026): the files and ranges of the per-bin QC values, see below |
 | `hvg` | only if `hvg/` was written: `{"nGenes", "chunkPx", "chunks", "bytes"}` |
 | `mat` | protein grid layers (`"kind": "protein"`) only, if `mat/` was written: `{"nChannels", "chunkPx", "chunks", "bytes"}` |
 | `umap` | only if `umap/` was written: `{"nEmbedded", "clusterings": [{"resolution", "n"}], "default"}` |
@@ -178,6 +180,45 @@ position), ordered by bin. `value` is the raw UMI count. Number of points = file
 
 uint16 per row (same length and order as `positions.bin`): region id, `0` = in no region.
 Ids match `regions[]` in the manifest and `__region_id` in the region overlay.
+
+### `binqc/`: per-bin QC values (total counts, genes detected, % mitochondrial)
+
+Written by `binqc.py` for every sequencing layer with bins of 8 µm or more (and classic
+spots), from the same count matrix as the gene files. One value per **row**, same length and
+order as `positions.bin`, no header:
+
+| File | Type | Content |
+|---|---|---|
+| `total.bin` | float32 | UMI over all genes of the layer (equal to the `hvg/` chunks' library size) |
+| `genes.bin` | uint16 (uint32 if the layer has ≥ 65,536 genes; see `dtype`) | genes with a count > 0 |
+| `pct_mt.bin` | float32 | 100 × UMI of the mitochondrial genes / total; 0 for a bin with no UMI. Only written when the layer has genes whose name starts with `MT-` (ignoring case, so mouse `mt-` too) |
+
+The manifest layer names them:
+
+```json
+"binQc": {"dir": "binqc", "nRows": 144509,
+          "metrics": [
+            {"key": "total", "label": "Total counts", "file": "total.bin", "dtype": "float32", "unit": "UMI",
+             "scale": "log", "min": 0.0, "max": 740.0, "median": 8.0, "q1": 1.0, "q3": 35.0},
+            {"key": "genes", "label": "Genes detected", "file": "genes.bin", "dtype": "uint16", ...},
+            {"key": "pctMt", "label": "% mitochondrial", "file": "pct_mt.bin", "dtype": "float32", "scale": "linear", ...}],
+          "mtPattern": "^MT- (ignoring case)", "mtGenes": ["MT-ND1", "MT-ND2", ...]}
+```
+
+`scale` is the histogram axis the viewer uses (`log` = log10(1 + x)); `min` … `q3` are over all
+rows. The viewer's **Bin QC filter** panel (`qc.js`) draws a histogram per metric with a min and
+a max threshold. It is off until a threshold is set; a bin outside any threshold is greyed on
+the slide and left out of Circle → UMAP (PCA, UMAP, Leiden, markers). The thresholds are stored
+in Circle → UMAP's saved JSON as
+
+```json
+"qcFilter": {"layer": "008um", "thresholds": {"total": {"min": 13, "max": null}, "pctMt": {"min": null, "max": 25}},
+             "nRows": 144509, "kept": 61318, "removed": 83191, "rule": "..."}
+```
+
+(`null` = no bound; `qcFilter: null` = no filter) and in the page URL as
+`?qc=<layer>:<metric>=<min>-<max>,...`, e.g. `?qc=008um:total=20-,pctMt=-25`. Exports made
+before 11 November 2026 have no `binQc` block; the panel is then hidden and nothing is filtered.
 
 ### `hvg/`: data for the circle → UMAP tool
 
