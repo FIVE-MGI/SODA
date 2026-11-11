@@ -11,7 +11,7 @@
 (function () {
   const NONE = 0xffff;
   const D = { minUmi: 10, topN: 3, maxTop: 20, maxGenes: 150, maxGenesTouch: 40, softMB: 150, softMBTouch: 30, hardMB: 600, hardMBTouch: 80,
-              cacheMB: 400, cacheMBTouch: 60, fetchers: 4, maxGroups: 200, fewBins: 10, kdeGrid: 64, kdeMin: 5, points: 300, pointsTouch: 120,
+              cacheMB: 400, cacheMBTouch: 60, fetchers: 4, maxGroups: 200, fewBins: 10, kdeGrid: 64, kdeMin: 5, points: 300, pointsTouch: 120, pointsAll: 6000,
               maxViolin: 4, chunkMB: 80, chunkMBTouch: 15, zClip: 2.5, seed: 42, worker: "plots_worker.js?v=20261111a" };
   const THEMES = {
     dark: { bg: "#161b24", ink: "#e6e9ef", muted: "#9aa3b2", line: "#3a4352", grid: "#232a37", warn: "#f6d68a", hi: "#ffffff",
@@ -118,7 +118,8 @@
       const t = hit(ev); if (!t || !R) return;
       V.sel = t; tip(ev); syncSel(); markSel();
     });
-    if (window.ResizeObserver) { let last = ""; new ResizeObserver(() => { const h = $("plHost"), k = `${h.clientWidth}x${h.clientHeight}`; if (k !== last && !$("plotsPanel").hidden) { last = k; draw(); } }).observe($("plHost")); }
+    // the matrix follows the width alone, so the selection bar growing by a line after a click does not rebuild the picture under the pointer
+    if (window.ResizeObserver) { let last = ""; new ResizeObserver(() => { const h = $("plHost"), k = V.view === "violin" ? `${h.clientWidth}x${h.clientHeight}` : `${h.clientWidth}`; if (k !== last && h.clientWidth && !$("plotsPanel").hidden) { last = k; draw(); } }).observe($("plHost")); }
   }
 
   const msg = (t, err) => { const el = $("plMsg"); if (!el) return; el.textContent = t; el.style.color = err ? "#ff8f8f" : ""; };
@@ -418,7 +419,7 @@
       if (!genes.length) throw new Error(`None of the genes could be loaded (${got.failed.join(", ")}).`);
       const input = { layout: mode === "rna" ? "indexed" : "xyv", nRows: G.N, positions: mode === "rna" ? null : await positions(), group: G.group, nGroups: G.K, totals, keep,
                       base: { norm, minUmi: D.minUmi, asisLog: mode === "rna" && /^log1p/i.test(S.m.valueLabel || ""), kdeGrid: D.kdeGrid, kdeMin: D.kdeMin,
-                              maxPoints: api.touch ? D.pointsTouch : D.points, seed: D.seed } };
+                              maxPoints: Math.max(20, Math.min(api.touch ? D.pointsTouch : D.points, Math.floor(D.pointsAll / G.K))), seed: D.seed } };
       const res = await callWorker({ ...input, base: undefined, genes: genes.map((n) => ({ name: n, buf: got.bufs.get(n) })), params: { ...input.base, detail: false } },
         (step, f) => { if (!dead()) msg(`${step}… ${Math.round(f * 100)}%`); });
       if (dead()) return;
@@ -564,7 +565,7 @@
     lastSvg = svg;
     $("plSvgBox").innerHTML = svg;
     syncViolinRow(); syncSel(); markSel();
-    const W = R.words, kd = R.kde;
+    const W = R.words;
     tip(null); syncWarn();
     $("plFoot").textContent =
       (R.norm === "cp10k" ? `Value of a ${W.bin} = log1p(count × 10,000 / its total over all genes); ${W.bins} under ${D.minUmi} UMI left out${R.nLow ? ` (${nf(R.nLow)})` : ""}. `
@@ -572,7 +573,7 @@
       (R.nQc ? `QC filter on (${R.qcTxt}): ${nf(R.nQc)} ${W.bins} left out. ` : R.mode === "spatial" ? "No QC filter. " : "") +
       (V.view === "violin"
         ? `Violin: Gaussian kernel density, Scott's bandwidth (h = sd × n^−1/5, sd with n − 1), drawn only between the smallest and largest value; every violin has the same greatest width. ` +
-          `Box = quartiles, line = median (linear interpolation). Groups with fewer than ${D.kdeMin} ${W.bins} (or all values equal) show points only. Points: a seeded sample of at most ${kd ? R.input.base.maxPoints : (api.touch ? D.pointsTouch : D.points)} per group. % = ${W.bins} with ${W.above}. `
+          `Box = quartiles, line = median (linear interpolation). Groups with fewer than ${D.kdeMin} ${W.bins} (or all values equal) show points only. Points: a seeded sample of at most ${R.input.base.maxPoints} per group. % = ${W.bins} with ${W.above}. `
         : `Mean = over all ${W.bins} of the group, zeros included. % expressing = ${W.bins} with ${W.above}. n = ${W.bins} of the group after the filters. ` +
           (V.scale === "z" ? `z-score: per gene, across the ${R.cols.length} groups shown (sd with n − 1), colour clipped at ±${D.zClip}. ` : V.scale === "mm" ? "0–1: per gene, (mean − lowest group) / (highest − lowest group). " : "")) +
       `${W.indep}: read these as a description of this ${R.mode === "rna" ? "dataset" : "section"}. Click a cell, a gene or a group for its numbers and for Show on slide.`;
@@ -813,7 +814,7 @@
         const N = R.eff.length, mask = new Uint8Array(N); let n = 0;
         for (let r = 0; r < N; r++) if (R.eff[r] === s.k) { mask[r] = 1; n++; }
         const shown = await api.lightRows(mask, n);
-        msg(shown ? `${R.names[s.k]}: ${nf(n)} ${R.words.bins} lit on the slide (Esc or "Clear" in Clusters & selection puts it back).` : `Could not show ${R.names[s.k]} on the slide.`);
+        msg(shown ? `${R.names[s.k]}: ${nf(n)} ${R.words.bins} lit on the slide (Esc or "Clear selection" puts it back).` : `Could not show ${R.names[s.k]} on the slide.`);
       }
     }
     if (api.touch) { $("plotsPanel").hidden = true; syncButtons(); }     // a phone's panel covers the slide
