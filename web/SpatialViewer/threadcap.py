@@ -17,13 +17,18 @@ sets SODA_THREADS before anything is imported). A variable that is already set (
 OMP_NUM_THREADS=4 by a job scheduler) is left alone unless SODA_THREADS / --threads is
 given, in which case that number wins for all of them.
 
-When numpy was imported before apply() could run (a notebook, another program importing
-export.py), the environment is too late: `limit()` caps the pools that are already
-loaded for the duration of a `with` block, through threadpoolctl (installed with
-scikit-learn, which umap-learn needs). sectionumap wraps its PCA in it.
+`limit(n)` caps the pools that are already loaded for the duration of a `with` block,
+through threadpoolctl (installed with scikit-learn, which umap-learn needs). It is for
+the case where numpy was imported before apply() could run (a notebook, another program
+importing export.py), where the environment is too late, and for a call that should
+run on fewer threads than the rest: sectionumap runs its PCA on one (see PCA_THREADS
+there for the timings behind that).
 
-The cap changes how many threads work on a product or a factorisation, not what is
-computed. See tests/smoke_test.py (check_threadcap) for the output comparison.
+The thread count changes how a product or a factorisation is split up, not what is
+computed: results agree to the last few bits of float32 (a handful of the PCA's values
+differ by 1-20 units in the last place between 1, 8 and 24 threads), and the exported
+UMAP coordinates and clusters came out byte-identical for all three on the datasets
+compared. See tests/smoke_test.py (check_threadcap).
 
 Only the standard library is imported here, so importing this module never loads numpy.
 """

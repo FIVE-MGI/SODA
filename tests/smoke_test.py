@@ -46,8 +46,8 @@ loads before viewer.js, viewer.js still has its three tile decoders in order and
 tile and graphics failures, and, when node is installed, tests/diag_test.js passes (the
 panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright).
 Also: prepare.py caps the BLAS / OpenMP threads before numpy loads (threadcap.py: default,
-SODA_THREADS, --threads, a variable already set) and the PCA gives the same numbers with one
-thread as with the cap; and the dataset picker (dspicker.js) is wired into the page with its
+SODA_THREADS, --threads, a variable already set), the PCA runs on one thread and gives the same
+numbers as on the cap's threads; and the dataset picker (dspicker.js) is wired into the page with its
 roles, and every .js of the page parses when node is installed.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
@@ -1458,23 +1458,39 @@ def check_threadcap(c: Checker, log_path: Path):
         c.ok(bool(re.search(r"\[export\] \d+ BLAS/OpenMP threads", log_txt)),
              "threadcap: the export log says how many BLAS/OpenMP threads it used")
 
-    # same numbers whatever the thread count: one thread against the cap, on a seeded sparse matrix
+    # The PCA runs on sectionumap.PCA_THREADS thread(s) whatever the cap, and gives the same
+    # numbers as on the cap's threads (a seeded sparse matrix)
     try:
-        import threadpoolctl  # noqa: F401
+        from threadpoolctl import threadpool_info
     except ImportError:
-        print("    threadpoolctl not installed: PCA one-thread comparison skipped")
+        print("    threadpoolctl not installed: PCA thread checks skipped")
         return
     from scipy import sparse
     rng = np.random.default_rng(7)
     X = sparse.random(4000, 400, density=0.05, random_state=rng, data_rvs=lambda n: rng.poisson(2.0, n) + 1.0, format="csr")
     X.data = np.log1p(X.data).astype(np.float32)
-    with threadcap.limit(1):
-        a = sectionumap._pca(X, 30)
-    b = sectionumap._pca(X, 30)
+    seen = []
+    plain = sectionumap._pca_uncapped
+
+    def spy(Xh, n_pcs):
+        seen.append([p["num_threads"] for p in threadpool_info()])
+        return plain(Xh, n_pcs)
+
+    before = [p["num_threads"] for p in threadpool_info()]   # this process loaded numpy first: its own count
+    sectionumap._pca_uncapped = spy
+    try:
+        a = sectionumap._pca(X, 30)                   # as the export calls it
+    finally:
+        sectionumap._pca_uncapped = plain
+    c.ok(bool(seen) and seen[0] and max(seen[0]) <= sectionumap.PCA_THREADS,
+         f"threadcap: the PCA runs on {sectionumap.PCA_THREADS} BLAS thread(s): pools inside it {seen[:1]}")
+    after = [p["num_threads"] for p in threadpool_info()]
+    c.eq(after, before, "threadcap: the pools are as they were once the PCA is done")
+    b = plain(X, 30)                                  # on all of this process's threads
     diff = float(np.abs(a - b).max())
     c.ok(a.shape == (4000, 30) and diff <= 1e-4 * float(np.abs(a).max()),
-         f"threadcap: PCA with 1 thread and with the cap agree (max abs difference {diff:.3g})")
-    print(f"    PCA 1 thread vs {threadcap.cap()}: max abs difference {diff:.3g}"
+         f"threadcap: PCA on {sectionumap.PCA_THREADS} thread(s) and on {max(before)} agree (max abs difference {diff:.3g})")
+    print(f"    PCA on {sectionumap.PCA_THREADS} thread(s) vs {max(before)}: max abs difference {diff:.3g}"
           + (" (bit-identical)" if np.array_equal(a, b) else ""))
 
 
