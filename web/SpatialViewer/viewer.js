@@ -679,6 +679,7 @@
     if (gPrev) layers.push(gatePreviewLayer()); else layers.push(...umapTissueLayers());
     const ql = qcLayer(); if (ql) layers.push(ql);
     layers.push(...lassoLayers());
+    const bq = binQcLayer(); if (bq) layers.push(bq);
     layers.push(...umapSideLayers());
     deckgl.setProps({ layers });
   }
@@ -1245,6 +1246,7 @@
     S.region.selected = null;
     await loadRegions();
     await loadQc();
+    if (binQc) await binQc.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
     if (S.tissue.on) await loadTissue();
     await lassoOnLayer();
     await umapOnLayer();
@@ -1444,6 +1446,34 @@
     // Leiden clusters of the last result (absent when the worker skipped clustering)
     selCluster: null, lpColor: "cluster", clNames: {} });
   let lpDeck = null;
+  // per-bin QC filter (qc.js): removed bins are greyed on the slide and left out of the run
+  let binQc = null;
+  function binQcInit() {
+    if (!window.SodaBinQc) return;
+    binQc = window.SodaBinQc.create({
+      $, esc: escHtml, ScatterplotLayer, NORMAL, requestRender, layerKey: () => S.exprKey,
+      positions: () => (S.lasso && S.lasso.pos ? Promise.resolve(S.lasso.pos)
+        : S.tissue.positions && S.tissue.key === S.exprKey ? Promise.resolve(S.tissue.positions) : S.src.positions(S.exprKey)),
+      onChange: () => {
+        const L = S.lasso; if (!L) return;
+        buildLassoUI();
+        $("bqStale").hidden = !(L.result && JSON.stringify(L.result.qc || null) !== JSON.stringify(binQc.state()));
+      },
+    });
+    if (window.__spatialViewer) window.__spatialViewer.binQc = binQc;   // for testing from the console
+  }
+  function binQcLayer() {
+    if (!binQc) return null;
+    const e = currentExpr();
+    return binQc.layer(Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale));
+  }
+  // bins inside the shapes that the QC filter removes
+  function binQcInShapes() {
+    const L = S.lasso, k = binQc && binQc.keepMask();
+    if (!k || !L.assign || k.length !== L.assign.length) return 0;
+    let n = 0; for (let i = 0; i < k.length; i++) if (!k[i] && L.assign[i] !== LASSO_NONE) n++;
+    return n;
+  }
   const LASSO_NONE = 0xffff;
 
   function lassoReset() {
@@ -1748,7 +1778,8 @@
         notes.push(`<small>${t}</small>`);
         if (R && R.info.found[i] !== undefined)
           notes.push(`<small>${R.info.kept[i].toLocaleString()} in UMAP` +
-            (L.prot ? "" : ` · ${R.info.dropped[i].toLocaleString()} under ${LASSO.minUmi} UMI`) + `</small>`);
+            (L.prot ? "" : ` · ${R.info.dropped[i].toLocaleString()} under ${LASSO.minUmi} UMI`) +
+            (R.info.qcRemoved ? ` · ${R.info.qcRemoved[i].toLocaleString()} removed by QC` : "") + `</small>`);
         const n = R ? R.info.kept[i] : s.bins;
         if (n > 0 && n < LASSO.smallShape) notes.push(`<small class="warn">too few bins for this shape to mean much</small>`);
         const rr = L.prot && L.roi && L.roi.sig === lassoSig() && L.roi.key === S.exprKey ? L.roi.rows.find((x) => x.shape === i) : null;
@@ -1790,6 +1821,8 @@
     const total = L.shapes.reduce((a, s) => a + s.bins, 0);
     if (!L.running && !R) {
       let m = L.shapes.length ? `${total.toLocaleString()} bins inside the shapes.` : "Pick Circle or Freehand, then draw on the slide.";
+      const qcOut = L.shapes.length ? binQcInShapes() : 0;
+      if (qcOut) m += ` The QC filter leaves out ${qcOut.toLocaleString()} of them.`;
       if (total > LASSO_CAP) m += ` Over ${LASSO_CAP.toLocaleString()}: a seeded sample of ${LASSO_CAP.toLocaleString()} will be used` +
         (TOUCH ? ` (a phone's limit; a computer takes up to ${LASSO.cap.toLocaleString()}).` : ".");
       const secs = Math.round(Math.min(total, LASSO_CAP) * 0.00095);
@@ -2048,6 +2081,7 @@
   async function lassoRun() {
     const L = S.lasso;
     if (L.running || !L.hvg || !L.assign) return;
+    const qcKeep = binQc && !L.prot ? binQc.keepMask() : null, qcState = binQc && !L.prot ? binQc.state() : null, qcTxt = qcKeep ? binQc.describe() : "", qcNote = L.qcNote || "";
     const msg = (t, err) => { $("lassoMsg").textContent = L.prot ? toProtWords(t) : t; $("lassoMsg").style.color = err ? "#ff8f8f" : ""; };
     const mode = $("lassoMode").value;
     const seed = Number($("lassoSeed").value);
@@ -2090,7 +2124,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261110u");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261111q");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
@@ -2109,7 +2143,7 @@
       const cluster = d.cluster && d.cluster.length === d.rows.length ? d.cluster : null;
       L.result = { emb: d.emb, rows: d.rows, shape: d.shape, cluster, info: d.info, idxOfRow, seed, params, layer: S.exprKey,
                    resolution: cluster ? (d.info.resolution != null ? d.info.resolution : resolution) : null,
-                   secs: (performance.now() - t0) / 1000, id: Date.now() };
+                   secs: (performance.now() - t0) / 1000, id: Date.now(), qc: qcState };
       if (cluster && !d.info.nClusters) { let m = 0; for (const c of cluster) if (c !== LASSO_NONE && c + 1 > m) m = c + 1; d.info.nClusters = m; }
       L.brush = null; L.selShape = null; L.hover = -1; L.lpVs = null; L.selCluster = null; L.clNames = {};
       const I = d.info, drop = I.dropped.reduce((a, b) => a + b, 0);
@@ -2124,6 +2158,8 @@
              mode === "bins" && clustering ? "No clusters came back (this worker version does not cluster yet)." : "",
            cluster ? lassoStabilityNote(I) : "",
            L.prot && L.roiError ? `Not compared with the rest of the slide: ${L.roiError}` : "",
+           I.qcRemoved ? `QC filter: left out ${I.qcRemoved.reduce((a, b) => a + b, 0).toLocaleString()} bins (${qcTxt}).` : "",
+           qcNote,
           ].filter(Boolean).join("\n"));
       $("lassoPanel").hidden = false;
       lassoRefresh(); buildLassoUI();
@@ -2143,7 +2179,8 @@
                                mean: st ? st.mean : null, sd: st ? st.sd : null } : null;
     const flags = L.prot && S.qc.flags && S.qc.key === S.exprKey ? S.qc.flags : null;   // for the "Artefact?" name
     L.worker.postMessage({ chunks: bufs, rowShape: L.assign, nShapes: L.shapes.length, nGenes: L.hvg.nGenes, params, resolution,
-                           geneNames: L.hvgGenes || null, markerSet, protein, flags });
+                           geneNames: L.hvgGenes || null, markerSet, protein, flags, qcKeep });
+    L.qcNote = null; $("bqStale").hidden = true;
   }
 
   // ---- the UMAP panel: its own small deck --------------------------------------------
@@ -2390,6 +2427,8 @@
                                       rows: Array.from(R.rows), cluster: Array.from(R.cluster) } : {}) } : null,
       // the whole-section clustering, if one is shown: its resolution and any names given to clusters
       sectionClusters: umapSaveState(),
+      // the per-bin QC thresholds the result was computed with (null = no filter)
+      qcFilter: R ? R.qc || null : binQc ? binQc.state() : null,
       saved: new Date().toISOString(),
     };
     lassoDownload(`${S.dsId}_${S.exprKey}_shapes.json`, JSON.stringify(out, null, 1), "application/json");
@@ -2428,6 +2467,7 @@
     if (Number.isInteger(j.seed)) $("lassoSeed").value = j.seed;
     if (Number.isFinite(j.resolution) || j.resolution === "auto") $("lassoRes").value = j.resolution;
     umapLoadState(j.sectionClusters);
+    L.qcNote = binQc ? binQc.setState(j.qcFilter || null) : null;   // a file without qcFilter = no filter
     if (j.mode === "bins" || j.mode === "shapes") $("lassoMode").value = j.mode;
     lassoShapesChanged();
     lassoRun();
@@ -5205,6 +5245,7 @@
     S.genes = []; S.tissue.positions = null; S.heat = null;
     S.region = { meta: null, ids: null, lookup: null, selected: null, overlayKey: null };
     lassoReset();
+    if (binQc) binQc.reset();
     umapReset();
     S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
     leaveRna();
@@ -5327,6 +5368,7 @@
   async function init() {
     sheetEvents();                                  // first, so the controls open even if loading fails
     initDeck();
+    binQcInit();
     lassoInit();
     umapInit();
     gateInit();

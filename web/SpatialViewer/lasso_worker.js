@@ -720,9 +720,12 @@ function run(msg) {
   d = subset(d, d.rows.map((_, i) => i).sort((a, b) => d.rows[a] - d.rows[b]));
   const nShapes = msg.nShapes;
   const found = new Array(nShapes).fill(0), dropped = new Array(nShapes).fill(0);
+  // the page's QC filter (qc.js): one byte per row, 0 = removed; absent when nothing is removed
+  const qk = msg.qcKeep && msg.qcKeep.length ? msg.qcKeep : null, qcOut = new Array(nShapes).fill(0);
   const ok = [];
   for (let i = 0; i < d.rows.length; i++) {
     found[d.shape[i]]++;
+    if (qk && !qk[d.rows[i]]) { qcOut[d.shape[i]]++; continue; }
     if (d.lib[i] >= P.minUmi) ok.push(i); else dropped[d.shape[i]]++;
   }
   let sampledFrom = 0;
@@ -736,6 +739,7 @@ function run(msg) {
   const kept = new Array(nShapes).fill(0);
   d.shape.forEach((s) => kept[s]++);
   const info = { found, dropped, kept, sampledFrom, nIn: d.rows.length };
+  if (qk) info.qcRemoved = qcOut;
 
   // one summed profile per shape
   if (P.mode === "shapes") {
@@ -750,7 +754,7 @@ function run(msg) {
     d = agg;
   }
   const N = d.rows.length;
-  if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} bins with ≥ ${P.minUmi} UMI; the shapes hold ${N}.`);
+  if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} bins with ≥ ${P.minUmi} UMI${qk ? " that pass the QC filter" : ""}; the shapes hold ${N}.`);
   if (P.mode === "shapes" && N < 3) throw new Error(`"One dot per shape" needs at least 3 non-empty shapes; there are ${N}.`);
 
   // log1p CP10k, then gene stats over the selection (zeros included) and in how many bins

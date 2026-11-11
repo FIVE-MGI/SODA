@@ -160,6 +160,16 @@
         <div class="btnrow"><button id="selShow" hidden title="Frame the lit squares on the slide (from the UMAP view, the dots fly back to the tissue)">Show on slide</button><button id="selToShape" hidden title="Add the selected bins to Circle → UMAP below as one more shape">Use selection as a shape</button></div>
       </section>
 
+      <!-- per-bin QC filter (qc.js): histograms of binqc/ values with min / max thresholds; hidden for older exports -->
+      <section class="panel" id="panelBinQc" hidden>
+        <h2>Bin QC filter <span id="bqCount" class="count"></span></h2>
+        <div id="bqMetrics" class="bq-metrics"></div>
+        <div id="bqSummary" class="meta bq-summary"></div>
+        <div id="bqStale" class="meta bq-stale" hidden>The thresholds changed since the last Circle → UMAP run: press Run UMAP to apply them.</div>
+        <label class="row slim check"><input id="bqGrey" type="checkbox" checked /><span>Grey out removed bins on the slide</span></label>
+        <div class="btnrow"><button id="bqReset" title="Remove every threshold: keep all bins" disabled>Reset (keep all)</button></div>
+        <div class="meta">Off until you move a slider. Applies to Circle → UMAP (PCA, UMAP, clusters); the whole-section UMAP was made at export and does not change. Saved with Save JSON and in the page link.</div>
+      </section>
       <section class="panel" id="panelLasso" hidden>
         <h2>Circle → UMAP <span id="lassoCount" class="count"></span></h2>
         <div class="btnrow">
@@ -287,6 +297,7 @@
   </div>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="viewer.js?v=20261110u"></script>
+  <script src="qc.js?v=20261111a"></script>
+  <script src="viewer.js?v=20261111q"></script>
 </body>
 </html>

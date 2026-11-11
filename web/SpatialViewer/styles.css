@@ -469,3 +469,17 @@ label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
 .lasso-panel .lp-mkvs { padding: 4px 10px 0; font-size: 11px; color: var(--muted); }
 .lasso-panel .lp-mkvs .seg button { padding: 1px 8px; font-size: 11px; }
 #lassoRun, #lassoCompare, #lassoRoiCsv { white-space: nowrap; }
+
+/* ---- per-bin QC filter (qc.js) ---------------------------------------------------- */
+.bq-metric { margin: 6px 0 10px; }
+.bq-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.bq-head .bq-name { color: var(--text); }
+.bq-head .bq-cut { color: var(--muted); font-size: 11px; text-align: right; }
+.bq-head .bq-cut.on { color: #ffd84d; }
+.bq-hist { display: block; width: 100%; height: 56px; margin-top: 3px; background: var(--panel2); border-radius: 3px; }
+.bq-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+.bq-sl { display: grid; grid-template-columns: 30px 1fr 64px; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.bq-sl input[type=text] { width: 100%; font-size: 11px; padding: 1px 4px; }
+.bq-summary { word-break: normal; }
+.bq-summary b { color: var(--text); }
+.bq-stale { color: #ffd84d; word-break: normal; }
