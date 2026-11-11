@@ -190,9 +190,13 @@
                                                 (e) => { if (live()) throw e; return dropped(); });
     for (const k of Object.keys(src)) {
       const f = src[k];
-      if (typeof f !== "function" || k === "tileUrl") continue;   // tileUrl only builds a string
-      // dataFetch / apiFetch pick srcSignal up as they start, so every method gets the signal
-      src[k] = (...a) => { srcSignal = signal; try { return hold(f(...a)); } finally { srcSignal = null; } };
+      if (typeof f !== "function") continue;
+      // dataFetch / apiFetch pick srcSignal up as they start, so every method gets the signal.
+      // A method that answers at once (tileUrl builds a string) is passed through as it is.
+      src[k] = (...a) => {
+        srcSignal = signal;
+        try { const r = f(...a); return r && typeof r.then === "function" ? hold(r) : r; } finally { srcSignal = null; }
+      };
     }
     return src;
   }
@@ -5783,6 +5787,7 @@
     render();
     status(null);
     await molOnDataset();
+    if (stale()) return;
     if (shownEx.length) { sel.value = shownEx[0].key; await setExprKey(shownEx[0].key); }
     if (stale()) return;
     // Tier A: turn the region overlay on so it's clickable without hunting for the toggle.
