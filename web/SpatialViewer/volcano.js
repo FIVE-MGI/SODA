@@ -91,7 +91,7 @@
       for (let c = 0; c < n; c++) out.run.push({ v: `c:${c}`, t: `${(L.clNames && L.clNames[c]) || `Cluster ${c}`} of the UMAP run${sizes[c] ? ` (${sizes[c].toLocaleString()} bins)` : ""}` });
     }
     const sec = api.sectionClusters();
-    if (sec) for (let c = 0; c < sec.n; c++) out.section.push({ v: `k:${c}`, t: `${sec.names[c] || `Cluster ${c}`} of the section (res ${sec.res}${sec.sizes && sec.sizes[c] ? `, ${sec.sizes[c].toLocaleString()} bins` : ""})` });
+    if (sec) for (let c = 0; c < sec.n; c++) out.section.push({ v: `k:${c}`, t: `${sec.names[c] || `Cluster ${c}`} of the section (${sec.label || `res ${sec.res}`}${sec.sizes && sec.sizes[c] ? `, ${sec.sizes[c].toLocaleString()} bins` : ""})` });
     return out;
   }
   function fillSelect(sel, groups, extra, keep) {
