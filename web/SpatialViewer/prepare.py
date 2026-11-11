@@ -285,8 +285,15 @@ def main(argv=None):
                               flip=manifest.get("flip", ""),
                               image_size=(manifest["image"]["width"], manifest["image"]["height"]))
             manifest["expr"].append(meta)
-            if manifest["pixelSizeUm"] is None and meta.get("micronsPerPixel"):
-                manifest["pixelSizeUm"] = meta["micronsPerPixel"]
+            # Space Ranger's microns_per_pixel is measured on this exact image grid, so it wins
+            # over the TIFF's own resolution tag; only --pixel-size overrides it.
+            sr_um = meta.get("micronsPerPixel")
+            if sr_um and args.pixel_size is None:
+                old = manifest["pixelSizeUm"]
+                if old and abs(old - sr_um) / sr_um > 0.05:
+                    log(f"[visium] pixel size: Space Ranger says {sr_um:.4f} µm/px, the image file "
+                        f"{old:.4f}; using Space Ranger's")
+                manifest["pixelSizeUm"] = sr_um
         if not layers:
             log("[visium] WARNING: no count layers found under", args.outs)
 

@@ -37,6 +37,7 @@ from numcodecs import Blosc
 from PIL import Image
 
 TILE = 1024
+MAX_PLAUSIBLE_UM_PER_PX = 10.0   # TIFF resolution tags above this are print settings, not optics
 
 # Default colors assigned by channel NAME (case-insensitive substring), then
 # by index for anything unnamed. DAPI/Hoechst blue is the one everyone expects.
@@ -269,9 +270,15 @@ class TiffStackSource(Source):
             if not xres or xres <= 1:
                 return None
             if unit == 3:      # centimetre
-                return 10000.0 / float(xres)
-            if unit == 2:      # inch
-                return 25400.0 / float(xres)
+                um = 10000.0 / float(xres)
+            elif unit == 2:    # inch
+                um = 25400.0 / float(xres)
+            else:
+                return None
+            # Many exports keep a print / screen setting here (72, 96 or 300 dpi = 353, 265 or
+            # 84.7 um/px), not the microscope's. No slide scan is coarser than ~10 um/px, so
+            # anything above that is not a physical pixel size: leave it unknown.
+            return um if um <= MAX_PLAUSIBLE_UM_PER_PX else None
         except Exception:
             pass
         return None
