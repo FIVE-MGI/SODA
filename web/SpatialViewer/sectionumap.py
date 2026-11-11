@@ -34,6 +34,9 @@ import json
 import sys
 import time
 
+import threadcap
+threadcap.apply()                                      # before numpy, when this is the first module to load it
+
 import numpy as np
 from scipy import linalg, sparse
 
@@ -66,6 +69,13 @@ def _params() -> dict:
 
 
 def _pca(Xh: sparse.csr_matrix, n_pcs: int) -> np.ndarray:
+    """_pca_uncapped with the BLAS / OpenMP threads capped (threadcap.py): with one thread per
+    logical CPU on a process that may use only some of them, the eigensolve took minutes."""
+    with threadcap.limit():
+        return _pca_uncapped(Xh, n_pcs)
+
+
+def _pca_uncapped(Xh: sparse.csr_matrix, n_pcs: int) -> np.ndarray:
     """PCA of the z-scored, clipped HVG matrix without ever holding it dense.
 
     After scaling and clipping, every zero of a gene column becomes the same value
