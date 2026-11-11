@@ -1459,6 +1459,7 @@
     const L = S.lasso, e = currentExpr();
     lassoCancel(); L.result = null; L.brush = null; L.selShape = null; L.selCluster = null; L.chunks = new Map(); L.hvgGenes = null;
     $("lassoPanel").hidden = true;
+    if (window.SodaVolcano) window.SodaVolcano.reset();
     const prot = !!(e && e.kind === "protein" && e.mat);
     const ok = S.src && S.src.kind === "static" && e && (e.hvg || prot) && S.mode !== "rna";
     $("panelLasso").hidden = !ok;
@@ -1802,6 +1803,7 @@
     $("lassoCompare").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoSaveCsv").disabled = !R;
     buildRoiTable();
+    if (window.SodaVolcano) window.SodaVolcano.refresh();
   }
 
   function lassoCancel() {
@@ -2483,6 +2485,19 @@
     window.addEventListener("resize", () => { if (S.lasso && S.lasso.result) renderLassoPanel(); });
     // for testing from the console: restore shapes saved with Save JSON, without a file
     window.__spatialViewer.lassoLoad = (obj) => lassoLoadJson({ text: async () => JSON.stringify(obj) });
+    // volcano plots (volcano.js, de_worker.js): handed only what they need from here
+    if (window.SodaVolcano) window.SodaVolcano.init({
+      state: () => S, touch: TOUCH, fetchChunks: lassoFetch, chunkOf: lassoChunkOf, addGene, download: lassoDownload,
+      geneXyv: (name) => S.src.gene(S.exprKey, name),
+      hvgGenes: async () => { const L = S.lasso; if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { return null; } } return L.hvgGenes; },
+      // the section's Leiden clusters at the resolution shown (names given in the Clusters panel)
+      sectionClusters: () => {
+        if (!umapAvail() || !S.umap || S.umap.res == null) return null;
+        const c = umapClusterings().find((x) => x.resolution === S.umap.res);
+        return c ? { n: c.n, res: c.resolution, sizes: c.sizes || null, names: (S.umap.names && S.umap.names[c.resolution]) || {} } : null;
+      },
+      loadSectionClusters: async () => { await umapSetRes(S.umap.res); return S.umap.cl ? { cl: S.umap.cl, res: S.umap.clRes } : null; },
+    });
     buildLassoUI();
   }
 
