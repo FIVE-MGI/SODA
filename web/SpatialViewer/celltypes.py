@@ -127,10 +127,10 @@ def best_type(score: np.ndarray, scored: np.ndarray, bin_min: float = BIN_MIN) -
 
 
 def summarise_clusters(lab: np.ndarray, best: np.ndarray, score: np.ndarray, scored: np.ndarray,
-                       names: list[str]) -> list[dict]:
-    """One suggestion per cluster id 0..max(lab)."""
+                       names: list[str], k: int | None = None) -> list[dict]:
+    """One suggestion per cluster id 0..max(lab) (0..k-1 when k is given)."""
     T = len(names)
-    k = int(lab.max()) + 1
+    k = int(lab.max()) + 1 if k is None else int(k)
     out = []
     for ci in range(k):
         m = lab == ci
@@ -186,7 +186,13 @@ def write_celltypes(er, d, markers: Path | None = None, log=print) -> dict | Non
     # positions.bin keeps only bins with a position, in order: that is the row space
     row_of = np.cumsum(on_image) - 1
     n_rows = int(on_image.sum())
-    coords = np.fromfile(ud / "coords.bin", dtype="<f4").reshape(-1, 2)
+    # SODA's own embedded bins are the population scored; after a user import (userclusters.py)
+    # coords.bin may be the user's embedding, and SODA's is kept as coords_soda.bin
+    cf = ud / "coords_soda.bin" if (ud / "coords_soda.bin").exists() else ud / "coords.bin"
+    if "userImport" in index and cf.name == "coords.bin":
+        log(f"[celltypes] {key}: no SODA UMAP to score on (user results only), skipped")
+        return None
+    coords = np.fromfile(cf, dtype="<f4").reshape(-1, 2)
     if len(coords) != n_rows:
         raise SystemExit(f"[celltypes] {key}: coords.bin has {len(coords)} rows, positions.bin {n_rows}")
     emb_rows = np.flatnonzero(~np.isnan(coords[:, 0]))
@@ -232,6 +238,12 @@ def write_celltypes(er, d, markers: Path | None = None, log=print) -> dict | Non
     for c in index["clusterings"]:
         cl = np.fromfile(ud / c["file"], dtype="<u2")
         lab = cl[emb_rows].astype(np.int64)
+        if c.get("source") == "user":                  # the user's groups: only their assigned bins count
+            if len(cl) != n_rows or int(cl[cl != NO_CLUSTER].max(initial=0)) >= c["n"]:
+                raise SystemExit(f"[celltypes] {key}: {c['file']} does not match index.json")
+            m = lab != NO_CLUSTER
+            clusterings[c["id"]] = summarise_clusters(lab[m], best[m], score[m], scored, names, k=c["n"])
+            continue
         if len(cl) != n_rows or (lab == NO_CLUSTER).any() or int(lab.max()) + 1 != c["n"]:
             raise SystemExit(f"[celltypes] {key}: {c['file']} does not match coords.bin / index.json")
         clusterings[f"{c['resolution']:g}"] = summarise_clusters(lab, best, score, scored, names)

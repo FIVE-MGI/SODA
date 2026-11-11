@@ -11,6 +11,7 @@ Cache layout  <dataset>/expr/<key>.zarr
     indices   (nnz,) int32     -> row of xy
     data      (nnz,) float32   UMI count
     totals    (G,)   float32   per-gene sum (for ranking the picker)
+    barcodes  (B,)   bytes     barcode of each row of xy (userclusters.py matches user files by it)
     attrs: genes [..], binSizeUm, spotDiameterPx, micronsPerPixel, ...
 
 Positions are whatever frame Space Ranger's `pxl_*_in_fullres` uses, i.e. the
@@ -178,6 +179,9 @@ def build_expr(layer: dict, out_dir: Path, image_scale: float = 1.0, log=print,
     g.create_dataset("data", data=csr.data.astype(np.float32), chunks=(1 << 20,), compressor=comp, overwrite=True)
     totals = np.asarray(csr.sum(axis=1)).ravel().astype(np.float32)
     g.create_dataset("totals", data=totals, compressor=comp, overwrite=True)
+    # in xy order: user clusters / UMAPs (userclusters.py) are matched to rows by barcode
+    g.create_dataset("barcodes", data=np.array([b.encode() for b in barcodes], dtype="S"),
+                     chunks=(1 << 20,), compressor=comp, overwrite=True)
     g.attrs["genes"] = names
     meta = {"key": key, "label": layer["label"], "nBins": int(B), "nGenes": int(len(names)),
             "binSizeUm": layer.get("binSizeUm"), "spotDiameterPx": spot_px,
