@@ -39,6 +39,16 @@ container behind a password. No database and no always-on server are needed.
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
   slide and left out of Circle → UMAP, and the thresholds are saved with the shapes and in
   the page link.
+- **Heatmap, dot plot and violin plots.** Compare genes across groups: the section's clusters
+  at any resolution, the shapes you drew, Circle → UMAP clusters, the regions of an overlay,
+  or (single-cell datasets) any annotation column. Genes are each group's top markers plus any
+  you type. A bin's value is log1p(counts per 10k); the heatmap shows the group mean (as it
+  is, or z-scored / scaled 0–1 per gene), the dot plot adds the share of bins expressing, and
+  violins show the spread with median and quartiles, with an "expressing only" switch because
+  most bins hold zero. Every group shows its number of bins and the QC filter applies. Click a
+  gene or a group to **show it on the slide**; save PNG, SVG, or the plotted numbers as CSV.
+  Computed in your browser from the per-gene files (a typical cluster heatmap of a Visium HD
+  section reads roughly 10–30 MB).
 - **Multiplexed protein images (Akoya / PhenoCycler and other multi-channel TIFFs).** The
   slide is cut into 16 µm squares holding each marker's mean intensity (from full-resolution
   pixels), and the squares get everything above: UMAP, Leiden clusters, suggested names from
@@ -197,7 +207,8 @@ support WebGL2. Password-encrypted dataset links need the page to be served over
   screen the viewer draws at most 2× the screen's CSS pixels, keeps fewer image tiles,
   notes when more than 10 stains are on (a phone can run out of memory and reload the
   page), and Circle → UMAP samples at most 20,000 bins (50,000 on a computer) and keeps
-  the screen on while it runs. A shape file saved on a phone records that limit; rerun on
+  the screen on while it runs. Heatmaps and violins take up to 40 genes at a time (150 on a
+  computer) and ask before downloading more than 30 MB of gene files. A shape file saved on a phone records that limit; rerun on
   a computer, a selection of more than 20,000 bins is sampled up to 50,000 instead.
 
 The phone layout and touch handling were tested in Chrome's phone emulation and on an

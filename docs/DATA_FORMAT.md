@@ -220,6 +220,29 @@ in Circle → UMAP's saved JSON as
 `?qc=<layer>:<metric>=<min>-<max>,...`, e.g. `?qc=008um:total=20-,pctMt=-25`. Exports made
 before 11 November 2026 have no `binQc` block; the panel is then hidden and nothing is filtered.
 
+### What the heatmap, dot plot and violin plots read
+
+The **Heatmap · dot plot · violin** panel (`plots.js`, numbers from `plots_worker.js`) computes
+everything in the browser from files already described here; nothing extra is exported.
+
+| Needed for | File |
+|---|---|
+| each gene shown | `gene/<NAME>.bin` (one request per gene, whole layer; placed on rows by walking `positions.bin` in order, or by exact position if the file is not in row order) |
+| counts per 10k | `binqc/total.bin`. Without it (exports before 11 November 2026): the library sizes in the `hvg/` chunks under the groups; without those: log1p of the raw counts, labelled "not depth-normalised" |
+| groups | `umap/index.json` and `umap/<file>` of the chosen clustering (labelled by its `name` if it has one, else "Leiden <resolution>"); `region.bin` and the layer's `regions[]`; drawn shapes and Circle → UMAP clusters come from the page itself |
+| default genes | `clusterings[].markers` (the first N per cluster) |
+| single-cell datasets | `obs/<NN>.bin` of a `category` column, `gene/<NAME>.bin` (values used as stored) |
+
+Definitions: a bin counts for a group if it is in it, kept by the QC filter (when one is set)
+and has ≥ 10 UMI (only when totals are available). Value of a bin = log1p(count × 10,000 /
+total). **Mean** = over all kept bins of the group, zeros included; **fraction expressing** =
+bins with a count > 0 / kept bins; per-gene scaling (optional) = z-score across the groups
+shown (sd with n − 1, colour clipped at ±2.5) or (mean − min) / (max − min). **Violin** =
+Gaussian kernel density with Scott's bandwidth (sd × n^(−1/5)), drawn between the smallest and
+largest value only, quartiles by linear interpolation; "expressing only" leaves out the bins
+with a count of 0. The saved CSV holds the numbers plotted, with the number of bins per group
+and how many were left out by the QC filter and the UMI minimum.
+
 ### `hvg/`: data for the circle → UMAP tool
 
 Written for layers with bins of 8 µm or more (and classic spots), when at least 50 bins
