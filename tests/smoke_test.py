@@ -380,8 +380,13 @@ def check_umap(c: Checker, d: Path, L: dict, pos, lib, truth, step_px) -> dict:
     emb = ~np.isnan(co[:, 0])
     c.ok((np.isnan(co[:, 0]) == np.isnan(co[:, 1])).all(), f"{key}: coords.bin half-NaN rows")
     c.eq(int(emb.sum()), idx["nEmbedded"], f"{key}: embedded rows vs nEmbedded")
-    c.ok(((lib >= idx["minUmi"]) == emb).all(),
-         f"{key}: embedded rows are not exactly the bins with >= {idx['minUmi']} UMI")
+    # embedded = >= minUmi UMI, less the few bins with < minHvgDetected variable genes detected
+    c.ok((emb <= (lib >= idx["minUmi"])).all(), f"{key}: an embedded bin has < {idx['minUmi']} UMI")
+    out_few = int(((lib >= idx["minUmi"]) & ~emb).sum())
+    c.ok(out_few <= 0.02 * max(1, int((lib >= idx["minUmi"]).sum())),
+         f"{key}: {out_few} bins >= {idx['minUmi']} UMI left out for too few variable genes (expected a handful)")
+    raw = (ud / "index.json").read_text(encoding="utf-8")
+    c.ok("NaN" not in raw and "Infinity" not in raw, f"{key}: umap/index.json has NaN / Infinity (a browser cannot parse it)")
     b = idx["bounds"]
     c.ok((co[emb, 0] >= b[0] - 1e-3).all() and (co[emb, 0] <= b[2] + 1e-3).all()
          and (co[emb, 1] >= b[1] - 1e-3).all() and (co[emb, 1] <= b[3] + 1e-3).all(), f"{key}: coords outside bounds")
@@ -622,11 +627,20 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     if not c.ok((ud / "index.json").exists(), f"{key}: umap/index.json missing"):
         return {"squares": n}
     idx = read_json(ud / "index.json")
-    c.eq((idx.get("nBins"), idx.get("nEmbedded")), (n, n), f"{key}: umap nBins / nEmbedded vs squares")
+    c.eq(idx.get("nBins"), n, f"{key}: umap nBins vs squares")
+    raw = (ud / "index.json").read_text(encoding="utf-8")
+    c.ok("NaN" not in raw and "Infinity" not in raw, f"{key}: umap/index.json has NaN / Infinity (a browser cannot parse it)")
     c.eq(idx.get("modality"), "protein", f"{key}: umap modality")
     c.eq(idx["params"].get("channels"), L["channels"], f"{key}: umap params.channels vs manifest channels")
     co = f32(ud / "coords.bin", 2)
-    c.ok(len(co) == n and np.isfinite(co).all(), f"{key}: coords.bin rows / NaN (every square is embedded)")
+    # every square is embedded except those at background in every embedded channel
+    c.ok(len(co) == n and (np.isnan(co[:, 0]) == np.isnan(co[:, 1])).all(), f"{key}: coords.bin rows / half-NaN rows")
+    pe = np.isfinite(co[:, 0])
+    c.eq(int(pe.sum()), idx.get("nEmbedded"), f"{key}: embedded squares vs nEmbedded")
+    c.ok(idx.get("nEmbedded", 0) >= 0.5 * n, f"{key}: only {idx.get('nEmbedded')} of {n} squares embedded")
+    for cl in idx["clusterings"]:
+        lab = np.fromfile(str(ud / cl["file"]), dtype="<u2")
+        c.ok(((lab == NO_CLUSTER) == ~pe).all(), f"{key}: {cl['file']}: 0xFFFF rows != not-embedded squares")
     u = L.get("umap") or {}
     c.eq([(x["resolution"], x["n"]) for x in u.get("clusterings", [])],
          [(x["resolution"], x["n"]) for x in idx["clusterings"]], f"{key}: manifest umap.clusterings")
@@ -639,16 +653,19 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     for cl in idx["clusterings"]:
         lab = np.fromfile(str(ud / cl["file"]), dtype="<u2").astype(np.int64)
         c.eq(len(lab), n, f"{key}: {cl['file']} rows")
-        c.ok((lab < cl["n"]).all(), f"{key}: {cl['file']}: label >= n (or 0xFFFF)")
-        sizes = np.bincount(lab, minlength=cl["n"])
+        c.ok((lab[pe] < cl["n"]).all() and (lab[~pe] == NO_CLUSTER).all(),
+             f"{key}: {cl['file']}: label >= n, or 0xFFFF on an embedded square")
+        sizes = np.bincount(lab[pe], minlength=cl["n"])
         c.eq(sizes.tolist(), cl["sizes"], f"{key}: {cl['file']}: sizes")
         c.ok((np.diff(sizes) <= 0).all(), f"{key}: {cl['file']}: cluster 0 is not the largest")
         c.eq(len(cl["markers"]), cl["n"], f"{key}: {cl['file']}: one marker list per cluster")
         c.ok(all(m["gene"] in V for ms in cl["markers"] for m in ms), f"{key}: {cl['file']}: marker not a channel")
-        same = float((lab[pairs[:, 0]] == lab[pairs[:, 1]]).mean())
-        sh = rng.permutation(lab)
-        chance = float((sh[pairs[:, 0]] == sh[pairs[:, 1]]).mean())
-        a = ari(lab, truth)
+        pp = pairs[pe[pairs[:, 0]] & pe[pairs[:, 1]]]
+        same = float((lab[pp[:, 0]] == lab[pp[:, 1]]).mean())
+        sh = lab.copy()
+        sh[pe] = rng.permutation(sh[pe])
+        chance = float((sh[pp[:, 0]] == sh[pp[:, 1]]).mean())
+        a = ari(lab[pe], np.asarray(truth)[pe])
         # ~1,300 squares in 13-18 clusters at r=1: chance is tiny, so also accept 3x chance
         c.ok(same > chance + 0.25 or same > 3 * chance,
              f"{key}: r={cl['resolution']}: neighbours agree {same:.2f} vs shuffled {chance:.2f}")
@@ -667,7 +684,7 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     c.eq((u.get("celltypes") or {}).get("nTypes"), len(names), f"{key}: manifest umap.celltypes.nTypes")
     tb = np.fromfile(str(ud / "celltype.bin"), dtype=np.uint8)
     c.eq(len(tb), n, f"{key}: celltype.bin rows")
-    c.ok(((tb < len(names)) | (tb == 254)).all(), f"{key}: celltype.bin values out of range (255 = not embedded is impossible here)")
+    c.ok(((tb < len(names)) | (tb == 254) | ((tb == 255) & ~pe)).all(), f"{key}: celltype.bin values out of range (255 only for squares not embedded)")
     typed = tb < len(names)
     agree = float(np.mean([names[v].lower() == r for v, r in zip(tb[typed], truth[typed])])) if typed.any() else 0.0
     c.ok(agree > 0.6, f"{key}: squares' suggested type matches the drawn region for {agree:.0%} of typed squares")
@@ -851,19 +868,20 @@ def check_sample(c: Checker, root: Path, L: dict) -> dict:
         return {}
     ia, ib = read_json(a / "index.json"), read_json(b / "index.json")
     n = ia["nBins"]
-    c.eq((ib.get("nBins"), ib.get("nEmbedded"), ib.get("fitOn")), (n, n, SAMPLE), f"{key}: sample nBins / nEmbedded / fitOn")
+    c.eq((ib.get("nBins"), ib.get("nEmbedded"), ib.get("fitOn")), (n, ia["nEmbedded"], SAMPLE), f"{key}: sample nBins / nEmbedded / fitOn")
     c.ok("fitted on" in ib["params"].get("fit", "") and ia["params"].get("fit") == "all rows",
          f"{key}: params.fit {ib['params'].get('fit')!r} / {ia['params'].get('fit')!r}")
     co = f32(b / "coords.bin", 2)
-    c.ok(len(co) == n and np.isfinite(co).all(), f"{key}: sample coords.bin rows / NaN")
+    c.ok(len(co) == n and int(np.isfinite(co).all(1).sum()) == ia["nEmbedded"], f"{key}: sample coords.bin rows / NaN")
     out = {}
     for ca, cb in zip(ia["clusterings"], ib["clusterings"]):
         la = np.fromfile(str(a / ca["file"]), dtype="<u2").astype(np.int64)
         lb = np.fromfile(str(b / cb["file"]), dtype="<u2").astype(np.int64)
-        sizes = np.bincount(lb, minlength=cb["n"])
-        c.ok(len(lb) == n and (lb < cb["n"]).all() and sizes.tolist() == cb["sizes"] and (np.diff(sizes) <= 0).all(),
-             f"{key}: sample {cb['file']}: labels / sizes / order")
-        out[ca["resolution"]] = round(ari(la, lb), 3)
+        m = lb != NO_CLUSTER                         # squares at background everywhere: not embedded
+        sizes = np.bincount(lb[m], minlength=cb["n"])
+        c.ok(len(lb) == n and (lb[m] < cb["n"]).all() and sizes.tolist() == cb["sizes"] and (np.diff(sizes) <= 0).all()
+             and (m == (la != NO_CLUSTER)).all(), f"{key}: sample {cb['file']}: labels / sizes / order")
+        out[ca["resolution"]] = round(ari(la[m], lb[m]), 3)
     best = max(out.values(), default=0)
     c.ok(best > 0.4, f"{key}: clusters from the sample disagree with the full fit (ARI {out})")
     print(f"    fitOn {ib.get('fitOn')} of {n}; ARI vs fitting on all: {out}")

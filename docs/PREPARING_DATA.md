@@ -156,7 +156,19 @@ Everything after that is automatic, so a slide needs no hand-tuning:
   the background (median of the off-tissue squares) is taken off, the result is divided by
   the channel's 99.5th percentile over the tissue (folds and other everything-bright squares
   left out of that percentile), then put through asinh (cofactor 0.2), so
-  a few very bright squares cannot dominate. Then z-scores, PCA and UMAP as for genes.
+  a few very bright squares cannot dominate. That value is what is shown, gated and ranked
+  as cluster markers.
+- **What the UMAP and clusters use: the mix of markers, not the brightness.** Every marker of
+  a square rises and falls with its overall brightness (cell density, section thickness,
+  the tissue edge), so on the values above the clusters became brightness bands. The UMAP
+  instead gets the centred log-ratio of each square's background-free, percentile-scaled
+  values (log(u + 0.1) minus the square's mean): which markers are up relative to the
+  others. Panels with fewer than 10 embedded markers keep the asinh values (with so few, one
+  bright marker moves the mean as much as brightness does). Then z-scores, PCA and UMAP as
+  for genes. Squares with no marker above about 10%
+  of its range (rims, gaps, empty squares: a quarter of one test slide) are left out of the
+  UMAP and the clusters, and counted in the slide QC as low signal; Circle → UMAP leaves
+  them out the same way.
 - **Slide QC** (`expr/<layer>/qc.json`, shown in the viewer under the layer): weak stains
   (signal under 15x background: kept, flagged), saturated stains (more than 1% of tissue
   pixels at the detector's limit: kept, flagged), squares where nearly every marker is bright
