@@ -58,6 +58,7 @@ import argparse
 import importlib.util
 import json
 import math
+import os
 import re
 import shutil
 import struct
@@ -177,8 +178,11 @@ def run(args: list[str], log_path: Path) -> float:
     with open(log_path, "a", encoding="utf-8") as lg:
         lg.write(f"\n$ python {' '.join(args)}\n")
         lg.flush()
+        # the child must print UTF-8 (its logs have µ): on Windows a piped child defaults to the
+        # ANSI code page, which this side would then read as broken characters
         p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         lg.write(p.stdout)
     dt = time.time() - t0
     tail = "\n".join(p.stdout.rstrip().splitlines()[-6:])
@@ -1411,6 +1415,9 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
 
 # ------------------------------------------------------------------ main
 def main(argv=None) -> int:
+    for stream in (sys.stdout, sys.stderr):      # a redirected Windows console (cp1252) must not stop the test
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=str(REPO / "demo"), help="where raw/, cache/, export/ go (default <repo>/demo)")
     ap.add_argument("--reuse", action="store_true", help="keep earlier outputs (export skips existing files)")
