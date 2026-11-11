@@ -268,7 +268,9 @@ What it writes, per dataset (layout in [DATA_FORMAT.md](DATA_FORMAT.md)):
 1. Image tiles for every channel and zoom level, then a check that one tile per channel
    matches the cache (`[export] verified N channel(s)`).
 2. Per expression layer: the gene list, bin positions, one file per gene, and, if a region
-   overlay exists, a region id per bin.
+   overlay exists, a region id per bin. Layers of 8 µm or more (and classic spots) also get
+   per-bin QC values (`binqc/`: total counts, genes detected, % mitochondrial) for the
+   viewer's Bin QC filter.
 3. Per layer with bins of 8 µm or more (or classic spots): the data for the circle → UMAP
    tool (`hvg/`) and the whole-section UMAP with Leiden clusters (`umap/`). See below.
 4. Overlays and the manifest, without your local file paths.
@@ -404,6 +406,14 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
     slide as a whole; against the other drawn squares lists what tells the clusters apart.
   - **Suggested names** are scored against the whole slide, so an all-immune circle is named
     immune.
+- **Bin QC filter.** On exports that carry `binqc/` (see [DATA_FORMAT.md](DATA_FORMAT.md)), a
+  panel above Circle → UMAP shows a histogram of total counts, genes detected and % mitochondrial
+  per bin, each with a min and a max slider (or type the number). It is **off by default**:
+  nothing is removed until you move a slider, so results do not change by themselves. Bins
+  outside a threshold are greyed on the slide and left out of the next run (PCA, UMAP,
+  clusters, markers); the per-shape counts say how many each shape lost. The thresholds go into
+  Save JSON (`qcFilter`) and the page link (`?qc=`), and Load JSON restores them (a file
+  without them loads with the filter off). The whole-section UMAP made at export is not filtered.
 - "Save JSON" stores the shapes, layer, seed and every parameter so a result can be redone;
   "Save CSV" saves bin row, shape and UMAP coordinates (no barcodes).
 - It works with exported data only, not with the live tile server.

@@ -35,6 +35,10 @@ container behind a password. No database and no always-on server are needed.
   optional Leiden clusters, of just the bins inside, computed in the browser. Drag a box or
   a loop over dots in its UMAP (Shift or **+** adds more) to light those bins on the slide,
   and **Show on slide** to frame them. Save the shapes and every parameter to redo it later.
+- **Bin QC filter.** Histograms of total counts, genes detected and % mitochondrial per bin,
+  each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
+  slide and left out of Circle → UMAP, and the thresholds are saved with the shapes and in
+  the page link.
 - **Multiplexed protein images (Akoya / PhenoCycler and other multi-channel TIFFs).** The
   slide is cut into 16 µm squares holding each marker's mean intensity (from full-resolution
   pixels), and the squares get everything above: UMAP, Leiden clusters, suggested names from
