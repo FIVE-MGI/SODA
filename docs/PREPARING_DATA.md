@@ -323,6 +323,78 @@ carries on; everything else, including the circle → UMAP data, is still writte
 **Recomputing.** An existing `expr/<layer>/umap/` made with the same parameters is reused.
 Delete that folder to compute it again.
 
+## Your own UMAP and clusters (Seurat, scanpy)
+
+If you have already clustered the same bins or spots (in Seurat or scanpy, with cell-type
+names), the export can show **your** results on a layer: by name in the Clustering menu, with
+your category names in the legend and on hover, and your colours. SODA's Leiden clusterings
+stay next to yours (yours first) unless you pass `--user-replace`. If you give clusters but
+no embedding, they are drawn on SODA's UMAP.
+
+What you give, for **one layer** (`--user-layer`, e.g. `008um`, `016um` or `spots`; the
+barcodes must be that layer's):
+
+| Option | File |
+|---|---|
+| `--user-umap umap.csv` | `barcode,UMAP_1,UMAP_2`: the first two numeric columns are used |
+| `--user-obs clusters.csv` | `barcode,<column>,...`, repeatable. Text columns and integer columns with at most 30 values become clusterings; an integer column named like a clustering (`seurat_clusters`, `leiden`, `SCT_snn_res.0.8`, ...) or listed in `--user-columns` may have up to 200. Other numeric columns are skipped. A column `<name>_color` with `#rrggbb` values gives the colours of `<name>` |
+| `--user-h5ad analysis.h5ad` | instead of the CSVs: obs columns, `obsm/X_umap` (or `--user-embedding <key>`) and the `uns/<column>_colors` palettes |
+| `--user-columns a,b` | only these columns (default: every usable one) |
+| `--user-barcode-prefix S1_` / `--user-barcode-suffix _2` | a merged object holding several sections: keep this section's barcodes |
+| `--user-replace` | leave SODA's Leiden clusterings out |
+
+```bash
+python web/SpatialViewer/prepare.py export --id sample1 --out <cache> --dest <export> \
+    --user-layer 008um --user-umap my_umap.csv --user-obs my_clusters.csv
+```
+
+On an export that already exists, `prepare.py userclusters` does only this step (same
+options, plus `--id`, `--out`, `--dest`), in seconds to minutes instead of a whole export.
+
+**From Seurat** (R; a Visium HD object loaded at one bin size):
+
+```r
+emb <- Embeddings(obj, "umap"); write.csv(emb, "my_umap.csv")
+meta <- obj@meta.data[, c("seurat_clusters", "cell_type")]; write.csv(meta, "my_clusters.csv")
+# colours (optional): meta$cell_type_color <- my_palette[as.character(meta$cell_type)]
+```
+
+**From scanpy** (Python):
+
+```python
+import pandas as pd
+pd.DataFrame(adata.obsm["X_umap"][:, :2], index=adata.obs_names, columns=["UMAP_1", "UMAP_2"]).to_csv("my_umap.csv")
+adata.obs[["leiden", "cell_type"]].to_csv("my_clusters.csv")      # or pass the .h5ad itself with --user-h5ad
+```
+
+**How rows are matched.** By barcode: exactly first, then the usual variants: a different or
+missing `-1` style suffix (`-1`, `_1`, `-1-0`, `.1`) and a sample prefix (`S1_`, `slice1_`,
+`S1:`). The export prints how many of your barcodes were found and by which rule.
+
+- Under 50 % found: the export **stops** and shows examples of your barcodes and of the
+  layer's (the usual cause is the wrong `--user-layer`, e.g. 16 µm clusters given for the 8 µm
+  layer; it says so when it can tell).
+- Some not found: a **warning**; the rest is imported.
+- Bins you did not cluster (filtered out in QC, or not in your file) show as "not assigned",
+  as SODA's own clusters show bins with too few counts.
+- A merged object (two sections whose barcodes become the same once the sample tag is
+  removed) stops with the tags it found: pick one with `--user-barcode-prefix` / `-suffix`.
+
+Marker genes per group are computed by SODA from the counts, the same way as for its own
+clusters, so the legend's marker lists, suggested names, the volcano plot's group pickers and
+the QC panel work with your groups too.
+
+**De-identification.** Column names and category values pass through `deid.py` as for
+single-cell data: a column that names samples (`sample`, `orig.ident`, `donor`, ...) has every
+value replaced by a number; barcodes and file names are never written.
+
+**Caches made before this feature** do not keep barcodes; they are then read again from the
+Space Ranger `outs` folder the cache was prepared from, which must still be reachable.
+Re-running `prepare.py visium` stores them in the cache.
+
+**Taking it back out.** Export again without the `--user-*` options: SODA's own UMAP and
+clusters (kept as `umap/index_soda.json` and `coords_soda.bin`) are put back.
+
 ## Suggested cluster names (marker lists)
 
 A cluster number says nothing about what the cluster is. After clustering, the export

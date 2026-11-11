@@ -2530,11 +2530,14 @@
       state: () => S, touch: TOUCH, fetchChunks: lassoFetch, chunkOf: lassoChunkOf, addGene, download: lassoDownload,
       geneXyv: (name) => S.src.gene(S.exprKey, name),
       hvgGenes: async () => { const L = S.lasso; if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { return null; } } return L.hvgGenes; },
-      // the section's Leiden clusters at the resolution shown (names given in the Clusters panel)
+      // the section's clustering on show (Leiden or the lab's own), with the names given in the Clusters panel
       sectionClusters: () => {
         if (!umapAvail() || !S.umap || S.umap.res == null) return null;
-        const c = umapClusterings().find((x) => x.resolution === S.umap.res);
-        return c ? { n: c.n, res: c.resolution, sizes: c.sizes || null, names: (S.umap.names && S.umap.names[c.resolution]) || {} } : null;
+        const c = umapClusterings().find((x) => clKey(x) === S.umap.res);
+        if (!c) return null;
+        const names = { ...(c.categories || []) }, own = (S.umap.names && S.umap.names[clKey(c)]) || {};
+        Object.assign(names, own);
+        return { n: c.n, res: clKey(c), label: clLabel(c), sizes: c.sizes || null, names };
       },
       loadSectionClusters: async () => { await umapSetRes(S.umap.res); return S.umap.cl ? { cl: S.umap.cl, res: S.umap.clRes } : null; },
     });
@@ -2573,12 +2576,34 @@
     const U = S.umap, m = umapMeta();
     return (U && U.index && U.index.clusterings) || (m && m.clusterings) || [];
   };
-  const umapClusterInfo = () => umapClusterings().find((c) => c.resolution === S.umap.clRes) || null;
-  const umapName = (c) => ((S.umap.names[S.umap.clRes] || {})[c]) || `Cluster ${c}`;
+  // a clustering is known by its "id" (the lab's own, userclusters.py) or its Leiden resolution
+  const clKey = (c) => (c ? (c.id != null ? c.id : c.resolution) : null);
+  const clUser = (c) => !!(c && c.source === "user");
+  const clLabel = (c) => (c ? c.name || `Leiden ${c.resolution}` : "");
+  const clFromValue = (v) => { const c = umapClusterings().find((x) => String(clKey(x)) === String(v)); return c ? clKey(c) : null; };
+  const umapClusterInfo = () => umapClusterings().find((c) => clKey(c) === S.umap.clRes) || null;
+  // a name given in the legend wins, then the lab's own category name, then "Cluster N"
+  const umapName = (c) => {
+    const own = (S.umap.names[S.umap.clRes] || {})[c];
+    if (own) return own;
+    const info = umapClusterInfo();
+    return info && info.categories && info.categories[c] != null ? String(info.categories[c]) : `Cluster ${c}`;
+  };
   // tab20, lifted for the dark background (see liftForDark); fixed per cluster id, so cluster 3
   // is the same colour in every view, the legend and the circle panel
   const clusterLut = [];
   const clusterRgb = (c) => (c === UMAP_NONE || c == null ? [120, 120, 120] : clusterLut[c] || (clusterLut[c] = liftForDark(catColor(c))));
+  // the section's clustering on show: the lab's own colours when it brought them (index.json "colors")
+  let secLut = { key: null, lut: null };
+  const sectionRgb = (c) => {
+    if (c === UMAP_NONE || c == null) return [120, 120, 120];
+    const U = S.umap, key = `${U.key}|${U.clRes}`;
+    if (secLut.key !== key) {
+      const info = umapClusterInfo(), cols = info && Array.isArray(info.colors) ? info.colors : null;
+      secLut = { key, lut: cols ? cols.map((h) => liftForDark(hexToRgb255(h))) : null };
+    }
+    return (secLut.lut && secLut.lut[c]) || clusterRgb(c);
+  };
   function umapDirty() { if (S.umap) S.umap.ver++; }
 
   // ---- the flight: one ScatterplotLayer, two positions per dot, mixed on the GPU --------
@@ -2677,7 +2702,7 @@
         // about a third of the mean spacing: dense areas still read as dense, sparse dots stay dots
         U.radius = Math.sqrt((bw * sc) * (bh * sc) / nEmb) * 0.35;
         const list = index.clusterings || [];
-        if (U.res == null && list.length) U.res = list[Math.min(list.length - 1, index.default || 0)].resolution;
+        if (U.res == null && list.length) U.res = clKey(list[Math.min(list.length - 1, index.default || 0)]);
       } finally { status(null); U.busy = null; }
     })();
     return U.busy;
@@ -2688,19 +2713,20 @@
     await umapLoad();
     if (S.umap !== U) return;
     const list = umapClusterings();
-    const c = list.find((x) => x.resolution === res) || list[Math.min(list.length - 1, (U.index && U.index.default) || 0)];
+    const c = list.find((x) => clKey(x) === res) || list[Math.min(list.length - 1, (U.index && U.index.default) || 0)];
     if (!c) throw new Error("this layer has no clusterings");
-    let arr = U.clusters.get(c.resolution);
+    const ck = clKey(c);
+    let arr = U.clusters.get(ck);
     if (!arr) {
       status("Loading clusters…");
       try { arr = new Uint16Array(await S.src.buf(`expr/${U.key}/umap/${c.file || `clusters_r${c.resolution}.bin`}`)); }
       finally { status(null); }
       if (S.umap !== U) return;
       if (arr.length !== U.pos.length / 2) throw new Error(`clusters file has ${arr.length} rows, positions.bin ${U.pos.length / 2}`);
-      U.clusters.set(c.resolution, arr);
+      U.clusters.set(ck, arr);
     }
-    if (U.clRes !== c.resolution) { U.pick = null; U.hidden = new Set(); }
-    U.res = c.resolution; U.cl = arr; U.clRes = c.resolution;
+    if (U.clRes !== ck) { U.pick = null; U.hidden = new Set(); }
+    U.res = ck; U.cl = arr; U.clRes = ck;
     await umapLoadCtInfo();                         // suggested names, if the export has them
     umapDirty();
   }
@@ -2714,7 +2740,7 @@
     if (umapAvail()) {
       U.key = S.exprKey;
       const m = umapMeta(), list = m.clusterings || [];
-      if (list.length) U.res = list[Math.min(list.length - 1, m.default || 0)].resolution;
+      if (list.length) U.res = clKey(list[Math.min(list.length - 1, m.default || 0)]);
       if (U.colorBy === "celltype" && !umapCtAvail()) U.colorBy = "gene";
       if (was !== "tissue" || U.colorBy !== "gene") {
         try {
@@ -3046,7 +3072,7 @@
       }
       let c;
       if (lit && !l) c = UMAP_GREY;               // a faded cluster colour still read as the cluster in a dense UMAP
-      else if (byCl) c = clusterRgb(U.cl[r]);
+      else if (byCl) c = sectionRgb(U.cl[r]);
       else if (byCt) c = ctRgb(U.ct[r]);
       else if (byPh) c = gateRuleRgb(calls[r]);
       else if (mix && mix.t[r] >= 0) c = [mix.rgb[3 * r], mix.rgb[3 * r + 1], mix.rgb[3 * r + 2]];
@@ -3109,8 +3135,9 @@
     const data = umapCentroids().filter((d) => !U.hidden.has(d.c));
     return new TextLayer({
       id: `${prefix}ulabels-${U.key}-${U.clRes}`, data,
-      getPosition: (d) => [d.x, d.y], getText: (d) => ((U.names[U.clRes] || {})[d.c]) || String(d.c),
-      getColor: (d) => [...labelColor(clusterRgb(d.c)), U.pick === null || U.pick === d.c ? 255 : 90],
+      getPosition: (d) => [d.x, d.y],
+      getText: (d) => ((U.names[U.clRes] || {})[d.c]) || (clUser(umapClusterInfo()) ? umapName(d.c) : String(d.c)),
+      getColor: (d) => [...labelColor(sectionRgb(d.c)), U.pick === null || U.pick === d.c ? 255 : 90],
       sizeUnits: "pixels", getSize: 13, characterSet: "auto", fontFamily: "system-ui, sans-serif", fontWeight: 700,
       background: true, getBackgroundColor: (d) => [8, 11, 18, U.pick === null || U.pick === d.c ? 215 : 70], backgroundPadding: [5, 2, 5, 2],
       parameters: NORMAL, pickable: false,
@@ -3391,7 +3418,7 @@
       const off = !!(o.hidden && o.hidden.has(c));
       const mk = o.markers[c] || [];
       const top = mk.slice(0, 3).map(markerName).filter(Boolean);
-      const [r, g, b] = clusterRgb(c);
+      const [r, g, b] = (o.rgb || clusterRgb)(c);
       const row = document.createElement("div");
       row.className = "cl-row" + (o.picked === c ? " sel" : "") + (off ? " off" : "");
       row.innerHTML = (o.onHide ? `<input type="checkbox" class="cb" ${off ? "" : "checked"} title="Show or hide this cluster" />` : `<span></span>`) +
@@ -3540,7 +3567,8 @@
       const byRes = new Map();
       for (const [k, list] of Object.entries(j.clusterings || {})) {
         const a = []; for (const s of list || []) a[s.cluster] = s;
-        byRes.set(Number(k), a);                          // "1" in the file is resolution 1.0 here
+        // "1" in the file is resolution 1.0 here; the lab's own clusterings are keyed by their id ("user1")
+        byRes.set(/^-?[\d.]+$/.test(k) ? Number(k) : k, a);
       }
       U.ctInfo = { ...j, byRes };
       // only for its note in "marker lists"; a protein set names its own file (markers/akoya_*.json)
@@ -3652,7 +3680,7 @@
     const setName = (c, t) => { (U.names[U.clRes] = U.names[U.clRes] || {})[c] = t; };
     const hasSug = !!(U.ctInfo && U.ctInfo.byRes.get(U.clRes));
     clusterLegend(host, {
-      n, sizes, markers: info.markers || [], picked: U.pick, hidden: U.hidden, name: umapName,
+      n, sizes, markers: info.markers || [], picked: U.pick, hidden: U.hidden, name: umapName, rgb: sectionRgb,
       onPick: (c) => umapPick(c),
       onRename: (c, t) => {
         if (t) setName(c, t);
@@ -3694,11 +3722,12 @@
     const list = umapClusterings();
     $("colorBy").value = U.colorBy;
     $("colorBy").options[1].disabled = !list.length;
+    $("colorBy").options[1].textContent = list.some(clUser) ? "Clusters" : "Clusters (Leiden)";
     const ctOpt = $("colorBy").options[2], ctOk = umapCtAvail();      // older exports: no such option
     ctOpt.hidden = !ctOk; ctOpt.disabled = !ctOk;
     syncGateColourOpt();
     const resSel = $("clusterRes");
-    const opts = list.map((c) => `<option value="${c.resolution}">${c.resolution} · ${c.n} clusters</option>`).join("");
+    const opts = list.map((c) => `<option value="${escHtml(clKey(c))}">${escHtml(clLabel(c))} · ${c.n} ${clUser(c) ? "groups" : "clusters"}</option>`).join("");
     if (resSel.dataset.opts !== opts) { resSel.innerHTML = opts; resSel.dataset.opts = opts; }
     if (U.res != null) resSel.value = String(U.res);
     $("rowRes").hidden = U.colorBy !== "cluster";
@@ -3712,6 +3741,8 @@
       ? (nEmb ? (nEmb >= e.nBins ? `All ${e.nBins.toLocaleString()} tissue squares` : `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} tissue squares`) +
                 ` (${e.binSizeUm ? `${e.binSizeUm} µm` : "each"} across) are in the UMAP, placed by how alike their markers are. ` : "") +
         `Switch between Tissue, Side by side and UMAP at the top left of the picture; markers, clusters and selections stay.`
+      : m.embedding === "user" ? (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} are in the UMAP, which came with the data (the lab's own analysis). ` : "") +
+        `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`
       : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} bins (those with at least 10 UMI${m.minHvgDetected ? ` and ${m.minHvgDetected} variable genes` : ""}) are in the UMAP. ` : "") +
         `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`;
     const ctLit = umapCtLit(), phLit = umapPhLit(), has = !!(U.sel || U.pick !== null || ctLit || phLit);
@@ -3765,7 +3796,7 @@
       umapDirty(); syncUmapUI(); render();
     };
     $("clusterRes").onchange = async (e) => {
-      try { await umapSetRes(Number(e.target.value)); }
+      try { await umapSetRes(clFromValue(e.target.value)); }
       catch (err) { status(`Could not load clusters: ${err.message}`, true); setTimeout(() => status(null), 5000); }
       syncUmapUI(); render();
     };
@@ -4365,7 +4396,7 @@
     }
     if (mode === "clusters") {
       const host = $("gateClTable"), list = umapClusterings(), rs = $("gateClRes");
-      const opts = list.map((c) => `<option value="${c.resolution}">Leiden ${c.resolution} · ${c.n} clusters</option>`).join("");
+      const opts = list.map((c) => `<option value="${escHtml(clKey(c))}">${escHtml(clLabel(c))} · ${c.n} ${clUser(c) ? "groups" : "clusters"}</option>`).join("");
       if (rs.dataset.opts !== opts) { rs.innerHTML = opts; rs.dataset.opts = opts; }
       if (U && U.clRes != null) rs.value = String(U.clRes);
       $("gateClColour").checked = !!(U && U.colorBy === "cluster");
@@ -4376,7 +4407,7 @@
       for (let k = 0; k <= T.K; k++) {
         const tot = T.groups.reduce((a, g) => a + g.counts[k], 0);
         if (k === T.K && !tot) continue;
-        const none = k === T.K, [r, gg, b] = none ? GATE_GREY : clusterRgb(k);
+        const none = k === T.K, [r, gg, b] = none ? GATE_GREY : sectionRgb(k);
         rows.push(`<tr class="ph${!none && U.pick === k ? " sel" : ""}" data-k="${none ? -1 : k}"><td title="${none ? "Squares left out of the UMAP" : "Click to highlight in every view"}"><i style="background:rgb(${r},${gg},${b})"></i>${esc(none ? "Not in a cluster" : umapName(k))}</td>` +
           T.groups.map((g) => `<td>${g.counts[k].toLocaleString()}<small>${gatePct(g.counts[k], g.total)}%</small></td>`).join("") + `</tr>`);
       }
@@ -4586,7 +4617,7 @@
     $("gateMore").onclick = () => { $("gateMoreBox").hidden = !$("gateMoreBox").hidden; };
     $("gatePosCsv").onclick = () => { const t = gatePosCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_percent_positive.csv`, t, "text/csv"); };
     $("gateClRes").onchange = async (e) => {
-      try { await umapSetRes(Number(e.target.value)); } catch (err) { gateMsg(`Could not load the clusters: ${err.message}`); }
+      try { await umapSetRes(clFromValue(e.target.value)); } catch (err) { gateMsg(`Could not load the clusters: ${err.message}`); }
       syncUmapUI(); render();
     };
     $("gateClColour").onchange = async (e) => {

@@ -16,6 +16,7 @@ this file:
     python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export_sample --fmt jpg --markers examples/demo_protein_markers.json --umap-sample 600
     python web/SpatialViewer/prepare.py tiff   --id demo_tiled --src demo/raw/multiplex_tiled.ome.tif --out demo/cache
     python web/SpatialViewer/prepare.py export --id demo_tiled --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json --no-umap --seam-correct
+    python web/SpatialViewer/prepare.py export --id demo_visiumhd --out demo/cache --dest demo/export_user --markers examples/demo_markers.json --user-layer 008um --user-obs demo/user/clusters.csv --user-umap demo/user/umap.csv
 
 and then checks the static tree the viewer reads: manifest.json, a tile for every
 channel / level / position, expr/<key>/positions.bin, genes.json and the per-gene
@@ -33,6 +34,12 @@ demo_tiled is the same image with per-tile steps in two markers: the export must
 tile grid, correct those two markers (seams.py) and recover the factors that were put in.
 It also checks the built-in marker lists and that the channel-name cleanup is the same
 in celltypes.py and lasso_worker.js.
+The last export brings "the lab's own" results for the 8 µm layer (userclusters.py): a
+Seurat-style clusters CSV (seurat_clusters, cell_type with a colour column, a numeric column)
+whose barcodes end in "-1-0" instead of "-1" and lack a tenth of the bins, and a UMAP CSV.
+Checked: the match rate and rule, index.json / manifest names and sources, the files, labels
+and colours, markers and suggested names per user group; then a partial match (warning, import
+goes ahead), no match and a merged two-sample file (both fail loudly, nothing changed).
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -60,6 +67,11 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "web" / "SpatialViewer"
 VIS, MX, TL = "demo_visiumhd", "demo_multiplex", "demo_tiled"
+# the lab's own names for the demo's drawn regions (user clusters test), and colours for some
+USER_NAMES = {"fascicle": "Schwann cells", "perineurium": "Perineurial cells", "vessel": "Endothelial cells",
+              "stroma": "Fibroblasts", "adipose": "Adipocytes", "edge": "Edge"}
+USER_COLORS = {"Schwann cells": "#e41a1c", "Perineurial cells": "#377eb8", "Endothelial cells": "#4daf4a",
+               "Fibroblasts": "#984ea3", "Adipocytes": "#ff7f00", "Edge": "#a65628"}
 NO_CLUSTER = 0xFFFF
 CLUSTER_MODULES = ("umap", "igraph", "leidenalg")
 # a barcode or a local path must never reach the export
@@ -109,7 +121,38 @@ def demo_commands(root: Path) -> list[list[str]]:
         [prep, "tiff", "--id", TL, "--src", f"{raw}/multiplex_tiled.ome.tif", "--out", cache],
         [prep, "export", "--id", TL, "--out", cache, "--dest", export, "--fmt", "jpg",
          "--markers", "examples/demo_protein_markers.json", "--no-umap", "--seam-correct"],
+        [prep, "export", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_markers.json",
+         "--user-layer", "008um", "--user-obs", f"{r}/user/clusters.csv", "--user-umap", f"{r}/user/umap.csv"],
     ]
+
+
+def write_user_files(root: Path):
+    """The lab's own results for the demo's 8 um layer, as Seurat writes them: write.csv of the
+    metadata (empty first header cell), barcodes "-1-0" instead of "-1", a tenth of the bins
+    dropped in QC; a cell_type column with a colour column; a numeric column; a UMAP CSV."""
+    rows = [ln.split(",") for ln in (root / "raw" / "visiumhd" / "truth_square_008um.csv")
+            .read_text(encoding="utf-8").split("\n")[1:] if ln]
+    regions = sorted({r for _, r in rows})
+    out = root / "user"
+    out.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(3)
+    cl, um = ['"","seurat_clusters","cell_type","cell_type_color","nCount_Spatial"'], ["barcode,UMAP_1,UMAP_2"]
+    for i, (bc, reg) in enumerate(rows):
+        if i % 10 == 0:
+            continue
+        k = regions.index(reg)
+        name = USER_NAMES[reg]
+        cl.append(f'"{bc}-0",{k},"{name}","{USER_COLORS[name]}",{int(rng.integers(10, 900))}')
+        um.append(f"{bc},{k * 4 + rng.normal():.5f},{(k % 3) * 4 + rng.normal():.5f}")
+    (out / "clusters.csv").write_text("\n".join(cl) + "\n", encoding="utf-8")
+    (out / "umap.csv").write_text("\n".join(um) + "\n", encoding="utf-8")
+    # partial: 40 % of the barcodes unknown; none: all unknown; merged: two samples on the same bins
+    part = [cl[0]] + [ln.replace("s_008um", "zz_008um") if j % 5 < 2 else ln for j, ln in enumerate(cl[1:])]
+    (out / "partial.csv").write_text("\n".join(part) + "\n", encoding="utf-8")
+    none = [cl[0]] + [ln.replace("s_008um", "s_016um") for ln in cl[1:]]
+    (out / "nomatch.csv").write_text("\n".join(none) + "\n", encoding="utf-8")
+    merged = ["barcode,cluster"] + [f"{t}_{bc},{k % 5}" for t in ("A", "B") for k, (bc, _) in enumerate(rows[:2000])]
+    (out / "merged.csv").write_text("\n".join(merged) + "\n", encoding="utf-8")
 
 
 def run(args: list[str], log_path: Path) -> float:
@@ -134,7 +177,8 @@ def run(args: list[str], log_path: Path) -> float:
 
 def clean(root: Path):
     """Remove only what this test itself writes, so nothing stale gets checked."""
-    for p in [root / "raw", root / "export_sample" / MX] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL)]:
+    for p in [root / "raw", root / "user", root / "export_sample" / MX, root / "export_user" / VIS,
+              root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL)]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -505,6 +549,135 @@ def check_celltypes(c: Checker, ud: Path, L: dict, idx: dict, emb, truth):
     c.ok(total > 0 and hits == total, f"{key}: confident suggestions naming the cluster's main region: {hits}/{total}")
     print(f"    suggested names: {hits}/{total} confident suggestions name the cluster's main region; "
           f"{agree:.0%} of typed bins match their region")
+
+
+def check_user(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict:
+    """The lab's own clusters / UMAP on the 8 um layer (userclusters.py); see the module docstring."""
+    key = "008um"
+    out = root / "export_user" / VIS
+    m = read_json(out / "manifest.json")
+    L = next((x for x in m.get("expr", []) if x["key"] == key), {})
+    if not clustering:
+        print("    SKIP user cluster checks: clustering packages not installed")
+        return {}
+    ud = out / "expr" / key / "umap"
+    idx = read_json(ud / "index.json")
+    raw = (ud / "index.json").read_text(encoding="utf-8")
+    pos = f32(out / "expr" / key / "positions.bin", 2)
+    n = len(pos)
+    truth_rows = [ln.split(",") for ln in (root / "raw" / "visiumhd" / f"truth_square_{key}.csv")
+                  .read_text(encoding="utf-8").split("\n")[1:] if ln]
+    truth = np.array([r for _, r in truth_rows])
+    in_file = np.arange(n) % 10 != 0                     # write_user_files dropped every tenth bin
+    rep = idx.get("userImport", {}).get("barcodes", [])
+    c.eq(len(rep), 2, "user: one barcode report per input file")
+    by = {}
+    for r in rep:
+        by["umap" if r["methods"]["exact"] else "obs"] = r
+    ro, ru = by.get("obs", {}), by.get("umap", {})
+    c.eq((ro.get("inFile"), ro.get("matched"), ro.get("rate")), (int(in_file.sum()), int(in_file.sum()), 1.0),
+         "user: clusters CSV barcodes matched")
+    c.eq(ro.get("methods", {}).get("suffix"), int(in_file.sum()), "user: clusters CSV matched by the -1-0 suffix rule")
+    c.eq((ru.get("matched"), ru.get("methods", {}).get("exact")), (int(in_file.sum()),) * 2, "user: UMAP CSV matched exactly")
+    cls = idx["clusterings"]
+    c.eq([(x.get("name"), x.get("source")) for x in cls],
+         [("seurat_clusters", "user"), ("cell_type", "user"), ("Leiden 0.3", "soda"), ("Leiden 0.6", "soda"),
+          ("Leiden 1", "soda")], "user: clusterings by name and source (yours first, nCount_Spatial skipped)")
+    c.eq(idx["default"], 0, "user: default is the first user clustering")
+    c.eq(idx.get("embedding", {}).get("source"), "user", "user: embedding source")
+    c.ok("NaN" not in raw and "Infinity" not in raw, "user: index.json has NaN / Infinity")
+    c.ok(not BARCODE.search(raw), "user: index.json contains a barcode")
+    u = L.get("umap") or {}
+    c.eq([(x.get("id"), x.get("resolution"), x.get("name"), x.get("source"), x.get("n")) for x in u.get("clusterings", [])],
+         [(x.get("id"), x.get("resolution"), x.get("name"), x.get("source"), x.get("n")) for x in cls],
+         "user: manifest umap.clusterings")
+    c.eq((u.get("embedding"), u.get("default"), u.get("nEmbedded")), ("user", 0, idx["nEmbedded"]), "user: manifest umap entry")
+    files = {"index.json", "coords.bin", "index_soda.json", "coords_soda.bin", "celltypes.json", "celltype.bin"} \
+        | {x["file"] for x in cls}
+    c.eq(sorted(p.name for p in ud.iterdir()), sorted(files), "user: files in umap/")
+    base = read_json(root / "export" / VIS / "expr" / key / "umap" / "index.json")
+    c.eq([(x["resolution"], x["n"]) for x in read_json(ud / "index_soda.json")["clusterings"]],
+         [(x["resolution"], x["n"]) for x in base["clusterings"]], "user: index_soda.json = SODA's own clusterings")
+    # coordinates: the CSV's, for exactly the bins in the file
+    co = f32(ud / "coords.bin", 2)
+    um = {ln.split(",")[0]: (float(ln.split(",")[1]), float(ln.split(",")[2]))
+          for ln in (root / "user" / "umap.csv").read_text(encoding="utf-8").split("\n")[1:] if ln}
+    want = np.full((n, 2), np.nan, np.float32)
+    for i, (bc, _) in enumerate(truth_rows):
+        if bc in um:
+            want[i] = um[bc]
+    c.ok(((co == want) | (np.isnan(co) & np.isnan(want))).all(), "user: coords.bin = the UMAP CSV by barcode")
+    c.eq(idx["nEmbedded"], int(in_file.sum()), "user: nEmbedded")
+    # cell_type: names, colours, labels per bin
+    ct = next(x for x in cls if x["name"] == "cell_type")
+    names = [USER_NAMES[r] for r in truth]
+    c.eq(sorted(ct["categories"]), sorted(set(USER_NAMES.values())), "user: cell_type categories (the user's names)")
+    c.eq(ct.get("colors"), [USER_COLORS[x] for x in ct["categories"]], "user: cell_type colours from the colour column")
+    lab = np.fromfile(str(ud / ct["file"]), dtype="<u2")
+    c.eq(len(lab), n, "user: clusters_user file rows")
+    c.ok(((lab == NO_CLUSTER) == ~in_file).all(), "user: 0xFFFF exactly for the bins not in the file")
+    got = np.array([ct["categories"][v] if v != NO_CLUSTER else "" for v in lab])
+    agree = float((got[in_file] == np.array(names)[in_file]).mean())
+    c.eq(agree, 1.0, "user: cell_type label per bin = the file's")
+    c.eq(ct["sizes"], [int((got == x).sum()) for x in ct["categories"]], "user: cell_type sizes")
+    c.eq(ct.get("nAssigned"), int(in_file.sum()), "user: cell_type nAssigned")
+    sc = next(x for x in cls if x["name"] == "seurat_clusters")
+    c.eq(sc["categories"], [str(k) for k in range(len(set(truth)))], "user: seurat_clusters categories 0..5 in order")
+    # markers and suggested names per user group
+    c.eq(len(ct["markers"]), ct["n"], "user: one marker list per group")
+    fi = ct["categories"].index("Schwann cells")
+    c.ok(any(mk["gene"].startswith("MARKER_FASC") for mk in ct["markers"][fi][:3]),
+         f"user: Schwann cells' top markers {[mk['gene'] for mk in ct['markers'][fi][:3]]} lack MARKER_FASC*")
+    cj = read_json(ud / "celltypes.json")
+    c.eq(sorted(cj["clusterings"]), sorted([x["id"] for x in cls if x.get("source") == "user"] + ["0.3", "0.6", "1"]),
+         "user: celltypes.json keyed by user id and resolution")
+    sg = cj["clusterings"].get(ct["id"], [])
+    c.eq(len(sg), ct["n"], "user: one suggestion per user group")
+    c.ok(sg and sg[fi]["top"] == "Fascicle" and sg[fi]["confidence"] in ("high", "medium"),
+         f"user: Schwann cells suggested as Fascicle ({sg[fi] if sg else None})")
+    res = {"matchRate": ro.get("rate"), "method": ro.get("methods"), "groups": ct["n"], "agree": agree}
+
+    # partial / none / merged, with `prepare.py userclusters` on a copy
+    part = root / "export_partial" / VIS
+    if part.exists():
+        shutil.rmtree(part)
+    shutil.copytree(out, part)
+    pidx = part / "expr" / key / "umap" / "index.json"
+
+    def uc(csv_name, *extra):
+        args = ["web/SpatialViewer/prepare.py", "userclusters", "--id", VIS, "--out", str(root / "cache"),
+                "--dest", str(part.parent), "--user-layer", key, "--user-obs", str(root / "user" / csv_name), *extra]
+        p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, encoding="utf-8", errors="replace")
+        with open(log_path, "a", encoding="utf-8") as lg:
+            lg.write(f"\n$ python {' '.join(args)}\n{p.stdout}")
+        return p.returncode, p.stdout
+
+    before = pidx.read_bytes()
+    rc, txt = uc("nomatch.csv")
+    c.ok(rc != 0 and "match this layer" in txt and "016" in txt, f"user: no match must fail loudly and name the layer (exit {rc})")
+    c.ok(pidx.read_bytes() == before, "user: a failed import left index.json unchanged")
+    rc, txt = uc("merged.csv")
+    c.ok(rc != 0 and "sample tags" in txt, f"user: a merged two-sample file must fail and ask for a prefix (exit {rc})")
+    rc, txt = uc("merged.csv", "--user-barcode-prefix", "A_")
+    pi = read_json(pidx)
+    c.ok(rc == 0 and pi["userImport"]["barcodes"][0].get("otherSample") == 2000,
+         f"user: with --user-barcode-prefix the merged file imports one sample (exit {rc})")
+    rc, txt = uc("partial.csv")
+    pi = read_json(pidx)
+    pr = pi["userImport"]["barcodes"][0] if pi.get("userImport") else {}
+    exp = int(in_file.sum()) - sum(1 for j in range(int(in_file.sum())) if j % 5 < 2)
+    c.ok(rc == 0 and "WARNING" in txt, f"user: a partial match imports with a warning (exit {rc})")
+    c.eq((pr.get("matched"), round(pr.get("rate", 0), 2)), (exp, round(exp / int(in_file.sum()), 2)), "user: partial match report")
+    c.eq([x.get("source") for x in pi["clusterings"]].count("soda"), 3, "user: SODA's clusterings kept next to the partial import")
+    c.eq(pi.get("embedding", {}).get("source"), "soda", "user: clusters without a UMAP stay on SODA's UMAP")
+    soda_co = np.fromfile(str(part / "expr" / key / "umap" / "coords_soda.bin"), dtype="<f4")
+    c.ok(np.array_equal(np.fromfile(str(part / "expr" / key / "umap" / "coords.bin"), dtype="<f4"), soda_co, equal_nan=True),
+         "user: coords.bin is SODA's when no UMAP is given")
+    res["partialRate"] = pr.get("rate")
+    print(f"    user clusters: {ro.get('matched')}/{ro.get('inFile')} barcodes matched ({ro.get('methods')}), "
+          f"cell_type {ct['n']} groups, labels agree {agree:.0%}; partial {pr.get('rate')}")
+    return res
 
 
 def check_multiplex(c: Checker, root: Path, clustering: bool) -> dict:
@@ -988,6 +1161,7 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
     texts = [p for ds in (VIS, MX, TL) for p in (export / ds).rglob("*")
              if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
     texts += [p for p in (root / "export_sample" / MX).rglob("*") if p.is_file() and p.suffix == ".json"]
+    texts += [p for p in (root / "export_user" / VIS).rglob("*") if p.is_file() and p.suffix in (".json", ".geojson")]
     bc = [p for p in texts if BARCODE.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not bc, f"export text files contain barcodes: {bc[:3]}")
     lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
@@ -995,6 +1169,9 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
     args = ["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX), str(export / TL)]
     if (root / "export_sample" / MX).exists():
         args.append(str(root / "export_sample" / MX))
+    for extra in (root / "export_user" / VIS, root / "export_partial" / VIS):
+        if extra.exists():
+            args.append(str(extra))
     print(f"$ python {' '.join(args)}", flush=True)
     p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        text=True, encoding="utf-8", errors="replace")
@@ -1026,7 +1203,10 @@ def main(argv=None) -> int:
         for cmd in demo_commands(root):
             label = Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"
             label += " (sample)" if "--umap-sample" in cmd else ""
+            label += " (user clusters)" if "--user-layer" in cmd else ""
             timings[label] = run(cmd, log_path)
+            if cmd[0] == "examples/make_demo.py":
+                write_user_files(root)
 
     c = Checker()
     t0 = time.time()
@@ -1036,6 +1216,8 @@ def main(argv=None) -> int:
     summary[GRID_KEY] = check_multiplex(c, root, clustering)
     print("checks: demo_tiled (tile seams)")
     summary["tiles"] = check_tiled(c, root)
+    print("checks: the lab's own clusters / UMAP (userclusters.py)")
+    summary["userClusters"] = check_user(c, root, clustering, log_path)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
     print("checks: publishable")

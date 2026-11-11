@@ -9,6 +9,7 @@
     <dest>/<id>/expr/<key>/binqc/...            per-bin total counts, genes detected, % MT (binqc.py)
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
+    <dest>/<id>/expr/<key>/umap/clusters_user*  the lab's own clusterings / UMAP, matched by barcode (userclusters.py)
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
@@ -36,6 +37,7 @@ import hvgchunks
 import protgrid
 import regions
 import sectionumap
+import userclusters
 from expr import ExprReader
 from pyramid import PyramidReader
 
@@ -111,7 +113,8 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                   umap: bool = True, celltypes: bool = True, markers: Path | None = None,
                   grid_um: float = protgrid.DEFAULT_GRID_UM,
                   tissue_smooth_um: float = protgrid.DEFAULT_TISSUE_SMOOTH_UM,
-                  umap_sample: int | None = None, seam_correct: bool = False) -> Path:
+                  umap_sample: int | None = None, seam_correct: bool = False,
+                  user_clusters: list[dict] | None = None) -> Path:
     """`markers`: the marker list for suggested cluster names. Default by modality:
     markers/rna_generic.json for RNA (Visium) layers, markers/protein_generic.json for the
     protein grid layer of an image dataset. `grid_um` (image datasets only): grid square size
@@ -119,9 +122,11 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     (µm) over the square means before the grid's tissue threshold; 0 = raw means.
     `umap_sample`: the grid layer's UMAP is fitted on a sample of this many squares above it
     (None = sectionumap.UMAP_SAMPLE, 0 = all). `seam_correct`: correct the grid layer's square
-    means for per-tile differences where tile seams are found (off: detected and reported only)."""
+    means for per-tile differences where tile seams are found (off: detected and reported only).
+    `user_clusters`: the lab's own UMAP / clusterings per layer (userclusters.make_spec)."""
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
+    userclusters.check_layers(user_clusters, m)
     out = Path(dest) / m["id"]
     out.mkdir(parents=True, exist_ok=True)
     r = PyramidReader(ds_dir, m)
@@ -197,15 +202,18 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
             if h:
                 layer_hvg[key] = h
         # whole-section UMAP + Leiden clusters of the same bins (same 8 um floor)
+        u = None
         if umap and (not layer.get("binSizeUm") or layer["binSizeUm"] >= 8):
             u = sectionumap.write_section_umap(er, d, log=log)
-            if u:
-                layer_umap[key] = u
-                # suggested cluster names from the marker lists, on the same embedded bins
-                if celltypes:
-                    c = celltypes_mod.write_celltypes(er, d, markers=markers, log=log)
-                    if c:
-                        layer_umap[key] = {**u, "celltypes": c}
+        # the lab's own UMAP / clusters for this layer (or SODA's put back after an earlier import)
+        u = userclusters.for_layer(user_clusters, er, d, ds_dir, u, log=log)
+        if u:
+            layer_umap[key] = u
+            # suggested cluster names from the marker lists, on the same embedded bins
+            if celltypes:
+                c = celltypes_mod.write_celltypes(er, d, markers=markers, log=log)
+                if c:
+                    layer_umap[key] = {**u, "celltypes": c}
         # slice in memory: reading each gene through zarr decompresses whole chunks
         indices = np.asarray(er.g["indices"])
         data = np.asarray(er.g["data"], dtype=np.float32)

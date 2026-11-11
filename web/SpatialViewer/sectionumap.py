@@ -273,7 +273,8 @@ def embed_and_cluster(pcs: np.ndarray, markers_of, libs, key, log=print, t0: flo
             lab = _renumber(full)
         k = int(lab.max()) + 1
         sizes = np.bincount(lab, minlength=k)
-        clusterings.append({"resolution": res, "file": f"clusters_r{res:.1f}.bin", "n": k,
+        clusterings.append({"resolution": res, "name": f"Leiden {res:g}", "source": "soda",
+                            "file": f"clusters_r{res:.1f}.bin", "n": k,
                             "sizes": [int(v) for v in sizes],
                             "markers": markers_of(lab, k)})
         labels.append(lab)
@@ -506,5 +507,6 @@ def write_feature_umap(d, xp: np.ndarray, names: list[str], embed_cols, marker_c
 def _entry(index: dict) -> dict:
     """The manifest's view of an index.json."""
     return {"nEmbedded": index["nEmbedded"],
-            "clusterings": [{"resolution": c["resolution"], "n": c["n"]} for c in index["clusterings"]],
+            "clusterings": [{**{k: c[k] for k in ("id", "resolution", "name", "source") if c.get(k) is not None},
+                             "n": c["n"]} for c in index["clusterings"]],
             "default": index["default"]}

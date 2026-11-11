@@ -111,7 +111,7 @@
         </div>
 
         <div id="gateModeCl" hidden>
-          <label class="row slim"><span>Clustering</span><select id="gateClRes" title="Leiden resolution: a higher number splits the squares into more, smaller clusters"></select></label>
+          <label class="row slim"><span>Clustering</span><select id="gateClRes" title="SODA's Leiden clusters (a higher resolution splits the squares into more, smaller clusters) or one that came with the data"></select></label>
           <div id="gateClTable" class="gate-counts"></div>
           <label class="check gate-colour"><input id="gateClColour" type="checkbox" /> Colour the squares by cluster</label>
           <div class="gate-add">
@@ -142,8 +142,8 @@
         <div id="umapNote" class="meta umap-note"></div>
         <label class="row slim"><span id="lblColorBy">Colour bins by</span>
           <select id="colorBy"><option value="gene">Genes (Transcripts above)</option><option value="cluster">Clusters (Leiden)</option><option value="celltype" hidden disabled>Suggested cell type</option><option value="phenotype" hidden disabled>Cell types (your rules)</option></select></label>
-        <label class="row slim" id="rowRes" hidden><span title="Leiden resolution: a higher number splits the bins into more, smaller clusters">Resolution</span>
-          <select id="clusterRes" title="Leiden resolution: a higher number splits the bins into more, smaller clusters"></select></label>
+        <label class="row slim" id="rowRes" hidden><span title="Which clustering colours the bins: SODA's Leiden clusters (a higher resolution splits the bins into more, smaller clusters) or one that came with the data">Clustering</span>
+          <select id="clusterRes" title="SODA's Leiden clusters (a higher resolution splits the bins into more, smaller clusters) or one that came with the data"></select></label>
         <div id="clusterTools" class="btnrow cl-tools" hidden>
           <button id="clShowAll" title="Show every cluster again">Show all</button>
           <span class="meta">Click a cluster to highlight it</span>
@@ -299,7 +299,7 @@
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
   <script src="qc.js?v=20261111a"></script>
-  <script src="volcano.js?v=20261111a"></script>
-  <script src="viewer.js?v=20261111r"></script>
+  <script src="volcano.js?v=20261111b"></script>
+  <script src="viewer.js?v=20261111s"></script>
 </body>
 </html>
