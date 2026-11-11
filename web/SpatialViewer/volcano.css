@@ -1,0 +1,40 @@
+/* Volcano plot (volcano.js): the block in the Circle -> UMAP panel and its floating panel */
+.vc-block { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+.vc-block .vc-msg { white-space: pre-line; }
+.vc-block select { max-width: 100%; min-width: 0; }
+/* below the Tissue / UMAP switch (top: 10px, z 7), above the slide and the UMAP panel */
+.vc-panel { position: absolute; top: 56px; left: 10px; bottom: 44px; width: min(46%, 680px); z-index: 8;
+  display: flex; flex-direction: column; background: rgba(22, 27, 36, .96); border: 1px solid var(--line);
+  border-radius: 6px; box-shadow: 0 4px 18px rgba(0, 0, 0, .5); }
+.vc-panel .vc-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.vc-panel .vc-head b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-panel .vc-btns button { padding: 1px 8px; margin-left: 4px; }
+.vc-panel .vc-ctl label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.vc-panel .vc-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 10px; font-size: 12px; color: var(--muted); }
+.vc-panel .vc-ctl input { width: 46px; padding: 1px 4px; }
+.vc-panel .vc-ctl select { padding: 1px 2px; }
+.vc-panel .lp-foot { color: var(--muted); font-size: 11px; padding: 4px 10px 8px; }
+.vc-panel .vc-counts { margin-left: auto; color: var(--text); }
+.vc-panel .vc-host { position: relative; flex: 1; min-height: 0; }
+.vc-panel .vc-svg { position: absolute; inset: 0; display: block; cursor: pointer; }
+.vc-svg .vc-frame { fill: none; stroke: var(--line); }
+.vc-svg .vc-grid { stroke: #232a37; stroke-width: 1; }
+.vc-svg .vc-tick { fill: var(--muted); font-size: 10px; }
+.vc-svg .vc-axis { fill: var(--muted); font-size: 11px; }
+.vc-svg .vc-thr { stroke: #c9ced8; stroke-width: 1; stroke-dasharray: 5 4; opacity: .7; }
+.vc-svg .vc-pt { stroke: none; }
+.vc-svg .vc-pt.ns { fill: #6b7385; opacity: .55; }
+.vc-svg .vc-pt.up { fill: #ff5a5f; }
+.vc-svg .vc-pt.down { fill: #4ea1ff; }
+.vc-svg .vc-lab { font-size: 11px; paint-order: stroke; stroke: rgba(14, 17, 23, .9); stroke-width: 3px; }
+.vc-svg .vc-lab.up { fill: #ffb3b5; }
+.vc-svg .vc-lab.down { fill: #b5d8ff; }
+.vc-svg .vc-lab.ns { fill: #aab1bf; }
+.vc-svg .vc-ring { fill: none; stroke: #fff; stroke-width: 2; pointer-events: none; }
+.vc-panel .vc-tip { position: absolute; z-index: 3; pointer-events: none; background: rgba(10, 12, 16, .95); border: 1px solid var(--line);
+  border-radius: 4px; padding: 5px 8px; font-size: 12px; line-height: 1.35; white-space: nowrap; }
+.vc-panel .vc-tip small { color: var(--muted); }
+@media (max-width: 700px) {
+  .vc-panel { top: auto; left: 6px; right: 6px; bottom: 40px; width: auto; height: 62%; }
+}
+.vc-panel .lp-warn { background: #3a2f12; color: #f6d68a; font-size: 12px; padding: 5px 10px; }
