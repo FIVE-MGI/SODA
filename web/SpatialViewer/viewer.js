@@ -5649,7 +5649,9 @@
     deckgl.setProps({ views, viewState: rnaViewStates(), layers });
   }
 
+  let dsPicker = null;                             // dspicker.js: the searchable dataset list
   async function openDataset(id) {
+    if (dsPicker) dsPicker.setValue(id);           // whoever asked (the picker, ?ds=, the console): the picker shows it
     // This open is now the only one that counts (see liveSource): the one before it stops at
     // its next await, its downloads are cancelled, and so is a layer switch still under way.
     const seq = ++openSeq, stale = () => seq !== openSeq;
@@ -5827,25 +5829,13 @@
     // Grouped by what was measured. The channel count used to be appended here, but
     // it counted raw channels including the `open-*` slots the viewer hides, so it
     // disagreed with both the label and the stain list; the labels carry it now.
-    const sel = $("dsSelect"); sel.innerHTML = "";
-    const groups = cfg.groups || {};
-    const order = [...Object.keys(groups), undefined];
-    const bucket = new Map(order.map((g) => [g, []]));
-    for (const d of S.datasets) bucket.get(bucket.has(d.group) ? d.group : undefined).push(d);
-    for (const g of order) {
-      const items = bucket.get(g);
-      if (!items || !items.length) continue;
-      // an ungrouped dataset (a ?ds= local export, or a server listing) goes in flat
-      const into = g === undefined && order.length === 1 ? sel
-        : g === undefined ? Object.assign(document.createElement("optgroup"), { label: "Other" })
-        : Object.assign(document.createElement("optgroup"), { label: groups[g] });
-      for (const d of items) {
-        const o = document.createElement("option"); o.value = d.id; o.textContent = d.label;
-        into.appendChild(o);
-      }
-      if (into !== sel) sel.appendChild(into);
-    }
-    sel.onchange = () => openDataset(sel.value);
+    // The list itself is dspicker.js: search, group headings (cfg.groups in their order, then
+    // "Other"; an ungrouped ?ds= local export or server listing goes in flat when there are no
+    // groups), arrow keys that only move the highlight. Opening happens on Enter or a click.
+    if (!window.SodaDatasetPicker || !$("dsPicker")) { status("This page is out of date: reload it (Ctrl+F5).", true); return; }
+    dsPicker = window.SodaDatasetPicker.create({ host: $("dsPicker"), labelledBy: "dsLabel", onPick: (id) => openDataset(id) });
+    dsPicker.setItems(S.datasets, cfg.groups || {});
+    Object.assign(window.__spatialViewer, { dsPicker, openDataset });   // for testing from the console
     $("btnFit").onclick = fitView;
     // One button for both directions: if anything is on it turns everything off,
     // otherwise it turns everything on. Rebuilding the whole channel list would refetch
@@ -6009,7 +5999,6 @@
     if (!S.datasets.length) { status("No datasets: add entries to config.js (static links) or set apiBase", true); return; }
     const want = params.get("ds") || cfg.defaultDataset;
     const first = S.datasets.find((d) => d.id === want) || S.datasets[0];
-    sel.value = first.id;
     await openDataset(first.id);
   }
 

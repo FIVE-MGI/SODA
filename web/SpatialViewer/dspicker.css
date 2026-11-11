@@ -1,0 +1,42 @@
+/* Dataset picker (dspicker.js): a button that opens a searchable, grouped list.
+   Colours and sizes follow styles.css (the dark sidebar's select, .results and .list). */
+.row.ds-row { position: relative; }                 /* the list hangs under the whole row, label column included */
+.dsp { min-width: 0; }
+.dsp-btn { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 7px; text-align: left; }
+.dsp-btn .dsp-val { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsp-btn i { flex: 0 0 auto; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid var(--muted); }
+.dsp.open .dsp-btn { border-color: var(--accent); }
+.dsp-pop { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 3px); display: flex; flex-direction: column;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.6); }
+.dsp-pop[hidden] { display: none; }
+.dsp-top { display: flex; gap: 6px; padding: 6px; border-bottom: 1px solid var(--line); }
+.dsp-search { flex: 1 1 auto; min-width: 0; background: var(--panel); }
+.dsp-search:focus { outline: none; border-color: var(--accent); }
+.dsp-x { display: none; flex: 0 0 auto; padding: 0 10px; font-size: 16px; line-height: 1; }
+.dsp-list { position: relative; overflow-y: auto; max-height: min(420px, 58vh); overscroll-behavior: contain; outline: none; }
+.dsp-g[hidden], .dsp-o[hidden] { display: none; }
+.dsp-h { position: sticky; top: 0; z-index: 1; padding: 5px 8px 4px; background: var(--panel2); color: var(--muted);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--line); }
+.dsp-o { position: static; padding: 5px 8px 5px 22px; cursor: pointer; overflow-wrap: anywhere; }
+.dsp-o.hot { background: #26304a; }
+.dsp-o.cur { color: var(--accent); font-weight: 600;
+  background-image: linear-gradient(var(--accent), var(--accent)); background-repeat: no-repeat;
+  background-size: 3px 100%; background-position: 8px 0; }
+.dsp-o.cur.hot { background-color: #26304a; }
+.dsp-count { padding: 4px 8px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.dsp-count.none { color: var(--text); padding: 10px 8px; }
+
+/* A finger: rows it can hit, and a button to close (there is no Esc). */
+@media (pointer: coarse) {
+  .dsp-o { padding-top: 11px; padding-bottom: 11px; }
+  .dsp-x { display: block; }
+}
+/* Phones: the controls sit in a short sheet under the map, too short for a list. The list
+   takes the screen instead, from the top, whatever height the sheet is at. */
+@media (max-width: 700px) {
+  .dsp-pop { position: fixed; z-index: 40; left: 8px; right: 8px; top: calc(8px + env(safe-area-inset-top));
+    max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .dsp-list { max-height: none; flex: 1 1 auto; min-height: 0; }
+  .dsp-x { display: block; }
+}
