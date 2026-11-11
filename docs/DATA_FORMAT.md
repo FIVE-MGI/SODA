@@ -3,7 +3,7 @@
 This is the layout that `prepare.py export` (images, spatial expression) and
 `prepare.py rnaseq` (single-cell UMAPs) write, and that the viewer reads. It is derived
 from `export.py`, `hvgchunks.py`, `binqc.py`, `sectionumap.py`, `regions.py`, `rnaseq.py`,
-`viewer.js` and `qc.js`. You only need it if you want to write the files with your own tools or
+`expr.py`, `molecules.py`, `xenium.py`, `viewer.js` and `qc.js`. You only need it if you want to write the files with your own tools or
 read them from another program.
 
 General rules:
@@ -12,7 +12,7 @@ General rules:
   `<root>/<id>/manifest.json` first and everything else relative to that folder.
 - All binary files are **little-endian**, with no header unless one is described below.
   "float32" is IEEE 754 single precision.
-- **Coordinates** of bins, regions and overlays are in **full-resolution image pixels**
+- **Coordinates** of bins, cells, molecules, regions and overlays are in **full-resolution image pixels**
   of the image the pyramid was built from (after any `--crop` and `--flip`): x to the
   right, y down, origin at the top-left corner of the image.
 - A **row** means a position in `expr/<key>/positions.bin`. `region.bin`, `binqc/`, `hvg/`
@@ -37,6 +37,8 @@ General rules:
   expr/<key>/hvg/{genes.json, index.json, <tx>_<ty>.bin}
   expr/<key>/mat/{index.json, <tx>_<ty>.bin}   protein grid layers only (instead of hvg/)
   expr/<key>/umap/{index.json, coords.bin, clusters_r<res>.bin}
+  molecules/index.json                   imaging platforms (Xenium): every transcript, per gene
+  molecules/gene/<NAME>.bin
 <root>/about.html                        optional, shown by "Read more about this project"
 ```
 
@@ -87,7 +89,8 @@ General rules:
 | `image.channels[].dataMax` | largest raw value seen at a mid-resolution level |
 | `crop` | present when `--crop` was used: `{"box": [x0, y0, x1, y1], "ofFullSize": [w, h]}` |
 | `flip` | present when `--flip` was used: `h`, `v` or `hv` |
-| `expr` | spatial expression layers (Visium only; empty list otherwise), see below |
+| `expr` | spatial expression layers (Visium bins, Xenium cells, protein grid squares; empty list otherwise), see below |
+| `molecules` | only when single molecules were imported (Xenium): `{"dir": "molecules", "format": "xy-uint16", "n", "nGenes", "bytes", "qvMin", "platform"}`, see [Molecules](#molecules-molecules) |
 | `overlays` | GeoJSON overlays: `key` (file stem), `label` (from `--geojson "Label=path"`), `file` |
 | `static` | always `true` in an export |
 | `tileFormat` | `png` or `jpg`: extension of every tile |
@@ -99,12 +102,15 @@ The prepare cache's own manifest also has a `source` block with local file paths
 
 | Field | Meaning |
 |---|---|
-| `key` | layer id and folder name: `002um`, `008um`, `016um` ... for Visium HD bins, `spots` for classic Visium |
-| `label` | e.g. `8 µm bins`, `Visium spots (55 µm)` |
-| `nBins` | barcodes in the count matrix (including any without a position) |
+| `key` | layer id and folder name: `002um`, `008um`, `016um` ... for Visium HD bins, `spots` for classic Visium, `cells` for Xenium cells, `grid016um` for a protein grid |
+| `label` | e.g. `8 µm bins`, `Visium spots (55 µm)`, `Cells` |
+| `kind` | absent for sequencing bins; `cells` for segmented cells (Xenium), `protein` for a protein grid |
+| `nBins` | barcodes (cells) in the count matrix (including any without a position) |
 | `nGenes` | genes of feature type "Gene Expression" |
-| `binSizeUm` | bin edge in µm; `null` for classic spots |
-| `spotDiameterPx` | spot / bin size in full-resolution pixels |
+| `binSizeUm` | bin edge in µm; `null` for classic spots and cells |
+| `spotDiameterPx` | spot / bin size in full-resolution pixels; for cells the diameter of a circle of the median cell area (`cellDiameterUm`, 10 µm when the area is unknown) |
+| `cellDiameterUm` | cells only: that diameter in µm |
+| `platform` | cells only: `xenium` |
 | `micronsPerPixel` | from Space Ranger's `scalefactors_json.json`, divided by `--image-scale` |
 | `imageScale` | the `--image-scale` used |
 | `regions` | only with a region overlay: `[{"id": 1, "name": "Cortex", "nBins": 5123}, ...]`, ids as in `region.bin`, regions with no bins left out |
@@ -276,6 +282,62 @@ have ≥ 10 UMI.
   | 8 + 12n + 2nnz | uint16 | nnz | UMI count, clipped at 65535 |
 
   File size = 8 + 12n + 4nnz.
+
+### Cells as a layer (`kind: "cells"`, Xenium)
+
+A cell-segmented platform's cells are written in exactly the bin format above, one "bin" per
+cell (`expr.build_cell_layer`, called by `xenium.py`; a CosMx or MERSCOPE adapter can call it
+with centroids in µm, the pixel size, a cells x genes sparse matrix and the gene names):
+
+- `positions.bin`: the cell centroid (`x_centroid`, `y_centroid` of `cells.csv.gz` /
+  `cells.parquet`, in µm) divided by the pixel size (`pixel_size` in `experiment.xenium`), in
+  the order of the count matrix's barcodes. Xenium's µm frame has its origin at the top-left
+  corner of the morphology image, so no other transform is applied.
+- `genes.json`, `gene/<NAME>.bin`: features of type "Gene Expression" only; control probes
+  and codewords (`NegControlProbe`, `NegControlCodeword`, `BLANK`, `UnassignedCodeword`,
+  `DeprecatedCodeword`, `Intergenic`, `antisense`, genomic controls) are left out. Values are
+  transcript counts from `cell_feature_matrix` (quality ≥ 20 molecules assigned to the cell).
+- `binqc/`, `hvg/`, `umap/` and `region.bin` as for bins. Targeted panels rarely contain `MT-`
+  genes, so `pct_mt.bin` is then not written.
+
+The viewer words such a layer as cells ("cells", "transcripts") instead of bins / UMI.
+
+## Molecules: `molecules/`
+
+Written by `prepare.py xenium` (`molecules.py`, platform-neutral; `xenium.py` reads
+`transcripts.parquet` when present, else `transcripts.zarr.zip` level 0) and copied unchanged
+by `export`. One file per gene, fetched only when the gene is picked in the Molecules panel.
+
+- Kept: transcripts with quality value (`qv` / `quality_score`) ≥ 20 (`qvMin`; Xenium's own
+  cut for its cell-feature matrix), of genes only: the control codewords listed above (and
+  any the zarr's `gene_category` does not mark `is_gene`) are left out. Molecules outside the
+  image are dropped. All of them are counted in `index.json` `excluded` / `lowQv`.
+- `gene/<NAME>.bin`: **uint16 pairs `qx, qy`**, one per molecule, little-endian, no header.
+  Number of molecules = file size / 4. Full-resolution pixel `x = qx * scale[0]`,
+  `y = qy * scale[1]`, with `scale = [width / 65535, height / 65535]` of the image (`qx =
+  round(x / scale[0])`), so a step is ~0.8 px (0.18 µm) on a 54,000 px wide Xenium image;
+  float32 x, y would be twice the size. Molecules are in a **seeded random order**: any prefix
+  is a uniform sample of the gene, which the viewer uses to draw fewer dots when zoomed out.
+  Genes with no molecules have no file.
+- `index.json`:
+
+  ```json
+  {"format": "xy-uint16", "n": 166624389, "nGenes": 480,
+   "bounds": [0, 0, 54002, 40815], "scale": [0.824, 0.623],
+   "units": "full-resolution image pixels", "pixelSizeUm": 0.2125,
+   "order": "seeded random: any prefix is a uniform sample of the gene",
+   "excluded": {"controls": 76991, "outsideImage": 0, "unknownGeneId": 0},
+   "platform": "xenium", "source": "transcripts.zarr", "qvMin": 20.0, "read": 208946850, "lowQv": 42245470,
+   "genes": [{"n": "Gad1", "c": 1234567}, ...]}
+  ```
+
+  (numbers from a 480-gene mouse brain section). `genes` is in the source's gene order; `c` = molecules in the file.
+
+The viewer draws a picked gene's molecules as small dots in one colour per gene, up to 12 genes
+at once. With the whole section in view it draws only the first *k* of each file (*k* a power of
+two; over all genes shown at most about one dot per 4 screen pixels, at least 200,000 and at most
+6 million, 1.5 million on a phone; `config.js` `moleculeBudget` / `moleculesPerPixel` change
+this), and the whole file once zoomed in; the panel says when it is showing a sample.
 
 ### `mat/`: the same, for marker squares (protein grid layers)
 

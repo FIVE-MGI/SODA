@@ -77,6 +77,10 @@ USER_NAMES = {"fascicle": "Schwann cells", "perineurium": "Perineurial cells", "
               "stroma": "Fibroblasts", "adipose": "Adipocytes", "edge": "Edge"}
 USER_COLORS = {"Schwann cells": "#e41a1c", "Perineurial cells": "#377eb8", "Endothelial cells": "#4daf4a",
                "Fibroblasts": "#984ea3", "Adipocytes": "#ff7f00", "Edge": "#a65628"}
+# synthetic Xenium folders (examples/make_xenium_demo.py): everything / transcripts.parquet without
+# cell files / cells (parquet + h5) without transcripts
+XE, XP, XN = "demo_xenium", "demo_xenium_pq", "demo_xenium_nt"
+XEN_DS = (XE, XP, XN)
 NO_CLUSTER = 0xFFFF
 CLUSTER_MODULES = ("umap", "igraph", "leidenalg")
 # a barcode or a local path must never reach the export
@@ -128,6 +132,13 @@ def demo_commands(root: Path) -> list[list[str]]:
          "--markers", "examples/demo_protein_markers.json", "--no-umap", "--seam-correct"],
         [prep, "export", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_markers.json",
          "--user-layer", "008um", "--user-obs", f"{r}/user/clusters.csv", "--user-umap", f"{r}/user/umap.csv"],
+        ["examples/make_xenium_demo.py", "--out", raw],
+        [prep, "xenium", "--id", XE, "--src", f"{raw}/xenium", "--out", cache, "--label", "Synthetic Xenium"],
+        [prep, "export", "--id", XE, "--out", cache, "--dest", export, "--markers", "examples/demo_xenium_markers.json"],
+        [prep, "xenium", "--id", XP, "--src", f"{raw}/xenium_pq", "--out", cache],
+        [prep, "export", "--id", XP, "--out", cache, "--dest", export, "--grid-um", "0"],
+        [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", cache],
+        [prep, "export", "--id", XN, "--out", cache, "--dest", export, "--no-umap"],
     ]
 
 
@@ -183,7 +194,7 @@ def run(args: list[str], log_path: Path) -> float:
 def clean(root: Path):
     """Remove only what this test itself writes, so nothing stale gets checked."""
     for p in [root / "raw", root / "user", root / "export_sample" / MX, root / "export_user" / VIS,
-              root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL)]:
+              root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -1106,6 +1117,177 @@ def check_sample(c: Checker, root: Path, L: dict) -> dict:
     return {"ari": out}
 
 
+def _mol_files(c: Checker, out: Path, ds: str) -> tuple[dict, dict]:
+    """molecules/index.json and every gene file of an export as packed uint32 (qx | qy << 16)."""
+    md = out / "molecules"
+    if not c.ok((md / "index.json").exists(), f"{ds}: molecules/index.json missing"):
+        return {}, {}
+    idx = read_json(md / "index.json")
+    packed, bad = {}, []
+    for g in idx["genes"]:
+        f = md / "gene" / f"{enc(g['n'])}.bin"
+        if not g["c"]:
+            if f.exists():
+                bad.append(f"{g['n']}: file although c = 0")
+            continue
+        if not f.exists() or f.stat().st_size != 4 * g["c"]:
+            bad.append(f"{g['n']}: {f.stat().st_size if f.exists() else 'no'} bytes, want {4 * g['c']}")
+            continue
+        packed[g["n"]] = np.fromfile(str(f), dtype="<u4")
+    c.ok(not bad, f"{ds}: molecule files: {bad[:4]}")
+    c.eq(len(list((md / "gene").glob("*.bin"))), len(packed), f"{ds}: molecules/gene/*.bin count")
+    return idx, packed
+
+
+def check_xenium(c: Checker, root: Path, clustering: bool) -> dict:
+    """The synthetic Xenium folders: cells as an expression layer (positions = centroid um / pixel
+    size in matrix order, controls left out, totals = matrix sums, binqc / hvg / umap as for bins),
+    molecules (quality >= 20, controls and off-image ones left out, counts per gene, exact quantised
+    positions, random order), alignment of cells and molecules with the DAPI nuclei, and the
+    parquet / no-cells and no-transcripts variants."""
+    raw = root / "raw"
+    tr = read_json(raw / "truth_xenium.json")
+    tz = np.load(raw / "truth_xenium.npz")
+    px, genes, W, H = tr["pixelSizeUm"], tr["genes"], tr["width"], tr["height"]
+    out = root / "export" / XE
+    m = read_json(out / "manifest.json")
+    check_manifest_common(c, m, XE, "png")
+    c.eq(m.get("kind"), "xenium", "xenium manifest kind")
+    c.eq((m["image"]["width"], m["image"]["height"]), (W, H), "xenium image size")
+    c.eq([ch["name"] for ch in m["image"]["channels"]], ["DAPI", "Boundary"], "xenium channel names (from the OME block)")
+    c.ok(abs((m.get("pixelSizeUm") or 0) - px) < 1e-9, f"xenium pixelSizeUm {m.get('pixelSizeUm')}")
+    check_tiles(c, out, m, "png")
+    layers = {L["key"]: L for L in m.get("expr", [])}
+    c.eq(sorted(layers), ["cells"], "xenium expr layers (a cells layer, no protein grid beside it)")
+    L = layers.get("cells", {})
+    d = out / "expr" / "cells"
+    c.eq(L.get("kind"), "cells", "cells layer kind")
+    c.eq(L.get("nBins"), tr["nCells"], "cells layer nBins = cells in the matrix")
+    c.eq(L.get("nGenes"), len(genes), "cells layer nGenes (controls left out)")
+    c.eq(L.get("binSizeUm"), None, "cells layer binSizeUm")
+    c.ok(abs((L.get("micronsPerPixel") or 0) - px) < 1e-9, "cells layer micronsPerPixel")
+    c.ok(10 / px < (L.get("spotDiameterPx") or 0) < 20 / px, f"cells layer spotDiameterPx {L.get('spotDiameterPx')}")
+    pos = f32(d / "positions.bin", 2)
+    want = (tz["xy_um"] / px).astype(np.float32)
+    c.ok(pos.shape == want.shape and np.allclose(pos, want, atol=1e-3),
+         "cells positions.bin = centroid um / pixel size, in matrix order (cells.csv rows are in another order)")
+    gj = read_json(d / "genes.json")
+    c.eq([g["n"] for g in gj], genes, "cells genes.json: the genes in matrix order, control features left out")
+    cnt = tz["counts"].astype(np.float64)
+    c.ok(np.allclose([g["t"] for g in gj], cnt.sum(0)), "cells genes.json totals = count-matrix column sums")
+    lib = cnt.sum(1)
+    dense, bad = {}, []
+    for j, g in enumerate(genes):
+        f = d / "gene" / f"{enc(g)}.bin"
+        rows = np.flatnonzero(cnt[:, j] > 0)
+        a = f32(f, 3) if f.exists() else np.zeros((0, 3), np.float32)
+        if len(a) != len(rows) or not np.allclose(a[:, :2], pos[rows]) or not np.allclose(a[:, 2], cnt[rows, j]):
+            bad.append(g)
+        dense[g] = (rows, cnt[rows, j])
+    c.ok(not bad, f"cells gene files differ from the count matrix: {bad[:4]}")
+    c.ok(not any((d / "gene" / f"{enc(x)}.bin").exists() for x in tr["controls"]), "cells: a control feature has a gene file")
+    # the cache keeps each row's cell id (user clusters are matched to cells by it)
+    try:
+        import gzip
+        import zarr
+        want_bc = gzip.open(raw / "xenium" / "cell_feature_matrix" / "barcodes.tsv.gz", "rt").read().split()
+        zc = zarr.open_group(str(root / "cache" / XE / "expr" / "cells.zarr"), mode="r")
+        got_bc = [b.decode() for b in zc["barcodes"][()]] if "barcodes" in zc else None
+        c.eq(got_bc, want_bc, "cells cache barcodes = cell ids in matrix (= positions) order")
+    except ImportError:
+        print("    SKIP cells barcodes check (zarr not installed)")
+    check_hvg(c, d, L, pos, lib, dense)
+    check_binqc(c, d, L, lib, dense, genes)
+    res = {"cells": int(len(pos))}
+    if clustering:
+        truth = np.array(["typea", "typeb", "typec"])[tz["ctype"]].tolist()
+        res["umap"] = check_umap(c, d, L, pos, lib, truth, 20 / px)
+    else:
+        print("    SKIP umap checks for the cells layer (clustering packages not installed)")
+
+    # cells sit on DAPI nuclei: the full-resolution DAPI tile is bright at every centroid
+    try:
+        from PIL import Image
+        T, z = m["image"]["tileSize"], m["image"]["levels"] - 1
+        tiles, vals = {}, []
+        for x, y in pos:
+            k = (int(x // T), int(y // T))
+            if k not in tiles:
+                tiles[k] = np.asarray(Image.open(out / "tiles" / "0" / str(z) / str(k[0]) / f"{k[1]}.png"))
+            vals.append(int(tiles[k][int(y) - k[1] * T, int(x) - k[0] * T]))
+        vals = np.array(vals)
+        bg = float(np.median(np.concatenate([t.ravel() for t in tiles.values()])))
+        c.ok(np.median(vals) > max(3 * bg, 60) and (vals > 2 * bg).mean() > 0.97,
+             f"cells on DAPI nuclei: median {np.median(vals):.0f} at the centroids vs {bg:.0f} overall")
+        print(f"    DAPI at the {len(vals)} centroids: median {np.median(vals):.0f} (8-bit), image median {bg:.0f}")
+    except ImportError:
+        print("    SKIP DAPI alignment check (Pillow not installed)")
+
+    # molecules
+    idx, packed = _mol_files(c, out, XE)
+    if idx:
+        c.eq(idx.get("format"), "xy-uint16", "molecules format")
+        c.eq({g["n"]: g["c"] for g in idx["genes"]}, tr["moleculesPerGene"],
+             "molecules per gene = quality >= 20, on the image, controls left out")
+        c.eq(idx.get("excluded", {}).get("controls"), tr["controlMolecules"], "molecules: control codewords counted out")
+        c.eq(idx.get("excluded", {}).get("outsideImage"), tr["outsideImage"], "molecules: off-image ones counted out")
+        c.eq(idx.get("lowQv"), tr["lowQuality"], "molecules: below quality 20")
+        c.eq(idx.get("read"), tr["read"], "molecules: transcripts read")
+        mb = m.get("molecules") or {}
+        c.eq((mb.get("n"), mb.get("nGenes"), mb.get("qvMin")), (sum(tr["moleculesPerGene"].values()), len(genes), 20.0),
+             "manifest molecules block")
+        sx, sy = idx["scale"]
+        c.ok(abs(sx - W / 65535) < 1e-9 and abs(sy - H / 65535) < 1e-9, "molecules scale = image size / 65535")
+        mg, mxy = tz["mol_gene"], tz["mol_xy_um"].astype(np.float64) / px
+        bad, near = [], []
+        from_cells = {g: set(dense[g][0].tolist()) for g in genes}
+        for j, g in enumerate(genes):
+            sel = mg == j
+            qx = np.minimum(np.rint(mxy[sel, 0] / sx), 65535).astype(np.uint32)
+            qy = np.minimum(np.rint(mxy[sel, 1] / sy), 65535).astype(np.uint32)
+            got = packed.get(g, np.zeros(0, np.uint32))
+            if not np.array_equal(np.sort(got), np.sort(qx | (qy << 16))):
+                bad.append(g)
+                continue
+            # random order: the first half is a fair sample (its mean x is the gene's mean x)
+            gx = (got & 0xFFFF).astype(np.float64) * sx
+            if len(gx) > 200 and abs(gx[: len(gx) // 2].mean() - gx.mean()) > 0.05 * W:
+                bad.append(f"{g} (not shuffled)")
+            # molecule dots fall on cells that show the gene in the cells layer
+            mxy_g = np.column_stack([gx, (got >> 16).astype(np.float64) * sy])
+            dd = ((mxy_g[:, None, :] - pos[None, :, :].astype(np.float64)) ** 2).sum(-1)
+            nn = dd.argmin(1)
+            ok = (np.sqrt(dd[np.arange(len(nn)), nn]) <= 5.5 / px) & np.array([r in from_cells[g] for r in nn])
+            near.append(float(ok.mean()))
+        c.ok(not bad, f"molecule files differ from the quantised truth: {bad[:4]}")
+        c.ok(bool(near) and min(near) > 0.8, f"molecules on cells expressing the gene: worst gene {min(near or [0]):.0%}")
+        res["molecules"] = {"n": int(sum(len(v) for v in packed.values())), "onExpressingCell": round(min(near or [0]), 3)}
+        print(f"    molecules: {res['molecules']['n']:,} in {len(packed)} files; per gene {min(near or [0]):.0%}-"
+              f"{max(near or [0]):.0%} lie within 5.5 um of a cell whose gene file has that gene")
+
+    # transcripts.parquet, no cell files: the same molecules, no expression layer
+    out_p = root / "export" / XP
+    mp = read_json(out_p / "manifest.json")
+    c.eq(mp.get("expr"), [], f"{XP}: no expression layer without cell files (and --grid-um 0)")
+    ip, pp = _mol_files(c, out_p, XP)
+    if ip and idx:
+        c.eq({g["n"]: g["c"] for g in ip["genes"]}, tr["moleculesPerGene"], f"{XP}: molecules per gene from the parquet")
+        empty = np.zeros(0, np.uint32)
+        c.ok(all(np.array_equal(np.sort(pp.get(g, empty)), np.sort(packed.get(g, empty))) for g in genes),
+             f"{XP}: parquet molecules = zarr molecules")
+    # cells.parquet + cell_feature_matrix.h5, no transcripts: the same cells layer, no molecules
+    out_n = root / "export" / XN
+    mn = read_json(out_n / "manifest.json")
+    c.ok("molecules" not in mn and not (out_n / "molecules").exists(), f"{XN}: no molecules without transcripts")
+    c.eq([L["key"] for L in mn.get("expr", [])], ["cells"], f"{XN}: cells layer from cells.parquet + .h5")
+    # (cells.csv.gz holds 4 decimals of a µm, cells.parquet the full value: equal to well under a pixel)
+    c.ok(np.allclose(f32(out_n / "expr" / "cells" / "positions.bin", 2), pos, atol=1e-3),
+         f"{XN}: positions.bin = the csv / mtx import")
+    c.ok(all(np.allclose(f32(out_n / "expr" / "cells" / "gene" / f"{enc(g)}.bin", 3), f32(d / "gene" / f"{enc(g)}.bin", 3),
+                         atol=1e-3) for g in genes), f"{XN}: gene files = the csv / mtx import")
+    return res
+
+
 def check_marker_lists(c: Checker):
     """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
     sys.path.insert(0, str(APP))
@@ -1203,7 +1385,7 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
 
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
-    texts = [p for ds in (VIS, MX, TL) for p in (export / ds).rglob("*")
+    texts = [p for ds in (VIS, MX, TL) + XEN_DS for p in (export / ds).rglob("*")
              if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
     texts += [p for p in (root / "export_sample" / MX).rglob("*") if p.is_file() and p.suffix == ".json"]
     texts += [p for p in (root / "export_user" / VIS).rglob("*") if p.is_file() and p.suffix in (".json", ".geojson")]
@@ -1211,7 +1393,8 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
     c.ok(not bc, f"export text files contain barcodes: {bc[:3]}")
     lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not lp, f"export text files contain local paths: {lp[:3]}")
-    args = ["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX), str(export / TL)]
+    args = (["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX), str(export / TL)] +
+            [str(export / ds) for ds in XEN_DS])
     if (root / "export_sample" / MX).exists():
         args.append(str(root / "export_sample" / MX))
     for extra in (root / "export_user" / VIS, root / "export_partial" / VIS):
@@ -1263,6 +1446,8 @@ def main(argv=None) -> int:
     summary["tiles"] = check_tiled(c, root)
     print("checks: the lab's own clusters / UMAP (userclusters.py)")
     summary["userClusters"] = check_user(c, root, clustering, log_path)
+    print("checks: demo_xenium (cells layer + molecules), demo_xenium_pq, demo_xenium_nt")
+    summary["xenium"] = check_xenium(c, root, clustering)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
     print("checks: the page (index.html, viewer.js tile path, diag.js)")

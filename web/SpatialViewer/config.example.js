@@ -95,6 +95,14 @@ window.SpatialViewerConfig = {
   // Colors cycled through as genes are added.
   geneColors: ["#ff3355", "#33ddff", "#ffdd33", "#66ff66", "#ff88ff", "#ff9933", "#99aaff", "#ffffff"],
 
+  // Single molecules (Xenium): up to this many genes at once, their colors, and how many dots
+  // are drawn when zoomed out (at most moleculeBudget, and about moleculesPerPixel per screen
+  // pixel; the rest appear as you zoom in).
+  // maxMoleculeGenes: 12,
+  // moleculeColors: ["#ff3355", "#33ddff", "#ffdd33", "#66ff66", "#ff9933", "#cc88ff"],
+  // moleculeBudget: 6e6,
+  // moleculesPerPixel: 0.25,
+
   // Floors for categorical colors, as relative luminance, against a dark background.
   // tab20 was drawn for white paper and several of its entries vanish otherwise.
   catMinLuminance: 0.21,    // the points

@@ -2,8 +2,8 @@
 
 SODA shows very large spatial biology datasets in a web browser:
 multiplexed immunofluorescence, H&E, Visium and Visium HD spatial transcriptomics,
-Xenium morphology images, and single-cell RNA-seq UMAPs. Each slide is converted once
-into a pyramid of small image tiles plus compact per-gene files. The browser then
+Xenium (stains, cells and single transcripts), and single-cell RNA-seq UMAPs. Each slide
+is converted once into a pyramid of small image tiles plus compact per-gene files. The browser then
 fetches only what is on screen, so a 30-channel whole slide opens in seconds and pans
 without downloading the rest. The output is plain static files: you can look at it on
 your own computer, put it on any web host for public data, or keep it in a private cloud
@@ -21,6 +21,11 @@ container behind a password. No database and no always-on server are needed.
   expression data.
 - **Spatial transcriptomics (Visium, Visium HD).** Search genes and show up to eight at
   once on the tissue, as points or as a density map, at 8 µm, 16 µm or coarser bins.
+- **Xenium.** The morphology stains, the segmented cells as an expression layer (gene maps,
+  UMAP and Leiden clusters, suggested names, QC, Circle → UMAP and the volcano panel work on
+  cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
+  panel and each one's molecules are drawn as coloured dots on the stains, several genes at
+  once, fetched one gene at a time.
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
@@ -237,6 +242,7 @@ web/SpatialViewer/markers/  marker-gene lists for suggested cluster names (edit 
 deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
 examples/make_demo.py synthetic demo data
+examples/make_xenium_demo.py  synthetic Xenium output folder (cells, transcripts, stains)
 tests/smoke_test.py   end-to-end test
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)

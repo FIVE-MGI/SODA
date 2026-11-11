@@ -84,15 +84,56 @@ you have nothing else, see `--image-scale` under [Common problems](#common-probl
 python web/SpatialViewer/prepare.py xenium --src path/to/xenium_output_folder --id my_xenium --out cache
 ```
 
-- Reads the morphology stains from `<src>/morphology_focus/*.ome.tif` (the layout written
-  by recent Xenium Onboard Analysis versions). Channel names and pixel size come from the
-  OME metadata.
+`--src` is the Xenium Onboard Analysis output folder (the one holding `morphology_focus/`;
+if you unpacked an archive with a `data/` folder inside, either folder works). What is read,
+when present:
+
+| File | Becomes |
+|---|---|
+| `morphology_focus/*.ome.tif` | the stain images (DAPI and the cell-boundary stains). Channel names come from the OME metadata. |
+| `experiment.xenium` | the pixel size (µm per pixel), used for every position below |
+| `cells.parquet` or `cells.csv.gz` | cell centroids (`x_centroid`, `y_centroid`, µm) and the median cell area |
+| `cell_feature_matrix.h5` or `cell_feature_matrix/` (`matrix.mtx.gz`, `features.tsv.gz`, `barcodes.tsv.gz`) | counts per cell and gene |
+| `transcripts.parquet`, else `transcripts.zarr.zip` | every decoded transcript, for the molecules layer |
+
+- **Cells** become an expression layer called "Cells" (key `cells`), in the same format as
+  Visium bins: each cell is drawn as a dot at its centroid, sized to the median cell area,
+  and everything that works on bins works on it (gene maps, the whole-section UMAP and
+  Leiden clusters, suggested names, the QC metrics, circle → UMAP and the volcano panel).
+  The viewer says "cells" and "transcripts" instead of "bins" and "UMI". Only features of
+  type "Gene Expression" are kept: negative-control probes and codewords, blank, unassigned
+  and deprecated codewords are left out. Both files (cells table and matrix) are needed; if
+  either is missing the layer is skipped with a message and the rest is still prepared.
+- **Molecules**: every transcript with quality value ≥ 20 (`--qv-min`; the same cut Xenium
+  uses for its count matrix), control codewords left out, is written to one small file per
+  gene (4 bytes per molecule; format in [DATA_FORMAT.md](DATA_FORMAT.md#molecules-molecules)).
+  In the viewer, the **Molecules** panel lets you pick genes; each picked gene's molecules
+  are drawn as coloured dots on the image (up to 12 genes at once), and only the files of
+  the picked genes are downloaded. Zoomed out, a random sample is drawn and the panel says
+  so; zoomed in, every molecule is drawn. If there is no transcripts file the molecules are
+  skipped with a message. Reading the zarr of a full slide (about 200 million transcripts)
+  takes a while, see [How big and how long](#how-big-and-how-long).
+- `--no-cells` / `--no-transcripts` skip either part, e.g. to re-prepare the image quickly.
+- **Cell and nucleus outlines** (`cell_boundaries`, `nucleus_boundaries`) are not imported
+  yet; the cells are drawn as dots of the median cell size.
 - If `<src>/Custom_annotation.geojson` exists and you gave no `--geojson`, it is added as
   an overlay called "Annotations". It must be in image pixels (see
   [Region overlays](#region-overlays)).
-- **Transcripts and cell boundaries are not imported.** For Xenium the viewer currently
-  shows the morphology images and overlays only.
 - `--crop` and `--flip` are not available for `xenium`.
+- Positions need no alignment: Xenium's µm coordinates start at the top-left corner of the
+  morphology image, so pixel = µm ÷ pixel size.
+
+For scale: a whole coronal mouse brain section (morphology_focus 54,002 × 40,815 px, 4 stains;
+155,754 cells; 480 genes; 209 million transcripts) took 43 min to prepare on a loaded
+workstation reading from a network share (41 min of it the image pyramid, 7 s the cells, 1.5 to
+6 min the transcripts) and 7 min to export (tiles 2.4 min, section UMAP and Leiden 3.2 min). The
+export is 3.85 GB in 12,679 files: tiles 2.78 GB, molecules 0.67 GB (480 files, largest 37 MB,
+median 0.7 MB), cell gene files 0.30 GB, `hvg/` 0.10 GB. Opening it loads about 3.7 MB (11
+files) before any gene is picked.
+
+The writers in `expr.py` (`build_cell_layer`) and `molecules.py` (`MoleculeWriter`) take
+plain arrays (centroids in µm, a cells x genes count matrix, gene ids and µm positions of
+molecules), so a CosMx or MERSCOPE reader can reuse them; `xenium.py` is the Xenium reader.
 
 ## Multiplexed immunofluorescence
 
@@ -523,6 +564,10 @@ timing figures here. What can be said from the formats:
 - **`hvg/`**: about 12 bytes per bin plus 4 bytes per non-zero value among the 2,000 genes,
   in one file per 500 µm square of tissue.
 - **`umap/`**: 8 bytes per bin, plus 2 bytes per bin for each of the three clusterings.
+- **Molecules** (Xenium): 4 bytes per transcript kept, one file per gene. A mouse brain
+  section with a 480-gene panel (209 million transcripts, 167 million of them quality ≥ 20)
+  gave 667 MB in 480 files, the largest gene 37 MB; the viewer downloads only the genes
+  someone picks. Reading its `transcripts.zarr.zip` took about 6 minutes.
 - **UMAP time** grows with the number of bins with ≥ 10 UMI and runs on one core.
   Expect it to dominate the export of a large Visium HD 8 µm layer.
 
