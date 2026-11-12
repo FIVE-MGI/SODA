@@ -130,7 +130,7 @@
     }
     // What is typed is looked for as it stands in the label or in the group heading ("cohort 2"
     // lists that group). When nothing holds it whole, every word must be somewhere in the two
-    // ("neuroma coh"). With nothing typed the highlight starts on the current dataset; with a
+    // ("normal coh"). With nothing typed the highlight starts on the current dataset; with a
     // filter, on the first match.
     function filter() {
       const words = search.value.toLowerCase().split(/\s+/).filter(Boolean), phrase = words.join(" ");
