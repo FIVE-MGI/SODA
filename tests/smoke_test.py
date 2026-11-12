@@ -1489,6 +1489,362 @@ def check_geomx(c: Checker, root: Path) -> dict:
     return {"aois": len(aois), "targets": len(genes), "geneFiles": files, "groupings": names, "gridAois": int(len(pg))}
 
 
+# ------------------------------------------------------------------ CosMx / MERSCOPE (examples/make_imaging_demo.py)
+# synthetic CosMx folders: older names + CellComposite + CellLabels / newer names, .csv.gz and raw
+# morphology TIFFs / tx parquet only; synthetic MERSCOPE folders: mosaics + old tables / no images,
+# cell tables one folder down, re-saved gzipped transcripts / mosaics + transcripts.parquet only
+CX, CXN, CXT = "demo_cosmx", "demo_cosmx_new", "demo_cosmx_tx"
+MS, MSN, MSP = "demo_merscope", "demo_merscope_noimg", "demo_merscope_pq"
+IMG_DS = (CX, CXN, CXT, MS, MSN, MSP)
+
+
+def imaging_commands(root: Path) -> list[list[str]]:
+    """The CosMx and MERSCOPE fixtures and their prepare / export commands (run after demo_commands)."""
+    try:
+        r = root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        r = root.resolve().as_posix()
+    raw, cache, export = f"{r}/raw", f"{r}/cache", f"{r}/export"
+    prep, mk = "web/SpatialViewer/prepare.py", "examples/demo_xenium_markers.json"
+    return [
+        ["examples/make_imaging_demo.py", "--out", raw],
+        [prep, "cosmx", "--id", CX, "--src", f"{raw}/cosmx", "--out", cache, "--pixel-size", "0.5", "--label", "Synthetic CosMx"],
+        [prep, "export", "--id", CX, "--out", cache, "--dest", export, "--markers", mk],
+        [prep, "cosmx", "--id", CXN, "--src", f"{raw}/cosmx_new", "--out", cache, "--channels", "Membrane,DAPI"],
+        [prep, "export", "--id", CXN, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "cosmx", "--id", CXT, "--src", f"{raw}/cosmx_tx", "--out", cache, "--pixel-size", "0.5"],
+        [prep, "export", "--id", CXT, "--out", cache, "--dest", export],
+        [prep, "merscope", "--id", MS, "--src", f"{raw}/merscope", "--out", cache, "--label", "Synthetic MERSCOPE"],
+        [prep, "export", "--id", MS, "--out", cache, "--dest", export, "--markers", mk],
+        [prep, "merscope", "--id", MSN, "--src", f"{raw}/merscope_noimg", "--out", cache],
+        [prep, "export", "--id", MSN, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "merscope", "--id", MSP, "--src", f"{raw}/merscope_pq", "--out", cache],
+        [prep, "export", "--id", MSP, "--out", cache, "--dest", export, "--grid-um", "0"],
+    ]
+
+
+def clean_imaging(root: Path):
+    for p in [root / sub / ds for sub in ("cache", "export") for ds in IMG_DS]:
+        if p.exists():
+            print(f"  removing earlier output {p}", flush=True)
+            shutil.rmtree(p)
+
+
+def _img_cells(c: Checker, root: Path, ds: str, L: dict, want_px, counts, genes, controls, barcodes, px: float,
+               platform: str, clustering: bool, ctype=None) -> tuple:
+    """A cells layer of an imaging platform against the fixture's truth: positions (image pixels,
+    matrix order), genes and totals, gene files, controls left out, cell ids kept in the cache."""
+    out = root / "export" / ds
+    d = out / "expr" / "cells"
+    c.eq((L.get("kind"), L.get("platform")), ("cells", platform), f"{ds}: cells layer kind / platform")
+    c.eq(L.get("nBins"), len(want_px), f"{ds}: cells layer nBins = cells of the count matrix")
+    c.eq(L.get("nGenes"), len(genes), f"{ds}: cells layer nGenes (controls left out)")
+    c.eq(L.get("binSizeUm"), None, f"{ds}: cells layer binSizeUm")
+    c.ok(abs((L.get("micronsPerPixel") or 0) - px) < 1e-9, f"{ds}: cells layer micronsPerPixel {L.get('micronsPerPixel')}")
+    c.ok(14 < (L.get("cellDiameterUm") or 0) < 18, f"{ds}: cells layer cellDiameterUm {L.get('cellDiameterUm')} (cells are 14-18 um across)")
+    pos = f32(d / "positions.bin", 2)
+    c.ok(pos.shape == want_px.shape and np.allclose(pos, want_px, atol=2e-2),
+         f"{ds}: cells positions.bin = centroids in image pixels, in matrix order (the cell table is in another order)")
+    gj = read_json(d / "genes.json")
+    c.eq([g["n"] for g in gj], genes, f"{ds}: cells genes.json: the genes in matrix order, controls left out")
+    cnt = counts.astype(np.float64)
+    c.ok(np.allclose([g["t"] for g in gj], cnt.sum(0)), f"{ds}: cells genes.json totals = count-matrix column sums")
+    dense, bad = {}, []
+    for j, g in enumerate(genes):
+        f = d / "gene" / f"{enc(g)}.bin"
+        rows = np.flatnonzero(cnt[:, j] > 0)
+        a = f32(f, 3) if f.exists() else np.zeros((0, 3), np.float32)
+        if len(a) != len(rows) or not np.allclose(a[:, :2], pos[rows]) or not np.allclose(a[:, 2], cnt[rows, j]):
+            bad.append(g)
+        dense[g] = (rows, cnt[rows, j])
+    c.ok(not bad, f"{ds}: cells gene files differ from the count matrix: {bad[:4]}")
+    c.ok(not any((d / "gene" / f"{enc(x)}.bin").exists() for x in controls), f"{ds}: a control code has a gene file")
+    try:
+        import zarr
+        zc = zarr.open_group(str(root / "cache" / ds / "expr" / "cells.zarr"), mode="r")
+        got = [b.decode() for b in zc["barcodes"][()]] if "barcodes" in zc else None
+        c.eq(got, list(barcodes), f"{ds}: cells cache barcodes = cell ids in matrix (= positions) order")
+    except ImportError:
+        print("    SKIP cells barcodes check (zarr not installed)")
+    lib = cnt.sum(1)
+    res = {"cells": int(len(pos))}
+    if ctype is not None:
+        check_hvg(c, d, L, pos, lib, dense)
+        check_binqc(c, d, L, lib, dense, genes)
+        if clustering:
+            res["umap"] = check_umap(c, d, L, pos, lib, np.array(["typea", "typeb", "typec"])[ctype].tolist(), 20 / px)
+        else:
+            print("    SKIP umap checks for the cells layer (clustering packages not installed)")
+    return pos, dense, res
+
+
+def _img_tile(out: Path, m: dict, ch: int):
+    """Channel `ch` of an export at full resolution (the fixtures are a few tiles), or None without Pillow."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    T, z, ext = m["image"]["tileSize"], m["image"]["levels"] - 1, m.get("tileFormat", "png")
+    W, H = m["image"]["width"], m["image"]["height"]
+    a = np.zeros((H, W), np.uint8)
+    for tx in range(math.ceil(W / T)):
+        for ty in range(math.ceil(H / T)):
+            t = np.asarray(Image.open(out / "tiles" / str(ch) / str(z) / str(tx) / f"{ty}.{ext}"))
+            a[ty * T:(ty + 1) * T, tx * T:(tx + 1) * T] = t[:min(T, H - ty * T), :min(T, W - tx * T)]
+    return a
+
+
+def _img_on_nuclei(c: Checker, ds: str, img, pos, what: str):
+    if img is None:
+        print("    SKIP stain alignment check (Pillow not installed)")
+        return
+    vals = img[np.clip(pos[:, 1].astype(int), 0, img.shape[0] - 1), np.clip(pos[:, 0].astype(int), 0, img.shape[1] - 1)].astype(float)
+    bg = float(np.median(img))
+    c.ok(np.median(vals) > max(3 * bg, 60) and (vals > 2 * bg).mean() > 0.97,
+         f"{ds}: cells on {what} nuclei: median {np.median(vals):.0f} at the centroids vs {bg:.0f} overall")
+    print(f"    {ds}: {what} at the {len(vals)} centroids: median {np.median(vals):.0f} (8-bit), image median {bg:.0f}")
+
+
+def _img_molecules(c: Checker, root: Path, ds: str, m: dict, genes, per_gene: dict, n_ctrl: int, read: int, platform: str,
+                   mol_px=None, mol_gene=None, pos=None, dense=None, px: float = 0.5) -> dict:
+    """molecules/ of an imaging platform: counts per gene, controls counted out, quantised
+    positions, random order, and (with cells) molecules on cells that have the gene."""
+    out = root / "export" / ds
+    idx, packed = _mol_files(c, out, ds)
+    if not idx:
+        return {}
+    W, H = m["image"]["width"], m["image"]["height"]
+    c.eq(idx.get("format"), "xy-uint16", f"{ds}: molecules format")
+    c.eq({g["n"]: g["c"] for g in idx["genes"]}, per_gene, f"{ds}: molecules per gene (controls left out)")
+    c.eq(idx.get("excluded", {}).get("controls"), n_ctrl, f"{ds}: molecules: control codes counted out")
+    c.eq(idx.get("excluded", {}).get("outsideImage"), 0, f"{ds}: molecules: none outside the image")
+    c.eq((idx.get("read"), idx.get("platform")), (read, platform), f"{ds}: molecules: rows read / platform")
+    c.ok("qvMin" not in idx and "lowQv" not in idx, f"{ds}: molecules index carries a Xenium quality cut")
+    mb = m.get("molecules") or {}
+    c.eq((mb.get("n"), mb.get("nGenes"), mb.get("platform")), (sum(per_gene.values()), len(genes), platform), f"{ds}: manifest molecules block")
+    sx, sy = idx["scale"]
+    c.ok(abs(sx - W / 65535) < 1e-9 and abs(sy - H / 65535) < 1e-9, f"{ds}: molecules scale = image size / 65535")
+    if mol_px is None:
+        return {"n": int(sum(len(v) for v in packed.values()))}
+    bad, near = [], []
+    for j, g in enumerate(genes):
+        sel = mol_gene == j
+        got = packed.get(g, np.zeros(0, np.uint32))
+        gxy = np.column_stack([(got & 0xFFFF).astype(np.float64) * sx, (got >> 16).astype(np.float64) * sy])
+        if len(got) != int(sel.sum()):
+            bad.append(g)
+            continue
+        # every molecule of the truth has a written one within 1.5 steps of the 16-bit grid (the
+        # tables hold 4-6 decimals, so a value can round to the neighbouring step) and vice versa
+        want = mol_px[sel]
+        dd = ((want[:, None, :] - gxy[None, :, :]) ** 2).sum(-1)
+        tol = (1.5 * max(sx, sy)) ** 2
+        if dd.min(1).max(initial=0) > tol or dd.min(0).max(initial=0) > tol:
+            bad.append(g)
+            continue
+        fx = gxy[:, 0]
+        if len(fx) > 200 and abs(fx[: len(fx) // 2].mean() - fx.mean()) > 0.05 * W:
+            bad.append(f"{g} (not shuffled)")
+        if pos is not None:
+            dd = ((gxy[:, None, :] - pos[None, :, :].astype(np.float64)) ** 2).sum(-1)
+            nn = dd.argmin(1)
+            has = set(dense[g][0].tolist())
+            ok = (np.sqrt(dd[np.arange(len(nn)), nn]) <= 5.5 / px) & np.array([r in has for r in nn])
+            near.append(float(ok.mean()))
+    c.ok(not bad, f"{ds}: molecule files differ from the truth: {bad[:4]}")
+    res = {"n": int(sum(len(v) for v in packed.values()))}
+    if pos is not None:
+        c.ok(bool(near) and min(near) > 0.8, f"{ds}: molecules on cells that have the gene: worst gene {min(near or [0]):.0%}")
+        res["onExpressingCell"] = round(min(near or [0]), 3)
+        print(f"    {ds}: {res['n']:,} molecules in {len(packed)} files; per gene {min(near or [0]):.0%}-{max(near or [0]):.0%} "
+              f"lie within 5.5 um of a cell whose gene file has that gene")
+    return res
+
+
+def _img_same_molecules(c: Checker, root: Path, ds: str, ref: str, genes, what: str):
+    """Two imports of the same molecules (another container / column generation) give the same files."""
+    ia, pa = _mol_files(c, root / "export" / ds, ds)
+    ib, pb = _mol_files(c, root / "export" / ref, ref)
+    if not (ia and ib):
+        return
+    c.eq({g["n"]: g["c"] for g in ia["genes"]}, {g["n"]: g["c"] for g in ib["genes"]}, f"{ds}: molecules per gene = {ref} ({what})")
+    c.eq(ia["bounds"], ib["bounds"], f"{ds}: molecules bounds = {ref}")
+    e = np.zeros(0, np.uint32)
+    far = [g for g in genes if len(pa.get(g, e)) != len(pb.get(g, e)) or
+           np.abs(np.sort(pa.get(g, e) & 0xFFFF).astype(np.int64) - np.sort(pb.get(g, e) & 0xFFFF).astype(np.int64)).max(initial=0) > 1]
+    c.ok(not far, f"{ds}: molecule x positions differ from {ref}: {far[:4]}")
+
+
+def _img_background(c: Checker, root: Path, ds: str, m: dict, mol_px):
+    """No images: a one-channel transcript-density background, labelled as such, bright where the
+    molecules are and empty in the margin; no protein grid is built on it."""
+    img = m.get("image", {})
+    c.eq(img.get("background"), "transcript density", f"{ds}: manifest image.background")
+    c.eq([ch["name"] for ch in img.get("channels", [])], ["Transcript density (no image)"], f"{ds}: background channel name")
+    c.ok(abs((m.get("pixelSizeUm") or 0) - 1.0) < 1e-9, f"{ds}: background pixel size {m.get('pixelSizeUm')} (1 um)")
+    c.ok(not [L for L in m.get("expr", []) if L.get("kind") == "protein"], f"{ds}: a protein grid was built on the density background")
+    a = _img_tile(root / "export" / ds, m, 0)
+    if a is None:
+        return
+    at = a[np.clip(mol_px[:, 1].astype(int), 0, a.shape[0] - 1), np.clip(mol_px[:, 0].astype(int), 0, a.shape[1] - 1)]
+    c.ok(float(np.median(at)) > 40 and int(a[:5].max()) == 0 and int(a[:, :5].max()) == 0,
+         f"{ds}: density background: median {np.median(at):.0f} at the molecules, margin max {max(int(a[:5].max()), int(a[:, :5].max()))}")
+
+
+def check_imaging(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict:
+    """The synthetic CosMx and MERSCOPE folders (examples/make_imaging_demo.py).
+
+    CosMx: four FOV images stitched by their positions with y_local turned over (global y up),
+    2 / 3 px gaps kept black, cell_ID 0 rows and NegPrb / SystemControl codes left out, ids
+    <cell_ID>_<fov>; the newer names (csv.gz, cell column, Negative*, mm positions, raw
+    morphology TIFFs) give the same cells and molecules; transcripts alone (parquet) give a
+    density background and the same molecules. MERSCOPE: the middle z-plane, positions through
+    the micron -> mosaic transform, Blank-* left out, 39-digit cell ids kept as text; no images
+    + tables one folder down + a re-saved transcript table give the same cells and molecules on
+    a density background; mosaics + transcripts.parquet alone give the molecules and no cells."""
+    raw = root / "raw"
+    tr = read_json(raw / "truth_imaging.json")
+    tz = np.load(raw / "truth_imaging.npz")
+    px, genes, n = tr["pixelSizeUm"], tr["genes"], tr["nCells"]
+    G = len(genes)
+    mol_gene = tz["mol_gene"]
+    res = {}
+
+    # ---------------- CosMx, older names: CellComposite mosaic, cells, molecules
+    t = tr["cosmx"]
+    W, H = t["width"], t["height"]
+    out = root / "export" / CX
+    m = read_json(out / "manifest.json")
+    check_manifest_common(c, m, CX, "png")
+    c.eq(m.get("kind"), "cosmx", "cosmx manifest kind")
+    c.eq((m["image"]["width"], m["image"]["height"]), (W, H), "cosmx mosaic size (2 x 2 FOVs and the gaps between them)")
+    c.eq([ch["name"] for ch in m["image"]["channels"]], ["CellComposite red", "CellComposite green", "CellComposite blue"],
+         "cosmx channel names (CellComposite)")
+    c.ok(abs((m.get("pixelSizeUm") or 0) - px) < 1e-9, f"cosmx pixelSizeUm {m.get('pixelSizeUm')}")
+    aff = np.array((m.get("frame") or {}).get("affine", [[0, 0, 0], [0, 0, 0]]), float)
+    c.ok(aff.shape == (2, 3) and aff[0, 0] == 1 and aff[1, 1] == -1 and aff[0, 1] == 0 and aff[1, 0] == 0,
+         f"cosmx manifest frame: x kept, global y turned over (got {aff.tolist()})")
+    g_xy = tz["cosmx_mol_global"].astype(np.float64)
+    back = np.column_stack([g_xy[:, 0] * aff[0, 0] + aff[0, 2], g_xy[:, 1] * aff[1, 1] + aff[1, 2]])
+    c.ok(np.allclose(back, tz["cosmx_mol_px"], atol=1e-3), "cosmx manifest frame maps x/y_global_px to the mosaic pixels")
+    check_tiles(c, out, m, "png")
+    layers = {L["key"]: L for L in m.get("expr", [])}
+    c.eq(sorted(layers), ["cells"], "cosmx expr layers (a cells layer, no protein grid beside it)")
+    # the count matrix lists the cells FOV by FOV (after each FOV's cell_ID 0 row): that is the layer's order
+    order = np.concatenate([np.flatnonzero(tz["cosmx_fov"] == f) for f in range(1, 5)])
+    c_fov, c_id = tz["cosmx_fov"][order], tz["cosmx_cell_id"][order]
+    c_px, c_cnt = tz["cosmx_cells_px"][order].astype(np.float32), tz["cosmx_counts"][order]
+    bc = [f"{i}_{f}" for i, f in zip(c_id.tolist(), c_fov.tolist())]
+    c.eq(len(set(bc)), n, "cosmx fixture: <cell_ID>_<fov> ids are unique (cell_ID restarts in every FOV)")
+    pos, dense, res[CX] = _img_cells(c, root, CX, layers.get("cells", {}), c_px, c_cnt,
+                                     genes, t["controls"], bc, px, "cosmx", clustering, ctype=tz["ctype"][order])
+    blue = _img_tile(out, m, 2)
+    _img_on_nuclei(c, CX, blue, pos, "CellComposite blue")
+    if blue is not None:
+        fw, fh = t["fovSize"]
+        c.ok(int(blue[fh:H - fh].max()) == 0 and int(blue[:, fw:W - fw].max()) == 0,
+             "cosmx mosaic: the gap between the FOV images is not black (a FOV is misplaced)")
+        for f in range(1, 5):                              # every FOV carries cells that sit on its own nuclei
+            sel = c_fov == f
+            v = blue[pos[sel, 1].astype(int), pos[sel, 0].astype(int)]
+            c.ok(float(np.median(v)) > 100, f"cosmx FOV {f}: nuclei under its {int(sel.sum())} centroids (median {np.median(v):.0f})")
+    keep = mol_gene < G
+    res[CX]["molecules"] = _img_molecules(c, root, CX, m, genes, t["moleculesPerGene"], t["controlMolecules"], t["read"], "cosmx",
+                                          tz["cosmx_mol_px"][keep], mol_gene[keep], pos, dense, px)
+
+    # ---------------- CosMx, newer names: csv.gz, cell column, Negative*, mm positions, raw morphology
+    mn = read_json(root / "export" / CXN / "manifest.json")
+    c.eq((mn["image"]["width"], mn["image"]["height"], mn["image"]["dtype"]), (W, H, "uint16"), f"{CXN}: mosaic of the raw morphology TIFFs")
+    c.eq([ch["name"] for ch in mn["image"]["channels"]], ["Membrane", "DAPI"], f"{CXN}: channel names from --channels")
+    c.ok(abs((mn.get("pixelSizeUm") or 0) - px) < 1e-6, f"{CXN}: pixel size from the mm and px columns of the FOV positions ({mn.get('pixelSizeUm')})")
+    ln = {L["key"]: L for L in mn.get("expr", [])}
+    c.eq(sorted(ln), ["cells"], f"{CXN}: expr layers")
+    bcn = [f"c_1_{f}_{i}" for i, f in zip(c_id.tolist(), c_fov.tolist())]
+    posn, _d, _r = _img_cells(c, root, CXN, ln.get("cells", {}), c_px, c_cnt, genes,
+                              t["controlsNew"], bcn, px, "cosmx", clustering)
+    _img_on_nuclei(c, CXN, _img_tile(root / "export" / CXN, mn, 1), posn, "DAPI (raw morphology)")
+    _img_molecules(c, root, CXN, mn, genes, t["moleculesPerGene"], t["controlMolecules"], t["read"], "cosmx")
+    _img_same_molecules(c, root, CXN, CX, genes, "csv.gz with the newer column set")
+
+    # ---------------- CosMx, transcripts only (parquet): density background, the same molecules
+    mt = read_json(root / "export" / CXT / "manifest.json")
+    c.eq(mt.get("expr"), [], f"{CXT}: no expression layer without cell files (and no grid on the background)")
+    lo, hi = g_xy.min(0), g_xy.max(0)
+    bg_px = np.column_stack([(g_xy[:, 0] - lo[0]) * px + 10.0, (hi[1] - g_xy[:, 1]) * px + 10.0])    # 1 um pixels, 10 um margin
+    c.eq((mt["image"]["width"], mt["image"]["height"]),
+         (math.ceil((hi[0] - lo[0]) * px + 20), math.ceil((hi[1] - lo[1]) * px + 20)), f"{CXT}: background size = extent + margins at 1 um")
+    _img_background(c, root, CXT, mt, bg_px[keep])
+    _img_molecules(c, root, CXT, mt, genes, t["moleculesPerGene"], t["controlMolecules"], t["read"], "cosmx", bg_px[keep], mol_gene[keep], px=1.0)
+
+    # ---------------- MERSCOPE: mosaics (middle z), cells, molecules
+    t = tr["merscope"]
+    W, H = t["width"], t["height"]
+    out = root / "export" / MS
+    m = read_json(out / "manifest.json")
+    check_manifest_common(c, m, MS, "png")
+    c.eq(m.get("kind"), "merscope", "merscope manifest kind")
+    c.eq((m["image"]["width"], m["image"]["height"]), (W, H), "merscope image size")
+    c.eq([ch["name"] for ch in m["image"]["channels"]], ["DAPI", "PolyT"], "merscope channel names (DAPI first)")
+    c.ok(abs((m.get("pixelSizeUm") or 0) - px) < 1e-9, f"merscope pixelSizeUm from the transform ({m.get('pixelSizeUm')})")
+    c.eq((m.get("frame") or {}).get("zPlane"), 1, "merscope: the middle z-plane of 0, 1, 2")
+    check_tiles(c, out, m, "png")
+    layers = {L["key"]: L for L in m.get("expr", [])}
+    c.eq(sorted(layers), ["cells"], "merscope expr layers (a cells layer, no protein grid beside it)")
+    org = np.array(t["origin"], np.float64)
+    cells_px = ((tz["merscope_cells_um"] - org) / px).astype(np.float32)
+    pos, dense, res[MS] = _img_cells(c, root, MS, layers.get("cells", {}), cells_px, tz["merscope_counts"], genes, t["controls"],
+                                     t["idsOld"], px, "merscope", clustering, ctype=tz["ctype"])
+    _img_on_nuclei(c, MS, _img_tile(out, m, 0), pos, "DAPI")
+    try:
+        import zarr
+        z0 = zarr.open_group(str(root / "cache" / MS / "image.zarr"), mode="r")["0"]
+        v = np.asarray(z0[0])[pos[:, 1].astype(int), pos[:, 0].astype(int)]
+        c.ok(float(np.median(v)) > 4000, f"merscope: the in-focus plane was imported (DAPI {np.median(v):.0f} at the centroids; the other planes give ~1800)")
+    except ImportError:
+        print("    SKIP z-plane brightness check (zarr not installed)")
+    mg = tz["merscope_mol_gene"]
+    mpx = (tz["merscope_mol_um"] - org) / px
+    keep = mg < G
+    res[MS]["molecules"] = _img_molecules(c, root, MS, m, genes, t["moleculesPerGene"], t["controlMolecules"], t["read"], "merscope",
+                                          mpx[keep], mg[keep], pos, dense, px)
+
+    # ---------------- MERSCOPE, no images: tables one folder down, EntityID, re-saved gz transcripts
+    mn = read_json(root / "export" / MSN / "manifest.json")
+    ln = {L["key"]: L for L in mn.get("expr", [])}
+    c.eq(sorted(ln), ["cells"], f"{MSN}: expr layers (cell tables found one folder down; no grid on the background)")
+    um_all = np.vstack([tz["merscope_mol_um"], tz["merscope_cells_um"]])
+    lo, hi = um_all.min(0), um_all.max(0)
+    c.eq((mn["image"]["width"], mn["image"]["height"]), (math.ceil(hi[0] - lo[0] + 20), math.ceil(hi[1] - lo[1] + 20)),
+         f"{MSN}: background size = extent + margins at 1 um")
+    bgc = (tz["merscope_cells_um"] - lo + 10.0).astype(np.float32)
+    _p, _d, _r = _img_cells(c, root, MSN, ln.get("cells", {}), bgc, tz["merscope_counts"], genes, t["controls"], t["idsNew"], 1.0,
+                            "merscope", clustering)
+    bgm = tz["merscope_mol_um"] - lo + 10.0
+    _img_background(c, root, MSN, mn, bgm[keep])
+    _img_molecules(c, root, MSN, mn, genes, t["moleculesPerGene"], t["controlMolecules"], t["read"], "merscope", bgm[keep], mg[keep], px=1.0)
+
+    # ---------------- MERSCOPE, mosaics + transcripts.parquet only
+    mp = read_json(root / "export" / MSP / "manifest.json")
+    c.eq(mp.get("expr"), [], f"{MSP}: no expression layer without cell tables (and --grid-um 0)")
+    _img_molecules(c, root, MSP, mp, genes, t["moleculesPerGene"], t["controlMolecules"], t["read"], "merscope")
+    _img_same_molecules(c, root, MSP, MS, genes, "parquet")
+
+    # ---------------- publishable: no local path, no cell id, no leftover sample id
+    export = root / "export"
+    texts = [p for ds in IMG_DS for p in (export / ds).rglob("*") if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
+    lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
+    c.ok(not lp, f"imaging exports: text files contain local paths: {lp[:3]}")
+    ids = [p for p in texts if any(s in p.read_text(encoding="utf-8", errors="ignore") for s in (t["idsOld"][0], t["idsNew"][0], "c_1_1_1"))]
+    c.ok(not ids, f"imaging exports: text files contain cell ids: {ids[:3]}")
+    args = ["web/SpatialViewer/deid.py", "check"] + [str(export / ds) for ds in IMG_DS]
+    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    c.eq(p.returncode, 0, "deid.py check on the CosMx / MERSCOPE exports (exit code)")
+    return res
+
+
 def check_marker_lists(c: Checker):
     """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
     sys.path.insert(0, str(APP))
@@ -1770,6 +2126,10 @@ def main(argv=None) -> int:
             timings[label] = run(cmd, log_path)
             if cmd[0] == "examples/make_demo.py":
                 write_user_files(root)
+        if not args.reuse:
+            clean_imaging(root)
+        for cmd in imaging_commands(root):               # CosMx / MERSCOPE fixtures
+            timings[Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"] = run(cmd, log_path)
 
     c = Checker()
     t0 = time.time()
@@ -1785,6 +2145,8 @@ def main(argv=None) -> int:
     summary["xenium"] = check_xenium(c, root, clustering)
     print("checks: demo_geomx (GeoMx ROI layer, two scans), demo_geomx_grid (no image)")
     summary["geomx"] = check_geomx(c, root)
+    print("checks: demo_cosmx*, demo_merscope* (FOV mosaic / mosaics, cells layer, molecules, density background)")
+    summary["imaging"] = check_imaging(c, root, clustering, log_path)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
     print("checks: the page (index.html, viewer.js tile path, diag.js)")

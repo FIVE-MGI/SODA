@@ -100,9 +100,10 @@ def is_photo(channels: list[dict]) -> bool:
 
 
 def applies_to(m: dict) -> bool:
-    """Image datasets only: not Visium (it has real counts), not RNA-seq, not a colour photo."""
+    """Image datasets only: not Visium (it has real counts), not RNA-seq, not a colour photo,
+    not a density background standing in for missing images (cosmx.py / merscope.py)."""
     return (m.get("kind") not in ("visium", "rnaseq") and not m.get("expr") and "image" in m
-            and not is_photo(m["image"].get("channels", [])))
+            and not m["image"].get("background") and not is_photo(m["image"].get("channels", [])))
 
 
 def edges(n_px: int, step: float) -> np.ndarray:
