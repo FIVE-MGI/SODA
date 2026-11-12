@@ -40,6 +40,12 @@ whose barcodes end in "-1-0" instead of "-1" and lack a tenth of the bins, and a
 Checked: the match rate and rule, index.json / manifest names and sources, the files, labels
 and colours, markers and suggested names per user group; then a partial match (warning, import
 goes ahead), no match and a merged two-sample file (both fail loudly, nothing changed).
+The synthetic GeoMx DSP study (examples/make_geomx_demo.py: DCC files, two PKC files, an
+annotation workbook / CSV / lab worksheet, two scans with ROI polygons and masks) is prepared
+twice, with its scans and without (a drawn grid): one row per ROI segment, target values =
+the generator's own probe collapse, negative probes out of the genes and behind the LOQ,
+positions inside the ROI outlines, the annotation columns as groupings with no UMAP, the GeoMx
+QC values, and no slide name or Sample_ID in the export (check_geomx).
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
@@ -82,6 +88,9 @@ USER_COLORS = {"Schwann cells": "#e41a1c", "Perineurial cells": "#377eb8", "Endo
 # cell files / cells (parquet + h5) without transcripts
 XE, XP, XN = "demo_xenium", "demo_xenium_pq", "demo_xenium_nt"
 XEN_DS = (XE, XP, XN)
+# synthetic GeoMx DSP study (examples/make_geomx_demo.py): with its two scans / without images (drawn grid)
+GX, GXG = "demo_geomx", "demo_geomx_grid"
+GEOMX_DS = (GX, GXG)
 NO_CLUSTER = 0xFFFF
 CLUSTER_MODULES = ("umap", "igraph", "leidenalg")
 # a barcode or a local path must never reach the export
@@ -140,6 +149,15 @@ def demo_commands(root: Path) -> list[list[str]]:
         [prep, "export", "--id", XP, "--out", cache, "--dest", export, "--grid-um", "0"],
         [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", cache],
         [prep, "export", "--id", XN, "--out", cache, "--dest", export, "--no-umap"],
+        ["examples/make_geomx_demo.py", "--out", raw],
+        [prep, "geomx", "--id", GX, "--dcc", f"{raw}/geomx/dcc", "--pkc", f"{raw}/geomx/pkc",
+         "--annotation", f"{raw}/geomx/annotations.xlsx", "--annotation", f"{raw}/geomx/segment_properties.xlsx",
+         "--image", f"{raw}/geomx/demoA.ome.tiff", "--image", f"{raw}/geomx/demoB.ome.tiff", "--out", cache,
+         "--label", "Synthetic GeoMx"],
+        [prep, "export", "--id", GX, "--out", cache, "--dest", export],
+        [prep, "geomx", "--id", GXG, "--dcc", f"{raw}/geomx/dcc", "--pkc", f"{raw}/geomx/pkc",
+         "--annotation", f"{raw}/geomx/Demo_LabWorksheet.txt", "--annotation", f"{raw}/geomx/annotations.csv", "--out", cache],
+        [prep, "export", "--id", GXG, "--out", cache, "--dest", export],
     ]
 
 
@@ -198,7 +216,7 @@ def run(args: list[str], log_path: Path) -> float:
 def clean(root: Path):
     """Remove only what this test itself writes, so nothing stale gets checked."""
     for p in [root / "raw", root / "user", root / "export_sample" / MX, root / "export_user" / VIS,
-              root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS]:
+              root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -1292,6 +1310,181 @@ def check_xenium(c: Checker, root: Path, clustering: bool) -> dict:
     return res
 
 
+def check_geomx(c: Checker, root: Path) -> dict:
+    """The synthetic GeoMx study (examples/make_geomx_demo.py): a "rois" layer with one row per AOI,
+    target values = the probe collapse worked out by plain loops in the generator, negative probes
+    kept out of the genes and used for the background / LOQ, positions = mask centroids inside the
+    ROI polygons of two scans put side by side, the annotation columns as groupings with no
+    embedding, GeoMx QC values in binqc/, every target in hvg/, nothing of the slide names or
+    Sample_IDs in the export; and the same study without images on the drawn grid."""
+    tr = read_json(root / "raw" / "truth_geomx.json")
+    px, genes = tr["pixelSizeUm"], tr["genes"]
+    (wa, ha), (wb, hb) = tr["scans"]["demoA"], tr["scans"]["demoB"]
+    off = {"demoA": 0, "demoB": wa + tr["gap"]}
+    aois = [a for a in tr["aois"] if a["scan"] in off]
+    out = root / "export" / GX
+    m = read_json(out / "manifest.json")
+    check_manifest_common(c, m, GX, "png")
+    c.eq(m.get("kind"), "geomx", "geomx manifest kind")
+    c.eq((m["image"]["width"], m["image"]["height"]), (wa + tr["gap"] + wb, max(ha, hb)), "geomx image = the two scans side by side")
+    c.eq([ch["name"] for ch in m["image"]["channels"]], ["SYTO 13 (FITC/525nm)", "Alexa 532 (Cy3/568nm)"],
+         "geomx channel names (Fluor + Name of the OME block)")
+    c.ok(abs((m.get("pixelSizeUm") or 0) - px) < 1e-9, f"geomx pixelSizeUm {m.get('pixelSizeUm')}")
+    check_tiles(c, out, m, "png")
+    gi = m.get("geomx") or {}
+    c.eq((gi.get("nAoi"), gi.get("nRoi"), gi.get("nSlides"), gi.get("layout")), (len(aois), 12, 2, "scan"), "geomx block: AOIs, ROIs, slides, layout")
+    c.eq([(p["targets"], p["probes"], p["negativeProbes"]) for p in gi.get("panels", [])], [(4, 9, 3), (18, 32, 6)], "geomx block: the two panels")
+    c.eq((gi.get("dcc") or {}).get("used"), len(aois), "geomx block: DCC files used (the third scan's and the NTC's are not)")
+    c.eq((gi.get("dcc") or {}).get("inFolder"), len(tr["aois"]) + 1, "geomx block: DCC files in the folder")
+    c.eq([x.get("total") for x in gi.get("ntc", [])], [tr["ntcTotal"]], "geomx block: the No Template Control's total")
+    c.eq([s["offsetPx"][0] for s in gi.get("scans", [])], [0, off["demoB"]], "geomx block: scan offsets")
+    layers = {L["key"]: L for L in m.get("expr", [])}
+    c.eq(sorted(layers), ["rois"], "geomx expr layers (one rois layer, no protein grid of the stains)")
+    L = layers.get("rois", {})
+    d = out / "expr" / "rois"
+    c.eq((L.get("kind"), L.get("nBins"), L.get("nGenes"), L.get("binSizeUm")), ("rois", len(aois), len(genes), None), "rois layer kind / rows / targets")
+    med_d = 0.6 * 2 * math.sqrt(float(np.median([a["area"] for a in aois])) / math.pi) / px
+    c.ok(abs((L.get("spotDiameterPx") or 0) - med_d) < 0.05, f"rois spotDiameterPx {L.get('spotDiameterPx')} = 0.6 x the diameter of a circle of the median AOI area ({med_d:.2f})")
+
+    # ---- positions: mask centroids, inside the ROI outlines; one outline per ROI ---------------
+    pos = f32(d / "positions.bin", 2)
+    c.eq(len(pos), len(aois), "rois positions.bin rows")
+    gj = read_json(out / "overlays" / "rois.geojson")
+    c.eq(len(gj["features"]), 12, "rois.geojson: one outline per ROI (the two segments of one ROI share theirs)")
+    c.eq((m.get("overlays") or [{}])[0].get("file"), "rois.geojson", "the ROI outlines are the first overlay")
+    c.eq(L.get("regionOverlay"), "rois.geojson", "the ROI outlines are the layer's region overlay")
+    rid = np.fromfile(d / "region.bin", dtype="<u2")
+    polys = {f["properties"].get("__region_id"): np.asarray(f["geometry"]["coordinates"][0], float) for f in gj["features"]}
+
+    def inside(x, y, P):
+        n, hit = len(P) - 1, False
+        for i in range(n):
+            (x1, y1), (x2, y2) = P[i], P[i + 1]
+            if (y1 > y) != (y2 > y) and x < x1 + (x2 - x1) * (y - y1) / (y2 - y1):
+                hit = not hit
+        return hit
+    c.ok(len(rid) == len(pos) and all(r in polys and inside(float(x), float(y), polys[r]) for (x, y), r in zip(pos, rid)),
+         "every AOI position lies inside the outline region.bin links it to")
+    want = np.array([[a["mask"]["cx"] + off[a["scan"]], a["mask"]["cy"]] for a in aois])
+    moved = [i for i, a in enumerate(aois) if (a["scan"], a["roi"]) == ("demoA", "005")]       # the "C": centroid outside
+    same = [i for i in range(len(aois)) if i not in moved]
+    c.ok(np.allclose(pos[same], want[same], atol=0.02), "AOI positions = centroid of the AOI's own mask (+ the scan's offset), in annotation order")
+    c.ok(len(moved) == 1 and not np.allclose(pos[moved], want[moved], atol=1.0),
+         "an AOI whose mask centroid falls outside its ROI is moved inside it")
+    seg = [i for i, a in enumerate(aois) if (a["scan"], a["roi"]) == ("demoA", "003")]
+    c.ok(len(seg) == 2 and rid[seg[0]] == rid[seg[1]] and abs(float(pos[seg[0], 0] - pos[seg[1], 0])) > 50,
+         "two segments of one ROI: two rows, one outline, two positions")
+    c.eq(len({(round(float(x), 2), round(float(y), 2)) for x, y in pos}), len(pos), "no two AOIs share a position")
+    c.eq(sorted(r["nBins"] for r in L.get("regions", [])), [1] * 11 + [2], "region table: 11 ROIs of one AOI, one of two")
+
+    # ---- counts: targets as collapsed from the probes ------------------------------------------
+    gl = read_json(d / "genes.json")
+    c.eq([g["n"] for g in gl], genes, "rois genes.json: the targets in PKC order, a name shared by two panels kept apart")
+    c.ok(not any(n in [g["n"] for g in gl] for n in tr["negativeTargets"]), "negative-probe targets are not genes")
+    V = np.array([a["values"] for a in aois], np.float64).T                     # genes x AOIs
+    c.ok(np.allclose([g["t"] for g in gl], V.sum(1), rtol=1e-5, atol=1e-3), "genes.json totals = sums of the collapsed values")
+    worst, files = 0.0, 0
+    for k, name in enumerate(genes):
+        p = d / "gene" / f"{enc(name)}.bin"
+        if V[k].sum() == 0:
+            c.ok(not p.exists(), f"target {name} was never counted: no gene file")
+            continue
+        files += 1
+        if not c.ok(p.exists(), f"gene file of {name} ({p.name})"):
+            continue
+        a = f32(p, 3)
+        got = np.zeros(len(aois))
+        for x, y, v in a:
+            j = int(np.argmin(np.abs(pos[:, 0] - x) + np.abs(pos[:, 1] - y)))
+            got[j] = v
+        worst = max(worst, float(np.abs(got - V[k]).max() / max(1.0, V[k].max())))
+    c.ok(worst < 1e-5, f"gene file values = geometric mean of the probes with the + 0.5 rule (worst relative difference {worst:.2e})")
+    k2 = genes.index("Multi2")
+    c.ok(np.allclose(V[k2], 0.5) and f32(d / "gene" / "Multi2.bin", 3)[:, 2].tolist() == [0.5] * len(aois),
+         "a multi-probe target with every probe at 0 reads 0.5 in every AOI (as GeomxTools)")
+    c.ok((d / "gene" / "TRB1%2F2.bin").exists() and (d / "gene" / "H2-T23.bin").exists(), "gene files of 'TRB1/2' and 'H2-T23'")
+
+    # ---- QC values per AOI -----------------------------------------------------------------------
+    q = L.get("binQc") or {}
+    met = {x["key"]: x for x in q.get("metrics", [])}
+    for key in ("total", "genes", "rawReads", "pctAligned", "saturation", "area", "nuclei", "negGeoMean", "loq", "genesAboveLoq", "q3", "q3OverNeg"):
+        c.ok(key in met and (d / "binqc" / met[key]["file"]).exists(), f"binqc metric {key}")
+    qv = lambda key: np.fromfile(d / "binqc" / met[key]["file"], dtype="<f4") if key in met else np.zeros(0)
+    c.ok(np.allclose(qv("total"), V.sum(0), rtol=1e-5), "binqc total = sum of the target values (negative probes not in it)")
+    c.ok(np.allclose(qv("rawReads"), [a["raw"] for a in aois]), "binqc rawReads = Raw of the DCC")
+    c.ok(np.allclose(qv("saturation"), [100 * (1 - a["dedup"] / a["aligned"]) for a in aois], atol=1e-3),
+         "binqc saturation = 100 x (1 - deduplicated / aligned)")
+    c.ok(np.allclose(qv("negGeoMean"), [a["negGeoMean"] for a in aois], rtol=1e-5), "binqc negGeoMean = geometric mean of the main panel's negative probes")
+    c.ok(np.allclose(qv("loq"), [a["loq"] for a in aois], rtol=1e-5), "binqc loq = max(2, NegGeoMean x NegGeoSD^2)")
+    c.ok(np.allclose(qv("area"), [a["area"] for a in aois], rtol=1e-5) and np.allclose(qv("nuclei"), [a["nuclei"] for a in aois]),
+         "binqc area and nuclei from the annotation")
+    c.ok(np.allclose(qv("q3"), np.percentile(V, 75, axis=0), rtol=1e-5), "binqc q3 = third quartile of the AOI's target values")
+
+    # ---- groupings from the annotation, no embedding, nothing computed for cells / bins ----------
+    u = L.get("umap") or {}
+    ix = read_json(d / "umap" / "index.json")
+    c.eq((u.get("embedding"), u.get("nEmbedded"), (ix.get("embedding") or {}).get("source")), ("none", 0, "none"), "rois layer: groupings without an embedding")
+    c.ok(bool(np.isnan(f32(d / "umap" / "coords.bin", 2)).all()), "umap/coords.bin is all NaN (no UMAP of ROIs)")
+    c.ok(not list((d / "umap").glob("clusters_r*.bin")) and not (d / "umap" / "celltypes.json").exists() and "celltypes" not in u,
+         "no Leiden clusters and no suggested cell types for an ROI layer")
+    names = [x["name"] for x in ix.get("clusterings", [])]
+    c.eq(names, ["tissue", "genotype", "Region", "segment", "Slide"],
+         "groupings: the study's columns, segment, slide (scan = the same groups, panel = one value, the display name = an id: left out)")
+    c.ok(all(x.get("source") == "user" for x in ix.get("clusterings", [])), "groupings carry source 'user'")
+    for col in ("tissue", "genotype", "segment"):
+        cl = next((x for x in ix.get("clusterings", []) if x["name"] == col), None)
+        if not c.ok(cl is not None, f"grouping {col}"):
+            continue
+        lab = np.fromfile(d / "umap" / cl["file"], dtype="<u2")
+        got = [cl["categories"][v] for v in lab]
+        c.eq(got, [a[col] for a in aois], f"grouping {col}: each AOI in its annotation group")
+        c.eq(cl.get("sizes"), [sum(a[col] == k for a in aois) for k in cl["categories"]], f"grouping {col}: group sizes")
+    sl = next((x for x in ix.get("clusterings", []) if x["name"] == "Slide"), {})
+    c.eq((sl.get("categories"), sl.get("sizes")), (["Slide 1", "Slide 2"], [7, 6]), "slide names replaced by Slide 1, Slide 2")
+    ti = next((x for x in ix.get("clusterings", []) if x["name"] == "tissue"), {})
+    tops = {cat: (mk[0]["gene"] if mk else None) for cat, mk in zip(ti.get("categories", []), ti.get("markers", []))}
+    c.eq(tops, {"cortex": "Gene1", "stroma": "Gene3", "tumour": "Gene2"}, "top marker of each tissue group = the gene the demo raised there")
+    hv = read_json(d / "hvg" / "index.json")
+    hg = read_json(d / "hvg" / "genes.json")
+    c.eq((L.get("hvg") or {}).get("allTargets"), True, "rois hvg entry says all targets")
+    c.eq(hg, [g for k, g in enumerate(genes) if V[k].sum() > 0], "hvg/genes.json = every target with a count (no variable-gene selection)")
+    c.eq(sum(ch["n"] for ch in hv.get("chunks", [])), len(aois), "hvg chunks hold every AOI (no minimum number of rows)")
+    c.ok(all((d / "hvg" / f"{ch['tx']}_{ch['ty']}.bin").stat().st_size == ch["bytes"] for ch in hv.get("chunks", [])), "hvg chunk files and sizes")
+
+    # ---- nothing of the slide names, scan names or Sample_IDs leaves the cache --------------------
+    texts = [p for p in out.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson")]
+    blob = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in texts)
+    for bad, what in ((tr["fakeId"][-4:], "the slide names' sample ID"), ("block", "a slide name"), ("demoA", "a scan name"),
+                      ("DSP-", "a Sample_ID"), ("1001000000001", "the plate number")):
+        c.ok(bad not in blob, f"geomx export text contains {what} ({bad!r})")
+
+    # ---- the same study without images: a drawn grid ---------------------------------------------
+    og = root / "export" / GXG
+    mg = read_json(og / "manifest.json")
+    check_manifest_common(c, mg, GXG, "png")
+    Lg = (mg.get("expr") or [{}])[0]
+    c.eq((mg.get("kind"), mg.get("pixelSizeUm"), (mg.get("geomx") or {}).get("layout"), Lg.get("nBins")),
+         ("geomx", None, "grid", len(tr["aois"])), "grid dataset: kind, no pixel size, layout, every AOI of the annotation")
+    c.eq([ch["name"] for ch in mg["image"]["channels"]], ["ROI grid (no scan image)"], "grid dataset: one drawn channel that says what it is")
+    check_tiles(c, og, mg, "png")
+    pg = f32(og / "expr" / "rois" / "positions.bin", 2)
+    c.ok(len(pg) == len(tr["aois"]) and len({(float(x), float(y)) for x, y in pg}) == len(pg)
+         and bool((pg[:, 0] > 0).all() and (pg[:, 0] < mg["image"]["width"]).all() and (pg[:, 1] > 0).all() and (pg[:, 1] < mg["image"]["height"]).all()),
+         "grid dataset: one cell per AOI, all on the canvas")
+    c.eq(len(read_json(og / "overlays" / "rois.geojson")["features"]), len(tr["aois"]), "grid dataset: one circle per AOI")
+    ig = read_json(og / "expr" / "rois" / "umap" / "index.json")
+    c.eq([(x["name"], x["sizes"]) for x in ig.get("clusterings", [])],
+         [("tissue", [5, 4, 6]), ("genotype", [7, 8]), ("segment", [13, 1, 1]), ("Slide", [7, 6, 2])],
+         "grid dataset (lab worksheet + CSV): groupings and sizes")
+    tg = read_json(og / "expr" / "rois" / "genes.json")
+    Vg = np.array([a["values"] for a in tr["aois"]], np.float64).T
+    c.ok([g["n"] for g in tg] == genes and np.allclose([g["t"] for g in tg], Vg.sum(1), rtol=1e-5, atol=1e-3),
+         "grid dataset: the same targets and totals over all 15 AOIs")
+    blob = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in og.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson"))
+    c.ok(tr["fakeId"][-4:] not in blob and "block" not in blob and "DSP-" not in blob, "grid dataset: no slide name or Sample_ID in the export text")
+    return {"aois": len(aois), "targets": len(genes), "geneFiles": files, "groupings": names, "gridAois": int(len(pg))}
+
+
 def check_marker_lists(c: Checker):
     """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
     sys.path.insert(0, str(APP))
@@ -1389,7 +1582,7 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
 
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
-    texts = [p for ds in (VIS, MX, TL) + XEN_DS for p in (export / ds).rglob("*")
+    texts = [p for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS for p in (export / ds).rglob("*")
              if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
     texts += [p for p in (root / "export_sample" / MX).rglob("*") if p.is_file() and p.suffix == ".json"]
     texts += [p for p in (root / "export_user" / VIS).rglob("*") if p.is_file() and p.suffix in (".json", ".geojson")]
@@ -1398,7 +1591,7 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
     lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not lp, f"export text files contain local paths: {lp[:3]}")
     args = (["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX), str(export / TL)] +
-            [str(export / ds) for ds in XEN_DS])
+            [str(export / ds) for ds in XEN_DS + GEOMX_DS])
     if (root / "export_sample" / MX).exists():
         args.append(str(root / "export_sample" / MX))
     for extra in (root / "export_user" / VIS, root / "export_partial" / VIS):
@@ -1455,6 +1648,8 @@ def main(argv=None) -> int:
     summary["userClusters"] = check_user(c, root, clustering, log_path)
     print("checks: demo_xenium (cells layer + molecules), demo_xenium_pq, demo_xenium_nt")
     summary["xenium"] = check_xenium(c, root, clustering)
+    print("checks: demo_geomx (GeoMx ROI layer, two scans), demo_geomx_grid (no image)")
+    summary["geomx"] = check_geomx(c, root)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
     print("checks: the page (index.html, viewer.js tile path, diag.js)")

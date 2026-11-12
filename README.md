@@ -26,6 +26,14 @@ container behind a password. No database and no always-on server are needed.
   cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
   panel and each one's molecules are drawn as coloured dots on the stains, several genes at
   once, fetched one gene at a time.
+- **GeoMx DSP.** A study of hand-drawn regions (ROIs) rather than cells or bins: the scans
+  (several slides side by side), the ROI outlines, and one disc per ROI segment coloured by a
+  gene. The columns of the annotation sheet are the groups: legend, heatmap / dot plot /
+  violin and the volcano compare groups of ROIs, and the QC panel has the GeoMx values (reads,
+  saturation, nuclei, area, negative-probe background, LOQ). What works for ROI data is the
+  comparing of groups; a UMAP, clusters, cell-type suggestions and density maps are not made
+  for a few dozen regions, and the viewer says so instead of showing them. Counts are shown as
+  counts per 10,000 in the plots (Q3 normalisation is not built in).
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
@@ -154,7 +162,7 @@ It runs the same steps and then checks every output file.
 ## Use your own data
 
 1. **[Prepare your data](docs/PREPARING_DATA.md):** one command per input type
-   (Visium HD, Visium, Xenium, OME-TIFF / QPTIFF, per-marker TIFF folders, H&E,
+   (Visium HD, Visium, Xenium, GeoMx DSP, OME-TIFF / QPTIFF, per-marker TIFF folders, H&E,
    `.h5ad` or 10x RNA-seq), then `prepare.py export`.
 2. **[De-identify and check](docs/DEIDENTIFICATION.md)** before anything leaves your
    computer.
@@ -243,6 +251,7 @@ deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
 examples/make_demo.py synthetic demo data
 examples/make_xenium_demo.py  synthetic Xenium output folder (cells, transcripts, stains)
+examples/make_geomx_demo.py   synthetic GeoMx DSP study (DCC, PKC, annotation sheets, scans with ROIs)
 tests/smoke_test.py   end-to-end test
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)

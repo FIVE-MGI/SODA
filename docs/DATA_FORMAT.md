@@ -302,6 +302,58 @@ with centroids in µm, the pixel size, a cells x genes sparse matrix and the gen
 
 The viewer words such a layer as cells ("cells", "transcripts") instead of bins / UMI.
 
+### ROI segments as a layer (`kind: "rois"`, GeoMx DSP)
+
+`prepare.py geomx` (`geomx.py`) writes a GeoMx DSP study as one layer with key `rois`, in the
+bin format above with one "bin" per ROI segment (AOI). The dataset's `kind` is `geomx`.
+What differs from a layer of bins or cells:
+
+- `expr[]` entry: `"kind": "rois"`, `"platform": "geomx"`, `"unit": "counts"`, `nBins` =
+  segments, `nRois` = ROIs, `binSizeUm` null, `spotDiameterPx` = 0.6 × the diameter of a circle of
+  the median segment area, `"layout": "scan"` or `"grid"` (no scan image: positions are a
+  drawn layout).
+- `positions.bin`: the centre of the segment's mask from the scan's OME-XML (else of the ROI
+  polygon), moved inside the ROI polygon when it falls outside, plus the scan's x offset when
+  several scans share the canvas. No two rows share a position. Rows are in the scans'
+  left-to-right order, then annotation order.
+- `genes.json`, `gene/<NAME>.bin`: target values = DCC probe counts collapsed with the PKC as
+  GeomxTools `aggregateCounts` (one probe: its count; several: the geometric mean, 0.5 added
+  to all of them first when any is 0). Values of multi-probe targets are not whole numbers.
+  Targets whose PKC `CodeClass` starts with `Negative` are not written.
+- `overlays/rois.geojson`: one polygon per ROI (`properties.name`, `roi`, `slide`, `aois`),
+  the first overlay and the layer's `regionOverlay`; `region.bin` links each segment to its ROI.
+- `binqc/`: the usual `total.bin`, `genes.bin` (and `pct_mt.bin`) plus, each float32 per row
+  and listed in the `binQc.metrics` block like the others: `raw_reads.bin` (`rawReads`),
+  `pct_aligned.bin` (`pctAligned`, 100 × Aligned ÷ Raw), `saturation.bin` (`saturation`,
+  100 × (1 − sum of the DCC counts ÷ Aligned)), `area.bin` (`area`, µm²), `nuclei.bin`
+  (`nuclei`), `neg_geomean.bin` (`negGeoMean`), `loq.bin` (`loq`), `genes_above_loq.bin`
+  (`genesAboveLoq`), `q3.bin` (`q3`), `q3_over_neg.bin` (`q3OverNeg`). A metric that is missing
+  for some segment (no nuclei column) is left out. With several panels the background and LOQ
+  metrics are those of the panel with the most targets.
+- `hvg/`: the same chunk format, but `genes.json` lists **every target with a count** (no
+  variable-gene selection, no minimum number of rows); `index.json` has `"selection"`,
+  `"rounded"` (values that were not whole numbers and were rounded for the uint16 counts) and
+  `"clipped"` (values above 65,535); the manifest's `hvg` entry has `"allTargets": true`.
+- `umap/`: **no embedding.** `index.json` has `"embedding": {"source": "none", "why": ...}`,
+  `"nEmbedded": 0`, and `coords.bin` is all NaN; the manifest's `umap.embedding` is `"none"`.
+  `clusterings` holds the annotation columns, each exactly like a lab's own clustering
+  (`id` `user<N>`, `name`, `"source": "user"`, `file` `clusters_user<N>.bin`, `categories`,
+  `sizes`, `nAssigned`, `markers`), de-identified the same way; slide and scan names are
+  "Slide 1", "Scan 1" ... unless prepared with `--keep-slide-names`. No `clusters_r*.bin`, no
+  `celltypes.json`.
+- manifest `geomx` block: `nAoi`, `nRoi`, `nSlides`, `layout`, `panels` (name, version,
+  targets, probes, negativeProbes), `collapse` and `loq` (the rules, as text),
+  `normalisation`, `dcc` (`used`, `inFolder`, `sharePkcMapped`), `scans` (order, `offsetPx`,
+  `size`, ROIs, AOIs, `unplaced`, `maskAreaOverAnnotation`: the median ratio of the masks' areas to the annotation's, 1.0 when the file and pixel size are right), `ntc` (the No Template Control's total count per plate),
+  `background` (median background and LOQ per panel).
+
+The viewer words such a layer as ROIs and counts, fills each ROI's outline with the colour of
+the genes on show (one disc per segment where an ROI has several; no density grid), hides the Tissue / UMAP switch and Circle → UMAP's own run, and leaves the rest
+(legend, groups, plots, volcano, QC filter) as for any layer (`roi.js`).
+
+In the prepare cache, `geomx/rows.json` keeps the annotation's raw text and the QC values per
+row for the export; like the rest of the cache it is never uploaded.
+
 ## Molecules: `molecules/`
 
 Written by `prepare.py xenium` (`molecules.py`, platform-neutral; `xenium.py` reads

@@ -147,6 +147,10 @@ if ($LASTEXITCODE -eq 0) { azcopy copy "demo/export/demo_visiumhd" "https://<acc
   region names come from your files and `--label`; choose them carefully.
 - **False positives happen.** A gene, marker or file name can match the pattern. Read what
   it reports instead of renaming blindly.
+  One family is built in as an exception: the mouse MHC genes `H2-T3` ... `H2-T24`. A `T` plus
+  digits directly after `H2-` is read as the gene symbol, neither replaced nor reported
+  (`_GENE_PREFIX` in `deid.py`); without it the gene list of any mouse whole-transcriptome
+  dataset fails the check.
 - It is a helper, not a certification. Whether a dataset may be shared, and how, is decided
   by your IRB, data-use agreements and institutional policy.
 
