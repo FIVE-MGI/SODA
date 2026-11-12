@@ -5,6 +5,9 @@ r"""Build the viewer cache for one dataset.
     python prepare.py visium --image <hires.tif> --outs <spaceranger outs> --id sample1_visiumhd --out <cache folder>
     python prepare.py xenium --src <xenium output folder> --id x1 --out <cache folder>
            (stains; cells -> a "cells" expression layer; transcripts -> the molecules layer)
+    python prepare.py cosmx    --src <CosMx flat-file folder>  --id c1 --out <cache folder>
+    python prepare.py merscope --src <MERSCOPE region folder>  --id m1 --out <cache folder>
+           (FOV mosaic / mosaic stains, cells and molecules as for xenium; cosmx.py, merscope.py)
 
 Common options: --label, --pixel-size (µm/px), --tile, --geojson "Label=path" (repeatable),
 --rgb-split (keep RGB files as three channels instead of max-projecting).
@@ -171,6 +174,35 @@ def main(argv=None):
     x.add_argument("--qv-min", type=float, default=20.0,
                    help="molecules: keep transcripts with quality value >= this (default 20, Xenium's own cut)")
     common(x)
+    cx = sub.add_parser("cosmx", help="CosMx SMI flat files: per-FOV images stitched into one mosaic, cells "
+                                      "(exprMat + metadata) as a 'cells' expression layer, tx_file as the "
+                                      "molecules layer (cosmx.py)")
+    cx.add_argument("--src", required=True, help="folder holding *_exprMat_file.csv, *_metadata_file.csv, "
+                                                 "*_fov_positions_file.csv, *_tx_file.csv and the image folders")
+    cx.add_argument("--images", choices=["auto", "morphology", "composite", "none"], default="auto",
+                    help="auto: raw morphology TIFFs when every FOV has one, else CellComposite, else a "
+                         "transcript-density background; none: the background even when images exist")
+    cx.add_argument("--z", type=int, help="raw morphology z-stacks (*_F<fov>_Z<z>.TIF): the plane to use (default the middle one)")
+    cx.add_argument("--channels", help="comma-separated names for the raw morphology channels (default: the "
+                                       "Mean.* columns of the metadata file, in their order)")
+    cx.add_argument("--fov-y", choices=["auto", "up", "down"], default="auto",
+                    help="whether y_local runs up from the bottom edge of a FOV image or down from the top; "
+                         "auto checks against CellLabels when present, else up")
+    mc = sub.add_parser("merscope", help="MERSCOPE region folder: mosaic stains (one z-plane), cells (cell_by_gene + "
+                                         "cell_metadata) as a 'cells' expression layer, detected_transcripts as the "
+                                         "molecules layer (merscope.py)")
+    mc.add_argument("--src", required=True, help="the region folder (holding detected_transcripts.csv and images/)")
+    mc.add_argument("--images", choices=["auto", "none"], default="auto",
+                    help="none: a transcript-density background even when mosaic images exist")
+    mc.add_argument("--z", type=int, help="z-plane of the mosaic images (default the middle one present)")
+    mc.add_argument("--cells-dir", help="folder holding cell_by_gene.csv and cell_metadata.csv when it is not "
+                                        "--src itself (e.g. one of several segmentation runs)")
+    for p_ in (cx, mc):
+        p_.add_argument("--no-cells", action="store_true", help="skip the cells layer")
+        p_.add_argument("--no-transcripts", action="store_true", help="skip the molecules layer")
+        p_.add_argument("--background-um", type=float,
+                        help="no images: µm per pixel of the density background (default 1)")
+        common(p_)
     v = sub.add_parser("visium", help="Space Ranger outs + the full-res image it was run on")
     v.add_argument("--image", required=True, help="the --image TIFF given to spaceranger (RGB or grey)")
     v.add_argument("--outs", required=True)
@@ -278,6 +310,12 @@ def main(argv=None):
         if ann.exists() and not args.geojson:
             args.geojson = [f"Annotations={ann}"]
         manifest["source"] = {"folder": str(folder), "files": [str(p) for _, p in pairs]}
+    elif args.kind in ("cosmx", "merscope"):
+        import importlib
+        plat = importlib.import_module(args.kind).plan(args, log=log)      # cosmx.py / merscope.py
+        src = plat.source
+        manifest["pixelSizeUm"] = plat.pixel_size_um
+        manifest["source"] = plat.manifest_source
     elif args.kind == "tiff":
         names = args.channels.split(",") if args.channels else None
         src = pyramid.TiffStackSource(Path(args.src), names=names, rgb_split=True)
@@ -336,6 +374,9 @@ def main(argv=None):
                 mol = _xen.write_transcripts(inp, ds_dir, size, um, qv_min=args.qv_min, log=log)
                 if mol:
                     manifest["molecules"] = mol
+
+    if args.kind in ("cosmx", "merscope"):
+        plat.finish(ds_dir, manifest, args, log=log)                       # cells layer, molecules
 
     if args.kind == "visium":
         layers = find_visium_layers(Path(args.outs))

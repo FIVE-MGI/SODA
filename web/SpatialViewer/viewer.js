@@ -5682,8 +5682,8 @@
     // the per-channel marker list and no transcript panel.
     // An image dataset can also carry protein squares (Akoya grid): it keeps its marker
     // list and gets the expression panel too, worded for markers (see syncWording).
-    // Xenium is an imaging platform: its stains stay a marker list even with a cells layer.
-    const isVisium = S.m.kind === "visium" || (S.m.kind !== "xenium" && ex.some((e) => e.kind !== "protein"));
+    // Xenium, CosMx and MERSCOPE are imaging platforms: their stains stay a marker list even with a cells layer.
+    const isVisium = S.m.kind === "visium" || (!["xenium", "cosmx", "merscope"].includes(S.m.kind) && ex.some((e) => e.kind !== "protein"));
     const hasProt = !isVisium && ex.length > 0;
     $("panelGenes").hidden = !isVisium && !hasProt;
     $("chanList").hidden = isVisium;
