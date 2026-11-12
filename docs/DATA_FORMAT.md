@@ -73,7 +73,7 @@ General rules:
 |---|---|
 | `id` | dataset id = folder name |
 | `label` | display name (the `--label` given to `prepare.py`, else the id) |
-| `kind` | `akoya`, `tiff`, `xenium`, `cosmx`, `merscope`, `geomx` or `visium` (the `prepare.py` subcommand used) |
+| `kind` | `akoya`, `tiff`, `xenium`, `cosmx`, `merscope`, `stereoseq`, `geomx` or `visium` (the `prepare.py` subcommand used) |
 | `pixelSizeUm` | µm per full-resolution pixel, for the scale bar; `null` if unknown |
 | `created` | when the cache was prepared, local time, ISO 8601 |
 | `image.width`, `image.height` | full-resolution size in pixels |
@@ -386,6 +386,33 @@ Written by `prepare.py cosmx` / `prepare.py merscope` (`cosmx.py`, `merscope.py`
   `"detected_transcripts"` and `"read"` (rows of the table); there is no `qvMin` / `lowQv`
   because these tables carry no quality value. `excluded.controls` counts the control codes
   above. `genes` is sorted by name (the names found in the table).
+
+### Stereo-seq layers (`kind: "stereoseq"`)
+
+`prepare.py stereoseq` (`stereoseq.py`) writes ordinary layers in the formats above: one bin
+layer per bin size, summed from the DNB counts of a bin GEF or a GEM, and a `cells` layer from
+the cell bin GEF. The manifest `kind` is `stereoseq`; the viewer shows it like a Visium
+dataset (the image under a transcripts panel). What is specific to it:
+
+| Where | Field | Meaning |
+|---|---|---|
+| `expr[]` | `key`, `label` | `bin020`, `bin050`, `bin100` ... (`bin` + DNBs per side, three digits), labelled `bin20 (10 µm)` ...; `cells`, labelled `Cells (cell bin)` |
+| `expr[]` | `binSizeUm` | DNBs per side × µm per DNB (10, 25, 50 ... at 0.5 µm per DNB); `null` for cells |
+| `expr[]` | `binDnb` | bin layers: DNBs per side of a bin |
+| `expr[]` | `platform` | `stereoseq`, on the bin layers and on cells |
+| `expr[]` | `midCount` | the sum of the layer's counts (MID is Stereo-seq's name for UMI) |
+| `expr[]` | `medianAreaUm2`, `fileOffsetDnb` | cells: the median cell area; the cell bin GEF's `offsetX`, `offsetY` |
+| manifest | `stereoseq` | how the layers were made: `dnbUm` (µm per DNB), `imageScale` (image pixels per DNB), `offsetDnb` (`--offset`), `source` (`gef` or `gem`), `gefVersion` or `gemFormat`, `levelsStored` (the bin sizes in the file), `fileOffsetDnb` (the file's `minX`, `minY` or `#OffsetX`, `#OffsetY`), `recordsRead`, `midRead`, `recordsInTissue`, `midInTissue`, `tissueCut` (`GEF contour (n rings)`, `mask image` or `none (source kept whole)`), `nGenes`, and `recordsOffImage` when records were left out |
+
+- `positions.bin` of a bin layer holds the bin centres, (first chip DNB of the bin + half a
+  bin − image offset) × image pixels per DNB, where chip DNB = the x, y stored in the file +
+  the file's offset. Only bins with at least one count under the tissue are rows, in row-major
+  order of the bin grid. A cell's position is its centre + half a DNB.
+- `genes.json` holds gene names (the gene id where a gene has no name). A name that several
+  gene ids share is written `Name_<geneID>` for all but the first, so each id keeps its own file.
+- In the cache, the `barcodes` of a bin layer are `x_y` of the bin's first DNB as the file
+  stores it, and of the cells layer the cell `id` (with `--barcodes stereopy`, Stereopy's
+  `x * 2^32 + y` for both). They are not exported.
 
 ## Molecules: `molecules/`
 

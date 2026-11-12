@@ -11,6 +11,8 @@ r"""Build the viewer cache for one dataset.
     python prepare.py cosmx    --src <CosMx flat-file folder>  --id c1 --out <cache folder>
     python prepare.py merscope --src <MERSCOPE region folder>  --id m1 --out <cache folder>
            (FOV mosaic / mosaic stains, cells and molecules as for xenium; cosmx.py, merscope.py)
+    python prepare.py stereoseq --image <SN>_HE_regist.tif --gef <SN>.raw.gef --cellbin <SN>.cellbin.gef --id s1 --out <cache folder>
+           (Stereo-seq / SAW: bin20 / bin50 / bin100 layers cut to the tissue + a "cells" layer; --gem instead of --gef works too)
 
 Common options: --label, --pixel-size (µm/px), --tile, --geojson "Label=path" (repeatable),
 --rgb-split (keep RGB files as three channels instead of max-projecting).
@@ -45,6 +47,7 @@ import threadcap                                   # first: caps the BLAS / Open
 threadcap.apply(threadcap.from_argv(sys.argv))     # --threads N, else SODA_THREADS, else min(8, usable CPUs)
 
 import pyramid
+import stereoseq
 import userclusters
 from expr import build_cell_layer, build_expr, find_visium_layers
 
@@ -223,6 +226,10 @@ def main(argv=None):
     v.add_argument("--image-scale", type=float, default=1.0,
                    help="multiply spaceranger positions by this if --image differs in scale")
     common(v)
+    ss = sub.add_parser("stereoseq", help="Stereo-seq (STOmics SAW) output: registered image + bin GEF or GEM "
+                                          "(square-bin layers) + cell bin GEF (a 'cells' layer)")
+    stereoseq.add_args(ss)
+    common(ss)
     for p in sub.choices.values():
         p.add_argument("--threads", type=int,
                        help="BLAS / OpenMP threads for numpy and scipy (default: min(8, CPUs this process may use); "
@@ -342,6 +349,12 @@ def main(argv=None):
         names = args.channels.split(",") if args.channels else None
         src = pyramid.TiffStackSource(Path(args.src), names=names, rgb_split=True)
         manifest["source"] = {"file": str(args.src)}
+    elif args.kind == "stereoseq":
+        stereoseq.precheck(args, log=log)
+        src = pyramid.TiffStackSource(Path(args.image), rgb_split=True)
+        if src.nchannels == 1:
+            src.names = [next((n for n in ("ssDNA", "DAPI") if n.lower() in Path(args.image).name.lower()), "Image")]
+        manifest["source"] = {"image": str(args.image), "gef": args.gef, "gem": args.gem, "cellbin": args.cellbin}
     else:
         src = pyramid.TiffStackSource(Path(args.image), rgb_split=True)
         manifest["source"] = {"image": str(args.image), "outs": str(args.outs)}
@@ -399,6 +412,8 @@ def main(argv=None):
 
     if args.kind in ("cosmx", "merscope"):
         plat.finish(ds_dir, manifest, args, log=log)                       # cells layer, molecules
+    if args.kind == "stereoseq":
+        stereoseq.build(args, ds_dir, manifest, log=log)
 
     if args.kind == "visium":
         layers = find_visium_layers(Path(args.outs))

@@ -34,6 +34,12 @@ demo_tiled is the same image with per-tile steps in two markers: the export must
 tile grid, correct those two markers (seams.py) and recover the factors that were put in.
 It also checks the built-in marker lists and that the channel-name cleanup is the same
 in celltypes.py and lasso_worker.js.
+Stereo-seq (examples/make_stereoseq_demo.py, web/SpatialViewer/stereoseq.py): a synthetic chip as a
+whole-chip bin GEF with a tissue contour + a cell bin GEF, as a tissue GEM, as an older multi-level
+tissue GEF and as a shuffled whole-chip GEM with a mask image (on the grey ssDNA image). Checked: the tissue cut, bin totals,
+positions, per-gene files and barcodes of the bin20 / bin50 layers against the drawn DNB counts, the
+cells layer against the cell table, that all four routes give the same layers, and the image under
+bins and cells.
 The last export brings "the lab's own" results for the 8 µm layer (userclusters.py): a
 Seurat-style clusters CSV (seurat_clusters, cell_type with a colour column, a numeric column)
 whose barcodes end in "-1-0" instead of "-1" and lack a tenth of the bins, and a UMAP CSV.
@@ -95,6 +101,10 @@ XEN_DS = (XE, XP, XN)
 # synthetic GeoMx DSP study (examples/make_geomx_demo.py): with its two scans / without images (drawn grid)
 GX, GXG = "demo_geomx", "demo_geomx_grid"
 GEOMX_DS = (GX, GXG)
+# synthetic Stereo-seq folder (examples/make_stereoseq_demo.py): raw GEF + cell bin GEF / tissue GEM /
+# older tissue GEF with stored bin10 + bin50 / shuffled whole-chip GEM cut with the mask image
+ST, STG, STL, STM = "demo_stereoseq", "demo_stereoseq_gem", "demo_stereoseq_lv", "demo_stereoseq_mask"
+ST_DS = (ST, STG, STL, STM)
 NO_CLUSTER = 0xFFFF
 CLUSTER_MODULES = ("umap", "igraph", "leidenalg")
 # a barcode or a local path must never reach the export
@@ -163,6 +173,38 @@ def demo_commands(root: Path) -> list[list[str]]:
          "--annotation", f"{raw}/geomx/Demo_LabWorksheet.txt", "--annotation", f"{raw}/geomx/annotations.csv", "--out", cache],
         [prep, "export", "--id", GXG, "--out", cache, "--dest", export],
     ]
+
+
+def stereoseq_commands(root: Path) -> list[list[str]]:
+    """The Stereo-seq demo commands (kept apart from demo_commands so the lists stay easy to merge)."""
+    try:
+        r = root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        r = root.resolve().as_posix()
+    raw, cache, export = f"{r}/raw/stereoseq", f"{r}/cache", f"{r}/export"
+    prep = "web/SpatialViewer/prepare.py"
+    img = ["--image", f"{raw}/SYNCHIP_HE_regist.tif"]
+    return [
+        ["examples/make_stereoseq_demo.py", "--out", f"{r}/raw"],
+        [prep, "stereoseq", "--id", ST, *img, "--gef", f"{raw}/SYNCHIP.raw.gef", "--cellbin", f"{raw}/SYNCHIP.cellbin.gef",
+         "--bins", "20,50", "--out", cache, "--label", "Synthetic Stereo-seq"],
+        [prep, "export", "--id", ST, "--out", cache, "--dest", export, "--markers", "examples/demo_xenium_markers.json"],
+        [prep, "stereoseq", "--id", STG, *img, "--gem", f"{raw}/SYNCHIP.tissue.gem.gz", "--bins", "20,50", "--out", cache],
+        [prep, "export", "--id", STG, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "stereoseq", "--id", STL, *img, "--gef", f"{raw}/SYNCHIP.tissue.gef", "--cellbin", f"{raw}/SYNCHIP.cut.cellbin.gef",
+         "--bins", "20,50", "--barcodes", "stereopy", "--out", cache],
+        [prep, "export", "--id", STL, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "stereoseq", "--id", STM, "--image", f"{raw}/SYNCHIP_ssDNA_regist.tif", "--gem", f"{raw}/SYNCHIP.raw.shuffled.gem",
+         "--tissue-mask", f"{raw}/SYNCHIP_HE_tissue_cut.tif", "--bins", "50", "--out", cache],
+        [prep, "export", "--id", STM, "--out", cache, "--dest", export, "--no-umap"],
+    ]
+
+
+def clean_stereoseq(root: Path):
+    for p in [root / "raw" / "stereoseq"] + [root / sub / ds for sub in ("cache", "export") for ds in ST_DS]:
+        if p.exists():
+            print(f"  removing earlier output {p}", flush=True)
+            shutil.rmtree(p)
 
 
 def write_user_files(root: Path):
@@ -1845,6 +1887,275 @@ def check_imaging(c: Checker, root: Path, clustering: bool, log_path: Path) -> d
     return res
 
 
+def _st_truth(tz, n: int, W: int, G: int, whole_chip: bool = False):
+    """Bins of n x n DNBs from the drawn records: (occupied bin ids in row order, centres px, bins x genes counts)."""
+    sel = np.ones(len(tz["x"]), bool) if whole_chip else tz["inside"]
+    nbx = -(-W // n)
+    b = (tz["y"][sel] // n) * nbx + tz["x"][sel] // n
+    cells = np.unique(b)
+    dense = np.zeros((len(cells), G))
+    np.add.at(dense, (np.searchsorted(cells, b), tz["gene"][sel]), tz["count"][sel])
+    pos = np.column_stack([(cells % nbx + 0.5) * n, (cells // nbx + 0.5) * n]).astype(np.float32)
+    return cells, pos, dense
+
+
+def _st_layer_files(c: Checker, d: Path, what: str, names: list[str], pos_want, dense_want):
+    """positions.bin, genes.json and every gene file of one exported layer against a dense truth matrix."""
+    pos = f32(d / "positions.bin", 2)
+    c.ok(pos.shape == pos_want.shape and np.array_equal(pos, pos_want), f"{what}: positions.bin = the drawn rows' centres")
+    gj = read_json(d / "genes.json")
+    c.eq([g["n"] for g in gj], names, f"{what}: genes.json names")
+    c.ok(len(gj) == dense_want.shape[1] and np.allclose([g["t"] for g in gj], dense_want.sum(0)),
+         f"{what}: genes.json totals = the drawn counts per gene")
+    dense, bad = {}, []
+    for j, g in enumerate(names):
+        rows = np.flatnonzero(dense_want[:, j] > 0)
+        f = d / "gene" / f"{enc(g)}.bin"
+        a = f32(f, 3) if f.exists() else np.zeros((0, 3), np.float32)
+        if len(a) != len(rows) or not np.array_equal(a[:, :2], pos_want[rows]) or not np.array_equal(a[:, 2], dense_want[rows, j]):
+            bad.append(g)
+        dense[g] = (rows, dense_want[rows, j])
+    c.ok(not bad, f"{what}: gene files differ from the drawn counts: {bad[:4]}")
+    c.eq(len(list((d / "gene").glob("*.bin"))), int((dense_want.sum(0) > 0).sum()), f"{what}: gene/*.bin count")
+    return pos, dense
+
+
+def _tile_values(out: Path, m: dict, ch: int, pos) -> np.ndarray:
+    """8-bit value of channel `ch` of the full-resolution tiles at each (x, y) pixel position."""
+    from PIL import Image
+    T, z = m["image"]["tileSize"], m["image"]["levels"] - 1
+    tiles, vals = {}, []
+    for x, y in pos:
+        k = (int(x // T), int(y // T))
+        if k not in tiles:
+            tiles[k] = np.asarray(Image.open(out / "tiles" / str(ch) / str(z) / str(k[0]) / f"{k[1]}.png"))
+        vals.append(int(tiles[k][int(y) - k[1] * T, int(x) - k[0] * T]))
+    return np.array(vals)
+
+
+def check_stereoseq(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict:
+    """The synthetic Stereo-seq chip (examples/make_stereoseq_demo.py) through its four routes."""
+    raw = root / "raw"
+    tr = read_json(raw / "truth_stereoseq.json")
+    tz = np.load(raw / "truth_stereoseq.npz")
+    W, H, um, labels = tr["width"], tr["height"], tr["dnbUm"], tr["labels"]
+    G = len(labels)
+    out = root / "export" / ST
+    m = read_json(out / "manifest.json")
+    check_manifest_common(c, m, ST, "png")
+    c.eq(m.get("kind"), "stereoseq", "stereoseq manifest kind")
+    c.eq((m["image"]["width"], m["image"]["height"]), (W, H), "stereoseq image size")
+    c.eq([ch["name"] for ch in m["image"]["channels"]], ["Red", "Green", "Blue"], "stereoseq channel names")
+    c.ok(abs((m.get("pixelSizeUm") or 0) - um) < 1e-9, f"stereoseq pixelSizeUm {m.get('pixelSizeUm')} (resolution 500 nm, 1 px per DNB)")
+    check_tiles(c, out, m, "png")
+    sb = m.get("stereoseq") or {}
+    c.eq((sb.get("source"), sb.get("gefVersion"), sb.get("levelsStored")), ("gef", 4, [1]), "stereoseq block: source / version / levels")
+    c.eq((sb.get("recordsRead"), sb.get("midRead")), (tr["records"], tr["mid"]), "stereoseq block: whole-chip records / MID read")
+    c.eq((sb.get("recordsInTissue"), sb.get("midInTissue")), (tr["recordsInTissue"], tr["midInTissue"]),
+         "stereoseq block: records / MID inside the tissue contour (hole cut out, island kept, background left out)")
+    c.ok(tr["midInTissue"] < tr["mid"], "the demo chip has background counts off the tissue")
+    c.ok(str(sb.get("tissueCut", "")).startswith("GEF contour"), f"stereoseq block: tissueCut {sb.get('tissueCut')!r}")
+    layers = {L["key"]: L for L in m.get("expr", [])}
+    c.eq(sorted(layers), ["bin020", "bin050", "cells"], "stereoseq expr layers")
+    try:
+        import zarr
+    except ImportError:
+        zarr = None
+        print("    SKIP barcode checks (zarr not installed)")
+    res = {}
+    for n in (20, 50):
+        key = f"bin{n:03d}"
+        L = layers.get(key, {})
+        d = out / "expr" / key
+        print(f"  expr {key}:")
+        cells, pos_w, dense_w = _st_truth(tz, n, W, G)
+        c.eq(L.get("nBins"), len(cells), f"{key}: nBins = bins holding a tissue DNB count")
+        c.eq((L.get("nGenes"), L.get("binSizeUm"), L.get("binDnb")), (G, n * um, n), f"{key}: nGenes / binSizeUm / binDnb")
+        c.ok(abs((L.get("spotDiameterPx") or 0) - n) < 1e-9 and abs((L.get("micronsPerPixel") or 0) - um) < 1e-9,
+             f"{key}: spotDiameterPx {L.get('spotDiameterPx')} / micronsPerPixel {L.get('micronsPerPixel')}")
+        c.eq(L.get("midCount"), tr["midInTissue"], f"{key}: midCount = MID inside the tissue")
+        c.ok("kind" not in L, f"{key}: a bin layer has no kind")
+        pos, dense = _st_layer_files(c, d, key, labels, pos_w, dense_w)
+        lib = dense_w.sum(1)
+        c.ok(abs(lib.sum() - tr["midInTissue"]) < 1e-6, f"{key}: sum of the layer = MID inside the tissue")
+        if zarr is not None:
+            zc = zarr.open_group(str(root / "cache" / ST / "expr" / f"{key}.zarr"), mode="r")
+            nbx = -(-W // n)
+            want_bc = [f"{(b % nbx) * n}_{(b // nbx) * n}" for b in cells.tolist()]
+            c.eq([b.decode() for b in zc["barcodes"][()]], want_bc, f"{key}: cache barcodes = x_y of each bin's first DNB")
+        check_hvg(c, d, L, pos, lib, dense)
+        check_binqc(c, d, L, lib, dense, labels)
+        res[key] = {"bins": int(len(pos)), "medianMid": float(np.median(lib))}
+        truth = np.array(tr["types"])[np.searchsorted(np.array(tr["bandEdges"]), pos[:, 0], side="right")].tolist()
+        if clustering:
+            res[key]["umap"] = check_umap(c, d, L, pos, lib, truth, n)
+        else:
+            print(f"    SKIP umap checks for {key} (clustering packages not installed)")
+        if n == 20:
+            try:                                  # bins lie on pink tissue, not on white glass (green is low on tissue)
+                gv = _tile_values(out, m, 1, pos)
+                c.ok((gv < 200).mean() > 0.9, f"{key}: {(gv < 200).mean():.0%} of bin centres are on tissue in the image")
+                # orientation: the small island (top right in the image) has bins on it only as imported
+                ix, iy, ia = tr["island"][:3]
+                isl = (np.abs(pos[:, 0] - ix) <= ia) & (np.abs(pos[:, 1] - iy) <= ia)
+                on = float((gv[isl] < 200).mean())
+                fy = float((_tile_values(out, m, 1, np.column_stack([pos[isl, 0], H - pos[isl, 1]])) < 200).mean())
+                fx = float((_tile_values(out, m, 1, np.column_stack([W - pos[isl, 0], pos[isl, 1]])) < 200).mean())
+                c.ok(isl.sum() >= 10 and on > 0.6 and fy < 0.1 and fx < 0.1,
+                     f"{key}: island bins on tissue {on:.0%} (y flipped {fy:.0%}, x flipped {fx:.0%}): x right, y down, no flip")
+                print(f"    image under the bin centres: {(gv < 200).mean():.0%} tissue; the {int(isl.sum())} island bins {on:.0%} "
+                      f"(y flipped {fy:.0%}, x flipped {fx:.0%})")
+            except ImportError:
+                print("    SKIP image alignment check (Pillow not installed)")
+
+    # cells
+    print("  expr cells:")
+    L = layers.get("cells", {})
+    d = out / "expr" / "cells"
+    cxy, ccnt, carea = tz["cell_xy"], tz["cell_counts"].astype(np.float64), tz["cell_area"]
+    c.eq((L.get("kind"), L.get("nBins"), L.get("nGenes"), L.get("binSizeUm")), ("cells", tr["nCells"], G, None),
+         "cells layer kind / nBins / nGenes / binSizeUm")
+    c.eq(L.get("midCount"), tr["cellMid"], "cells layer midCount = MID of the cell table")
+    want_d = 2 * math.sqrt(float(np.median(carea)) / math.pi)
+    c.ok(abs((L.get("spotDiameterPx") or 0) - want_d) < 0.02, f"cells spotDiameterPx {L.get('spotDiameterPx')} (median cell area)")
+    pos, dense = _st_layer_files(c, d, "cells", labels, (cxy + 0.5).astype(np.float32), ccnt)
+    lib = ccnt.sum(1)
+    if zarr is not None:
+        zc = zarr.open_group(str(root / "cache" / ST / "expr" / "cells.zarr"), mode="r")
+        c.eq([b.decode() for b in zc["barcodes"][()]], [str(i) for i in range(tr["nCells"])], "cells cache barcodes = cell ids")
+    check_hvg(c, d, L, pos, lib, dense)
+    check_binqc(c, d, L, lib, dense, labels)
+    res["cells"] = {"cells": int(len(pos))}
+    if clustering:
+        res["cells"]["umap"] = check_umap(c, d, L, pos, lib, np.array(tr["types"])[tz["cell_type"]].tolist(), 40)
+    else:
+        print("    SKIP umap checks for the cells layer (clustering packages not installed)")
+    try:                                          # every cell centre is a dark nucleus in the H&E
+        rv = _tile_values(out, m, 0, pos)
+        c.ok(np.median(rv) < 110 and (rv < 150).mean() > 0.97, f"cells on nuclei: red {np.median(rv):.0f} at the centres")
+        print(f"    red channel at the {len(rv)} cell centres: median {np.median(rv):.0f} (tissue ~226, glass ~236)")
+    except ImportError:
+        print("    SKIP nucleus alignment check (Pillow not installed)")
+
+    # the other three routes give the same layers
+    def same(ds, key, names_a, names_b, ref_ds=ST):
+        a, b = root / "export" / ref_ds / "expr" / key, root / "export" / ds / "expr" / key
+        ok = (b / "positions.bin").exists() and (a / "positions.bin").read_bytes() == (b / "positions.bin").read_bytes()
+        for ga, gb in zip(names_a, names_b):
+            fa, fb = a / "gene" / f"{enc(ga)}.bin", b / "gene" / f"{enc(gb)}.bin"
+            ok = ok and fa.exists() == fb.exists() and (not fa.exists() or fa.read_bytes() == fb.read_bytes())
+        return ok
+
+    mg = read_json(root / "export" / STG / "manifest.json")
+    c.eq([L["key"] for L in mg.get("expr", [])], ["bin020", "bin050"], f"{STG}: layers from the tissue GEM (no cells)")
+    c.eq(((mg.get("stereoseq") or {}).get("source"), (mg.get("stereoseq") or {}).get("midInTissue")), ("gem", tr["midInTissue"]),
+         f"{STG}: stereoseq block (GEM source, already cut to the tissue)")
+    c.eq((mg.get("stereoseq") or {}).get("fileOffsetDnb"), tr["cut"], f"{STG}: the GEM's #OffsetX / #OffsetY are read as its offset")
+    c.ok(abs((mg.get("pixelSizeUm") or 0) - um) < 1e-9, f"{STG}: pixelSizeUm (0.5 um per DNB assumed for a GEM)")
+    for key in ("bin020", "bin050"):
+        c.ok(same(STG, key, labels, labels), f"{STG}: {key} from the tissue GEM = from the raw GEF cut by its contour")
+        c.eq([g["n"] for g in read_json(root / "export" / STG / "expr" / key / "genes.json")], labels, f"{STG}: {key} gene names")
+    old = tr["oldLayoutNames"]
+    ml = read_json(root / "export" / STL / "manifest.json")
+    c.eq(((ml.get("stereoseq") or {}).get("gefVersion"), (ml.get("stereoseq") or {}).get("levelsStored")), (2, [10, 50]),
+         f"{STL}: stereoseq block (older GEF, stored bin10 + bin50)")
+    cut = tr["cut"]
+    c.eq((ml.get("stereoseq") or {}).get("fileOffsetDnb"), cut, f"{STL}: the GEF's minX / minY (it is cut to a region) are read as its offset")
+    c.eq([L["key"] for L in ml.get("expr", [])], ["bin020", "bin050", "cells"], f"{STL}: layers")
+    c.ok(same(STL, "cells", labels, labels), f"{STL}: cells of the cut cell bin GEF (x stored minus offsetX) land where the whole-chip file's do")
+    for key in ("bin020", "bin050"):
+        c.ok(same(STL, key, labels, old), f"{STL}: {key} from stored levels ({'bin10 summed' if key == 'bin020' else 'bin50 as it is'}) = from bin1")
+        c.eq([g["n"] for g in read_json(root / "export" / STL / "expr" / key / "genes.json")], old, f"{STL}: {key} gene names (one `gene` field)")
+    if zarr is not None:
+        cells, _, _ = _st_truth(tz, 20, W, G)
+        nbx = -(-W // 20)
+        zc = zarr.open_group(str(root / "cache" / STL / "expr" / "bin020.zarr"), mode="r")
+        c.eq([b.decode() for b in zc["barcodes"][()]],
+             [str((((b % nbx) * 20 - cut[0]) << 32) | ((b // nbx) * 20 - cut[1])) for b in cells.tolist()],
+             f"{STL}: --barcodes stereopy = x * 2^32 + y, x and y as the file stores them")
+        zc = zarr.open_group(str(root / "cache" / STL / "expr" / "cells.zarr"), mode="r")
+        c.eq([b.decode() for b in zc["barcodes"][()]], [str(((int(x) - cut[0]) << 32) | (int(y) - cut[1])) for x, y in cxy],
+             f"{STL}: cells --barcodes stereopy = x * 2^32 + y of the centre, as stored")
+    mm = read_json(root / "export" / STM / "manifest.json")
+    c.eq([L["key"] for L in mm.get("expr", [])], ["bin050"], f"{STM}: layers (and no protein grid of the stain)")
+    c.eq([(ch["name"], ch["color"]) for ch in mm["image"]["channels"]], [("ssDNA", "#ffffff")], f"{STM}: grey ssDNA image = one white channel")
+    c.eq(mm["image"]["dtype"], "uint16", f"{STM}: ssDNA image dtype")
+    check_tiles(c, root / "export" / STM, mm, "png")
+    bm = mm.get("stereoseq") or {}
+    c.eq((bm.get("midRead"), bm.get("midInTissue")), (tr["mid"], tr["midInTissue"]), f"{STM}: whole-chip GEM cut with the mask image")
+    c.ok(str(bm.get("tissueCut", "")).startswith("mask image"), f"{STM}: tissueCut {bm.get('tissueCut')!r}")
+    c.ok(same(STM, "bin050", old, old, ref_ds=STL), f"{STM}: bin050 from the shuffled 4-column GEM = the other routes (by gene name)")
+    c.eq(sorted(g["n"] for g in read_json(root / "export" / STM / "expr" / "bin050" / "genes.json")), sorted(old), f"{STM}: gene names")
+
+    # the reader's parts on their own
+    try:
+        sys.path.insert(0, str(APP))
+        import stereoseq
+        mask_w = np.unpackbits(tz["mask"])[: W * H].reshape(H, W).astype(bool)
+        tm = stereoseq.TissueMask.from_contour(stereoseq.read_contour(raw / "stereoseq" / "SYNCHIP.raw.gef"), W, H)
+        got = np.unpackbits(tm.bits, axis=1)[:, :W].astype(bool)
+        c.ok(np.array_equal(got, mask_w), f"tissue contour -> mask: {int((got != mask_w).sum())} DNBs differ from the drawn mask")
+        c.eq(tm.area, tr["tissueDnb"], "tissue mask area")
+        pad = np.zeros((-(-H // 50) * 50, -(-W // 50) * 50), bool)
+        pad[:H, :W] = mask_w
+        c.ok(np.array_equal(tm.blocks(50), pad.reshape(pad.shape[0] // 50, 50, -1, 50).any(axis=(1, 3))), "tissue mask blocks(50)")
+        sh = np.zeros((1200, 1350), bool)                 # blocks counted from DNB (70, 30)
+        sh[:H - 30, :W - 70] = mask_w[30:, 70:]
+        c.ok(np.array_equal(tm.blocks(50, 70, 30), sh.reshape(24, 50, 27, 50).any(axis=(1, 3))), "tissue mask blocks(50) from another origin")
+        xs, ys = np.array([-1, 0, W - 1, W, 700]), np.array([0, -1, H - 1, 5, 610])
+        c.eq(tm.contains(xs, ys).tolist(), [False, False, bool(mask_w[H - 1, W - 1]), False, True], "tissue mask contains(): off-chip = not tissue")
+        for name, whole, want_ordered in (("SYNCHIP.tissue.gem.gz", False, True), ("SYNCHIP.raw.shuffled.gem", True, False)):
+            hdr = stereoseq.gem_header(raw / "stereoseq" / name)
+            genes = {"ids": [], "names": [], "index": {}}
+            acc = stereoseq.BinAccumulator([50], {50: 1}, W, H, root / "cache" / "_st_acc_test")
+            try:
+                nb = 0
+                for g, x, y, v in stereoseq.gem_chunks(raw / "stereoseq" / name, hdr, genes, block_bytes=200_000):
+                    acc.add(1, g, x + hdr["offset"][0], y + hdr["offset"][1], v)        # chip DNBs, as the drawn truth
+                    nb += 1
+                ordered = acc.levels[50].ordered
+                indptr, idx, val = acc.finish(50, len(genes["ids"]))
+            finally:
+                acc.cleanup()
+            cells_w, _, dw = _st_truth(tz, 50, W, G, whole_chip=whole)
+            order = [tr["geneIds"].index(i) if i in tr["geneIds"] else old.index(i) for i in genes["ids"]]
+            got = np.zeros((len(cells_w), G))
+            for j, gj in enumerate(order):
+                a, b = int(indptr[j]), int(indptr[j + 1])
+                got[np.searchsorted(cells_w, idx[a:b]), gj] = val[a:b]
+            c.ok(nb > 5 and ordered == want_ordered, f"{name} in {nb} small batches: arrives gene by gene = {ordered}, want {want_ordered}")
+            c.ok(np.array_equal(got, dw), f"{name} in small batches ({'sorted at the end' if not want_ordered else 'concatenated'}) = the drawn counts")
+        c.eq(stereoseq.gene_labels(["E1", "E2", "E3", "E4"], ["Abc", "ABC", "", "Abc"]), ["Abc", "ABC_E2", "E3", "Abc_E4"],
+             "gene_labels: names shared by several ids (or differing only by case) stay distinct")
+        c.eq(stereoseq.plan_levels([20, 50, 100], [1, 10, 50]), {20: 10, 50: 50, 100: 50}, "plan_levels: largest stored level that divides")
+        # the mouse gene names H2-T23 ... are not sample IDs (the demo has one); other IDs still are
+        import deid
+        c.eq([deid.find_ids(s) for s in ("H2-T23", "h2-t10", "Cd4, H2-T24;")], [[], [], []], "deid: mouse MHC gene names H2-Tnn pass")
+        c.eq([deid.find_ids(s) for s in ("T23", "H2-INT95", "H2_T23")], [["T23"], ["INT95"], ["T23"]],        # deid:ok
+             "deid: sample IDs are still found")
+        c.ok("H2-T23" in labels, "the demo has a gene named H2-T23")
+        try:
+            stereoseq.plan_levels([20], [50])
+            c.ok(False, "plan_levels: bin20 from a file that only holds bin50 must stop")
+        except SystemExit:
+            c.ok(True, "")
+    except ImportError as e:
+        print(f"    SKIP reader unit checks ({e})")
+
+    # nothing identifying in the exports: no chip serial number, no local path, deid clean
+    texts = [p for ds in ST_DS for p in (root / "export" / ds).rglob("*") if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
+    c.ok(not [p for p in texts if tr["sn"] in p.read_text(encoding="utf-8", errors="ignore")], "stereoseq exports name the chip serial number")
+    c.ok(not [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))], "stereoseq exports contain local paths")
+    args = ["web/SpatialViewer/deid.py", "check"] + [str(root / "export" / ds) for ds in ST_DS]
+    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    c.eq(p.returncode, 0, "deid.py check on the stereoseq exports (exit code)")
+    return res
+
+
+
 def check_marker_lists(c: Checker):
     """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
     sys.path.insert(0, str(APP))
@@ -2118,8 +2429,9 @@ def main(argv=None) -> int:
     if not args.checks_only:
         if not args.reuse:
             clean(root)
+            clean_stereoseq(root)
         log_path.write_text("", encoding="utf-8")
-        for cmd in demo_commands(root):
+        for cmd in demo_commands(root) + stereoseq_commands(root):
             label = Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"
             label += " (sample)" if "--umap-sample" in cmd else ""
             label += " (user clusters)" if "--user-layer" in cmd else ""
@@ -2147,6 +2459,8 @@ def main(argv=None) -> int:
     summary["geomx"] = check_geomx(c, root)
     print("checks: demo_cosmx*, demo_merscope* (FOV mosaic / mosaics, cells layer, molecules, density background)")
     summary["imaging"] = check_imaging(c, root, clustering, log_path)
+    print("checks: demo_stereoseq (bin layers + cells), _gem, _lv, _mask")
+    summary["stereoseq"] = check_stereoseq(c, root, clustering, log_path)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
     print("checks: the page (index.html, viewer.js tile path, diag.js)")
