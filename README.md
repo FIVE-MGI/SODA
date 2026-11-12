@@ -26,6 +26,10 @@ container behind a password. No database and no always-on server are needed.
   cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
   panel and each one's molecules are drawn as coloured dots on the stains, several genes at
   once, fetched one gene at a time.
+- **Stereo-seq (STOmics).** The registered H&E or ssDNA image with square-bin layers summed
+  from the DNB counts of a GEF or GEM file (bin20 / bin50 / bin100 = 10 / 25 / 50 µm, cut to
+  the tissue) and the segmented cells of the cell bin file as a layer of their own; gene maps,
+  UMAP and clusters, QC, Circle → UMAP and the plots work on both.
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
@@ -243,6 +247,7 @@ deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
 examples/make_demo.py synthetic demo data
 examples/make_xenium_demo.py  synthetic Xenium output folder (cells, transcripts, stains)
+examples/make_stereoseq_demo.py  synthetic Stereo-seq output (bin GEF, cell bin GEF, GEM, registered image)
 tests/smoke_test.py   end-to-end test
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)

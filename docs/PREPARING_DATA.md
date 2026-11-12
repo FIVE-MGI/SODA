@@ -135,6 +135,104 @@ The writers in `expr.py` (`build_cell_layer`) and `molecules.py` (`MoleculeWrite
 plain arrays (centroids in µm, a cells x genes count matrix, gene ids and µm positions of
 molecules), so a CosMx or MERSCOPE reader can reuse them; `xenium.py` is the Xenium reader.
 
+## Stereo-seq (STOmics SAW)
+
+```bash
+python web/SpatialViewer/prepare.py stereoseq --id my_stereoseq --image path/to/SN_HE_regist.tif --gef path/to/SN.raw.gef --cellbin path/to/SN.cellbin.gef --out cache
+```
+
+Stereo-seq counts are per **DNB** (a capture spot; 0.5 µm apart on every chip so far), and
+people read them as square **bins** of N × N DNBs: bin20 = 10 µm, bin50 = 25 µm,
+bin100 = 50 µm, bin200 = 100 µm. `prepare.py stereoseq` makes those bin layers (like the
+Visium HD bin layers) and, from the cell bin file, a cells layer. The files it reads are SAW
+outputs (`<SN>` is the chip serial number; names as in STOmics' demo data, where they sit
+flat in `outs/`; other SAW versions put the same files in subfolders, so give each path):
+
+| Option | SAW file | Becomes |
+|---|---|---|
+| `--image` (required) | `<SN>_HE_regist.tif`, or `<SN>_ssDNA_regist.tif` / `<SN>_DAPI_regist.tif` | the image. It must be the **registered** image: one pixel per DNB, the size of the chip. RGB (H&E) is shown as a colour photo, a grey ssDNA / DAPI image as one white channel. |
+| `--gef` | `<SN>.tissue.gef`, `<SN>.raw.gef` or `<SN>.gef` (bin GEF, HDF5) | the bin layers |
+| `--gem` | `<SN>.tissue.gem.gz` or `<SN>.gem.gz` (text: `geneID geneName x y MIDCount ExonCount`) | the bin layers when there is no `--gef` (if both are given the GEF is read) |
+| `--cellbin` | `<SN>.cellbin.gef` (or `<SN>.adjusted.cellbin.gef`) | the cells layer |
+| `--tissue-mask` | `<SN>_<stain>_tissue_cut.tif` (same size as the image, non-zero = tissue) | which DNBs count as tissue, instead of the outline inside the GEF |
+
+Not needed: `<SN>.report.tar.gz`, `visualization.tar.gz`, `*.barcodeToPos.h5`, the image
+`.tar.gz` package, FASTQ files. Each part is optional except the image: without `--gef` /
+`--gem` there are no bin layers, without `--cellbin` no cells layer. A file that is not found,
+or is not the kind its option expects, is skipped with a message (a bin GEF and a cell bin GEF
+given the wrong way round are swapped). A bin size the file cannot give stops the command
+before the image is read.
+
+**Positions.** The registered image has one pixel per DNB, with pixel (0, 0) at chip DNB
+(0, 0), x to the right and y down. x and y in a file count DNBs from the file's own offset:
+STOmics' writer stores x − minX and y − minY and keeps the offset in the file, as `minX` /
+`minY` on a bin GEF's `expression` dataset, `offsetX` / `offsetY` on a cell bin GEF and
+`#OffsetX` / `#OffsetY` in a GEM header. A whole-chip file has offset 0; a file cut to a
+region has that region's corner. `prepare.py` adds the offset back (chip DNB = x + offset), so
+a DNB sits at image pixel (chip x + 0.5, chip y + 0.5) and a bin's centre at its first DNB
++ N / 2, with no flip. The pixel size is the files' `resolution` (500 nm) = **0.5 µm per
+pixel**; a GEM does not state it, so 0.5 µm is assumed (`--dnb-um` to change). `--offset X,Y`
+is only for an image that was itself cropped (the chip DNB at its first pixel), and
+`--image-scale` for an image that is not at one pixel per DNB. Records or cells that fall
+outside the image are left out and counted in a warning: that means the image is not the
+registered one. This was checked on whole-chip files and on files cut to a region, written by
+STOmics' own library (gefpy 1.3.3).
+
+**Bin sizes.** `--bins 20,50,100` is the default:
+
+- **bin20 (10 µm)** is about a cell wide and close to Visium HD's 8 µm bins; it is the finest
+  size the viewer offers (8 µm and up) and the largest layer.
+- **bin50 (25 µm)** is the usual size for clustering Stereo-seq sections.
+- **bin100 (50 µm)** is close to a classic Visium spot (55 µm): few bins, many counts each,
+  for whole-section overviews.
+
+Add `200` for 100 µm bins, or pass `--bins 50,100` to leave out the largest layer (about
+40 % of the gene files and most of the clustering time). Bins are counted from the file's
+origin (bin i covers file x from i × N to i × N + N − 1), as in SAW and Stereopy, so a bin
+here is the same bin there. If the GEF already stores a wanted size (`geneExp/bin50`, as
+`tissue.gef` and `<SN>.gef` do) it is used as it is; a size that is not stored is summed from
+the largest stored size that divides it (bin1 in a `raw.gef`).
+
+**Tissue.** `<SN>.raw.gef` holds the whole chip, including the DNBs beside the tissue (8 % of
+the counts in the mouse brain used for testing); `<SN>.tissue.gef` and `<SN>.tissue.gem.gz`
+hold only the DNBs under SAW's tissue mask. A whole-chip GEF is cut to the tissue here, using
+`--tissue-mask` if given, else the tissue outline stored in the GEF (`contour/tissueContour`;
+holes in the outline are left out). On the test chip that cut of `raw.gef` gave exactly the
+records of `tissue.gem.gz`. A file with neither mask nor outline is kept whole, with a
+message, and so is a GEF that is itself cut to a region (`minX` / `minY` not 0: taken as a
+tissue GEF); `--tissue contour` applies the outline anyway and `--tissue none` keeps a whole
+chip on purpose. The cut is per DNB when counts are summed from bin1; a stored coarser level
+is kept bin by bin (a bin stays if any of its DNBs is tissue).
+
+**Genes.** The gene name is shown (the gene id where there is no name). When several ids
+share one name, the first keeps the name and the others are shown as `Name_<geneID>`, so no
+counts are merged (a mouse annotation has about twenty such names).
+
+**Cells.** Each cell of `cellBin/cell` becomes a dot at its centre, sized to the median cell
+area; its counts are `cellBin/cellExp`. Everything that works on bins works on the cells layer
+(see [Xenium](#xenium)). Cell outlines (`cellBin/cellBorder`) are not imported yet, and SAW's
+own `clusterID` per cell is not read.
+
+**Your own clusters.** The cache keeps a name per row so that
+[your own UMAP and clusters](#your-own-umap-and-clusters-seurat-scanpy) can be attached with
+`--user-layer bin050` (or `bin020`, `bin100`, `cells`): for a bin, `x_y` of its first DNB as
+the file stores it (e.g. `5300_9500`); for a cell, the cell `id` of the cell bin GEF. Stereopy
+names bins and cells `x * 2^32 + y` instead (one integer); prepare with `--barcodes stereopy`
+to keep those names, so the `obs_names` of a Stereopy / AnnData object match as they are.
+
+**Memory and time.** The bin1 table is never held whole: it is read gene by gene in chunks
+of about 8 million records, each chunk is summed to (gene, bin) pairs and appended to a
+temporary file per bin size inside the cache, and the layers are then written one at a time.
+Peak memory is about 13 bytes per non-zero (gene, bin) pair of the largest layer. For a whole
+mouse brain on a 1 cm chip (23,520 × 23,520 px image; 270 million bin1 records of which 248
+million lie under the tissue; about 27,600 genes; about 130,000 cells), prepare with the
+default bins took 5.3 min on a loaded workstation (2.3 min the image pyramid,
+1.6 min reading the GEF, the rest writing the layers) with a peak of 2.7 GB.
+Reading the same counts from `tissue.gem.gz` took 2.6 min for the text, with a peak of
+3.9 GB. The export (53 min, 6.5 GB in 111,395 files) is described under
+[How big and how long](#how-big-and-how-long). `--crop` and `--flip` are not available for
+`stereoseq`.
+
 ## Multiplexed immunofluorescence
 
 ### One multichannel file (OME-TIFF, QPTIFF, ImageJ or other TIFF stack)
@@ -570,6 +668,15 @@ timing figures here. What can be said from the formats:
   someone picks. Reading its `transcripts.zarr.zip` took about 6 minutes.
 - **UMAP time** grows with the number of bins with ≥ 10 UMI and runs on one core.
   Expect it to dominate the export of a large Visium HD 8 µm layer.
+- **Stereo-seq:** a whole mouse brain on a 1 cm chip (about 320 million counts under the tissue,
+  27,600 genes, 131,000 cells) with the default bins exported in 53 min on one core, with a
+  peak of 8.5 GB of memory: 6.5 GB in 111,395 files. bin20 (523,000 bins, 206 million non-zero
+  values) is 2.6 GB and took 12 min to cluster, bin50 (84,000 bins) 1.9 GB and 1.5 min, bin100
+  (21,000 bins) 1.2 GB and half a minute, the cells 0.6 GB and 2 min; the H&E tiles are 0.28 GB
+  as JPEG. Each layer writes one file per gene that has counts (about 27,400 files; 4 to 10 min
+  per layer onto a network drive). Opening the dataset loads 11 MB in 22 files before a gene is
+  picked, most of it the bin positions and QC values of bin20; a widely expressed gene drawn on
+  bin20 is 3 to 6 MB. `--bins 50,100` leaves out the largest layer.
 
 Run the [checklist in HOSTING.md](HOSTING.md#before-you-upload-checklist) to count files
 and bytes before you upload.
