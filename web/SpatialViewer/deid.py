@@ -44,7 +44,14 @@ KEY_PATH = Path(os.environ.get("SPATIALVIZ_KEY", "sample_id_key.csv"))
 # transcript accessions only because those carry 6 or 9 digits (NM_000123) and this
 # pattern caps at 4 with (?![0-9]) after it, so an accession never matches. Do not
 # widen the digit count without checking that again - it would rewrite gene names.
-_ID = re.compile(r"(?<![A-Za-z0-9])(INT|TFI|UTD|IO|NM|T|I)[-_ ]?(\d{2,4})([A-Za-z](?![A-Za-z]))?(?![0-9])", re.I)
+#
+# One gene family is let through by name: the mouse MHC genes H2-T10, H2-T18, H2-T22, H2-T23,
+# H2-T24 (in every mouse gene list, and often among a section's variable genes) would otherwise
+# read as the ID after the hyphen and stop every mouse export. Only the exact token counts:
+# "H2-" must start a word and the T must be followed by exactly two digits and then no letter or
+# digit, so BATCH2-T23, H2-T23a and H2-T1234 are still caught (deid:ok).
+_ID = re.compile(r"(?<![A-Za-z0-9])(?!(?<=(?<![A-Za-z0-9])H2-)T\d\d(?![A-Za-z0-9]))"
+                 r"(INT|TFI|UTD|IO|NM|T|I)[-_ ]?(\d{2,4})([A-Za-z](?![A-Za-z]))?(?![0-9])", re.I)
 # continuation right after an ID: "_9912", " / 9912", "-5"
 _CONT = re.compile(r"^([\s/_,&+]*|-)(\d{1,4})(?![0-9A-Za-z])")
 
