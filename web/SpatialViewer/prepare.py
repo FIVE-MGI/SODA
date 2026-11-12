@@ -5,6 +5,9 @@ r"""Build the viewer cache for one dataset.
     python prepare.py visium --image <hires.tif> --outs <spaceranger outs> --id sample1_visiumhd --out <cache folder>
     python prepare.py xenium --src <xenium output folder> --id x1 --out <cache folder>
            (stains; cells -> a "cells" expression layer; transcripts -> the molecules layer)
+    python prepare.py geomx  --dcc <folder of .dcc> --pkc <panel.pkc ...> --annotation <xlsx|csv|LabWorksheet.txt>
+           [--image <scan.ome.tiff> ...] --id g1 --out <cache folder>
+           (GeoMx DSP: one row per ROI segment in a "rois" layer, ROI outlines, annotation columns as groups)
 
 Common options: --label, --pixel-size (µm/px), --tile, --geojson "Label=path" (repeatable),
 --rgb-split (keep RGB files as three channels instead of max-projecting).
@@ -174,6 +177,11 @@ def main(argv=None):
     x.add_argument("--qv-min", type=float, default=20.0,
                    help="molecules: keep transcripts with quality value >= this (default 20, Xenium's own cut)")
     common(x)
+    gx = sub.add_parser("geomx", help="GeoMx DSP: DCC counts + PKC probe kit(s) + annotation sheet (+ scan OME-TIFFs "
+                                      "with the ROI polygons) -> a 'rois' layer, one row per ROI segment (geomx.py)")
+    import geomx as _geomx
+    _geomx.add_args(gx)
+    common(gx)
     v = sub.add_parser("visium", help="Space Ranger outs + the full-res image it was run on")
     v.add_argument("--image", required=True, help="the --image TIFF given to spaceranger (RGB or grey)")
     v.add_argument("--outs", required=True)
@@ -239,6 +247,10 @@ def main(argv=None):
         src = pyramid.TiffStackSource(Path(args.src), rgb_split=True)
         print(f"  channels ({src.nchannels}): " + ", ".join(src.names))
         src.close()
+        return
+
+    if args.kind == "geomx":
+        _geomx.prepare(args, log=log, geojson=parse_geojson_args)
         return
 
     ds_dir = Path(args.out) / args.id

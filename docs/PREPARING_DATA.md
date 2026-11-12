@@ -135,6 +135,121 @@ The writers in `expr.py` (`build_cell_layer`) and `molecules.py` (`MoleculeWrite
 plain arrays (centroids in µm, a cells x genes count matrix, gene ids and µm positions of
 molecules), so a CosMx or MERSCOPE reader can reuse them; `xenium.py` is the Xenium reader.
 
+## GeoMx DSP
+
+```bash
+python web/SpatialViewer/prepare.py geomx --dcc path/to/dcc_folder --pkc path/to/panel.pkc --annotation path/to/annotations.xlsx --image path/to/scan1.ome.tiff --image path/to/scan2.ome.tiff --id my_geomx --out cache
+```
+
+GeoMx DSP (NanoString, now Bruker; NGS readout) is a different kind of data from everything
+above. It does not measure cells or bins: someone draws a few dozen **regions of interest
+(ROIs)** on a scanned slide, sometimes split into **segments** (AOIs: for example the PanCK+
+and the PanCK- part of one ROI), and each segment gives **one** count vector. A study is 20 to
+a few hundred such rows with an annotation sheet (tissue, genotype ...), and the question is
+"these ROIs against those", not "where is this gene". SODA therefore shows it as a layer of
+ROI segments (key `rois`) and switches off what only makes sense for thousands of bins.
+
+### The files, and where the GeoMx software writes them
+
+| Option | File | Where it comes from |
+|---|---|---|
+| `--dcc` | a folder (searched recursively) or a `.zip` of `*.dcc` files, one per collection-plate well; the file name is the `Sample_ID`, e.g. `DSP-1001250001234-A-A02.dcc` | written by the **GeoMx NGS Pipeline** (the vendor's FASTQ-to-counts step, run on the sequencer's output or in BaseSpace), as a folder or a `DCC.zip`. A folder holding DCC files of other scans or plates is fine: only the wells named in the annotation are read. |
+| `--pkc` | one or more `*.pkc` probe kit files (JSON), one per panel on the slide, e.g. `Mm_R_NGS_WTA_v1.0.pkc`; a folder or `.zip` of them works too | downloaded from the vendor's GeoMx "PKC files" page for the panel and version used (the same file the NGS Pipeline's configuration was made with). Give one version of each panel. |
+| `--annotation` | the annotation sheet, one row per segment. Columns: `Sample_ID`, `slide name`, `scan name`, `panel`, `roi`, `segment`, `aoi`, `area`, then any columns of your own (`tissue`, `genotype`, `nuclei` ...). `.xlsx` (read without openpyxl), `.csv` / `.tsv`, or the lab worksheet below. `--sheet NAME` picks a sheet. | Either the annotation workbook you already use with GeomxTools / the DSP Data Analysis suite, or the **`<readout group>_<date>_LabWorksheet.txt`** from the *readout package* the instrument writes when a collection plate is finalised (the same zip that holds `*_GNP_config.ini` and `SampleSheet.csv`). The lab worksheet has the first eight columns; add your own columns in a second file. |
+| `--annotation` (again) | more files are joined to the first one that has `Sample_ID`: by `Sample_ID`, or, for a sheet without it, by scan + ROI + segment. A DSP Data Analysis suite export with a `SegmentProperties` sheet (`SlideName`, `ScanLabel`, `ROILabel`, `SegmentLabel`, `AOINucleiCount`, your tags) is read this way. | DSP Data Analysis suite: the dataset's Excel export. |
+| `--image` (optional, repeatable) | the scan as an **OME-TIFF**. Its OME-XML block (or a `.ome.xml` file next to it) holds, for every ROI, the label, the outline (polygon, ellipse or rectangle) and one mask per segment, in pixels of that image. | Exported from the instrument: open the scan and export the image as OME-TIFF (the export that includes the ROIs; it is the file NanoString's SpatialOmicsOverlay package reads). The scan's name inside the file must be the `scan name` of the annotation; if it is not, write `--image "ScanName=path/to/file.ome.tiff"`. |
+
+Menu names differ between instrument software versions; the file names and contents above are
+what matters.
+
+### What you get
+
+- **The image**: the scan, with its stains as channels (named from the file, e.g.
+  "SYTO 13 (FITC/525nm)"). **Several scans are placed side by side** on one canvas, so one
+  dataset holds the whole study and groups can be compared across slides. The scans must have
+  the same pixel size and number of channels (else prepare one dataset per scan).
+- **ROI outlines** as an overlay, switched on when the dataset opens. Hover one for its name
+  ("ROI 007", or "Slide 2 · ROI 007").
+- **One row per segment** in the layer "GeoMx ROIs". Search a gene and **each ROI's own outline
+  is filled** with a colour for its count; the slider sets which counts are the bottom and the
+  top of the colour scale, and hovering an ROI shows its name and the counts. Where one ROI
+  has several segments, each segment is a disc inside the outline instead (at the centre of
+  the segment's own mask). Groups (below) are shown as one disc per segment, 0.6 × the
+  diameter of a circle with the median segment area, so that it sits inside most outlines.
+  Rows are in the scans' left-to-right order: "Slide 1" is the leftmost scan.
+- **Counts**: the DCC probe counts collapsed to targets with the PKC, by the rule of
+  GeomxTools' `aggregateCounts`: a target with one probe keeps its count; a target with several
+  probes gets their geometric mean, with 0.5 added to all of them first if any is 0 (so such a
+  target is never exactly 0, and "targets detected" says little for multi-probe panels: use
+  "targets above LOQ"). The **negative probes are not genes**: per segment they give the
+  background (their geometric mean) and the limit of quantification,
+  LOQ = max(2, geometric mean × geometric SD²).
+  Not done: GeomxTools' optional removal of outlier probes before the collapse, and the DSP
+  Data Analysis suite's habit of raising counts of 0 to 1.
+- **Your annotation columns are the groups.** Every column with 2 to 200 distinct values
+  (text, or whole numbers with few values) becomes a named grouping: in **Colour ROIs by →
+  Groups**, in the legend (with the top targets of each group), in the heatmap / dot plot /
+  violin panel and in the volcano's group pickers. Left out, with a line in the log: columns
+  with one value, id-like columns (more than half of the rows have their own value), numbers
+  (area, nuclei, read counts: these are QC values), and a column that makes exactly the same
+  groups as another. Drawing a circle or a loop around discs makes one more group.
+- **QC values per segment** in the QC filter panel (histogram and min / max sliders each):
+  total counts, targets detected, raw reads, % of raw reads aligned, sequencing saturation
+  (100 × (1 − deduplicated ÷ aligned)), area, nuclei (if the annotation has them), background,
+  LOQ, targets above LOQ, the third quartile (Q3) of the target counts, and Q3 ÷ background.
+- **Normalisation.** The files hold the collapsed counts, not normalised. On the slide a gene
+  shows its raw counts (a bigger or deeper-sequenced ROI has more of everything: the key under
+  the picture says so). The plots and the volcano use log1p of **counts per 10,000** of the
+  segment's total, as for every other layer, and say so in their labels. GeoMx analyses often
+  use Q3 normalisation instead; both divide each segment by one number, and Q3 is in the QC
+  panel to look at. A Q3 option for the plots does not exist yet.
+
+### What is not offered for ROIs, and why
+
+- **No UMAP, no Leiden clusters, no suggested cell types.** A few dozen hand-picked regions
+  are not a sample of the tissue; an embedding and clusters of them would mostly redraw the
+  annotation or the slide. The Tissue / UMAP switch is hidden and the panel says why.
+- **Circle → UMAP** keeps its drawing tools (a drawn shape is a group of ROIs for the volcano
+  and the plots) but does not run a UMAP.
+- **The volcano tests every target** (not 2,000 variable genes). In its data the multi-probe
+  geometric means are rounded to whole counts and values above 65,535 are capped (the log says
+  how many; the per-gene files are exact). With this few ROIs, and ROIs of one slide or one
+  animal not being independent, read the fold changes; the p-values are rough.
+- **No grid of the stains** ("protein" layer): three or four morphology stains are not a
+  marker panel.
+- Outlier-probe QC, Q3 / background-normalised values, and the per-segment masks as shapes
+  (segments of one ROI are discs; the ROI outline is drawn once) are not there.
+
+### No image, or no coordinates
+
+Without `--image` (or with `--layout grid`) the segments are laid out on a **drawn grid**: one
+block per slide, one labelled cell per segment. The dataset opens and every comparison works;
+the image's single channel is called "ROI grid (no scan image)" because the positions are a
+layout, not the tissue. A segment whose ROI is not in the scan's OME-XML has no position and
+is not drawn (the log counts them; if more than half of a scan's segments are missing it
+stops, since that is the wrong file).
+
+### De-identification
+
+- `Sample_ID`s, DCC file names and plate numbers are never written to the export.
+- **Slide and scan names are replaced by "Slide 1", "Slide 2" ...** They are free text typed
+  at the instrument and often carry a block or patient number in a shape no pattern knows.
+  `--keep-slide-names` keeps them (through the ordinary sample-ID pattern only).
+- Every other column name and value goes through the same de-identification as
+  [your own clusters](#your-own-umap-and-clusters-seurat-scanpy): a sample / donor / patient
+  column has its values replaced by numbers, anything shaped like a sample ID is replaced.
+  Read the group names in the legend yourself before publishing, and run
+  `python web/SpatialViewer/deid.py check <export>/<id>`.
+
+### Checks worth a look in the log
+
+`[geomx] N AOIs to read; M DCC files under --dcc, K not used`: N must be your segment count.
+`... % on probes of the PKC(s)`: close to 100; under 80 % stops (wrong PKC).
+`scan X: N ROIs in the OME-XML`: must match the slide.
+`grouping 'tissue': 3 groups, sizes [...]`: the groups the viewer will offer.
+
+For scale: an 84-ROI study (two scans of 16,384 x 16,384 px and 4 stains, side by side as one 33,280 x 16,384 px image; 401 DCC files in the folder, 84 used; a 19,963-target mouse whole-transcriptome PKC) took 3 to 5.5 min to prepare on a loaded workstation reading from a network share (all but 10 s of it the image pyramid) and about 10 min to export (tiles 35 s; the 19,962 per-gene files 9 min, slow only because each is a separate small file on the share; QC, groupings and the volcano's data 3 s). The export is 149 MB in 22,883 files: tiles 123 MB (JPEG), gene files 19 MB, hvg/ 6 MB. The 88-segment example without an image (1,819 targets) took 6 s to prepare and 85 s to export (3.7 MB in 1,873 files).
+
 ## Multiplexed immunofluorescence
 
 ### One multichannel file (OME-TIFF, QPTIFF, ImageJ or other TIFF stack)
@@ -594,6 +709,16 @@ the pixel grid of the image given to `spaceranger count --image`. Check, in this
 | The bins are a mirror image of the tissue | the image was flipped relative to the one Space Ranger used | `--flip h` (left-right) or `--flip v` (top-bottom); both image and bins are mirrored |
 | You only want part of the slide, or the image has a margin Space Ranger did not have | | `--crop x0,y0,x1,y1`; bins move with the crop, bins outside it are dropped |
 | Close but not matching, or rotated | a different scan or a rotated export of the slide | use the exact file Space Ranger was given. Rotation is not supported. |
+
+**GeoMx: "no annotation row has the scan name of the image(s)".** The scan name stored in the
+OME-TIFF is not the `scan name` of the annotation (a renamed scan, or a re-export). The message
+lists the names in the annotation: give the right one with `--image "ScanName=path"`.
+
+**GeoMx: "N of M annotation rows have no <Sample_ID>.dcc".** The DCC folder is another run's,
+or the files were renamed. The `Sample_ID` must be the DCC file name without `.dcc`.
+
+**GeoMx: "only N % of the DCC counts are on probes of the PKC file(s)".** The PKC is another
+panel or species than the slide's; a slide with two panels needs both PKC files.
 
 **Windows: `FileNotFoundError` while the UMAP starts.** umap-learn's compiler writes cache
 files inside the Python environment. If that environment sits in a deeply nested folder the

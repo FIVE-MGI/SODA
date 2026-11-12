@@ -15,6 +15,9 @@
                                                 (protgrid.py)
     <dest>/<id>/molecules/index.json, gene/<NAME>.bin   imaging platforms (Xenium): every transcript,
                                                 uint16 x, y per molecule, one file per gene (molecules.py)
+    <dest>/<id>/expr/rois/...                   GeoMx ROI segments (geomx.py): gene files, binqc/ with the GeoMx
+                                                QC values, hvg/ with every target, umap/ with the annotation
+                                                columns as groupings and no embedding
     <dest>/<id>/overlays/<file>.geojson
 
 Upload the <id> folder to any static host (Azure blob, S3, a web server) and
@@ -194,22 +197,34 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                 layer_regions[key] = table
                 log(f"[export] expr {key}: {len(table)} regions, "
                     f"{int(np.count_nonzero(ids)):,}/{len(ids):,} bins assigned")
+        # GeoMx ROI segments (geomx.py): a few dozen rows. Their own QC values, every target in hvg/,
+        # the annotation columns as groupings; no UMAP, Leiden, cell types or variable-gene selection.
+        roi = layer.get("kind") == "rois"
+        if roi:
+            import geomx
+            if any(s["layer"] == key for s in user_clusters or []):
+                raise SystemExit(f"[geomx] --user-layer {key}: an ROI layer takes its groups from the annotation sheet. "
+                                 f"Add your columns there (or give a second --annotation file) and run prepare.py geomx again.")
+            rq, rh, ru = geomx.export_layer(er, d, ds_dir, layer, log=log)
+            for store, val in ((layer_binqc, rq), (layer_hvg, rh), (layer_umap, ru)):
+                if val:
+                    store[key] = val
         # per-bin QC (total counts, genes detected, % MT) for the QC filter; same 8 um floor
-        if not layer.get("binSizeUm") or layer["binSizeUm"] >= 8:
+        if not roi and (not layer.get("binSizeUm") or layer["binSizeUm"] >= 8):
             q = binqc.write_bin_qc(er, d, log=log)
             if q:
                 layer_binqc[key] = q
         # circle -> UMAP: bin-major top-variable genes. Not for the 2 um grid: too sparse to embed.
-        if hvg and (not layer.get("binSizeUm") or layer["binSizeUm"] >= 8):
+        if hvg and not roi and (not layer.get("binSizeUm") or layer["binSizeUm"] >= 8):
             h = hvgchunks.write_hvg_chunks(er, d, layer.get("micronsPerPixel"), log=log)
             if h:
                 layer_hvg[key] = h
         # whole-section UMAP + Leiden clusters of the same bins (same 8 um floor)
         u = None
-        if umap and (not layer.get("binSizeUm") or layer["binSizeUm"] >= 8):
+        if umap and not roi and (not layer.get("binSizeUm") or layer["binSizeUm"] >= 8):
             u = sectionumap.write_section_umap(er, d, log=log)
         # the lab's own UMAP / clusters for this layer (or SODA's put back after an earlier import)
-        u = userclusters.for_layer(user_clusters, er, d, ds_dir, u, log=log)
+        u = userclusters.for_layer(user_clusters, er, d, ds_dir, u, log=log) if not roi else None
         if u:
             layer_umap[key] = u
             # suggested cluster names from the marker lists, on the same embedded bins

@@ -48,6 +48,19 @@ _ID = re.compile(r"(?<![A-Za-z0-9])(INT|TFI|UTD|IO|NM|T|I)[-_ ]?(\d{2,4})([A-Za-
 # continuation right after an ID: "_9912", " / 9912", "-5"
 _CONT = re.compile(r"^([\s/_,&+]*|-)(\d{1,4})(?![0-9A-Za-z])")
 
+# Gene symbols that look like an ID. The mouse MHC class Ib genes are named H2-T3 ... H2-T24,
+# and the letter T plus digits after the hyphen is exactly the ID shape. A match directly after
+# "H2-" is the gene, not a sample: it is neither replaced nor reported. (Seen with the GeoMx
+# mouse whole-transcriptome panel, whose genes.json would otherwise fail `deid.py check`.)
+# Keep this list as narrow as that.
+_GENE_PREFIX = ("H2-",)
+
+
+def _is_gene(text: str, m) -> bool:
+    head = text[max(0, m.start() - 3):m.start()].upper()
+    return m.group(1).upper() == "T" and head in _GENE_PREFIX
+
+
 _lock = threading.Lock()
 _key: dict[str, int] | None = None
 
@@ -97,7 +110,7 @@ def anonymize(text: str, form: str = "text", context: str = "") -> str:
         return text
     out, pos, found = [], 0, 0
     for m in _ID.finditer(text):
-        if m.start() < pos or m.group(0) in _DTYPES:
+        if m.start() < pos or m.group(0) in _DTYPES or _is_gene(text, m):
             continue
         out.append(text[pos:m.start()])
         prefix, digits, suffix = m.group(1), m.group(2), m.group(3) or ""
@@ -155,7 +168,7 @@ def sample_value(value: str, context: str = "") -> str:
 
 
 def find_ids(text: str) -> list[str]:
-    return [m.group(0) for m in _ID.finditer(text or "") if m.group(0) not in _DTYPES]
+    return [m.group(0) for m in _ID.finditer(text or "") if m.group(0) not in _DTYPES and not _is_gene(text, m)]
 
 
 def find_in_obj(obj, path="") -> list[tuple[str, str]]:
