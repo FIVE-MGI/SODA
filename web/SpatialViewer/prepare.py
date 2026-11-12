@@ -35,6 +35,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import threadcap                                   # first: caps the BLAS / OpenMP threads before numpy loads
+threadcap.apply(threadcap.from_argv(sys.argv))     # --threads N, else SODA_THREADS, else min(8, usable CPUs)
+
 import pyramid
 import userclusters
 from expr import build_cell_layer, build_expr, find_visium_layers
@@ -180,7 +183,13 @@ def main(argv=None):
     v.add_argument("--image-scale", type=float, default=1.0,
                    help="multiply spaceranger positions by this if --image differs in scale")
     common(v)
+    for p in sub.choices.values():
+        p.add_argument("--threads", type=int,
+                       help="BLAS / OpenMP threads for numpy and scipy (default: min(8, CPUs this process may use); "
+                            "also the SODA_THREADS environment variable). See threadcap.py.")
     args = ap.parse_args(argv)
+    if args.threads is not None and args.threads < 1:
+        ap.error("--threads must be 1 or more")
 
     if args.kind == "rnaseq":
         import rnaseq
@@ -199,6 +208,7 @@ def main(argv=None):
 
     if args.kind == "export":
         from export import export_static
+        log(f"[export] {threadcap.describe()}")
         export_static(Path(args.out) / args.id, Path(args.dest), fmt=args.fmt, workers=args.workers, log=log,
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,

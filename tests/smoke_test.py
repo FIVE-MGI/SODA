@@ -45,6 +45,10 @@ stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
 tile and graphics failures, and, when node is installed, tests/diag_test.js passes (the
 panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright).
+Also: prepare.py caps the BLAS / OpenMP threads before numpy loads (threadcap.py: default,
+SODA_THREADS, --threads, a variable already set), the PCA runs on one thread and gives the same
+numbers as on the cap's threads; and the dataset picker (dspicker.js) is wired into the page with its
+roles, and every .js of the page parses when node is installed.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -1387,6 +1391,137 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
         c.eq(q.returncode, 0, f"node --check {f}")
 
 
+THREAD_PROBE = r"""
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import threadcap
+early = "numpy" in sys.modules                 # threadcap itself must not load numpy
+import prepare                                 # caps first, then imports numpy (through pyramid, expr)
+import numpy as np
+from scipy import linalg
+out = {"numpyBeforeCap": early, "cap": threadcap.cap(), "usable": threadcap.usable_cpus(),
+       "env": {v: os.environ.get(v) for v in threadcap.VARS}, "describe": threadcap.describe()}
+try:
+    from threadpoolctl import threadpool_info
+    out["pools"] = [p["num_threads"] for p in threadpool_info()]
+except ImportError:
+    out["pools"] = None
+print("PROBE " + json.dumps(out))
+"""
+
+
+def check_threadcap(c: Checker, log_path: Path):
+    """prepare.py caps the BLAS / OpenMP threads before numpy loads; the user's number wins;
+    the cap does not change what the PCA computes."""
+    import os
+    sys.path.insert(0, str(APP))
+    try:
+        import sectionumap
+        import threadcap
+    finally:
+        sys.path.pop(0)
+    base = {k: v for k, v in os.environ.items() if k not in threadcap.VARS and k != threadcap.ENV}
+
+    def probe(env: dict, *argv: str) -> dict | None:
+        p = subprocess.run([sys.executable, "-c", THREAD_PROBE, str(APP), *argv], env={**base, **env},
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        line = next((ln for ln in p.stdout.splitlines() if ln.startswith("PROBE ")), None)
+        if p.returncode != 0 or line is None:
+            print(p.stdout[-2000:], flush=True)
+            return None
+        return json.loads(line[6:])
+
+    names = threadcap.VARS
+    d = probe({})
+    if c.ok(d is not None, "threadcap: probe ran (import prepare with no thread variables set)"):
+        want = min(threadcap.DEFAULT_MAX, d["usable"])
+        c.ok(not d["numpyBeforeCap"], "threadcap: importing threadcap does not load numpy")
+        c.eq(d["cap"], want, "threadcap: default cap = min(8, usable CPUs)")
+        c.ok(all(d["env"][v] == str(want) for v in names), f"threadcap: every thread variable set to {want}: {d['env']}")
+        if d["pools"] is not None:
+            c.ok(d["pools"] and max(d["pools"]) <= want, f"threadcap: loaded BLAS pools within the cap {want}: {d['pools']}")
+        print(f"    default: {d['describe']}, pools {d['pools']}")
+    d = probe({threadcap.ENV: "3"})
+    if c.ok(d is not None, "threadcap: probe ran (SODA_THREADS=3)"):
+        c.ok(d["cap"] == 3 and all(d["env"][v] == "3" for v in names), f"threadcap: SODA_THREADS=3 sets every variable to 3: {d['env']}")
+        if d["pools"] is not None:
+            c.ok(max(d["pools"]) <= 3, f"threadcap: SODA_THREADS=3 caps the loaded pools: {d['pools']}")
+    d = probe({threadcap.ENV: "3", "OMP_NUM_THREADS": "6"}, "export", "--threads", "2")
+    if c.ok(d is not None, "threadcap: probe ran (--threads 2)"):
+        c.ok(d["cap"] == 2 and all(d["env"][v] == "2" for v in names), f"threadcap: --threads 2 wins over the environment: {d['env']}")
+    d = probe({"OMP_NUM_THREADS": "5"})
+    if c.ok(d is not None, "threadcap: probe ran (OMP_NUM_THREADS=5 already set)"):
+        c.ok(d["env"]["OMP_NUM_THREADS"] == "5" and d["env"]["OPENBLAS_NUM_THREADS"] == str(d["cap"]),
+             f"threadcap: a variable the user set is kept, the others get the cap: {d['env']}")
+    log_txt = log_path.read_text(encoding="utf-8", errors="ignore") if log_path.exists() else ""
+    if "prepare.py export" in log_txt:             # no export in the log: --checks-only on a tree made earlier
+        c.ok(bool(re.search(r"\[export\] \d+ BLAS/OpenMP threads", log_txt)),
+             "threadcap: the export log says how many BLAS/OpenMP threads it used")
+
+    # The PCA runs on sectionumap.PCA_THREADS thread(s) whatever the cap, and gives the same
+    # numbers as on the cap's threads (a seeded sparse matrix)
+    try:
+        from threadpoolctl import threadpool_info
+    except ImportError:
+        print("    threadpoolctl not installed: PCA thread checks skipped")
+        return
+    from scipy import sparse
+    rng = np.random.default_rng(7)
+    X = sparse.random(4000, 400, density=0.05, random_state=rng, data_rvs=lambda n: rng.poisson(2.0, n) + 1.0, format="csr")
+    X.data = np.log1p(X.data).astype(np.float32)
+    seen = []
+    plain = sectionumap._pca_uncapped
+
+    def spy(Xh, n_pcs):
+        seen.append([p["num_threads"] for p in threadpool_info()])
+        return plain(Xh, n_pcs)
+
+    before = [p["num_threads"] for p in threadpool_info()]   # this process loaded numpy first: its own count
+    sectionumap._pca_uncapped = spy
+    try:
+        a = sectionumap._pca(X, 30)                   # as the export calls it
+    finally:
+        sectionumap._pca_uncapped = plain
+    c.ok(bool(seen) and seen[0] and max(seen[0]) <= sectionumap.PCA_THREADS,
+         f"threadcap: the PCA runs on {sectionumap.PCA_THREADS} BLAS thread(s): pools inside it {seen[:1]}")
+    after = [p["num_threads"] for p in threadpool_info()]
+    c.eq(after, before, "threadcap: the pools are as they were once the PCA is done")
+    b = plain(X, 30)                                  # on all of this process's threads
+    diff = float(np.abs(a - b).max())
+    c.ok(a.shape == (4000, 30) and diff <= 1e-4 * float(np.abs(a).max()),
+         f"threadcap: PCA on {sectionumap.PCA_THREADS} thread(s) and on {max(before)} agree (max abs difference {diff:.3g})")
+    print(f"    PCA on {sectionumap.PCA_THREADS} thread(s) vs {max(before)}: max abs difference {diff:.3g}"
+          + (" (bit-identical)" if np.array_equal(a, b) else ""))
+
+
+def check_picker(c: Checker):
+    """The dataset picker is wired into the page (check_viewer_page covers the files and ?v= strings),
+    carries its ARIA roles, and every .js of the page parses."""
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
+    c.ok("dspicker.js" in names and "dspicker.css" in names, "index.html loads dspicker.js and dspicker.css")
+    c.ok("dspicker.js" in names and "viewer.js" in names and names.index("dspicker.js") < names.index("viewer.js"),
+         "dspicker.js loads before viewer.js")
+    c.ok('id="dsPicker"' in html and 'id="dsLabel"' in html and 'id="dsSelect"' not in html,
+         "index.html: the dataset picker's host and label, no <select id=dsSelect>")
+    js = (APP / "dspicker.js").read_text(encoding="utf-8")
+    for attr in ('role="combobox"', 'role="listbox"', '"role", "option"', '"role", "group"', 'aria-haspopup="listbox"',
+                 "aria-activedescendant", "aria-selected", "aria-expanded", "aria-controls"):
+        c.ok(attr in js, f"dspicker.js sets {attr}")
+    viewer = (APP / "viewer.js").read_text(encoding="utf-8")
+    c.ok("SodaDatasetPicker.create" in viewer and "openSeq" in viewer and "AbortController" in viewer,
+         "viewer.js: picker created; dataset opens are numbered and abort the one before")
+    node = shutil.which("node")
+    if not node:
+        print("    node not found: JavaScript syntax check skipped")
+        return
+    for f in sorted(APP.glob("*.js")):
+        if f.name == "config.js":
+            continue
+        p = subprocess.run([node, "--check", str(f)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        c.ok(p.returncode == 0, f"node --check {f.name}" + ("" if p.returncode == 0 else f": {p.stdout.strip()[:200]}"))
+
+
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
     texts = [p for ds in (VIS, MX, TL) + XEN_DS for p in (export / ds).rglob("*")
@@ -1459,6 +1594,10 @@ def main(argv=None) -> int:
     check_marker_lists(c)
     print("checks: the page (index.html, viewer.js tile path, diag.js)")
     check_viewer_page(c, root, log_path)
+    print("checks: BLAS / OpenMP thread cap")
+    check_threadcap(c, log_path)
+    print("checks: dataset picker, JavaScript syntax")
+    check_picker(c)
     print("checks: publishable")
     check_publishable(c, root, log_path)
     timings["checks"] = time.time() - t0

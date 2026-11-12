@@ -34,6 +34,9 @@ import json
 import sys
 import time
 
+import threadcap
+threadcap.apply()                                      # before numpy, when this is the first module to load it
+
 import numpy as np
 from scipy import linalg, sparse
 
@@ -65,7 +68,21 @@ def _params() -> dict:
             "markers": f"log2 fold change of mean expression vs rest, pct >= {MIN_PCT:g}, lfc > 0"}
 
 
+# The PCA's dense part is one 2000 x 2000 eigensolve: about a second on one thread. More threads
+# save a fraction of that at best, and at worst cost minutes: with OpenBLAS 0.3.27 on 8 of 24
+# CPUs it took 3-4 s on 1 or 4 threads, 4-17 s on 8 (more when the cores were busy), 42 s on 16
+# and 114-126 s on 24. So it runs on one, whatever the process-wide cap is.
+PCA_THREADS = 1
+
+
 def _pca(Xh: sparse.csr_matrix, n_pcs: int) -> np.ndarray:
+    """_pca_uncapped on PCA_THREADS BLAS / OpenMP thread(s) (threadcap.limit; without
+    threadpoolctl the process-wide cap of threadcap.apply applies instead)."""
+    with threadcap.limit(PCA_THREADS):
+        return _pca_uncapped(Xh, n_pcs)
+
+
+def _pca_uncapped(Xh: sparse.csr_matrix, n_pcs: int) -> np.ndarray:
     """PCA of the z-scored, clipped HVG matrix without ever holding it dense.
 
     After scaling and clipping, every zero of a gene column becomes the same value

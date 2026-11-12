@@ -173,6 +173,33 @@
       mol: async (p) => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/${p}`)); if (!r.ok) throw new Error(`${r.status} molecules/${p}`); return r.arrayBuffer(); },
     };
   }
+  // ---- one dataset at a time, one layer at a time ---------------------------------
+  // Picking a second dataset while the first is still loading used to let the first one's
+  // late answers land on the second. openSeq numbers the opens and layerSeq the layer
+  // switches: code that awaits keeps the number it started under and stops when it is no
+  // longer the current one. On top of that every request of a dataset goes through its
+  // source, and opening another dataset retires the source: its fetches are aborted and
+  // whatever was still in flight never settles (resolve or reject), so no loader of the old
+  // dataset can run on into the new one or report the abort as an error. Anything waiting
+  // on a retired source is simply dropped and garbage-collected.
+  let openSeq = 0, layerSeq = 0, openCtl = null, srcSignal = null;
+  function liveSource(src, seq, signal) {
+    const live = () => seq === openSeq;
+    const dropped = () => new Promise(() => {});           // a fresh one each time: nothing holds on to it
+    const hold = (p) => Promise.resolve(p).then((v) => (live() ? v : dropped()),
+                                                (e) => { if (live()) throw e; return dropped(); });
+    for (const k of Object.keys(src)) {
+      const f = src[k];
+      if (typeof f !== "function") continue;
+      // dataFetch / apiFetch pick srcSignal up as they start, so every method gets the signal.
+      // A method that answers at once (tileUrl builds a string) is passed through as it is.
+      src[k] = (...a) => {
+        srcSignal = signal;
+        try { const r = f(...a); return r && typeof r.then === "function" ? hold(r) : r; } finally { srcSignal = null; }
+      };
+    }
+    return src;
+  }
   // ---- private container: short-lived read-only access token --------------------
   // The exported datasets live in a private blob container, so a URL on its own
   // fetches nothing. /api/token checks the shared password on the server and
@@ -213,6 +240,7 @@
   // A URL built with a token that expired while it was queued: sign it again.
   const reSign = (url) => (token ? url.split("?")[0] + tokenQuery() : url);
   async function dataFetch(url, opts = {}) {
+    if (srcSignal && !opts.signal) opts = { ...opts, signal: srcSignal };   // see liveSource
     let r = await fetch(url, opts);
     if ((r.status === 403 || r.status === 401) && TOKEN_URL && token) {
       await ensureToken(true);
@@ -291,6 +319,7 @@
     return loginWait;
   }
   async function apiFetch(url, opts = {}) {
+    if (srcSignal && !opts.signal) opts = { ...opts, signal: srcSignal };   // see liveSource
     let r = null;
     for (let tries = 0; tries < 6; tries++) {
       const sent = authHeader;
@@ -1043,6 +1072,7 @@
   }
   function updateHud(xy) {
     if (S.mode === "rna") return;
+    if (!S.m) return;                               // between two datasets (or one that failed to open): nothing to measure
     const vs = S.viewState; if (!vs) return;
     // UMAP axes have no unit: no coordinates, no scale bar
     $("scalebar").hidden = inUmap();
@@ -1433,13 +1463,15 @@
     S.geneIndex = [];
     if (!S.exprKey) return;
     status(`Loading ${wd().gene} list…`);
+    const seq = layerSeq;
     try {
       const list = await S.src.genes(S.exprKey);
+      if (seq !== layerSeq) return;                // another layer was picked meanwhile: not this list
       // a panel of ~30 markers reads best alphabetically; a transcriptome by total count
       if (isProt()) list.sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: true, sensitivity: "base" }));
       else list.sort((a, b) => b.t - a.t);
       S.geneIndex = list;
-    } finally { status(null); }
+    } finally { if (seq === layerSeq) status(null); }
   }
   function showGeneResults(q) {
     const box = $("geneResults");
@@ -1538,7 +1570,10 @@
       list.appendChild(row);
     }
   }
+  // Resolves true when the layer is fully loaded, false when another layer (or dataset) was
+  // picked while it loaded: the newer call does the work, this one stops where it is.
   async function setExprKey(key) {
+    const seq = ++layerSeq, stale = () => seq !== layerSeq;
     S.exprKey = key || null;
     S.genes = []; S.tissue.positions = null; S.heat = null; S.tissue.key = key;
     // One square per bin, always: the layer already sets the resolution, and a
@@ -1547,23 +1582,25 @@
     syncWording();
     if (isProt()) { S.geneBlend = "heatmap"; $("geneBlend").value = "heatmap"; $("rowGenePalette").hidden = false; }
     buildGeneUI();
-    await loadGeneIndex();
+    await loadGeneIndex(); if (stale()) return false;
     S.region.selected = null;
-    await loadRegions();
-    await loadQc();
-    if (binQc) await binQc.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
-    if (S.tissue.on) await loadTissue();
-    await lassoOnLayer();
-    await umapOnLayer();
+    await loadRegions(); if (stale()) return false;
+    await loadQc(); if (stale()) return false;
+    if (binQc) { await binQc.onLayer(S.dsId, S.exprKey, currentExpr(), S.src); if (stale()) return false; }
+    if (S.tissue.on) { await loadTissue(); if (stale()) return false; }
+    await lassoOnLayer(); if (stale()) return false;
+    await umapOnLayer(); if (stale()) return false;
     render();
-    await gateOnLayer();
+    await gateOnLayer(); if (stale()) return false;
     syncUmapUI(); render();
+    return true;
   }
   async function loadTissue() {
     if (!S.exprKey) return;
     status(`Loading ${wd().bin} positions…`);
-    try { S.tissue.positions = await S.src.positions(S.exprKey); }
-    finally { status(null); }
+    const seq = layerSeq;
+    try { const pos = await S.src.positions(S.exprKey); if (seq === layerSeq) S.tissue.positions = pos; }
+    finally { if (seq === layerSeq) status(null); }
   }
 
   // ---- slide QC (marker squares): protgrid.py qc.json + qc_flags.bin -------------------
@@ -1575,11 +1612,13 @@
     const Q = S.qc, e = currentExpr();
     Q.key = null; Q.info = null; Q.flags = null; Q.positions = null;
     if (e && e.qc && e.qc.file && S.src && S.src.buf) {
+      const seq = layerSeq;
       try {
         const [info, buf] = await Promise.all([S.src.json(`expr/${S.exprKey}/${e.qc.file}`),
           S.src.buf(`expr/${S.exprKey}/${e.qc.flags || "qc_flags.bin"}`)]);
+        if (seq !== layerSeq) return;
         Q.info = info; Q.flags = new Uint8Array(buf); Q.key = S.exprKey;
-      } catch (err) { Q.info = null; Q.flags = null; }
+      } catch (err) { if (seq !== layerSeq) return; Q.info = null; Q.flags = null; }
     }
     buildQcBox();
   }
@@ -1675,13 +1714,15 @@
     S.region.ids = null; S.region.lookup = null;
     S.region.overlayKey = (e && e.regionOverlay) || null;
     if (!S.region.meta) return;
+    const seq = layerSeq;
     try {
       const [pos, ids] = await Promise.all([S.src.positions(S.exprKey), S.src.region(S.exprKey)]);
+      if (seq !== layerSeq) return;
       const lookup = new Map();
       const n = Math.min(ids.length, pos.length / 2);
       for (let i = 0; i < n; i++) if (ids[i]) lookup.set(binKey(pos[2 * i], pos[2 * i + 1]), ids[i]);
       S.region.ids = ids; S.region.lookup = lookup;
-    } catch (e2) { S.region.meta = null; }     // region.bin absent -> feature simply stays off
+    } catch (e2) { if (seq === layerSeq) S.region.meta = null; }     // region.bin absent -> feature simply stays off
   }
 
   function selectRegion(rid) {
@@ -1782,9 +1823,11 @@
   const LASSO_NONE = 0xffff;
 
   function lassoReset() {
+    lassoCancel();                                 // a run of the dataset being left: its Cancel button, the screen lock
     if (S.lasso && S.lasso.worker) S.lasso.worker.terminate();
     S.lasso = lassoBlank();
     $("panelLasso").hidden = true; $("lassoPanel").hidden = true; $("drawPad").hidden = true;
+    if (window.SodaVolcano) window.SodaVolcano.reset();   // a volcano of the other dataset's bins
     buildLassoUI();
   }
 
@@ -1800,13 +1843,15 @@
     const ok = S.src && S.src.kind === "static" && e && (e.hvg || prot) && S.mode !== "rna";
     $("panelLasso").hidden = !ok;
     if (!ok) { lassoSetTool(null); L.pos = null; L.hvg = null; L.prot = false; return; }
+    const seq = layerSeq;
     try {
       const [hvg, pos] = await Promise.all([S.src.json(`expr/${S.exprKey}/${prot ? "mat" : "hvg"}/index.json`),
         S.tissue.positions && S.tissue.key === S.exprKey ? S.tissue.positions : S.src.positions(S.exprKey)]);
+      if (seq !== layerSeq || S.lasso !== L) return;        // the layer changed meanwhile
       // a protein index names its channels: they stand in for the gene count and names
       if (prot) { hvg.nGenes = hvg.nChannels; L.hvgGenes = hvg.channels; }
       L.hvg = hvg; L.pos = pos; L.prot = prot;
-    } catch (err) { $("panelLasso").hidden = true; return; }
+    } catch (err) { if (seq === layerSeq && S.lasso === L) $("panelLasso").hidden = true; return; }
     $("lassoNote").textContent = prot
       ? `Uses the ${e.label} layer: the ${L.hvg.nChannels} markers of the section UMAP, each scaled as the whole ` +
         (L.hvg.normalize === "bg-asinh-v1" ? `slide was (background taken off, divided by its 99.5th percentile, asinh), `
@@ -2766,7 +2811,8 @@
     if (!Array.isArray(j.shapes)) { $("lassoMsg").textContent = "No shapes in that file."; return; }
     if (j.dataset && j.dataset !== S.dsId && !confirm(`These shapes were drawn on ${j.dataset}, not ${S.dsId}. Load them anyway?`)) return;
     if (j.layer && j.layer !== S.exprKey && [...$("exprSelect").options].some((o) => o.value === j.layer)) {
-      $("exprSelect").value = j.layer; await setExprKey(j.layer);
+      $("exprSelect").value = j.layer;
+      if (!(await setExprKey(j.layer))) return;    // another layer or dataset was picked while it loaded
     }
     const L = S.lasso;
     L.shapes = j.shapes.map((s, i) => ({ id: i + 1, name: s.name || `Shape ${i + 1}`, kind: s.kind || "free", pts: s.points || [],
@@ -3057,9 +3103,9 @@
       if (was !== "tissue" || U.colorBy !== "gene") {
         try {
           await umapLoad();
-          if (list.length) await umapSetRes(U.res);
-          if (U.colorBy === "celltype") await umapLoadTypes();
-        } catch (e) { status(`Could not load the UMAP for this layer: ${e.message}`, true); setTimeout(() => status(null), 5000); }
+          if (S.umap === U && list.length) await umapSetRes(U.res);
+          if (S.umap === U && U.colorBy === "celltype") await umapLoadTypes();
+        } catch (e) { if (S.umap === U) { status(`Could not load the UMAP for this layer: ${e.message}`, true); setTimeout(() => status(null), 5000); } }
         if (S.umap !== U) return;
         if (was !== "tissue" && U.uxy) U.view = was;               // stay in UMAP / side by side
       }
@@ -4224,14 +4270,15 @@
     if (S.gate !== G || !j) return;
     if (j.layer && j.layer !== G.key) return;
     await gateEnsurePos();
+    if (S.gate !== G) return;
     if (await gateApply(j, "this dataset's gates.json (published with the data)")) $("gatePub").hidden = false;
   }
   // fetched once per dataset; only static exports have a dataset folder to look in
   function gateFetchPublished() {
     if (!S.src || !S.src.json) return Promise.resolve(null);
-    if (S.gatePub && S.gatePub.ds === S.dsId) return S.gatePub.p;
+    if (S.gatePub && S.gatePub.src === S.src) return S.gatePub.p;   // per source: a retired source never answers
     const p = S.src.json("gates.json").catch(() => null);
-    S.gatePub = { ds: S.dsId, p };
+    S.gatePub = { ds: S.dsId, src: S.src, p };
     return p;
   }
 
@@ -5606,7 +5653,15 @@
     deckgl.setProps({ views, viewState: rnaViewStates(), layers });
   }
 
+  let dsPicker = null;                             // dspicker.js: the searchable dataset list
   async function openDataset(id) {
+    if (dsPicker) dsPicker.setValue(id);           // whoever asked (the picker, ?ds=, the console): the picker shows it
+    // This open is now the only one that counts (see liveSource): the one before it stops at
+    // its next await, its downloads are cancelled, and so is a layer switch still under way.
+    const seq = ++openSeq, stale = () => seq !== openSeq;
+    layerSeq++;
+    if (openCtl) openCtl.abort();
+    openCtl = new AbortController();
     status("Opening dataset…");
     S.dsId = id;
     tileCache.clear();
@@ -5625,18 +5680,23 @@
     try {
       const d = S.datasets.find((x) => x.id === id);
       const staticRoot = params.get("static");   // ?static=http://host/folder -> <folder>/<id>/ (test exports before upload)
-      if (staticRoot) S.src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
+      let src;
+      if (staticRoot) src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
       else if (TOKEN_URL && !params.get("api") && !(d && (d.linkPath || d.base))) {   // ?api= wins: a local tile server
         const t = await ensureToken();           // asks for the password once per session
-        S.src = staticSource(`${t.base}${id}/`, tokenQuery);
+        src = staticSource(`${t.base}${id}/`, tokenQuery);
       }
-      else if (d && d.linkPath) S.src = staticSource(await resolveLink(d.linkPath));
-      else if (d && d.base) S.src = staticSource(d.base);
-      else S.src = apiSource(id);
+      else if (d && d.linkPath) src = staticSource(await resolveLink(d.linkPath));
+      else if (d && d.base) src = staticSource(d.base);
+      else src = apiSource(id);
+      if (stale()) return;                       // another dataset was picked while the password box was up
+      S.src = liveSource(src, seq, openCtl.signal);
       S.m = await S.src.manifest();
-    } catch (e) { status(`Cannot open ${id}: ${e.message}`, true); return; }
+    } catch (e) { if (!stale()) status(`Cannot open ${id}: ${e.message}`, true); return; }
+    if (stale()) return;
     if (S.m.kind === "rnaseq") {
       await openRna();
+      if (stale()) return;
       const u = new URL(location.href); u.searchParams.set("ds", id); history.replaceState(null, "", u);
       return;
     }
@@ -5727,13 +5787,16 @@
     render();
     status(null);
     await molOnDataset();
+    if (stale()) return;
     if (shownEx.length) { sel.value = shownEx[0].key; await setExprKey(shownEx[0].key); }
+    if (stale()) return;
     // Tier A: turn the region overlay on so it's clickable without hunting for the toggle.
     if (S.region.overlayKey) {
       const ov = S.overlays.find((o) => o.file === S.region.overlayKey || o.key === S.region.overlayKey);
       if (ov && !ov.on) {
         ov.on = true;
         try { ov.data = await S.src.overlay(S.src.kind === "static" ? ov.file : ov.key); } catch (e) { /* leave off */ }
+        if (stale()) return;
         buildOverlayUI(); render();
       }
     }
@@ -5771,25 +5834,13 @@
     // Grouped by what was measured. The channel count used to be appended here, but
     // it counted raw channels including the `open-*` slots the viewer hides, so it
     // disagreed with both the label and the stain list; the labels carry it now.
-    const sel = $("dsSelect"); sel.innerHTML = "";
-    const groups = cfg.groups || {};
-    const order = [...Object.keys(groups), undefined];
-    const bucket = new Map(order.map((g) => [g, []]));
-    for (const d of S.datasets) bucket.get(bucket.has(d.group) ? d.group : undefined).push(d);
-    for (const g of order) {
-      const items = bucket.get(g);
-      if (!items || !items.length) continue;
-      // an ungrouped dataset (a ?ds= local export, or a server listing) goes in flat
-      const into = g === undefined && order.length === 1 ? sel
-        : g === undefined ? Object.assign(document.createElement("optgroup"), { label: "Other" })
-        : Object.assign(document.createElement("optgroup"), { label: groups[g] });
-      for (const d of items) {
-        const o = document.createElement("option"); o.value = d.id; o.textContent = d.label;
-        into.appendChild(o);
-      }
-      if (into !== sel) sel.appendChild(into);
-    }
-    sel.onchange = () => openDataset(sel.value);
+    // The list itself is dspicker.js: search, group headings (cfg.groups in their order, then
+    // "Other"; an ungrouped ?ds= local export or server listing goes in flat when there are no
+    // groups), arrow keys that only move the highlight. Opening happens on Enter or a click.
+    if (!window.SodaDatasetPicker || !$("dsPicker")) { status("This page is out of date: reload it (Ctrl+F5).", true); return; }
+    dsPicker = window.SodaDatasetPicker.create({ host: $("dsPicker"), labelledBy: "dsLabel", onPick: (id) => openDataset(id) });
+    dsPicker.setItems(S.datasets, cfg.groups || {});
+    Object.assign(window.__spatialViewer, { dsPicker, openDataset });   // for testing from the console
     $("btnFit").onclick = fitView;
     // One button for both directions: if anything is on it turns everything off,
     // otherwise it turns everything on. Rebuilding the whole channel list would refetch
@@ -5953,7 +6004,6 @@
     if (!S.datasets.length) { status("No datasets: add entries to config.js (static links) or set apiBase", true); return; }
     const want = params.get("ds") || cfg.defaultDataset;
     const first = S.datasets.find((d) => d.id === want) || S.datasets[0];
-    sel.value = first.id;
     await openDataset(first.id);
   }
 

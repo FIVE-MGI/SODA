@@ -303,6 +303,7 @@ python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache 
 | `--dest` | where to write `<dest>/<id>/` |
 | `--fmt png\|jpg` | tile format. `png` (default) is lossless. `jpg` is several times smaller and fine for viewing; it slightly shifts very dark pixels. Use `png` when exact intensities matter. |
 | `--workers` | parallel tile writers, default 8 |
+| `--threads` | threads numpy and scipy may use for linear algebra. Default: 8, or the number of CPUs the process may use if that is fewer. The `SODA_THREADS` environment variable does the same. (The PCA before the UMAP always runs on one.) |
 
 What it writes, per dataset (layout in [DATA_FORMAT.md](DATA_FORMAT.md)):
 
@@ -570,6 +571,14 @@ timing figures here. What can be said from the formats:
   someone picks. Reading its `transcripts.zarr.zip` took about 6 minutes.
 - **UMAP time** grows with the number of bins with ≥ 10 UMI and runs on one core.
   Expect it to dominate the export of a large Visium HD 8 µm layer.
+- **Threads:** the export starts by printing `[export] N BLAS/OpenMP threads`. numpy and
+  scipy would otherwise start one thread per CPU of the machine, even when the process may
+  only use a few of them (pinned to some cores, a container CPU limit, a shared server);
+  the threads then wait on each other and the PCA line (`[umap] <layer>: PCA 30`) takes
+  minutes instead of seconds. `prepare.py` caps them at 8, or fewer if the process may use
+  fewer CPUs (`--threads N` or `SODA_THREADS=N` sets another number), and runs the PCA
+  itself on one thread: that costs under a second and cannot be slowed down this way. The
+  exported UMAP and clusters do not depend on the number of threads.
 
 Run the [checklist in HOSTING.md](HOSTING.md#before-you-upload-checklist) to count files
 and bytes before you upload.
