@@ -28,7 +28,10 @@ import numpy as np
 from pyramid import Source
 
 TABLE_SUFFIXES = (".csv", ".csv.gz", ".parquet")
-BLOCK_BYTES = 32 << 20            # CSV read block: a few hundred thousand transcript rows
+# CSV read block. pyarrow parses several blocks ahead in parallel, so peak memory follows this,
+# not the file size: 8 MB kept a 26-million-row transcript table under 0.6 GB (32 MB: 1.6 GB) at
+# the same speed.
+BLOCK_BYTES = 8 << 20
 PARQUET_ROWS = 1_000_000
 BACKGROUND_UM = 1.0               # µm per pixel of the neutral background (no images)
 BACKGROUND_MAX_PX = 250e6         # above this many pixels the background gets coarser pixels
@@ -153,7 +156,7 @@ def read_columns(path: Path, ints=(), floats=(), strings=()) -> dict:
     return out
 
 
-def read_count_matrix(path: Path, int_ids=(), str_ids=(), block_bytes: int = 16 << 20):
+def read_count_matrix(path: Path, int_ids=(), str_ids=(), block_bytes: int = BLOCK_BYTES):
     """A dense cells x features table -> (X CSR float32, {id column: values}, feature names).
 
     `int_ids` / `str_ids`: the columns that identify a row (read as integers / text); every other
@@ -252,7 +255,7 @@ def write_molecules(path: Path, gene_col: str, x_col: str, y_col: str, names, ke
             k = (g >= 0) & keep[np.maximum(g, 0)]
             density.add(px[k], py[k])
         n += b.num_rows
-        if (i + 1) % 25 == 0:
+        if (i + 1) % 100 == 0:
             log(f"[{tag}]   {n:,} transcripts read  ({time.time() - t0:.0f}s)")
     w.rows_read = n
     return w
