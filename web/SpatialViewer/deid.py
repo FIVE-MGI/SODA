@@ -57,8 +57,11 @@ _GENE_PREFIX = ("H2-",)
 
 
 def _is_gene(text: str, m) -> bool:
-    head = text[max(0, m.start() - 3):m.start()].upper()
-    return m.group(1).upper() == "T" and head in _GENE_PREFIX
+    start = m.start() - 3
+    if start < 0 or m.group(1).upper() != "T" or text[start:m.start()].upper() not in _GENE_PREFIX:
+        return False
+    # "H2-" must begin the name: "BATCH2-T23" is not the gene H2-T23
+    return start == 0 or not text[start - 1].isalnum()
 
 
 _lock = threading.Lock()
