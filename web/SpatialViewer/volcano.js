@@ -71,7 +71,9 @@
     if (window.ResizeObserver) new ResizeObserver(() => { if (!$("volcanoPanel").hidden) draw(); }).observe($("vcHost"));
   }
 
-  const msg = (t, err) => { const el = $("vcMsg"); if (!el) return; el.textContent = t; el.style.color = err ? "#ff8f8f" : ""; };
+  // the layer's own words (roi.js: ROI segments instead of bins), when the viewer hands a wording function over
+  const say = (t) => (api && api.say ? api.say(t) : t);
+  const msg = (t, err) => { const el = $("vcMsg"); if (!el) return; el.textContent = say(t); el.style.color = err ? "#ff8f8f" : ""; };
   function syncButtons() {
     if (!$("vcRun")) return;
     $("vcRun").disabled = running || !$("vcA").value || !$("vcB").value;
@@ -97,7 +99,7 @@
   function fillSelect(sel, groups, extra, keep) {
     const old = keep !== undefined ? keep : sel.value;
     sel.innerHTML = "";
-    const add = (parent, o) => { const e = document.createElement("option"); e.value = o.v; e.textContent = o.t; parent.appendChild(e); };
+    const add = (parent, o) => { const e = document.createElement("option"); e.value = o.v; e.textContent = say(o.t); parent.appendChild(e); };
     for (const o of extra) add(sel, o);
     for (const [k, label] of [["shapes", "Drawn shapes"], ["run", "Clusters of the Circle → UMAP run"], ["section", "Clusters of the whole section"]]) {
       const list = groups[k].filter((o) => o.v !== $("vcA").value || sel.id === "vcA");
@@ -169,7 +171,7 @@
     }
     return { g, nA, nB, both };
   }
-  const labelOf = (sel, v) => { const o = [...sel.options].find((x) => x.value === v); return o ? o.textContent.replace(/\s*\([^)]*bins\)$/, "").replace(/\s*\(res [^)]*\)$/, "") : v; };
+  const labelOf = (sel, v) => { const o = [...sel.options].find((x) => x.value === v); return o ? o.textContent.replace(/\s*\([^)]*(?:bins|ROIs)\)$/, "").replace(/\s*\(res [^)]*\)$/, "") : v; };
 
   function cancel() {
     if (worker && running) { worker.terminate(); worker = null; }
@@ -240,7 +242,7 @@
       if (!running) return;
       T.worker = performance.now() - t0 - T.fetch - T.extra;
       R = { ...res, genes: genes.concat(extra.map((e) => e.name)), a, b, nameA, nameB, sig, test, layer: S.exprKey, dataset: S.dsId,
-            nHvg: genes.length, both, missingChunks: missing.length, secs: (performance.now() - t0) / 1000, ms: { ...T, ...res.info.ms } };
+            nHvg: genes.length, both, missingChunks: missing.length, givenGroups: !!((api.sectionClusters() || {}).user), secs: (performance.now() - t0) / 1000, ms: { ...T, ...res.info.ms } };
       window.SodaVolcano.result = R;                // for tests from the console
       pickedJ = -1; hoverJ = -1; tip(null);
       const I = R.info;
@@ -339,16 +341,17 @@
     const I = R.info, warns = [];
     if (R.sig !== sigNow(R.a, R.b)) warns.push("The groups have changed since this volcano was computed: run it again.");
     if (Math.min(I.nA, I.nB) < 30) warns.push(`Few bins (${Math.min(I.nA, I.nB)} in the smaller group): treat the p-values as rough.`);
-    if (R.a.startsWith("c:") || R.b.startsWith("c:") || R.a.startsWith("k:") || R.b.startsWith("k:"))
+    // groups that came with the data (an annotation column, a lab's own clustering) were not found from these counts here
+    if (R.a.startsWith("c:") || R.b.startsWith("c:") || ((R.a.startsWith("k:") || R.b.startsWith("k:")) && !R.givenGroups))
       warns.push("Clusters were found from these same genes, so testing them against the rest is circular: p-values are inflated. Use the ranking, not the p-values.");
-    $("vcWarn").innerHTML = warns.map(esc).join("<br>"); $("vcWarn").hidden = !warns.length;
-    $("vcFoot").textContent =
+    $("vcWarn").innerHTML = warns.map((w) => esc(say(w))).join("<br>"); $("vcWarn").hidden = !warns.length;
+    $("vcFoot").textContent = say(
       `${R.test === "welch" ? "Welch t-test" : "Wilcoxon rank-sum (tie-corrected)"} on log1p CP10k (library = all genes), bins with ≥ ${I.minUmi} UMI; ` +
       `A ${I.nA.toLocaleString()} bins, B ${I.nB.toLocaleString()} bins. Tested: genes counted in ≥ ${+(I.minPct * 100).toFixed(2)}% of the bins of A or B, ` +
       `of the section's ${R.nHvg.toLocaleString()} variable genes${I.nExtra ? ` plus ${I.nExtra} named` : ""}; Benjamini-Hochberg over the ${I.nTested.toLocaleString()} tested. ` +
       `log2FC = log2((mean CP10k A + 1) / (mean CP10k B + 1)). ` +
       (Math.max(I.nA, I.nB) > 5000 ? "With this many bins nearly every difference is 'significant': bins are neighbours, not independent samples, so read the fold change and % expressing, and confirm on other sections. " : "Bins are neighbours, not independent samples: the p-values describe this section only. ") +
-      `Hover a dot for its numbers; click it to show the gene on the tissue.`;
+      `Hover a dot for its numbers; click it to show the gene on the tissue.`);
   }
   function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(raw || 1))), f = raw / p; return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p; }
   function sqrtTicks(top) { const out = [0]; for (const v of [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]) if (v <= top) out.push(v); return out.length > 7 ? out.filter((_, i) => i % 2 === 0) : out; }
@@ -369,11 +372,11 @@
     const el = $("vcTip");
     if (!ev || hoverJ < 0 || !R) { el.hidden = true; return; }
     const j = hoverJ, r = $("vcHost").getBoundingClientRect();
-    el.innerHTML = `<b>${esc(R.genes[j])}</b>${j >= R.nHvg ? " <small>(named gene)</small>" : ""}<br>` +
+    el.innerHTML = `<b>${esc(R.genes[j])}</b>${j >= R.nHvg ? " <small>(named gene)</small>" : ""}<br>` + say(
       `log2FC ${R.lfc[j] >= 0 ? "+" : ""}${R.lfc[j].toFixed(2)} <small>(scanpy-style ${Number.isFinite(R.lfcScanpy[j]) ? R.lfcScanpy[j].toFixed(2) : "–"})</small><br>` +
       `padj ${fmtP(R.log10padj[j])} · p ${fmtP(R.log10p[j])}<br>` +
       `in A ${(R.pctA[j] * 100).toFixed(1)}% of bins, mean ${R.cpA[j].toFixed(1)} CP10k<br>` +
-      `in B ${(R.pctB[j] * 100).toFixed(1)}% of bins, mean ${R.cpB[j].toFixed(1)} CP10k<br><small>click: show on the tissue</small>`;
+      `in B ${(R.pctB[j] * 100).toFixed(1)}% of bins, mean ${R.cpB[j].toFixed(1)} CP10k<br><small>click: show on the tissue</small>`);
     el.hidden = false;
     const x = ev.clientX - r.left, y = ev.clientY - r.top;
     el.style.left = `${Math.min(x + 12, r.width - el.offsetWidth - 4)}px`;

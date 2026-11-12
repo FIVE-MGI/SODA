@@ -40,6 +40,8 @@
   }
   // cells of a single-cell dataset hold stored values, bins hold counts
   const words = () => (modeNow() === "rna" ? { bin: "cell", bins: "cells", above: "a value above 0", indep: "Cells of one sample are not independent replicates" }
+    : (curExpr(api.state()) || {}).kind === "rois"      // GeoMx ROI segments (roi.js)
+    ? { bin: "ROI", bins: "ROIs", above: "a count above 0", indep: "ROIs of one slide or animal are not independent replicates" }
     : { bin: "bin", bins: "bins", above: "a count above 0", indep: "Neighbouring bins are not independent samples" });
   const cacheKey = () => { const S = api.state(); return `${S.dsId}|${S.mode === "rna" ? "rna" : S.exprKey}`; };
   // a clustering is known by its "id" when it has one (a lab's own), else by its Leiden resolution

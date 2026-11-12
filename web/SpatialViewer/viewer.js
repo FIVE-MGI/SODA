@@ -151,7 +151,17 @@
       manifest: () => getJSON(u("manifest.json"), true),
       tileUrl: (c, z, x, y, fmt) => u(`tiles/${c}/${z}/${x}/${y}.${fmt}`),
       genes: (key) => getJSON(u(`expr/${key}/genes.json`), true),
-      gene: (key, name) => getF32(u(`expr/${key}/gene/${encodeURIComponent(name)}.bin`), true),
+      // The export names a gene file encodeURIComponent(name) + ".bin", so for a name with a
+      // character that gets encoded ("TRBC1/2", "KIR Family": GeoMx panels have them) the file
+      // name itself holds a "%", and the URL must encode it again. Names of letters and digits
+      // are unchanged by either encoding. The singly encoded URL is tried second, for a host
+      // whose upload decoded the names.
+      gene: async (key, name) => {
+        const e1 = encodeURIComponent(name), e2 = encodeURIComponent(e1);
+        if (e2 === e1) return getF32(u(`expr/${key}/gene/${e1}.bin`), true);
+        try { return await getF32(u(`expr/${key}/gene/${e2}.bin`), true); }
+        catch (err) { return getF32(u(`expr/${key}/gene/${e1}.bin`), true); }
+      },
       positions: (key) => getF32(u(`expr/${key}/positions.bin`), true),
       region: (key) => getU16(u(`expr/${key}/region.bin`), true),
       overlay: (file) => getJSON(u(`overlays/${file}`), true),
@@ -661,6 +671,7 @@
       el.hidden = false;
       return;
     }
+    if (isRois() && S.mode === "image" && on.length && !umapByCat() && !umap) { el.innerHTML = window.SodaRoi.keyHtml(roiCtx()); el.hidden = false; return; }
     if (S.mode !== "image" || (S.geneBlend !== "heatmap" && !umap) || !on.length || umapByCat()) { el.hidden = true; return; }
     const e = currentExpr();
     // in the UMAP every dot is one bin, so the key talks about bins rather than squares
@@ -919,6 +930,17 @@
     });
   }
 
+  // what roi.js needs to draw an ROI layer's genes and their key
+  function roiCtx() {
+    const e = currentExpr(), R = S.region, names = R.meta && R.ids ? new Map(R.meta.map((r) => [r.id, r.name])) : null;
+    return { genes: S.genes, pos: (S.lasso && S.lasso.pos) || (S.tissue.key === S.exprKey && S.tissue.positions) || null,
+      palette: S.genePalette, palettes: PALETTES, rampCss: rampCss(S.genePalette), hexToRgb255, unit: countUnit(),
+      radius: Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale), opacity: S.geneOpacity,
+      rowName: names ? (r) => names.get(R.ids[r]) || "" : null, dsId: S.dsId, exprKey: S.exprKey, ScatterplotLayer, PolygonLayer, NORMAL,
+      // the ROI outlines (the layer's region overlay, once loaded) and each row's ROI
+      regionIds: R.ids, outlines: ((S.overlays || []).find((o) => o.data && (o.file === R.overlayKey || o.key === R.overlayKey)) || {}).data || null };
+  }
+
   let renderPending = false;  // asked to draw while the pane had no size (hidden tab)
   // Dragging a slider fires `input` continuously, and render() rebuilds layers - on a
   // multi-channel slide that is a tile layer and all its per-tile sublayers, per pixel of
@@ -948,7 +970,9 @@
     // Colour by cluster replaces the gene density: one colour per bin, not two on top of each other.
     const gPrev = gatePreviewOn();
     if (!umapByCat() && !gPrev) {
-      if (S.geneBlend === "heatmap") {
+      if (isRois()) {
+        layers.push(...window.SodaRoi.geneLayers(roiCtx()));
+      } else if (S.geneBlend === "heatmap") {
         const hl = geneHeatLayer();
         if (hl) layers.push(hl);
       } else {
@@ -1070,6 +1094,8 @@
     if (!info.object || !info.object.properties) return null;
     const p = info.object.properties;
     const name = p.name || (p.classification && p.classification.name) || p.label || p.id;
+    // an ROI outline of a GeoMx layer: its name plus the counts of the genes on show (roi.js)
+    if (name && p.__region_id && isRois() && !umapByCat()) return { text: window.SodaRoi.tip(roiCtx(), p.__region_id, String(name)) };
     return name ? { text: String(name) } : null;
   }
   // touch: the hover readout (coordinates, the linked bin in the other pane) and the tooltip,
@@ -1388,8 +1414,12 @@
   // counts are transcripts rather than UMI.
   const isCells = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "cells"); };
   const WORDS_CELL = { bin: "cell", bins: "cells", Bins: "Cells", gene: "gene", genes: "genes", Gene: "Gene", Genes: "Genes" };
-  const wd = () => (isProt() ? WORDS_PROT : isCells() ? WORDS_CELL : WORDS_RNA);
-  const countUnit = () => (isCells() ? "transcripts" : "UMI");
+  // GeoMx ROI segments (geomx.py, a layer of kind "rois"): a few dozen hand-drawn regions, one count
+  // vector each. Said as ROIs and counts; drawn as one disc per segment; no UMAP (roi.js).
+  const isRois = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "rois" && window.SodaRoi); };
+  const toRoiWords = (t) => window.SodaRoi.toWords(t);
+  const wd = () => (isProt() ? WORDS_PROT : isCells() ? WORDS_CELL : isRois() ? window.SodaRoi.WORDS : WORDS_RNA);
+  const countUnit = () => (isCells() ? "transcripts" : isRois() ? "counts" : "UMI");
   const toCellWords = (t) => t.replace(/\bbins\b/g, "cells").replace(/\bbin\b/g, "cell")
     .replace(/\bBins\b/g, "Cells").replace(/\bBin\b/g, "Cell").replace(/\bUMI\b/g, "transcripts");
   // a marker's value in a square: mean intensity on the image's own 0-255 scale
@@ -1416,17 +1446,19 @@
   ];
   const wordingOrig = new Map();
   function syncWording() {
-    const prot = isProt(), cells = isCells();
+    const prot = isProt(), cells = isCells(), rois = isRois();
     for (const [sel, prop, txt] of WORDING) {
       const el = document.querySelector(sel); if (!el) continue;
       const k = sel + "|" + prop;
       if (!wordingOrig.has(k)) wordingOrig.set(k, el[prop]);
       const orig = wordingOrig.get(k);
-      el[prop] = prot ? (txt == null ? toProtWords(orig) : txt) : cells ? toCellWords(orig) : orig;
+      el[prop] = prot ? (txt == null ? toProtWords(orig) : txt) : cells ? toCellWords(orig) : rois ? toRoiWords(orig) : orig;
     }
     if (cells) $("geneTitle").textContent = "Genes per cell";
+    if (rois) $("geneTitle").textContent = "Genes per ROI";
     // squares are always drawn as squares: the round-spot "Normal" view has no meaning here
-    $("rowGeneBlend").hidden = prot;
+    // (ROI segments are always one disc each: neither view applies)
+    $("rowGeneBlend").hidden = prot || rois;
     $("lassoOff").hidden = !prot || !!(currentExpr() || {}).mat;
   }
   async function loadGeneIndex() {
@@ -1815,6 +1847,7 @@
       : `Uses the ${e.label} layer. The UMAP can only use the ${L.hvg.nGenes.toLocaleString()} ` +
         `most variable genes of the whole section; inside the shapes it keeps those counted in at least ` +
         `${LASSO.minDetect}–${LASSO.minDetectCap} of the ${wd().bins} (1% of them, within those limits).`;
+    if (window.SodaRoi) window.SodaRoi.syncLasso(isRois(), e, L.hvg);     // ROI layers: shapes yes, the panel's own UMAP no
     lassoAssign();
   }
 
@@ -2094,7 +2127,7 @@
       }
       if (s.missing) notes.push(`<small class="bad">data missing for part of this shape</small>`);
       const nt = notes.join("");
-      row.innerHTML = `<i style="background:${s.hex}"></i><div><span class="nm"></span>${L.prot ? toProtWords(nt) : isCells() ? toCellWords(nt) : nt}</div>` +
+      row.innerHTML = `<i style="background:${s.hex}"></i><div><span class="nm"></span>${L.prot ? toProtWords(nt) : isCells() ? toCellWords(nt) : isRois() ? toRoiWords(nt) : nt}</div>` +
         `<span class="lbtns"><button class="ren" title="rename / label">✎</button><button class="rm" title="remove">×</button></span>`;
       const nm = row.querySelector(".nm");
       nm.textContent = s.name;                     // typed by the user: never as HTML
@@ -2135,7 +2168,7 @@
       const secs = Math.round(Math.min(total, LASSO_CAP) * 0.00095);
       if (TOUCH && total > 5000) m += ` On a phone this takes about ${secs}-${3 * secs} s: keep this page open until it finishes.`;
       else if (total > LASSO.softCap) m += ` This will take about ${secs} s.`;
-      $("lassoMsg").textContent = L.prot ? toProtWords(m) : isCells() ? toCellWords(m) : m;
+      $("lassoMsg").textContent = L.prot ? toProtWords(m) : isCells() ? toCellWords(m) : isRois() ? toRoiWords(m) : m;
     }
     $("lassoRun").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoCompare").hidden = !L.prot;
@@ -2835,6 +2868,7 @@
     // volcano plots (volcano.js, de_worker.js): handed only what they need from here
     if (window.SodaVolcano) window.SodaVolcano.init({
       state: () => S, touch: TOUCH, fetchChunks: lassoFetch, chunkOf: lassoChunkOf, addGene, download: lassoDownload,
+      say: (t) => (isRois() ? toRoiWords(t) : t),
       geneXyv: (name) => S.src.gene(S.exprKey, name),
       hvgGenes: async () => { const L = S.lasso; if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { return null; } } return L.hvgGenes; },
       // the section's clustering on show (Leiden or the lab's own), with the names given in the Clusters panel
@@ -2844,7 +2878,7 @@
         if (!c) return null;
         const names = { ...(c.categories || []) }, own = (S.umap.names && S.umap.names[clKey(c)]) || {};
         Object.assign(names, own);
-        return { n: c.n, res: clKey(c), label: clLabel(c), sizes: c.sizes || null, names };
+        return { n: c.n, res: clKey(c), label: clLabel(c), sizes: c.sizes || null, names, user: clUser(c) };
       },
       loadSectionClusters: async () => { await umapSetRes(S.umap.res); return S.umap.cl ? { cl: S.umap.cl, res: S.umap.clRes } : null; },
     });
@@ -2991,6 +3025,14 @@
           if (!(x === x) || !(y === y)) continue;                  // NaN: under 10 UMI, not embedded
           ex[nEmb] = x; ey[nEmb] = y; nEmb++;
         }
+        // an ROI layer (geomx.py) has groupings and no embedding: only the tissue view exists
+        if (!nEmb && index.embedding && index.embedding.source === "none") {
+          U.index = index; U.pos = pos; U.uxy = new Float32Array(2 * N).fill(NaN); U.nEmb = 0; U.radius = 1;
+          U.box = [tx0, ty0, Math.max(tx1, tx0 + 1), Math.max(ty1, ty0 + 1)];
+          const gl = index.clusterings || [];
+          if (U.res == null && gl.length) U.res = clKey(gl[Math.min(gl.length - 1, index.default || 0)]);
+          return;
+        }
         if (!nEmb) throw new Error(`no ${wd().bin} is embedded`);
         // frame on the middle 99%: a few stray bins far from the cloud would otherwise shrink
         // it to a corner of the picture (they are still drawn, just outside the first frame)
@@ -3061,7 +3103,7 @@
           if (U.colorBy === "celltype") await umapLoadTypes();
         } catch (e) { status(`Could not load the UMAP for this layer: ${e.message}`, true); setTimeout(() => status(null), 5000); }
         if (S.umap !== U) return;
-        if (was !== "tissue" && U.uxy) U.view = was;               // stay in UMAP / side by side
+        if (was !== "tissue" && U.uxy && U.nEmb) U.view = was;     // stay in UMAP / side by side
       }
     }
     if (was === "umap") S.viewState = U.view === "umap" ? null : U.tissueVs;   // null: render() refits
@@ -3116,7 +3158,7 @@
   // force: the person asked to watch the flight (Play), so it runs even with reduced motion
   async function umapSetView(v, force) {
     const U = S.umap;
-    if (!U || U.anim || v === U.view || (v !== "tissue" && (!U.key || !umapAvail()))) return;
+    if (!U || U.anim || v === U.view || (v !== "tissue" && (!U.key || !umapAvail() || umapMeta().embedding === "none"))) return;
     if (v !== "tissue") {
       try {
         await umapLoad();
@@ -4039,13 +4081,16 @@
     $("lassoCircle").title = um ? why : "Drag from the centre outwards (Esc to stop)";
     $("lassoFree").title = um ? why : `Hold and draw around the ${wd().bins} (Esc to stop)`;
     $("sbsCaps").hidden = !ok || !umapSbs();
+    // groupings without an embedding (GeoMx ROIs): the Tissue / UMAP switch has nothing to switch to
+    const noEmb = ok && umapMeta().embedding === "none";
+    for (const el of $("viewSwitch").querySelectorAll(".seg, .fly-play, .fly-speed")) el.hidden = noEmb;
     if (!ok) { syncGateColourOpt(); gateCountsRefresh(); return; }
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === U.view));
     $("flyPlay").disabled = !!U.anim;
     const list = umapClusterings();
     $("colorBy").value = U.colorBy;
     $("colorBy").options[1].disabled = !list.length;
-    $("colorBy").options[1].textContent = list.some(clUser) ? "Clusters" : "Clusters (Leiden)";
+    $("colorBy").options[1].textContent = noEmb ? "Groups (annotation)" : list.some(clUser) ? "Clusters" : "Clusters (Leiden)";
     const ctOpt = $("colorBy").options[2], ctOk = umapCtAvail();      // older exports: no such option
     ctOpt.hidden = !ctOk; ctOpt.disabled = !ctOk;
     syncGateColourOpt();
@@ -4060,7 +4105,7 @@
     const m = umapMeta(), e = currentExpr(), W = wd(), prot = isProt();
     const nEmb = U.nEmb || m.nEmbedded;
     $("sbsCapUmap").textContent = `UMAP · whole section${nEmb ? ` · ${nEmb.toLocaleString()} ${W.bins}` : ""}`;
-    $("umapNote").textContent = prot
+    $("umapNote").textContent = noEmb && window.SodaRoi ? window.SodaRoi.umapNote(e, list.length) : prot
       ? (nEmb ? (nEmb >= e.nBins ? `All ${e.nBins.toLocaleString()} tissue squares` : `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} tissue squares`) +
                 ` (${e.binSizeUm ? `${e.binSizeUm} µm` : "each"} across) are in the UMAP, placed by how alike their markers are. ` : "") +
         `Switch between Tissue, Side by side and UMAP at the top left of the picture; markers, clusters and selections stay.`
@@ -4079,6 +4124,7 @@
       ? `${selTxt}, lit in every view` + (U.uxy && U.selEmb < U.selN
         ? ` (${U.selEmb.toLocaleString()} of them are in the UMAP; the others ${prot ? "are low signal (rims, gaps)" : "have too few counts"}).` : ".")
       : U.pick !== null || ctLit || phLit ? `${selTxt} in every view.`
+      : noEmb ? `Draw a box or a loop around ${W.bins} on the slide to select them.`
       : `Draw a box or a loop around dots, on the tissue or the UMAP, to light the same ${W.bins} in both.`;
     $("selChip").hidden = !has && !lpTxt;
     $("selChipTxt").textContent = selTxt || lpTxt;
@@ -5683,7 +5729,7 @@
     // An image dataset can also carry protein squares (Akoya grid): it keeps its marker
     // list and gets the expression panel too, worded for markers (see syncWording).
     // Xenium is an imaging platform: its stains stay a marker list even with a cells layer.
-    const isVisium = S.m.kind === "visium" || (S.m.kind !== "xenium" && ex.some((e) => e.kind !== "protein"));
+    const isVisium = S.m.kind === "visium" || (S.m.kind !== "xenium" && S.m.kind !== "geomx" && ex.some((e) => e.kind !== "protein"));
     const hasProt = !isVisium && ex.length > 0;
     $("panelGenes").hidden = !isVisium && !hasProt;
     $("chanList").hidden = isVisium;
@@ -5709,7 +5755,7 @@
       const o = document.createElement("option"); o.value = e.key;
       o.textContent = e.kind === "protein"
         ? `${e.label} · ${e.nBins.toLocaleString()} squares · ${e.nGenes.toLocaleString()} markers`
-        : `${e.label} · ${e.nBins.toLocaleString()} ${e.kind === "cells" ? "cells" : "bins"} · ${e.nGenes.toLocaleString()} genes`;
+        : `${e.label} · ${e.nBins.toLocaleString()} ${e.kind === "cells" ? "cells" : e.kind === "rois" ? "ROI segments" : "bins"} · ${e.nGenes.toLocaleString()} genes`;
       sel.appendChild(o);
     }
     const isPhoto = img.channels.length === 3 && img.channels.every((c) => /^(red|green|blue)$/i.test(c.name));
