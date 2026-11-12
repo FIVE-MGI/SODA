@@ -135,6 +135,122 @@ The writers in `expr.py` (`build_cell_layer`) and `molecules.py` (`MoleculeWrite
 plain arrays (centroids in µm, a cells x genes count matrix, gene ids and µm positions of
 molecules), so a CosMx or MERSCOPE reader can reuse them; `xenium.py` is the Xenium reader.
 
+## CosMx SMI
+
+```bash
+python web/SpatialViewer/prepare.py cosmx --src path/to/flat_file_folder --id my_cosmx --out cache
+```
+
+`--src` is the folder of one slide's flat files as exported from AtoMx (or a public release);
+the tables may sit up to two folders below it. What is read, when present:
+
+| File | Becomes |
+|---|---|
+| `*_exprMat_file.csv` (`.csv.gz`, `.parquet`) | counts per cell: `fov`, `cell_ID`, optionally `cell`, then one column per target |
+| `*_metadata_file.csv` | cell centroids (`CenterX_local_px`, `CenterY_local_px`, `CenterX_global_px`, `CenterY_global_px`) and `Area` |
+| `*_fov_positions_file.csv` | where each FOV sits: `fov, x_px, y_px` (older exports), `FOV, x_global_px, y_global_px`, or the `..._mm` columns |
+| `*_tx_file.csv` | every transcript: `target`, `x_global_px`, `y_global_px` (the other columns are not needed) |
+| `Morphology2D/*_F<fov>.TIF` | raw stain images, one multi-page 16-bit TIFF per FOV (also `RawMorphologyImages/` or `ResegmentationImages/` `*_F<fov>_Z<z>.TIF`, one z-plane, `--z`) |
+| `CellComposite/CellComposite_F<fov>.jpg` | the vendor's rendered colour picture of each FOV |
+| `CellLabels/CellLabels_F<fov>.tif` | only used to check which way up the FOV images are |
+
+- **Image.** The per-FOV images are stitched into one mosaic at the FOV positions. The raw
+  morphology TIFFs are used when every FOV has one (channels named after the `Mean.*` columns
+  of the metadata file, in their order, or `--channels A,B,C`); otherwise the CellComposite
+  JPEGs, as three channels "CellComposite red / green / blue" (an 8-bit rendering: fine to
+  look at, not for measuring intensities). `--images morphology|composite|none` overrides
+  the choice. FOVs are not blended: a later FOV is drawn over an earlier one where they
+  overlap, and gaps stay black. The log states the overlap and the gaps found.
+- **Coordinates.** CosMx positions are instrument pixels, "local" within a FOV image and
+  "global" over the slide. Two things differ between exports, so they are measured from your
+  files rather than assumed: the sign between local and global on each axis and every FOV's
+  origin (fitted from the cell table, which holds both, else from the first transcripts), and
+  where local (0, 0) sits in the FOV image. In the release tested, global y points up and
+  `y_local` is measured from the **bottom** edge of the image; this is checked against
+  `CellLabels` when they are there (the label under each centroid must be that cell's id; the
+  log says what share matched) and assumed otherwise. `--fov-y up|down` forces it. Check the
+  first dataset of a new instrument or software version by eye: centroids must sit on nuclei
+  in every FOV.
+- **Pixel size**: 0.18 µm for 5472 × 3648 px FOVs and 0.12028 µm for 4256 × 4256 px FOVs
+  (the vendor's figures), or from the mm and px columns of the FOV positions file when it has
+  both. `--pixel-size` (µm per instrument pixel) overrides; the log says which was used.
+- **Cells** become the "Cells" expression layer, as for Xenium. Left out: `cell_ID` 0 (each
+  FOV's row of transcripts that are in no cell), negative probes (`NegPrb*`, `Negative*`),
+  `SystemControl*` and `FalseCode*`. The dot size comes from the median `Area`. Cell ids are
+  the `cell` column when the matrix has one, else `<cell_ID>_<fov>` (the form Seurat and
+  squidpy use), so your own clusters can be matched to them
+  ([Your own UMAP and clusters](#your-own-umap-and-clusters-seurat-scanpy)).
+- **Molecules**: every row of the tx file except the control codes above (CosMx files carry
+  no per-transcript quality value, so there is no quality cut). The file is read twice in
+  blocks (once for the target list, once for the molecules), never whole.
+- **No images at all** (or `--images none`): the dataset still opens, on a one-channel
+  background called "Transcript density (no image)": transcripts per 1 µm pixel, lightly
+  smoothed (`--background-um` changes the pixel size; "Cell density" when there are no
+  transcripts either). It is a picture of where the data is, not a stain.
+- `--no-cells` / `--no-transcripts` skip either part. Missing files are skipped with a
+  message. Cell outlines (`*-polygons.csv`) are not imported; `--crop` and `--flip` are not
+  available. One folder is one slide: prepare each slide of a run as its own dataset.
+
+**Tested on** one public release in the older layout (2021 FFPE lung, 20 FOVs of
+5472 × 3648 px, 0.18 µm: `fov, x_px, y_px` positions, CellComposite, CellLabels, one raw
+morphology z-plane). The newer column names (`x_global_px` / `_mm` positions, a `cell`
+column, `Negative*` / `FalseCode*`, `Morphology2D`) are handled from the vendor's
+documentation and exercised only by the synthetic test folders, not by a real AtoMx export.
+On that slide (about 92,000 cells, 960 genes, 26 million transcripts, mosaic 21,889 ×
+18,248 px) prepare took 4.5 min on a loaded workstation reading from a network share (3 min
+of it the image, 9 s the cells, 1.5 min the transcripts) and export 4.7 min (tiles 34 s,
+section UMAP and Leiden 2.8 min). The export is 472 MB in 3,608 files: JPEG tiles 183 MB,
+cell gene files 136 MB, molecules 105 MB (960 files, largest 3.7 MB, median 46 KB), `hvg/`
+46 MB. Opening it loads about 8 MB (49 files, 42 of them tiles) before any gene is picked.
+Memory does not grow with the size of the transcript file beyond 4 bytes per molecule kept:
+importing that slide without its images peaked at 0.76 GB.
+
+## MERSCOPE
+
+```bash
+python web/SpatialViewer/prepare.py merscope --src path/to/region_0 --id my_merscope --out cache
+```
+
+`--src` is one region folder of a MERSCOPE run. What is read, when present:
+
+| File | Becomes |
+|---|---|
+| `images/mosaic_<stain>_z<k>.tif` | the stain images (DAPI, PolyT, Cellbound1-3 ...): **one** z-plane, the middle one present unless `--z k` |
+| `images/micron_to_mosaic_pixel_transform.csv` | the 3 × 3 matrix from µm to mosaic pixels: places cells and molecules, and gives the pixel size (about 0.108 µm) |
+| `cell_by_gene.csv` (`.csv.gz`, `.parquet`) | counts per cell: `cell`, then one column per gene and `Blank-*` barcode |
+| `cell_metadata.csv` | cell centroids `center_x`, `center_y` (µm) and the bounding box `min_x ... max_y`; the cell id is `EntityID` or the unnamed first column |
+| `detected_transcripts.csv` (`.csv.gz`, `.parquet`) | every transcript: `gene`, `global_x`, `global_y` (µm) |
+
+- The two cell tables may sit one folder down (a Vizgen Post-processing Tool run such as
+  `vpt-run/`); with several runs, `--cells-dir` picks the folder. Columns are found by name,
+  so a table re-saved with extra row-number columns in front (pandas) is read as it is. Cell
+  ids are kept as text (older runs use 39-digit ids).
+- **Cells** become the "Cells" expression layer; `Blank-*` barcodes are left out. MERSCOPE
+  reports a volume and a bounding box, not an area, so the dot size is the median of
+  √(box width × box height).
+- **Molecules**: every row except the `Blank-*` barcodes; no quality cut (the file has none).
+- **Positions** go through the transform file as it is, so y points down as in the image.
+  Without it the mosaics cannot be placed and are left out with a warning.
+- **No `images/` folder** (some deposits leave it out because of its size), or
+  `--images none`: the dataset opens on the same "Transcript density (no image)" background
+  as described for CosMx, 1 µm per pixel, y down.
+- `--no-cells` / `--no-transcripts` skip either part. Cell boundaries
+  (`cell_boundaries.parquet`, `cell_boundaries/*.hdf5`) are not imported; `--crop` and
+  `--flip` are not available. To save disk, copy only the z-plane you want.
+
+**Tested on** two public deposits, neither straight from the instrument: a 400 µm crop
+re-saved by a third party (4 mosaics of 3,704 × 3,704 px at z 3 only, transform file, a VPT
+run folder with `EntityID`, a transcript table with two leading index columns; 1,179 cells,
+1.0 million transcripts), and a full region without images (the newer transcript table with
+`cell_id`; 65,029 cells, 2.35 million transcripts, 500 genes + 50 Blank). A full-size mosaic
+(tens of thousands of pixels a side, several GB per stain), `.parquet` tables from the
+instrument and the older `cell_boundaries/*.hdf5` layout have not been run on real data. The
+full region took 40 s to prepare and 2.2 min to export (section UMAP and Leiden 1.2 min for
+40,270 cells with ≥ 10 transcripts): 38 MB in 1,133 files, molecules 9.4 MB.
+
+The readers are `cosmx.py` and `merscope.py`; `flatfiles.py` holds what they share (reading
+the tables in blocks, the density background).
+
 ## Multiplexed immunofluorescence
 
 ### One multichannel file (OME-TIFF, QPTIFF, ImageJ or other TIFF stack)
@@ -568,6 +684,8 @@ timing figures here. What can be said from the formats:
   section with a 480-gene panel (209 million transcripts, 167 million of them quality ≥ 20)
   gave 667 MB in 480 files, the largest gene 37 MB; the viewer downloads only the genes
   someone picks. Reading its `transcripts.zarr.zip` took about 6 minutes.
+- **CosMx and MERSCOPE**: the same 4 bytes per transcript; measured sizes and times are at the
+  end of the [CosMx](#cosmx-smi) and [MERSCOPE](#merscope) sections.
 - **UMAP time** grows with the number of bins with ≥ 10 UMI and runs on one core.
   Expect it to dominate the export of a large Visium HD 8 µm layer.
 

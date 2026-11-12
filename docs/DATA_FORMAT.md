@@ -3,7 +3,7 @@
 This is the layout that `prepare.py export` (images, spatial expression) and
 `prepare.py rnaseq` (single-cell UMAPs) write, and that the viewer reads. It is derived
 from `export.py`, `hvgchunks.py`, `binqc.py`, `sectionumap.py`, `regions.py`, `rnaseq.py`,
-`expr.py`, `molecules.py`, `xenium.py`, `viewer.js` and `qc.js`. You only need it if you want to write the files with your own tools or
+`expr.py`, `molecules.py`, `xenium.py`, `cosmx.py`, `merscope.py`, `viewer.js` and `qc.js`. You only need it if you want to write the files with your own tools or
 read them from another program.
 
 General rules:
@@ -73,7 +73,7 @@ General rules:
 |---|---|
 | `id` | dataset id = folder name |
 | `label` | display name (the `--label` given to `prepare.py`, else the id) |
-| `kind` | `akoya`, `tiff`, `xenium` or `visium` (the `prepare.py` subcommand used) |
+| `kind` | `akoya`, `tiff`, `xenium`, `cosmx`, `merscope` or `visium` (the `prepare.py` subcommand used) |
 | `pixelSizeUm` | µm per full-resolution pixel, for the scale bar; `null` if unknown |
 | `created` | when the cache was prepared, local time, ISO 8601 |
 | `image.width`, `image.height` | full-resolution size in pixels |
@@ -301,6 +301,39 @@ with centroids in µm, the pixel size, a cells x genes sparse matrix and the gen
   genes, so `pct_mt.bin` is then not written.
 
 The viewer words such a layer as cells ("cells", "transcripts") instead of bins / UMI.
+
+### CosMx and MERSCOPE datasets (`kind: "cosmx"`, `"merscope"`)
+
+Written by `prepare.py cosmx` / `prepare.py merscope` (`cosmx.py`, `merscope.py`, with
+`flatfiles.py`). They use the same files as a Xenium dataset: tiles, a `cells` layer and
+`molecules/`. What differs:
+
+- `manifest.json` has a `frame` entry, the map from the platform's own coordinates to
+  full-resolution image pixels, so that other data in those coordinates (cell outlines, your
+  own annotations) can be placed: `{"from": "<what the coordinates are>", "affine": [[a, b, c],
+  [d, e, f]]}` with `x_px = a*x + b*y + c`, `y_px = d*x + e*y + f`.
+  - CosMx: from `x_global_px, y_global_px` (instrument pixels). `a` and `e` are +1 or -1
+    (y is turned over when global y points up) and `c`, `f` move the mosaic's corner to
+    (0, 0); with a density background they are scaled by `instrumentPixelUm` / `pixelSizeUm`.
+    `instrumentPixelUm` is the µm per instrument pixel used.
+  - MERSCOPE: from `global_x, global_y` (µm): the first two rows of
+    `micron_to_mosaic_pixel_transform.csv`. `zPlane` is the mosaic z-plane imported.
+- `image.background` is present only when the dataset had no images: `"transcript density"`
+  or `"cell density"`. The single channel ("Transcript density (no image)") is then the
+  number of transcripts (cells) per pixel of `pixelSizeUm` (1 µm unless `--background-um`),
+  Gaussian-smoothed (σ 1.5 µm; 5 µm for cells) and scaled so that the 99.9th percentile of
+  the non-empty pixels is 255. No protein grid layer is built on such an image.
+- CosMx image channels are either the raw morphology stains (uint16) or "CellComposite
+  red / green / blue", the vendor's 8-bit rendering, stored as three channels.
+- The `cells` layer has `platform: "cosmx"` or `"merscope"`. `positions.bin` is the centroid
+  (`CenterX/Y_global_px`; `center_x`, `center_y`) put through `frame`, in count-matrix order.
+  Left out of `genes.json` and `gene/`: CosMx `NegPrb*`, `Negative*`, `SystemControl*`,
+  `FalseCode*` and the `cell_ID` 0 rows; MERSCOPE `Blank-*`. `cellDiameterUm` comes from the
+  median `Area` (CosMx) or the median √(bounding-box width × height) (MERSCOPE).
+- `molecules/index.json` has `"platform": "cosmx"` / `"merscope"`, `"source": "tx_file"` /
+  `"detected_transcripts"` and `"read"` (rows of the table); there is no `qvMin` / `lowQv`
+  because these tables carry no quality value. `excluded.controls` counts the control codes
+  above. `genes` is sorted by name (the names found in the table).
 
 ## Molecules: `molecules/`
 

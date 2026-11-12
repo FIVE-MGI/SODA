@@ -26,6 +26,11 @@ container behind a password. No database and no always-on server are needed.
   cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
   panel and each one's molecules are drawn as coloured dots on the stains, several genes at
   once, fetched one gene at a time.
+- **CosMx SMI and MERSCOPE.** The same three parts as Xenium, from the vendors' flat files:
+  the per-FOV CosMx images stitched into one mosaic (raw stains or the rendered composite),
+  or one z-plane of the MERSCOPE mosaic stains; the cells as an expression layer; and
+  every transcript in the Molecules panel. Control probes and blanks are left out, and a
+  dataset that comes without images still opens on a transcript-density background.
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
@@ -154,7 +159,7 @@ It runs the same steps and then checks every output file.
 ## Use your own data
 
 1. **[Prepare your data](docs/PREPARING_DATA.md):** one command per input type
-   (Visium HD, Visium, Xenium, OME-TIFF / QPTIFF, per-marker TIFF folders, H&E,
+   (Visium HD, Visium, Xenium, CosMx, MERSCOPE, OME-TIFF / QPTIFF, per-marker TIFF folders, H&E,
    `.h5ad` or 10x RNA-seq), then `prepare.py export`.
 2. **[De-identify and check](docs/DEIDENTIFICATION.md)** before anything leaves your
    computer.
@@ -243,6 +248,7 @@ deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
 examples/make_demo.py synthetic demo data
 examples/make_xenium_demo.py  synthetic Xenium output folder (cells, transcripts, stains)
+examples/make_imaging_demo.py  synthetic CosMx and MERSCOPE folders (FOV images / mosaics, cells, transcripts)
 tests/smoke_test.py   end-to-end test
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)
