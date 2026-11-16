@@ -2169,7 +2169,7 @@ def check_stereoseq(c: Checker, root: Path, clustering: bool, log_path: Path) ->
 # ------------------------------------------------------------------ cell outlines (web/SpatialViewer/cellshapes.py)
 # The fixtures above carry the cells' outlines in every form a platform writes them; two more exports of
 # demo_xenium_nt take them from cells.zarr.zip and from "a lab's own" files (prepare.py outlines).
-OL_ZARR, OL_OWN, OL_NONE = "export_zarr", "export_own", "export_none"
+OL_ZARR, OL_OWN, OL_NONE, OL_NONE_CACHE = "export_zarr", "export_own", "export_none", "cache_none"
 
 
 def outline_commands(root: Path) -> list[list[str]]:
@@ -2185,11 +2185,14 @@ def outline_commands(root: Path) -> list[list[str]]:
         [prep, "export", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_OWN}", *small],
         [prep, "outlines", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_OWN}", "--boundaries", f"{raw}/xenium_own/cells.geojson",
          "--nuclei", f"{raw}/xenium_own/nuclei.csv", "--boundary-units", "um"],
+        # the same folder prepared with --no-outlines: the export must be what it was before outlines existed
+        [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", f"{r}/{OL_NONE_CACHE}", "--no-outlines"],
+        [prep, "export", "--id", XN, "--out", f"{r}/{OL_NONE_CACHE}", "--dest", f"{r}/{OL_NONE}", *small],
     ]
 
 
 def clean_outlines(root: Path):
-    for p in [root / sub / XN for sub in (OL_ZARR, OL_OWN, OL_NONE)]:
+    for p in [root / sub / XN for sub in (OL_ZARR, OL_OWN, OL_NONE, OL_NONE_CACHE)]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -2493,7 +2496,7 @@ def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
              f"{STL}: a cut cell bin GEF (offsetX) gives the same outline tiles")
     c.ok("shapes" not in json.dumps(read_json(export / STG / "manifest.json")), f"{STG}: no cell bin GEF, so no outlines")
 
-    # ---- what is refused; and a dataset without outlines exports as it did before
+    # ---- what is refused (and then changes nothing); a dataset without outlines exports as it did before
     print("  refusals: wrong units, another run's ids, a folder without boundaries")
     def ol(*extra):
         args = ["web/SpatialViewer/prepare.py", "outlines", "--id", XN, "--out", str(root / "cache"), *extra]
@@ -2505,26 +2508,27 @@ def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
         return p
     def cached():
         return next((L for L in read_json(root / "cache" / XN / "manifest.json")["expr"] if L["key"] == "cells"), {}).get("shapes")
+    def files():
+        d = root / "cache" / XN / "shapes" / "cells"
+        return {p.relative_to(d).as_posix(): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file()}
     gj = str(raw / "xenium_own" / "cells.geojson")
+    had, held = cached(), files()
+    c.ok(bool(had) and had["sets"][0]["source"] == "GeoJSON polygons (own file)" and len(held) > 4, "the cache holds the own-file outlines before the refusals")
     p = ol("--boundaries", gj, "--boundary-units", "px")
-    c.ok(p.returncode == 0 and "do not sit on the cells" in p.stdout and cached() is None,
+    c.ok(p.returncode == 0 and "do not sit on the cells" in p.stdout and "nothing written" in p.stdout,
          "outlines in the wrong units (um read as pixels) are refused: the centres are not inside them")
     p = ol("--boundaries", gj, "--boundary-units", "um", "--boundary-id", "other_run")
-    c.ok(p.returncode == 0 and "not this dataset's outlines" in p.stdout and cached() is None,
+    c.ok(p.returncode == 0 and "not this dataset's outlines" in p.stdout and "nothing written" in p.stdout,
          "outlines whose ids are not this dataset's cells are refused")
     p = ol("--src", str(raw / "xenium_pq"))
-    c.ok(p.returncode == 0 and "no cell outlines" in p.stdout and cached() is None, "a folder without boundary files: a message, nothing written")
-    c.ok(not (root / "cache" / XN / "shapes" / "cells" / "cell").exists(), "a refused import leaves no outline files in the cache")
-    args = ["web/SpatialViewer/prepare.py", "export", "--id", XN, "--out", str(root / "cache"), "--dest", str(root / OL_NONE),
-            "--no-umap", "--no-hvg", "--grid-um", "0"]
-    print(f"$ python {' '.join(args)}", flush=True)
-    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       text=True, encoding="utf-8", errors="replace")
-    with open(log_path, "a", encoding="utf-8") as lg:
-        lg.write(p.stdout)
+    c.ok(p.returncode == 0 and "no cell outlines" in p.stdout and "nothing written" in p.stdout, "a folder without boundary files: a message, nothing written")
+    c.ok(cached() == had and files() == held, "a refused import changes nothing: the outlines the dataset already had are kept, byte for byte")
     none = root / OL_NONE / XN
-    c.ok(p.returncode == 0 and (none / "manifest.json").exists() and "shapes" not in (none / "manifest.json").read_text(encoding="utf-8")
-         and not (none / "expr" / "cells" / "shapes").exists(), "a dataset without outlines exports as before: no shapes in the manifest, no files")
+    c.ok((none / "manifest.json").exists() and "shapes" not in (none / "manifest.json").read_text(encoding="utf-8")
+         and not (none / "expr" / "cells" / "shapes").exists() and not (root / OL_NONE_CACHE / XN / "shapes").exists(),
+         "--no-outlines: no shapes in the cache, in the manifest or in the export")
+    same = [f for f in ("positions.bin", "genes.json") if (none / "expr" / "cells" / f).read_bytes() != (export / XN / "expr" / "cells" / f).read_bytes()]
+    c.ok(not same, f"--no-outlines: the cells layer itself is the same as with outlines ({same})")
     args = ["web/SpatialViewer/deid.py", "check"] + [str(p_) for p_ in (root / OL_ZARR / XN, root / OL_OWN / XN, none)] + \
            [str(export / ds / "expr" / "cells" / "shapes") for ds in (CX, CXN, MS, MSN, ST, STL)]
     p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

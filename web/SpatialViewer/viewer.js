@@ -744,7 +744,7 @@
     if (S.mode !== "image" || (S.geneBlend !== "heatmap" && !umap) || !on.length || umapByCat()) { el.hidden = true; return; }
     const e = currentExpr();
     // in the UMAP every dot is one bin, so the key talks about bins rather than squares
-    const um = umap ? wd().bin : (e && e.kind === "cells") ? `${e.cellDiameterUm ? `${e.cellDiameterUm.toFixed(0)} µm` : "cell-sized"} square`
+    const um = umap || dotK() < 0.5 ? wd().bin : (e && e.kind === "cells") ? `${e.cellDiameterUm ? `${e.cellDiameterUm.toFixed(0)} µm` : "cell-sized"} square`
       : `${(e && e.binSizeUm) ? `${e.binSizeUm.toLocaleString()} µm` : "each"} square`;
     if (isProt()) {
       const none = umap ? " Grey dots: below the left handle of every marker shown." : "";

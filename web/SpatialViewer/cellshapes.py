@@ -186,8 +186,9 @@ def _simplify_once(start, xy, idx, tol):
 def simplify(start, xy, tol, max_vertices=MAX_VERTICES):
     """Douglas-Peucker on closed rings, all at once: no vertex that is dropped lies farther than
     `tol` (image pixels) from the simplified outline. A ring left with more than `max_vertices`
-    is done again from all its vertices with 1.5 x the tolerance, until it fits. tol = 0 only
-    enforces `max_vertices`. Returns (start, xy, number of rings whose tolerance was raised)."""
+    is done again from all its vertices with 1.5 x the tolerance, until it fits; a ring that
+    would be left with fewer than 3 vertices (a cell smaller than the tolerance) is not
+    simplified. tol = 0 only enforces `max_vertices`. Returns (start, xy, number of rings whose tolerance was raised)."""
     cnt = np.diff(start)
     keep_all = np.ones(len(xy), bool)
     todo = (cnt > 3) if tol > 0 else (cnt > max_vertices)
@@ -196,9 +197,11 @@ def simplify(start, xy, tol, max_vertices=MAX_VERTICES):
     while todo.any():
         idx = np.flatnonzero(todo)
         vsel, keep = _simplify_once(start, xy, idx, t)
-        keep_all[vsel] = keep
         c = cnt[idx]
-        over = _sum(keep.astype(np.int64), np.concatenate([[0], np.cumsum(c)])) > max_vertices
+        left = _sum(keep.astype(np.int64), np.concatenate([[0], np.cumsum(c)]))
+        keep |= np.repeat((left < 3) & (c <= max_vertices), c)   # a ring that would lose its area keeps all its vertices
+        keep_all[vsel] = keep
+        over = left > max_vertices
         if first and tol > 0:
             raised = int(over.sum())
         elif first:
@@ -854,11 +857,10 @@ def write_layer(ds_dir: Path, layer_key: str, sets: list, pixel_size_um: float |
         log(f"[outlines] {s.key}: {len(T['chunks'])} tiles of {chunk_px} px, {T['bytes'] / 1e6:.1f} MB "
             f"({T['bytes'] / max(1, n_with):.0f} bytes a cell), vertex step {T['step']:g} px, reach outside a tile "
             f"{T['overhangPx']:.0f} px  ({time.time() - t0:.0f}s)")
-    if base.is_dir():
-        for stale in [p for p in base.iterdir() if p.is_dir() and p.name not in seen]:
-            shutil.rmtree(stale)                              # a set of an earlier run that is no longer there
     if not blocks:
-        return None
+        return None                                           # nothing passed: what an earlier run wrote is left alone
+    for stale in [p for p in base.iterdir() if p.is_dir() and p.name not in seen]:
+        shutil.rmtree(stale)                                  # a set of an earlier run that is not part of this one
     return {"version": VERSION, "format": FORMAT, "dir": DIR, "chunkPx": chunk_px, "sets": blocks}
 
 
@@ -1233,11 +1235,14 @@ def run(args, log=print) -> None:
     else:
         raise SystemExit(f"[outlines] a {kind} dataset: give your outlines with --boundaries (CosMx outlines are traced "
                          f"from the CellLabels images by prepare.py cosmx itself)")
+    before = layer.get("shapes")
     attach(ds_dir, layer, sets, um, args=args, log=log)
-    mp.write_text(json.dumps(m, indent=1), encoding="utf-8")
     if not layer.get("shapes"):
-        log("[outlines] nothing written")
+        if before:
+            layer["shapes"] = before
+        log("[outlines] nothing written" + ("; the outlines this dataset already had are kept" if before else ""))
         return
+    mp.write_text(json.dumps(m, indent=1), encoding="utf-8")
     if args.dest:
         out = Path(args.dest) / m["id"]
         ep = out / "manifest.json"

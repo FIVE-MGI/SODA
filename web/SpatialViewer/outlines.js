@@ -30,6 +30,9 @@
     const T0 = cfg.outlineFromPx || 5, T1 = Math.max((cfg.outlineFullPx || 9), T0 + 0.5);
     const BUDGET = cfg.outlineBudget || (ctx.TOUCH ? 20000 : 120000);        // polygons in view
     const KEEP_VERTS = ctx.TOUCH ? 4e5 : 3e6;                                // decoded vertices kept for a quick return
+    // deck builds a tile's triangles and line segments the first time it is drawn (some tens of ms for
+    // a full tile): tiles that arrive together go in over a few frames, about this many polygons a frame
+    const NEW_PER_FRAME = 700;
     const PARALLEL = 6;
     let mode = "outlines", nuclei = false;
     try { if (localStorage.getItem(KEY) === "dots") mode = "dots"; } catch (e) { /* private mode */ }
@@ -37,7 +40,7 @@
 
     function blank() {
       return { ds: null, key: null, e: null, src: null, sets: [], seq: 0, alpha: 0, dot: 1, sig: "", note: "",
-               col: null, byLayer: new Map(), stats: { fetched: 0, bytes: 0, tiles: 0, decodeMs: 0, firstMs: null, t0: 0 } };
+               col: null, byLayer: new Map(), drawn: new Set(), waiting: 0, stats: { fetched: 0, bytes: 0, tiles: 0, decodeMs: 0, firstMs: null, t0: 0 } };
     }
     const setOf = (key) => O.sets.find((s) => s.key === key) || null;
     const primary = () => O.sets[0] || null;
@@ -214,7 +217,7 @@
     function frame(vs) {
       const P = plan(vs), S = primary();
       O.byLayer.clear();
-      const off = (note) => { O.alpha = 0; O.dot = 1; O.sig = sigOf(P, []); say(note || ""); return null; };
+      const off = (note) => { O.alpha = 0; O.dot = 1; O.sig = sigOf(P, []); O.drawn = new Set(); O.waiting = 0; say(note || ""); return null; };
       if (!P) return off("");
       if (S.failed) return off("The outlines could not be loaded: cells are drawn as dots.");
       if (!P.box) return off("Zoom in to see the cell outlines.");
@@ -237,17 +240,22 @@
         if (!X.loading.has(name) && inFlight < PARALLEL) { fetchTile(X, name); inFlight++; }
       }
       O.sig = sigOf(P, names);
-      if (P.early || P.alpha <= 0) { O.alpha = 0; O.dot = 1; say("Zoom in to see the cell outlines."); return null; }
+      if (P.early || P.alpha <= 0) { O.alpha = 0; O.dot = 1; O.drawn = new Set(); O.waiting = missing; say("Zoom in to see the cell outlines."); return null; }
       const a = P.alpha;
       O.alpha = a;
       // while tiles are still on their way (or failed) the dots stay half visible, so no cell goes missing
       O.dot = missing || failed ? Math.max(1 - a, 0.5) : 1 - a;
       const col = colours(S.index.nRows);
-      const now = performance.now(), layers = [];
-      let shown = 0;
+      const now = performance.now(), layers = [], drawn = new Set();
+      let shown = 0, fresh = 0, held = 0;
       for (const name of names) {
         const T = S.tiles.get(name);
         if (!T) continue;
+        if (!O.drawn.has(name)) {                    // new this frame: only so many at once
+          if (fresh && fresh + T.n > NEW_PER_FRAME) { held++; continue; }
+          fresh += T.n;
+        }
+        drawn.add(name);
         T.used = now; shown += T.n;
         const base = `${O.ds}-${O.key}-${S.key}-${name}`;
         const rr = T.ringRow, f = col.fill, l = col.line;
@@ -290,6 +298,8 @@
         }));
       }
       evict(want);
+      O.drawn = drawn; O.waiting = missing + held;
+      if (held) { O.dot = Math.max(O.dot, 0.5); ctx.requestRender(); }      // the rest of them next frame
       O.stats.tiles = names.length; O.stats.shown = shown;
       say(failed ? "Some outlines could not be loaded: those cells are drawn as dots."
         : missing ? "Loading cell outlines…" : "");
@@ -346,6 +356,7 @@
       setNuclei: (on) => { nuclei = !!on && !!setOf("nucleus"); syncUI(); ctx.requestRender(); },
       // for tests and the console: what is loaded and what it cost
       stats: () => ({ ...O.stats, alpha: O.alpha, dot: O.dot, note: O.note, mode, nuclei, layers: O.byLayer.size,
+        busy: O.waiting > 0 || O.sets.some((s) => !!s.busy || s.loading.size > 0),
         sets: O.sets.map((s) => ({ key: s.key, index: !!s.index, tiles: s.tiles.size, loading: s.loading.size, bad: s.bad.size,
           vertices: [...s.tiles.values()].reduce((n, T) => n + T.nVert, 0), polygons: [...s.tiles.values()].reduce((n, T) => n + T.n, 0) })) }),
       _debug: () => O,
