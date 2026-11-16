@@ -236,10 +236,13 @@
     }
     const pos = await positions(), N = pos.length / 2;
     if (gv.startsWith("sec:")) {
-      const idx = await sectionIndex(), c = (idx.clusterings || []).find((x) => String(clKey(x)) === gv.slice(4));
+      // the viewer's own description first: with cell sets (merged clusters) it says which numbers are gone
+      const own0 = (api.clusterings() || []).find((x) => String(clKey(x)) === gv.slice(4));
+      const idx = own0 ? null : await sectionIndex(), c = own0 || (idx.clusterings || []).find((x) => String(clKey(x)) === gv.slice(4));
       if (!c) throw new Error("That clustering is not in this layer.");
       const ck = clKey(c);
-      let cl = S.umap && S.umap.key === S.exprKey && S.umap.clusters ? S.umap.clusters.get(ck) : null;
+      let cl = api.clusterCodes ? await api.clusterCodes(c) : null;
+      if (!cl) cl = S.umap && S.umap.key === S.exprKey && S.umap.clusters ? S.umap.clusters.get(ck) : null;
       if (!cl) cl = cache.clusters.get(ck);
       if (!cl) { cl = new Uint16Array(await S.src.buf(`expr/${S.exprKey}/umap/${c.file || `clusters_r${c.resolution}.bin`}`)); cache.clusters.set(ck, cl); }
       if (cl.length !== N) throw new Error(`The clusters file has ${cl.length} rows, the layer ${N}.`);
