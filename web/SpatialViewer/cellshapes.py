@@ -620,7 +620,8 @@ def read_merscope_hdf5(folder, z=None):
                     c = np.asarray(g[f"zIndex_{zk}"][pk]["coordinates"], np.float64).reshape(-1, 2)
                     ids.append(str(cid))
                     rings.append(c)
-    return (*_from_ring_list(ids, rings), {"files": len(files), "zPlanes": sorted(planes), "otherPlane": int(other)})
+    zp = z if z is not None else (sorted(planes)[len(planes) // 2] if planes else None)
+    return (*_from_ring_list(ids, rings), {"files": len(files), "zPlane": zp, "zPlanes": sorted(planes), "otherPlane": int(other)})
 
 
 def read_cell_border(path):
@@ -754,7 +755,7 @@ def _prepare(s: ShapeSet, xy_cache, barcodes, um: float, tol_um: float, chunk_px
         f"{int(bad.sum()) + int(large.sum()) + int(crumb.sum()):,} dropped); {what}; "
         f"{cnt.mean():.1f} vertices a polygon ({v_in / max(1, n_in - not_in - no_pos):.1f} read), {int(crossing.sum()):,} cross themselves")
     if int((~has).sum()):
-        log(f"{tag}:   {int((~has).sum()):,} cells have no outline and stay dots")
+        log(f"{tag}:   {int((~has).sum()):,} cells have no {'nucleus outline' if nucleus else 'outline and stay dots'}")
     return {"rows": rows, "start": start, "xy": xy, "pos": pos, "n_rows": n_rows, "stats": stats, "has": has}
 
 

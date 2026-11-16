@@ -52,6 +52,13 @@ twice, with its scans and without (a drawn grid): one row per ROI segment, targe
 the generator's own probe collapse, negative probes out of the genes and behind the LOQ,
 positions inside the ROI outlines, the annotation columns as groupings with no UMAP, the GeoMx
 QC values, and no slide name or Sample_ID in the export (check_geomx).
+Cell outlines (web/SpatialViewer/cellshapes.py): the Xenium fixture carries cell and nucleus boundaries as
+csv.gz, parquet, cells.zarr.zip (both layouts) and "a lab's own" GeoJSON + vertex table, CosMx CellLabels
+images and a polygons file, MERSCOPE an older cell_boundaries HDF5 and a WKB parquet with z-planes, Stereo-seq
+its cellBorder. Checked (check_outlines): the tile format byte for byte, every outline against the polygon
+it came from (traced ones against their label mask, by IoU), rows (the files are not in matrix order), a
+cell's centre inside its own outline, cells in parts, holes, crumbs, missing outlines, simplification, and
+that outlines in the wrong units or of another run are refused and a dataset without outlines exports as before.
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
@@ -2159,6 +2166,385 @@ def check_stereoseq(c: Checker, root: Path, clustering: bool, log_path: Path) ->
 
 
 
+# ------------------------------------------------------------------ cell outlines (web/SpatialViewer/cellshapes.py)
+# The fixtures above carry the cells' outlines in every form a platform writes them; two more exports of
+# demo_xenium_nt take them from cells.zarr.zip and from "a lab's own" files (prepare.py outlines).
+OL_ZARR, OL_OWN, OL_NONE = "export_zarr", "export_own", "export_none"
+
+
+def outline_commands(root: Path) -> list[list[str]]:
+    try:
+        r = root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        r = root.resolve().as_posix()
+    raw, cache = f"{r}/raw", f"{r}/cache"
+    prep, small = "web/SpatialViewer/prepare.py", ["--no-umap", "--no-hvg", "--grid-um", "0"]
+    return [
+        [prep, "outlines", "--id", XN, "--out", cache, "--src", f"{raw}/xenium_zarr"],
+        [prep, "export", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_ZARR}", *small],
+        [prep, "export", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_OWN}", *small],
+        [prep, "outlines", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_OWN}", "--boundaries", f"{raw}/xenium_own/cells.geojson",
+         "--nuclei", f"{raw}/xenium_own/nuclei.csv", "--boundary-units", "um"],
+    ]
+
+
+def clean_outlines(root: Path):
+    for p in [root / sub / XN for sub in (OL_ZARR, OL_OWN, OL_NONE)]:
+        if p.exists():
+            print(f"  removing earlier output {p}", flush=True)
+            shutil.rmtree(p)
+
+
+def _ol_area(r: np.ndarray) -> float:
+    """Shoelace area; positive = clockwise on screen (x right, y down)."""
+    x, y = r[:, 0] - r[0, 0], r[:, 1] - r[0, 1]
+    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _ol_inside(r: np.ndarray, x, y) -> np.ndarray:
+    """Points inside a ring (even-odd)."""
+    x, y = np.atleast_1d(np.asarray(x, float)), np.atleast_1d(np.asarray(y, float))
+    x1, y1 = r[:, 0][:, None], r[:, 1][:, None]
+    x2, y2 = np.roll(r[:, 0], -1)[:, None], np.roll(r[:, 1], -1)[:, None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        hit = ((y1 > y) != (y2 > y)) & (x < x1 + (y - y1) * (x2 - x1) / (y2 - y1))
+    return hit.sum(0) % 2 == 1
+
+
+def _ol_dist(p: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """Distance from each point of p to the outline of ring r."""
+    a, b = r[None, :, :], np.roll(r, -1, axis=0)[None, :, :]
+    q = p[:, None, :]
+    ab = b - a
+    L2 = (ab ** 2).sum(-1)
+    t = np.clip(((q - a) * ab).sum(-1) / np.where(L2 > 0, L2, 1), 0, 1)
+    return np.sqrt(((q - (a + t[..., None] * ab)) ** 2).sum(-1)).min(1)
+
+
+def _ol_same(stored: np.ndarray, truth: np.ndarray, tol: float = 0.0) -> bool:
+    """A stored ring against the ring it was made from: every stored vertex is one of the truth's
+    (to the vertex step), and no truth vertex lies farther than `tol` px from the stored outline;
+    tol = 0: the very same vertices."""
+    d = np.hypot(stored[:, None, 0] - truth[None, :, 0], stored[:, None, 1] - truth[None, :, 1]).min(1)
+    if d.max() > 0.05 or (tol == 0 and len(stored) != len(truth)):
+        return False
+    return bool(_ol_dist(truth, stored).max() <= tol + 0.05)
+
+
+def _ol_read(c: Checker, out: Path, what: str, key: str = "cells") -> dict:
+    """Every outline set of a layer, decoded and checked against the format (docs/DATA_FORMAT.md):
+    {set: {"index", "rings": {row: [ring, ...]}, "empty": rows listed without an outline, "pos"}}."""
+    m = read_json(out / "manifest.json")
+    L = next((x for x in m.get("expr", []) if x.get("key") == key), {})
+    blk = L.get("shapes")
+    if not c.ok(isinstance(blk, dict) and blk.get("sets"), f"{what}: the {key} layer has no shapes block in the manifest"):
+        return {}
+    c.eq((blk.get("version"), blk.get("format"), blk.get("dir")), (1, "poly-u16-tiles", "shapes"), f"{what}: shapes version / format / dir")
+    pos = f32(out / "expr" / key / "positions.bin", 2)
+    N = len(pos)
+    if L.get("hvg"):
+        c.eq(blk.get("chunkPx"), L["hvg"]["chunkPx"], f"{what}: outlines use the same tile grid as hvg/")
+    res = {}
+    for si, s in enumerate(blk["sets"]):
+        tag = f"{what} {s.get('key')}"
+        d = out / "expr" / key / "shapes" / s["key"]
+        if not c.ok((d / "index.json").exists(), f"{tag}: index.json missing"):
+            continue
+        idx = read_json(d / "index.json")
+        cp, step = idx["chunkPx"], idx["step"]
+        c.eq((idx.get("format"), idx.get("version"), idx.get("set"), idx.get("nRows"), cp),
+             ("poly-u16-tiles", 1, s["key"], N, blk.get("chunkPx")), f"{tag}: index format / version / set / nRows / chunkPx")
+        c.ok(step >= 1 / 16 and math.log2(step) == int(math.log2(step)), f"{tag}: vertex step {step} is a power of two, 1/16 px at the finest")
+        c.eq(sorted(p.name for p in d.glob("*.bin")), sorted(f"{k['tx']}_{k['ty']}.bin" for k in idx["chunks"]),
+             f"{tag}: the tile files are those index.json lists")
+        rings, empty, bad, nP, nV, total, over = {}, set(), [], 0, 0, 0, 0.0
+        for k in idx["chunks"]:
+            buf = (d / f"{k['tx']}_{k['ty']}.bin").read_bytes()
+            n, nv = (int(v) for v in np.frombuffer(buf, "<u4", 2))
+            if len(buf) != 16 + 6 * n + 4 * nv or (n, nv, len(buf)) != (k["n"], k["nv"], k["bytes"]):
+                bad.append(f"{k['tx']}_{k['ty']}: {len(buf)} bytes for n {n}, nv {nv} (index: {k})")
+                continue
+            origin = np.frombuffer(buf, "<f4", 2, 8).astype(np.float64)
+            rows = np.frombuffer(buf, "<u4", n, 16).astype(np.int64)
+            cnt = np.frombuffer(buf, "<u2", n, 16 + 4 * n).astype(np.int64)
+            xy = origin + np.frombuffer(buf, "<u2", 2 * nv, 16 + 6 * n).reshape(-1, 2).astype(np.float64) * step
+            if int(cnt.sum()) != nv or (n and int(rows.max()) >= N):
+                bad.append(f"{k['tx']}_{k['ty']}: vertex counts or rows out of range")
+                continue
+            t = np.floor(pos[rows].astype(np.float64) / cp).astype(np.int64)
+            if not ((t[:, 0] == k["tx"]) & (t[:, 1] == k["ty"])).all():
+                bad.append(f"{k['tx']}_{k['ty']}: a polygon is not in the tile of its cell's position")
+            if nv:
+                over = max(over, k["tx"] * cp - xy[:, 0].min(), k["ty"] * cp - xy[:, 1].min(),
+                           xy[:, 0].max() - (k["tx"] + 1) * cp, xy[:, 1].max() - (k["ty"] + 1) * cp)
+            o = 0
+            for r, k_ in zip(rows.tolist(), cnt.tolist()):
+                if k_:
+                    rings.setdefault(r, []).append(xy[o:o + k_])
+                else:
+                    empty.add(r)
+                o += k_
+            nP, nV, total = nP + int((cnt > 0).sum()), nV + nv, total + len(buf)
+        c.ok(not bad, f"{tag}: tile files: {bad[:3]}")
+        c.eq((nP, nV, total, len(rings)), (idx.get("nPolygons"), idx.get("nVertices"), idx.get("bytes"), idx.get("nRowsWithShape")),
+             f"{tag}: polygons / vertices / bytes / cells with an outline as index.json says")
+        c.eq((s.get("nPolygons"), s.get("nVertices"), s.get("bytes"), s.get("chunks"), s.get("nRowsWithShape")),
+             (nP, nV, total, len(idx["chunks"]), len(rings)), f"{tag}: the manifest's numbers")
+        c.ok(over <= idx.get("overhangPx", -1) + 1e-6, f"{tag}: a vertex reaches {over:.2f} px outside its tile, index.json says {idx.get('overhangPx')}")
+        if si == 0:
+            c.ok(idx.get("complete") is True and (set(rings) | empty) == set(range(N)) and not (set(rings) & empty),
+                 f"{tag}: the first set lists every row (with or without an outline)")
+        else:
+            c.ok(not empty and idx.get("complete") is False, f"{tag}: a further set lists only cells with an outline")
+        flat = [r for rs in rings.values() for r in rs]
+        c.ok(all(3 <= len(r) <= 64 for r in flat), f"{tag}: every ring has 3 to 64 vertices")
+        c.ok(all(_ol_area(r) > 0 for r in flat), f"{tag}: every ring is clockwise on screen")
+        c.ok(all((r[0] != r[-1]).any() for r in flat), f"{tag}: rings are stored open (the first vertex is not repeated)")
+        txt = (d / "index.json").read_text(encoding="utf-8")
+        c.ok(not BARCODE.search(txt) and not LOCAL_PATH.search(txt), f"{tag}: index.json holds a barcode or a local path")
+        res[s["key"]] = {"index": idx, "rings": rings, "empty": empty, "pos": pos}
+    return res
+
+
+def _ol_centres(c: Checker, S: dict, what: str, want: float = 1.0):
+    """Each cell's own centre lies inside (one of) its own outline(s)."""
+    pos, rings = S["pos"], S["rings"]
+    ok = sum(any(_ol_inside(r, pos[i, 0], pos[i, 1])[0] for r in rs) for i, rs in rings.items())
+    c.ok(ok >= want * len(rings), f"{what}: {ok} of {len(rings)} cell centres lie inside their own outline")
+    c.ok(abs(S["index"]["stats"]["centreInside"] - ok / max(1, len(rings))) < 1e-4, f"{what}: index.json centreInside is the share counted here")
+
+
+def _ol_xenium(c: Checker, out: Path, what: str, tr: dict, tz, own: bool = False, not_in_matrix: int = 0) -> dict:
+    """The Xenium fixture's outlines in an export against the generator's truth."""
+    px, sp = tr["pixelSizeUm"], tr["outlines"]
+    R = _ol_read(c, out, what)
+    if "cell" not in R or "nucleus" not in R:
+        c.ok(False, f"{what}: expected a cell and a nucleus set, got {sorted(R)}")
+        return {}
+    C, Nu = R["cell"], R["nucleus"]
+    n = len(C["pos"])
+    cell, nuc, dense = tz["cell_poly_um"] / px, tz["nucleus_poly_um"] / px, tz["dense_poly_um"] / px
+    none = set() if own else set(sp["noBoundary"])
+    c.eq(C["empty"], none, f"{what}: the cells without a boundary are listed without an outline (they stay dots)")
+    multi = {sp["ownMulti"]} if own else set()
+    bad = [i for i in range(n) if i not in none and i not in multi and (own or i != sp["dense"])
+           and not (len(C["rings"].get(i, [])) == 1 and _ol_same(C["rings"][i][0], cell[i]))]
+    c.ok(not bad, f"{what}: cell outlines differ from the fixture's polygons (matrix order; the file is in another order): rows {bad[:5]}")
+    st = C["index"]["stats"]
+    if own:
+        rs = C["rings"].get(sp["ownMulti"], [])
+        c.ok(len(rs) == 2 and sorted(len(r) for r in rs) == [8, 12], f"{what}: a cell in two parts keeps both ({[len(r) for r in rs]})")
+        c.eq((st["rowsInSeveralParts"], st["dropped"]["holes"], st["dropped"]["smallParts"]), (1, 1, 1),
+             f"{what}: one cell in parts, one hole left out, one crumb (1 % of its cell) dropped")
+        c.ok(len(C["rings"].get(sp["ownCrumb"], [])) == 1 and len(C["rings"].get(sp["ownHole"], [])) == 1, f"{what}: the crumb and the hole are gone")
+    else:
+        d = C["rings"].get(sp["dense"], [np.zeros((0, 2))])[0]
+        c.ok(8 <= len(d) < sp["denseN"] and _ol_same(d, dense, tol=0.1 / px),
+             f"{what}: the {sp['denseN']}-vertex outline is simplified ({len(d)} left) and no vertex moved by more than 0.1 um")
+        c.eq(st["polygonsNotInMatrix"], not_in_matrix, f"{what}: polygons of cells that are not in the matrix are counted and left out")
+    _ol_centres(c, C, f"{what} cell")
+    area = tz["cell_area_um2"]
+    ratio = np.array([_ol_area(C["rings"][i][0]) * px * px / area[i] for i in range(n) if i in C["rings"] and i not in multi
+                      and (own or i != sp["dense"])])
+    c.ok(0.94 < float(np.median(ratio)) < 0.97 and ratio.min() > 0.93 and ratio.max() < 0.98,
+         f"{what}: polygon area / cell_area {np.median(ratio):.3f} ({ratio.min():.3f}-{ratio.max():.3f}); a 12-gon holds 95.5 % of its circle")
+    twins = {} if own else {i: tz["twin_poly_um"][k] / px for k, i in enumerate(sp["binucleate"])}
+    no_nuc = set() if own else set(sp["noNucleus"])
+    c.eq(set(range(n)) - set(Nu["rings"]), no_nuc, f"{what}: cells without a nucleus have no entry in the nucleus set")
+    bad = [i for i in range(n) if i not in no_nuc and i not in twins
+           and not (len(Nu["rings"].get(i, [])) == 1 and _ol_same(Nu["rings"][i][0], nuc[i]))]
+    c.ok(not bad, f"{what}: nucleus outlines differ from the fixture's: rows {bad[:5]}")
+    for i, tw in twins.items():
+        rs = Nu["rings"].get(i, [])
+        c.ok(len(rs) == 2 and all(any(_ol_same(r, t) for t in tw) for r in rs), f"{what}: a cell with two nuclei keeps both (row {i})")
+    return {"cells": len(C["rings"]), "nuclei": sum(len(v) for v in Nu["rings"].values()), "bytesPerCell": round(C["index"]["bytes"] / n, 1)}
+
+
+def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
+    """Cell outlines of every fixture (cellshapes.py): the tile format, each outline against the
+    polygon or label mask it came from, rows, the special cases, and what is refused."""
+    raw, export = root / "raw", root / "export"
+    res = {}
+    tr, tz = read_json(raw / "truth_xenium.json"), np.load(raw / "truth_xenium.npz")
+    px = tr["pixelSizeUm"]
+    print("  xenium: cell_boundaries / nucleus_boundaries .csv.gz, .parquet, cells.zarr.zip, a lab's own files")
+    res["csv"] = _ol_xenium(c, export / XE, f"{XE} (csv.gz)", tr, tz, not_in_matrix=tr["outlines"]["notInMatrix"])
+    _ol_xenium(c, export / XN, f"{XN} (parquet)", tr, tz, not_in_matrix=tr["outlines"]["notInMatrix"])
+    _ol_xenium(c, root / OL_ZARR / XN, f"{XN} (cells.zarr.zip)", tr, tz)
+    _ol_xenium(c, root / OL_OWN / XN, f"{XN} (own GeoJSON + vertex table)", tr, tz, own=True)
+    for ds in (XE, XN):
+        ix = read_json(export / ds / "expr" / "cells" / "shapes" / "cell" / "index.json")
+        c.eq(ix.get("source"), "cell_boundaries.csv.gz" if ds == XE else "cell_boundaries.parquet", f"{ds}: outlines source")
+    c.eq(read_json(root / OL_ZARR / XN / "expr" / "cells" / "shapes" / "cell" / "index.json").get("source"), "cells.zarr.zip", "zarr export: source")
+    try:
+        import gzip
+        ids = gzip.open(raw / "xenium" / "cell_feature_matrix" / "barcodes.tsv.gz", "rt").read().split()
+        blob = b"".join(p.read_bytes() for p in (export / XE / "expr" / "cells" / "shapes").rglob("*") if p.is_file())
+        c.ok(not any(i.encode() in blob for i in ids), f"{XE}: a cell id is written in the outline files")
+    except OSError as e:
+        c.ok(False, f"{XE}: cannot read the outline files ({e})")
+    c.ok("shapes" not in json.dumps(read_json(export / XP / "manifest.json")), f"{XP}: no cells, so no outlines")
+    try:                                               # the older cells.zarr.zip layout, read in-process
+        sys.path.insert(0, str(APP))
+        import cellshapes
+        got = cellshapes.read_xenium_zarr(raw / "xenium_zarr_v1" / "cells.zarr.zip")
+        ids1, st1, xy1 = got["cell"]
+        want_ids = [b for i, b in enumerate(ids) if i not in tr["outlines"]["noBoundary"]]
+        keep = np.flatnonzero(np.diff(st1) > 0)
+        c.eq([ids1[i] for i in keep], want_ids, "cells.zarr.zip, older layout: cell ids from (prefix, suffix), cells without a polygon skipped")
+        k0 = int(keep[0])
+        r0 = xy1[st1[k0]:st1[k0 + 1]]
+        c.ok(len(r0) == 13 and np.allclose(r0[:12], tz["cell_poly_um"][0], atol=1e-3), "cells.zarr.zip, older layout: polygon_vertices read as x, y pairs")
+        c.eq(len(got["nucleus"][0]), len(ids), "cells.zarr.zip, older layout: one nucleus slot per cell")
+        t = cellshapes.trace_labels(np.array([[0, 1, 1, 0], [0, 1, 0, 2], [3, 0, 2, 2]], np.uint8))
+        c.eq((t[0].tolist(), np.diff(t[1]).tolist(), t[3]), ([1, 2, 3], [6, 6, 4], 0), "trace_labels: three labels, corners only, no holes")
+    except ImportError as e:
+        print(f"    SKIP in-process reader checks ({e})")
+
+    # ---- CosMx: traced from the CellLabels images / the polygons file
+    ti, tzi = read_json(raw / "truth_imaging.json"), np.load(raw / "truth_imaging.npz")
+    order = np.concatenate([np.flatnonzero(tzi["cosmx_fov"] == f) for f in range(1, 5)])
+    print("  cosmx: traced CellLabels, polygons file")
+    R = _ol_read(c, export / CX, CX)
+    if "cell" in R:
+        S, lab = R["cell"], tzi["cosmx_labels"]
+        fw, fh = ti["cosmx"]["fovSize"]
+        gx, gy = ti["cosmx"]["width"] - 2 * fw, ti["cosmx"]["height"] - 2 * fh
+        c.eq(S["index"].get("source"), "CellLabels images (traced)", f"{CX}: outlines source")
+        c.ok(not S["empty"] and S["index"]["stats"].get("traced") is True, f"{CX}: every cell has a traced outline")
+        iou = []
+        for row, ti_ in enumerate(order.tolist()):
+            f, cid = int(tzi["cosmx_fov"][ti_]), int(tzi["cosmx_cell_id"][ti_])
+            x0, y0 = ((f - 1) % 2) * (fw + gx), (1 - (f - 1) // 2) * (fh + gy)
+            mask = lab[y0:y0 + fh, x0:x0 + fw] == cid
+            ys, xs = np.nonzero(mask)
+            a0, a1, b0, b1 = xs.min() - 2, xs.max() + 3, ys.min() - 2, ys.max() + 3
+            qx, qy = np.meshgrid(np.arange(a0, a1) + 0.5 + x0, np.arange(b0, b1) + 0.5 + y0)
+            got = np.zeros(qx.shape, bool)
+            for r in S["rings"].get(row, []):
+                got |= _ol_inside(r, qx.ravel(), qy.ravel()).reshape(qx.shape)
+            want = np.zeros(qx.shape, bool)
+            want[ys - b0, xs - a0] = True
+            iou.append((got & want).sum() / max(1, (got | want).sum()))
+        iou = np.array(iou)
+        c.ok(float(np.median(iou)) > 0.95 and float(iou.min()) > 0.85,
+             f"{CX}: traced outlines against the label masks: IoU median {np.median(iou):.3f}, worst {iou.min():.3f}")
+        _ol_centres(c, S, CX)
+        mv = float(np.mean([len(r) for rs in S["rings"].values() for r in rs]))
+        c.ok(8 <= mv <= 24, f"{CX}: {mv:.1f} vertices a traced outline (a 28 px disk; the pixel staircase is simplified away)")
+        res["cosmxTraced"] = {"iouMedian": round(float(np.median(iou)), 4), "iouMin": round(float(iou.min()), 4), "meanVertices": round(mv, 1)}
+        print(f"    traced outlines: IoU with the label mask median {np.median(iou):.3f}, worst {iou.min():.3f}; {mv:.1f} vertices each")
+    R = _ol_read(c, export / CXN, CXN)
+    if "cell" in R:
+        S, want = R["cell"], tzi["cosmx_poly_px"][order]
+        c.eq(S["index"].get("source"), "polygons file", f"{CXN}: the polygons file is used when the export has one")
+        bad = [i for i in range(len(want)) if not (len(S["rings"].get(i, [])) == 1 and _ol_same(S["rings"][i][0], want[i]))]
+        c.ok(not bad, f"{CXN}: outlines differ from the polygons file put through the frame (y turned over): rows {bad[:5]}")
+        c.ok(all(_ol_area(r) > 0 for rs in S["rings"].values() for r in rs), f"{CXN}: rings turned clockwise after the y flip")
+    c.ok("shapes" not in json.dumps(read_json(export / CXT / "manifest.json")), f"{CXT}: no cells, so no outlines")
+
+    # ---- MERSCOPE: cell_boundaries/*.hdf5 (with images) / *_micron_space.parquet (WKB, no images)
+    print("  merscope: cell_boundaries hdf5, micron_space parquet (WKB)")
+    t = ti["merscope"]
+    org = np.array(t["origin"], np.float64)
+    pu = tzi["merscope_poly_um"]
+    cen = tzi["merscope_cells_um"]
+    um_all = np.vstack([tzi["merscope_mol_um"], cen])
+    for ds, to_px, src in ((MS, lambda u: (u - org) / ti["pixelSizeUm"], "cell_boundaries/*.hdf5"),
+                           (MSN, lambda u: u - um_all.min(0) + 10.0, "micron_space.parquet")):
+        R = _ol_read(c, export / ds, ds)
+        if "cell" not in R:
+            continue
+        S = R["cell"]
+        st = S["index"]["stats"]
+        c.eq(S["index"].get("source"), src, f"{ds}: outlines source")
+        c.eq(S["empty"], {4}, f"{ds}: the cell without a boundary stays a dot")
+        c.eq((st.get("zPlane"), st.get("otherPlane")), (1, 1), f"{ds}: the middle z-plane, and the nearest one for the cell that has none there")
+        other = to_px(cen[3] + 0.8 * (pu[3] - cen[3]))
+        c.ok(len(S["rings"].get(3, [])) == 1 and _ol_same(S["rings"][3][0], other), f"{ds}: that cell's outline is the one of its nearest plane")
+        skip = {3, 4} | ({0} if ds == MSN else set())
+        bad = [i for i in range(len(pu)) if i not in skip and not (len(S["rings"].get(i, [])) == 1 and _ol_same(S["rings"][i][0], to_px(pu[i])))]
+        c.ok(not bad, f"{ds}: outlines differ from the fixture's (the middle plane, through the micron -> pixel transform): rows {bad[:5]}")
+        if ds == MSN:
+            rs = S["rings"].get(0, [])
+            c.ok(len(rs) == 2 and any(_ol_same(r, to_px(pu[0])) for r in rs), f"{ds}: a MultiPolygon cell keeps both parts")
+            c.eq((st["rowsInSeveralParts"], st["dropped"]["holes"], st["dropped"]["smallParts"]), (1, 1, 1),
+                 f"{ds}: one cell in parts, one hole left out, one crumb dropped")
+        _ol_centres(c, S, ds)
+    c.ok("shapes" not in json.dumps(read_json(export / MSP / "manifest.json")), f"{MSP}: no cells, so no outlines")
+
+    # ---- Stereo-seq: cellBin/cellBorder, whole chip and cut (file offset)
+    print("  stereoseq: cellBin/cellBorder")
+    tzs = np.load(raw / "truth_stereoseq.npz")
+    R = _ol_read(c, export / ST, ST)
+    if "cell" in R:
+        S, cxy = R["cell"], tzs["cell_xy"].astype(np.float64)
+        ang = np.linspace(0, 2 * np.pi, 16, endpoint=False)
+        rr = read_json(raw / "truth_stereoseq.json")["cellRadiusDnb"]
+        off = np.column_stack([np.rint(rr * np.cos(ang)), np.rint(rr * np.sin(ang))])
+        bad = [i for i in range(len(cxy)) if not (len(S["rings"].get(i, [])) == 1 and _ol_same(S["rings"][i][0], cxy[i] + 0.5 + off, tol=0.2))]
+        c.ok(not bad and not S["empty"], f"{ST}: outlines = cell x, y + the border offsets + half a DNB: rows {bad[:5]}")
+        c.eq(S["index"].get("source"), "cellBin/cellBorder", f"{ST}: outlines source")
+        _ol_centres(c, S, ST)
+        ratio = np.array([_ol_area(S["rings"][i][0]) for i in range(len(cxy))]) / tzs["cell_area"]
+        c.ok(0.8 < float(np.median(ratio)) < 1.0, f"{ST}: outline area / the cell's DNB count {np.median(ratio):.3f} (the border runs through the outermost DNBs)")
+        a, b = export / ST / "expr" / "cells" / "shapes" / "cell", export / STL / "expr" / "cells" / "shapes" / "cell"
+        c.ok(b.is_dir() and all((b / p.name).exists() and (b / p.name).read_bytes() == p.read_bytes() for p in a.glob("*.bin")),
+             f"{STL}: a cut cell bin GEF (offsetX) gives the same outline tiles")
+    c.ok("shapes" not in json.dumps(read_json(export / STG / "manifest.json")), f"{STG}: no cell bin GEF, so no outlines")
+
+    # ---- what is refused; and a dataset without outlines exports as it did before
+    print("  refusals: wrong units, another run's ids, a folder without boundaries")
+    def ol(*extra):
+        args = ["web/SpatialViewer/prepare.py", "outlines", "--id", XN, "--out", str(root / "cache"), *extra]
+        print(f"$ python {' '.join(args)}", flush=True)
+        p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, encoding="utf-8", errors="replace")
+        with open(log_path, "a", encoding="utf-8") as lg:
+            lg.write(p.stdout)
+        return p
+    def cached():
+        return next((L for L in read_json(root / "cache" / XN / "manifest.json")["expr"] if L["key"] == "cells"), {}).get("shapes")
+    gj = str(raw / "xenium_own" / "cells.geojson")
+    p = ol("--boundaries", gj, "--boundary-units", "px")
+    c.ok(p.returncode == 0 and "do not sit on the cells" in p.stdout and cached() is None,
+         "outlines in the wrong units (um read as pixels) are refused: the centres are not inside them")
+    p = ol("--boundaries", gj, "--boundary-units", "um", "--boundary-id", "other_run")
+    c.ok(p.returncode == 0 and "not this dataset's outlines" in p.stdout and cached() is None,
+         "outlines whose ids are not this dataset's cells are refused")
+    p = ol("--src", str(raw / "xenium_pq"))
+    c.ok(p.returncode == 0 and "no cell outlines" in p.stdout and cached() is None, "a folder without boundary files: a message, nothing written")
+    c.ok(not (root / "cache" / XN / "shapes" / "cells" / "cell").exists(), "a refused import leaves no outline files in the cache")
+    args = ["web/SpatialViewer/prepare.py", "export", "--id", XN, "--out", str(root / "cache"), "--dest", str(root / OL_NONE),
+            "--no-umap", "--no-hvg", "--grid-um", "0"]
+    print(f"$ python {' '.join(args)}", flush=True)
+    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    none = root / OL_NONE / XN
+    c.ok(p.returncode == 0 and (none / "manifest.json").exists() and "shapes" not in (none / "manifest.json").read_text(encoding="utf-8")
+         and not (none / "expr" / "cells" / "shapes").exists(), "a dataset without outlines exports as before: no shapes in the manifest, no files")
+    args = ["web/SpatialViewer/deid.py", "check"] + [str(p_) for p_ in (root / OL_ZARR / XN, root / OL_OWN / XN, none)] + \
+           [str(export / ds / "expr" / "cells" / "shapes") for ds in (CX, CXN, MS, MSN, ST, STL)]
+    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    c.eq(p.returncode, 0, "deid.py check on the outline exports (exit code)")
+
+    # ---- the page
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    js = (APP / "outlines.js").read_text(encoding="utf-8") if (APP / "outlines.js").exists() else ""
+    c.ok(re.search(r'<script src="outlines\.js\?v=[\w.-]+"></script>', html) is not None and html.find("outlines.js") < html.find("viewer.js?"),
+         "index.html loads outlines.js (with a ?v= string) before viewer.js")
+    for i in ("rowCellShapes", "cellShapes", "rowCellNuclei", "cellNuclei"):
+        c.ok(f'id="{i}"' in html, f"index.html: the cell shapes control #{i} is missing")
+    c.ok("window.SodaOutlines" in js and "poly-u16-tiles" in js, "outlines.js: SodaOutlines and the format name")
+    c.ok(not re.search(r"\bInt(8|16|32)Array\b", js), "outlines.js uses a signed typed array (deid.py check reads those names as sample IDs)")
+    vj = (APP / "viewer.js").read_text(encoding="utf-8")
+    c.ok("SodaOutlines" in vj, "viewer.js: the outlines hooks are missing")
+    return res
+
+
 def check_marker_lists(c: Checker):
     """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
     sys.path.insert(0, str(APP))
@@ -2524,6 +2910,10 @@ def main(argv=None) -> int:
             clean_imaging(root)
         for cmd in imaging_commands(root):               # CosMx / MERSCOPE fixtures
             timings[Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"] = run(cmd, log_path)
+        if not args.reuse:
+            clean_outlines(root)
+        for i, cmd in enumerate(outline_commands(root)):  # outlines from cells.zarr.zip and from a lab's own files
+            timings[f"{cmd[1]} {cmd[3]} (outlines {i + 1})"] = run(cmd, log_path)
 
     c = Checker()
     t0 = time.time()
@@ -2543,6 +2933,8 @@ def main(argv=None) -> int:
     summary["imaging"] = check_imaging(c, root, clustering, log_path)
     print("checks: demo_stereoseq (bin layers + cells), _gem, _lv, _mask")
     summary["stereoseq"] = check_stereoseq(c, root, clustering, log_path)
+    print("checks: cell outlines (every platform's boundaries, traced label masks, a lab's own file)")
+    summary["outlines"] = check_outlines(c, root, log_path)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
     print("checks: the page (index.html, viewer.js tile path, diag.js)")
