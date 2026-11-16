@@ -15,6 +15,24 @@ needs an internet connection: it loads its libraries from a public CDN.
 <!-- SCREENSHOT PLACEHOLDER: docs/img/overview.png
      Whole-slide multiplex IF view with the channel panel open. Lead adds the image. -->
 
+## Show your own data in 4 steps
+
+No coding needed: you paste a few commands and fill in two lines.
+
+1. **Install** with one command: `bash install.sh` (macOS / Linux) or
+   `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows). It ends with **SODA is
+   installed**. Then activate it and run `pip install jupyter` ([details](#try-it-in-5-minutes)).
+2. **Convert.** Open `notebooks/SODA_pipeline.ipynb` and fill in your work folder (`WORK`) and
+   your cloud folder's link (`CLOUD_URL`). Run Sections 0 and 1, put your instrument files in
+   the `inputs/` folders Section 1 makes (one subfolder per dataset), then **Run All**.
+3. **Upload.** Answer Section 7's one question (is this data public?), then upload the
+   `export/` folder, as it is, to your own storage: Azure, AWS, Google Cloud or a web server.
+   Box, Google Drive and Dropbox do not work.
+4. **Share** the link the notebook prints: `<the SODA page>/index.html?data=<your folder>`.
+
+Every step in detail, with the one storage setting (CORS) the link needs:
+[docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). Everything beyond that: [docs/ADVANCED.md](docs/ADVANCED.md).
+
 ## Features
 
 - **Four tabs, one job each.** The controls sit beside the picture in four tabs: **View**
@@ -103,6 +121,10 @@ needs an internet connection: it loads its libraries from a public CDN.
   automatically, and a slide QC box lists weak and saturated stains and outlines folds and
   bright edges. Set a cut-off per marker (by eye or Otsu) to read the % of tissue squares
   positive for it, or count squares per cluster. No cell segmentation (yet).
+- **Save as image.** **Save image** (Save tab, or the camera beside Fit) saves the map as a
+  PNG exactly as shown in Tissue, UMAP or Side by side, with a legend, the scale bar and the
+  dataset's name, at 1x, 2x or 4x the screen's pixels (finer image tiles at 2x / 4x), on a
+  black, white or transparent background. The volcano plot saves as PNG or SVG, like the plots.
 - **Region overlays.** GeoJSON regions (for example from QuPath) drawn over the image;
   click a region to restrict the gene density to its bins.
 - **Single-cell RNA-seq.** UMAP from AnnData (`.h5ad`) or 10x output, coloured by cluster
@@ -235,6 +257,7 @@ email wbuchser@wustl.edu with any questions about hosting.
 |---|---|
 | [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | commands and options per input type, export, clustering, the circle tool, common problems |
 | [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways: a link to your data folder, or your own copy of SODA |
+| [docs/ADVANCED.md](docs/ADVANCED.md) | the advanced way in one place: your own site, passwords, labels and colours, every notebook setting, your own clusters, marker lists, which code file does what |
 | [docs/HOSTING.md](docs/HOSTING.md) | hosting options from a laptop to a password-protected cloud site; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure Static Web App + private blob container + password, step by step |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the upload gate, and its limits |
