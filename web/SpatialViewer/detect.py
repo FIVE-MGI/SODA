@@ -540,61 +540,72 @@ def _visium_expect(cx: Ctx, outs: str, squares: list[str]):
 
 
 def _visium_images(cx: Ctx, outs: str, droot: str, expect, other_outs: set) -> list[list[dict]]:
-    """TIFFs that could be the image given to spaceranger, nearest first: next to the outs folder,
-    in a folder next to it, then the same one level further up. Each level is a list of options."""
-    t = cx.t
+    """TIFFs that could be the image given to spaceranger, nearest first, as levels of options.
 
-    def opts(files: dict, base_path: Path | None, rel: str | None):
+    Free levels (any TIFF there is a candidate): the dataset's own folder, i.e. next to an `outs`
+    folder and in the folders next to it, or the top of a Space Ranger folder that is not called
+    outs. Strict levels (marked `_outside`: only a TIFF of the size Space Ranger recorded counts,
+    so they are skipped when that size is unknown): everything further out, which may belong to
+    other datasets - one level further up, and the parent of the folder given."""
+    t = cx.t
+    levels: list[list[dict]] = []
+    named_outs = t.name(outs).lower() == "outs"
+
+    def opts(files: dict, base_path, rel, strict: bool):
         out = []
         for n in sorted(files, key=str.lower):
-            if not _is_tiff(n):
-                continue
-            path = str(base_path / n) if base_path is not None else t.path(rel, n)
-            out.append({"path": path, "size": files[n], "_rel": rel, "_name": n})
+            if _is_tiff(n):
+                o = {"path": str(base_path / n) if base_path is not None else t.path(rel, n), "size": files[n],
+                     "_rel": rel, "_name": n}
+                if strict:
+                    o["_outside"] = True
+                out.append(o)
         return out
 
-    levels = []
+    def holds_outs(rel: str) -> bool:
+        return any(_under(o, rel) for o in other_outs | {outs})
 
-    def outside(folder: Path, skip: str):
-        """A folder that is not in the listing (the parent of the folder given): its TIFFs, then
-        those of the folders in it."""
-        got = _listdir(folder)
+    def listed(base: str, strict: bool, own_only: bool = False):
+        levels.append(opts(t.f(base), None, base, strict))
+        if not own_only:
+            levels.append([o for dn in t.d(base) if not holds_outs(_join(base, dn))
+                           for o in opts(t.f(_join(base, dn)), None, _join(base, dn), strict)])
+
+    def unlisted(folder: Path, skip: str, strict_files: bool):
+        """The parent of the folder given: one listing, plus one per folder in it (at most 40)."""
+        got = _listdir(folder) if t.real else None
         if got is None:
             return
         files, dirs = got
-        levels.append(opts(files, folder, None))
+        levels.append(opts(files, folder, None, strict_files))
         sub = []
         for dn in dirs[:40]:
             if dn == skip or dn.lower().startswith("."):
                 continue
             g2 = _listdir(folder / dn)
             if g2 and "binned_outputs" not in g2[1] and "outs" not in g2[1]:
-                sub += opts(g2[0], folder / dn, None)
+                sub += opts(g2[0], folder / dn, None, True)
         levels.append(sub)
 
-    if outs == "":                                   # the folder given IS the outs folder: look beside it
-        if t.real:
-            outside(t.root.parent, t.root.name)
-        return levels
-
-    def holds_outs(rel: str) -> bool:
-        return any(_under(o, rel) for o in other_outs | {outs})
-
-    par = _parent(outs)
-    for base in ([par] if par == "" else [par, _parent(par)]):
-        levels.append(opts(t.f(base), None, base))
-        sub = []
-        for dn in t.d(base):
-            r = _join(base, dn)
-            if not holds_outs(r):
-                sub += opts(t.f(r), None, r)
-        levels.append(sub)
-    if par == "" and t.real and expect is not None:   # <project>/<run>/outs with the images in <project>/<folder>/:
-        n_in = len(levels)                            # only an image of the recorded size counts out there
-        outside(t.root.parent, t.root.name)
-        for lv in levels[n_in:]:
-            for o in lv:
-                o["_outside"] = True
+    can_check = expect is not None
+    if outs and named_outs:                          # <dataset>/outs: the dataset folder, then further out
+        listed(_parent(outs), strict=False)
+        if can_check and _parent(outs):
+            listed(_parent(_parent(outs)), strict=True)
+        elif can_check and t.root is not None:
+            unlisted(t.root.parent, t.root.name, strict_files=True)
+    elif outs:                                       # a Space Ranger folder under another name
+        listed(outs, strict=False, own_only=True)
+        if can_check:
+            listed(_parent(outs), strict=True)
+    elif named_outs:                                 # the folder given IS outs: the TIFFs beside it
+        unlisted(t.root.parent, t.root.name, strict_files=False)
+        if not can_check:
+            levels.pop()                             # folders beside it: only with a size to check
+    else:                                            # the folder given is a Space Ranger folder under another name
+        listed("", strict=False, own_only=True)
+        if can_check and t.root is not None:
+            unlisted(t.root.parent, t.root.name, strict_files=True)
     return levels
 
 
@@ -1390,6 +1401,7 @@ def _finish(c: dict, ov: dict) -> dict:
     for k, v in ov.items():
         if k in KIND_ARGS[c["kind"]]:
             c["args"][k] = v
+            _ev(c, f"--{k.replace('_', '-')} (given by you)", ", ".join(str(x) for x in v) if isinstance(v, (list, tuple)) else str(v))
         if k in KIND_ARGS[c["kind"]] or k in OVERRIDE_FLAGS:
             c["missing"] = [m for m in c["missing"] if m["arg"] != k]
             c["choices"] = [ch for ch in c["choices"] if ch["arg"] != k]
@@ -1693,7 +1705,9 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
         rep.update({k: d[k] for k in ("verdict", "reason", "message", "kind", "variant", "label", "candidates", "suggestions")})
         rep["extras"] = d["extras"] + notes
         if d["root"] and not t.single and d["verdict"] == "certain":
-            rep["extras"].insert(0, f"the dataset is in {d['root']}/ below the folder given")
+            is_file = d["candidates"][0]["kind"] in ("tiff", "rnaseq") and Path(d["path"]).is_file()
+            rep["extras"].insert(0, f"the dataset is the file {d['root']} in the folder given" if is_file
+                                 else f"the dataset is in {d['root']}/ below the folder given")
         return done()
     kinds = sorted({d["kind"] for d in datasets if d["kind"]})
     return done(verdict="ambiguous", reason="several-datasets",
