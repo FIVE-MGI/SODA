@@ -10,7 +10,8 @@ folders below it:
     Morphology2D/*_F<fov>.TIF      raw morphology stains, one multi-page 16-bit TIFF per FOV
     RawMorphologyImages/ | ResegmentationImages/ *_F<fov>_Z<z>.TIF   the same per z-plane
     CellComposite/CellComposite_F<fov>.jpg   the vendor's rendered RGB composite per FOV
-    CellLabels/CellLabels_F<fov>.tif         cell label images, used only to check orientation
+    CellLabels/CellLabels_F<fov>.tif         cell label images: the orientation check, and the cells' outlines
+    *polygons.csv[.gz]                       newer exports: fov, cellID, x_global_px, y_global_px (used instead)
 
 (.parquet copies of the four tables are read too.)
 
@@ -66,7 +67,8 @@ def find_inputs(folder: Path) -> dict:
     skip = tuple(IMAGE_DIRS) + ("compartmentlabels", "celloverlay")
     inp = {k: ff.find_table(folder, pat, skip_dirs=skip) for k, pat in
            (("matrix", r".*exprmat_file"), ("cells", r".*metadata_file"),
-            ("fov_positions", r".*fov_positions_file"), ("transcripts", r".*tx_file"))}
+            ("fov_positions", r".*fov_positions_file"), ("transcripts", r".*tx_file"),
+            ("polygons", r".*[-_]polygons"))}
     images: dict[str, dict] = {"morphology": {}, "zstack": {}, "composite": {}, "labels": {}}
     level = [folder]
     for _ in range(5):
@@ -416,6 +418,9 @@ class Plan:
             meta = build_cell_layer(ds_dir, xy, um, cells["X"], cells["genes"], key="cells", label="Cells",
                                     cell_diameter_um=diam, log=log, extra={"platform": PLATFORM},
                                     barcodes=cells["barcodes"])
+            if not getattr(args, "no_outlines", False):
+                import cellshapes
+                cellshapes.attach(ds_dir, meta, cellshapes.cosmx_sets(self, cells, log=log), um, args=args, log=log)
             manifest["expr"].append(meta)
         if not args.no_transcripts:
             if self._writer is None and self.inp.get("transcripts"):
@@ -583,6 +588,7 @@ def plan(args, log=print) -> Plan:
         f"{', local x from the right edge' if flip_x else ''} ({how})")
     tx = signs[0] * (-1 if flip_x else 1)
     ty = signs[1] * (-1 if flip_y else 1)
+    P.fov = {"signs": signs, "flip": (flip_x, flip_y), "origins": origins}      # for the outlines (cellshapes.cosmx_sets)
 
     P.cells = None
     if not args.no_cells and P.cell_global is not None:

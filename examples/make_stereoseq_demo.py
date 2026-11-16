@@ -357,7 +357,7 @@ def main(argv=None):
              "seed": args.seed, "sn": SN, "width": W, "height": H, "dnbUm": RES_NM / 1000, "geneIds": IDS,
              "geneNames": NAMES, "labels": NAMES[:-1] + [f"SynDup_{IDS[-1]}"], "oldLayoutNames": NAMES_UNIQUE,
              "types": TYPES, "bandEdges": list(BAND_EDGES), "island": list(ISLAND), "cut": list(CUT), "records": int(len(g)), "mid": int(c.sum()), "recordsInTissue": int(inside.sum()),
-             "midInTissue": int(c[inside].sum()), "tissueDnb": int(mask.sum()), "nCells": int(len(cells)),
+             "midInTissue": int(c[inside].sum()), "tissueDnb": int(mask.sum()), "nCells": int(len(cells)), "cellRadiusDnb": CELL_R,
              "cellMid": int(counts.sum())}
     (out / "truth_stereoseq.json").write_text(json.dumps(truth, indent=1), encoding="utf-8")
     print(f"synthetic Stereo-seq folder -> {folder}")

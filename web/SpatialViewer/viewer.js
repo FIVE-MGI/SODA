@@ -755,7 +755,7 @@
     if (S.mode !== "image" || (S.geneBlend !== "heatmap" && !umap) || !on.length || umapByCat()) { el.hidden = true; return; }
     const e = currentExpr();
     // in the UMAP every dot is one bin, so the key talks about bins rather than squares
-    const um = umap ? wd().bin : (e && e.kind === "cells") ? `${e.cellDiameterUm ? `${e.cellDiameterUm.toFixed(0)} µm` : "cell-sized"} square`
+    const um = umap || dotK() < 0.5 ? wd().bin : (e && e.kind === "cells") ? `${e.cellDiameterUm ? `${e.cellDiameterUm.toFixed(0)} µm` : "cell-sized"} square`
       : `${(e && e.binSizeUm) ? `${e.binSizeUm.toLocaleString()} µm` : "each"} square`;
     if (isProt()) {
       const none = umap ? " Grey dots: below the left handle of every marker shown." : "";
@@ -807,7 +807,7 @@
       diskResolution: 4, angle: 45,            // four sides, corner-up: an axis-aligned square
       radius: side / Math.SQRT2,               // circumradius of a square of side `side`
       radiusUnits: "common", extruded: false, filled: true, stroked: false,
-      opacity: S.geneOpacity, parameters: NORMAL,
+      opacity: S.geneOpacity * dotK(), parameters: NORMAL,
       updateTriggers: { getFillColor: [h.key], getPosition: [h.key] },
     });
   }
@@ -821,7 +821,7 @@
       dataComparator: () => false,
       radiusUnits: "common", getRadius: r, radiusMinPixels: 0.6,
       stroked: false, filled: true,
-      opacity: S.geneOpacity,
+      opacity: S.geneOpacity * dotK(),
       parameters: NORMAL,
       updateTriggers: { getFillColor: [g.colorKey] },
     });
@@ -836,7 +836,7 @@
       id: `tissue-${S.dsId}-${t.key}`,
       data: { length: t.positions.length / 2, attributes: { getPosition: { value: t.positions, size: 2 } } },
       radiusUnits: "common", getRadius: r, radiusMinPixels: 0.5,
-      getFillColor: [120, 130, 150, 90], stroked: false,
+      getFillColor: [120, 130, 150, 90], stroked: false, opacity: dotK(),
       parameters: NORMAL,
     });
   }
@@ -1079,6 +1079,7 @@
     if (!S.viewState || !Number.isFinite(S.viewState.zoom) || fitPending) fitView();
     if (inUmap()) { renderUmap(); return; }
     const layers = [];
+    const OL = outlines ? outlines.frame(S.viewState) : null;       // cell outlines; also decides how much of the dots stays (dotK)
     const nOn = S.imgOn ? S.channels.filter((ch) => ch.visible).length : 0;
     manyChannelsNote(nOn);
     if (S.imgOn) for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch, S.imgOpacity, nOn));
@@ -1095,12 +1096,14 @@
         for (const g of S.genes) if (g.visible !== false) layers.push(geneLayer(g));
       }
     }
+    if (OL && !OL.over) layers.push(...OL.layers);
     layers.push(...molLayers());
     drawDensityKey();
     updateRegionReadout();
     for (const o of S.overlays) { const l = overlayLayer(o); if (l) layers.push(l); }
     // the gating preview replaces the coloured squares on the slide while it is on
     if (gPrev) layers.push(gatePreviewLayer()); else layers.push(...umapTissueLayers());
+    if (OL && OL.over) layers.push(...OL.layers);
     const ql = qcLayer(); if (ql) layers.push(ql);
     layers.push(...lassoLayers());
     const bq = binQcLayer(); if (bq) layers.push(bq);
@@ -1169,7 +1172,9 @@
       const [w, h] = umapPaneSize("ortho"), [w2, h2] = umapPaneSize("uside");
       S.viewState = imageFitVs(w, h); S.umap.sideVs = umapFitVs(w2, h2);
       fitPending = !w;
-      deckgl.setProps({ viewState: deckVs() }); updateHud(); return;
+      deckgl.setProps({ viewState: deckVs() }); updateHud();
+      if (outlines && outlines.viewChanged(S.viewState)) requestRender();   // from zoomed in: back to dots
+      return;
     }
     const img = S.m.image;
     const el = $("viewport");
@@ -1180,6 +1185,7 @@
     S.viewState = { target: [img.width / 2, img.height / 2, 0], zoom, minZoom: zoom - 2, maxZoom: 6 };
     deckgl.setProps({ viewState: deckVs() });
     updateHud();
+    if (outlines && outlines.viewChanged(S.viewState)) requestRender();     // from zoomed in: back to dots
   }
   function updateHud(xy) {
     if (S.mode === "rna") return;
@@ -1207,6 +1213,8 @@
   }
 
   function tooltipFor(info) {
+    const orow = outlines ? outlines.rowAt(info) : -1;           // a cell's outline: what its dot would say
+    if (orow >= 0) return umapTooltip(orow);
     if (info.layer && info.layer.id.includes("ucloud") && info.index >= 0) return umapTooltip(umapRowAt(info.layer.id, info.index));
     if (!info.object || !info.object.properties) return null;
     const p = info.object.properties;
@@ -1255,6 +1263,7 @@
     // units changes with the zoom
     if (zoomed && ((S.geneBlend === "heatmap" && S.genes.length) || gatePreviewOn())) requestRender();
     molViewChanged();
+    if (outlines && outlines.viewChanged(viewState)) requestRender();
   }
   function initDeck() {
     deckgl = new Deck({
@@ -1289,6 +1298,13 @@
         // a finger has no hover: a tap shows what hovering the same spot would
         if (ev && (ev.pointerType === "touch" || (ev.srcEvent && ev.srcEvent.pointerType === "touch"))) tapInspect(info);
         if (S.mode === "rna") return;
+        const orow = outlines ? outlines.rowAt(info) : -1;       // a cell's outline: as clicking its dot
+        if (orow >= 0 && umapByCat()) {
+          const U = S.umap;
+          if (U.cl && U.colorBy === "cluster" && U.cl[orow] !== UMAP_NONE) umapPick(U.cl[orow]);
+          else if (umapByType() && U.ct[orow] !== CT_OUT) umapPickType(U.ct[orow]);
+          return;
+        }
         // a dot coloured by cluster: clicking it highlights its cluster, in either view
         if (info && info.layer && info.layer.id.includes("ucloud")) {
           const row = umapRowAt(info.layer.id, info.index), U = S.umap;
@@ -1713,6 +1729,7 @@
     await loadRegions(); if (stale()) return false;
     await loadQc(); if (stale()) return false;
     if (binQc) { await binQc.onLayer(S.dsId, S.exprKey, currentExpr(), S.src); if (stale()) return false; }
+    if (outlines) outlines.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
     if (S.tissue.on) { await loadTissue(); if (stale()) return false; }
     await lassoOnLayer(); if (stale()) return false;
     await umapOnLayer(); if (stale()) return false;
@@ -1938,7 +1955,7 @@
   function binQcLayer() {
     if (!binQc) return null;
     const e = currentExpr();
-    return binQc.layer(Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale));
+    return binQc.layer(Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale), dotK());
   }
   // bins inside the shapes that the QC filter removes
   function binQcInShapes() {
@@ -1948,6 +1965,40 @@
     return n;
   }
   const LASSO_NONE = 0xffff;
+
+  // ---- cell outlines (outlines.js): a cells layer's segmentation boundaries, drawn instead of the
+  // dots once the cells are large enough on screen. The tiles and layers are outlines.js's; the
+  // colouring is the dots' own, handed over by row of positions.bin (outlineColors).
+  let outlines = null;
+  const dotK = () => (outlines ? outlines.dotAlpha() : 1);       // how much of the dots this frame keeps
+  function outlinesInit() {
+    if (!window.SodaOutlines) return;
+    outlines = window.SodaOutlines.create({
+      $, cfg, NORMAL, TOUCH, requestRender,
+      status: (m, err) => { status(m, err); setTimeout(() => status(null), 6000); },
+      tissueView: () => S.mode === "image" && !inUmap() && !(S.umap && S.umap.anim),
+      viewSize: () => (umapSbs() ? umapPaneSize("ortho") : [$("viewport").clientWidth, $("viewport").clientHeight]),
+      colors: outlineColors,
+    });
+    if (window.__spatialViewer) window.__spatialViewer.outlines = outlines;   // for testing from the console
+  }
+  function outlineColors() {
+    const U = S.umap, e = currentExpr();
+    if (!U || !e) return null;
+    if (!U.pos) {                                    // the rows' positions: fetched once, when outlines are first drawn
+      if (!U.posBusy) U.posBusy = umapPositions().then((p) => { if (S.umap === U && !U.pos) U.pos = p; requestRender(); }, () => {});
+      return null;
+    }
+    const byCl = umapByCluster(), byCt = !byCl && umapByType();
+    const mix = byCl || byCt ? null : umapGeneMix();
+    const keep = binQc ? binQc.greyMask() : null;
+    return { pos: U.pos, mix, lit: umapLit("tissue"), keep, sel: UMAP_SEL, opacity: S.geneOpacity,
+      radius: Math.max(0.5, (e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale),
+      pick: !!(U.cl || mix),                         // hovering has something to say
+      cat: byCl ? (r) => { const c = U.cl[r]; return U.hidden.has(c) ? null : c === UMAP_NONE ? undefined : sectionRgb(c); }
+        : byCt ? (r) => (U.ct[r] === CT_OUT ? undefined : ctRgb(U.ct[r])) : null,
+      key: `${S.dsId}|${S.exprKey}|${U.ver}|${byCl ? `cl${U.clRes}|${[...U.hidden].join(",")}` : byCt ? "ct" : mix ? mix.key : "-"}|${keep ? binQc.ver() : "-"}` };
+  }
 
   function lassoReset() {
     lassoCancel();                                 // a run of the dataset being left: its Cancel button, the screen lock
@@ -3700,9 +3751,9 @@
       radiusUnits: "common", getRadius: r, radiusMinPixels: where === "umap" ? 0.8 : 0.6,
       stroked: false, filled: true,
       // hover says which cluster a dot is in; on the slide only when the dots are the clusters
-      pickable: where === "umap" || umapByCat(),
+      pickable: where === "umap" || (umapByCat() && dotK() >= 0.5),
       // marker squares: "Square opacity" fades the cluster colours too, so the stains show through
-      opacity: where === "tissue" && isProt() ? S.geneOpacity : 1,
+      opacity: where === "tissue" ? (isProt() ? S.geneOpacity : 1) * dotK() : 1,
       parameters: NORMAL,
       updateTriggers: { getFillColor: [C.key], getPosition: [C.key] },
     });
@@ -3810,6 +3861,7 @@
     if (!U || !umapSbs() || !U.pos) return;
     let row = -1;
     if (info && info.layer && info.layer.id.includes("ucloud") && info.index >= 0) row = umapRowAt(info.layer.id, info.index);
+    else if (outlines && outlines.rowAt(info) >= 0) row = outlines.rowAt(info);
     else if (info && info.viewport && info.viewport.id === "ortho" && info.coordinate) row = umapBinAt(info.coordinate[0], info.coordinate[1]);
     if (row !== U.hover) { U.hover = row; requestRender(); }
   }
@@ -5952,6 +6004,7 @@
     lassoReset();
     molReset();
     if (binQc) binQc.reset();
+    if (outlines) outlines.reset();
     umapReset();
     S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
     leaveRna();
@@ -6181,6 +6234,7 @@
     sheetEvents();                                  // first, so the controls open even if loading fails
     initDeck();
     binQcInit();
+    outlinesInit();
     lassoInit();
     umapInit();
     gateInit();

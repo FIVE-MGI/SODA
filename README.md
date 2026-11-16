@@ -55,8 +55,10 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   UMAP and Leiden clusters, suggested names, QC, Draw a region and the volcano panel work on
   cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
   panel and each one's molecules are drawn as coloured dots on the stains, several genes at
-  once, fetched one gene at a time. Cell outlines are not drawn yet: each cell is a dot at
-  its centre.
+  once, fetched one gene at a time. Zoomed in, each cell is drawn with its own outline (the
+  instrument's cell and nucleus boundaries, also for CosMx, MERSCOPE and Stereo-seq cell bins,
+  or a lab's own segmentation file), filled with the colour of the gene or cluster on show;
+  zoomed out, a dot at its centre.
 - **GeoMx DSP.** A study of hand-drawn regions (ROIs) rather than cells or bins: the scans
   (several slides side by side), and each ROI's outline filled with the colour of a gene or
   of its group (a disc per segment where an ROI has several). The columns of the annotation

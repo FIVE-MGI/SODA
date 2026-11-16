@@ -3,7 +3,7 @@
 This is the layout that `prepare.py export` (images, spatial expression) and
 `prepare.py rnaseq` (single-cell UMAPs) write, and that the viewer reads. It is derived
 from `export.py`, `hvgchunks.py`, `binqc.py`, `sectionumap.py`, `regions.py`, `rnaseq.py`,
-`expr.py`, `molecules.py`, `xenium.py`, `cosmx.py`, `merscope.py`, `viewer.js` and `qc.js`. You only need it if you want to write the files with your own tools or
+`expr.py`, `molecules.py`, `cellshapes.py`, `xenium.py`, `cosmx.py`, `merscope.py`, `viewer.js`, `outlines.js` and `qc.js`. You only need it if you want to write the files with your own tools or
 read them from another program.
 
 General rules:
@@ -37,6 +37,7 @@ General rules:
   expr/<key>/hvg/{genes.json, index.json, <tx>_<ty>.bin}
   expr/<key>/mat/{index.json, <tx>_<ty>.bin}   protein grid layers only (instead of hvg/)
   expr/<key>/umap/{index.json, coords.bin, clusters_r<res>.bin}
+  expr/<key>/shapes/<set>/{index.json, <tx>_<ty>.bin}   cells layers with segmentation boundaries: cell (and nucleus) outlines
   molecules/index.json                   imaging platforms (Xenium): every transcript, per gene
   molecules/gene/<NAME>.bin
 <root>/about.html                        optional, shown by "Read more about this project"
@@ -118,6 +119,7 @@ The prepare cache's own manifest also has a `source` block with local file paths
 | `binQc` | only if `binqc/` was written (RNA layers of 8 µm or more, and classic spots; exports from 11 November 2026): the files and ranges of the per-bin QC values, see below |
 | `hvg` | only if `hvg/` was written: `{"nGenes", "chunkPx", "chunks", "bytes"}` |
 | `mat` | protein grid layers (`"kind": "protein"`) only, if `mat/` was written: `{"nChannels", "chunkPx", "chunks", "bytes"}` |
+| `shapes` | cells layers only, if the platform's cell outlines were imported: `{"version": 1, "format": "poly-u16-tiles", "dir": "shapes", "chunkPx", "sets": [{"key", "label", "nPolygons", "nRowsWithShape", "nVertices", "chunks", "bytes", "source"}]}`, see [Cell outlines](#cell-outlines-shapesset-cells-layers) |
 | `umap` | only if `umap/` was written: `{"nEmbedded", "clusterings": [{"resolution", "name", "source", "n"}], "default"}`; with the lab's own results also `id` per clustering and `"embedding": "user"` (see umap/ below) |
 
 ## Tiles: `tiles/<c>/<z>/<x>/<y>.<tileFormat>`
@@ -343,6 +345,104 @@ with centroids in µm, the pixel size, a cells x genes sparse matrix and the gen
 
 The viewer words such a layer as cells ("cells", "transcripts") instead of bins / UMI.
 
+### Cell outlines: `shapes/<set>/` (cells layers)
+
+Written by `cellshapes.py` for a cells layer whose platform came with segmentation boundaries
+(or for which a lab gave its own, `prepare.py outlines`): the outline of every cell, and of
+every nucleus when the platform has them, as polygons in spatial tiles. The viewer draws them
+instead of the dots once the cells are large enough on screen (`outlines.js`) and fetches only
+the tiles under the view. Format name `poly-u16-tiles`, version 1. A layer has them when its
+`expr[]` entry has
+
+```json
+"shapes": {"version": 1, "format": "poly-u16-tiles", "dir": "shapes", "chunkPx": 2353,
+           "sets": [{"key": "cell", "label": "Cell boundaries", "nPolygons": 155754, "nRowsWithShape": 155754,
+                     "nVertices": 3505410, "chunks": 296, "bytes": 14960900, "source": "cell_boundaries.csv.gz"},
+                    {"key": "nucleus", "label": "Nucleus boundaries", "nPolygons": 156299, "nRowsWithShape": 155560,
+                     "nVertices": 3215919, "chunks": 294, "bytes": 13806174, "source": "nucleus_boundaries.csv.gz"}]}
+```
+
+(numbers from a 155,754-cell mouse brain section: 96 bytes per cell for 22.5 vertices). The
+first set is the one drawn for the cells; a set with key `nucleus` is the optional nucleus
+outlines. An export without `shapes` is drawn as dots, as before.
+
+- **Tiles** are the grid `hvg/` uses: `chunkPx` = round(500 µm / µm per pixel) (1024 when the
+  pixel size is unknown), and a polygon is in the tile of **its cell's position**:
+  `tx = floor(x / chunkPx)`, `ty = floor(y / chunkPx)` on the float32 values of
+  `positions.bin`. A polygon is never cut or repeated at a tile edge; `overhangPx` in
+  `index.json` is how far a vertex can reach outside its tile, so a viewer fetches the tiles of
+  its view grown by that much.
+- `shapes/<set>/<tx>_<ty>.bin`, with `n` polygons and `nv` vertices:
+
+  | Offset (bytes) | Type | Count | Content |
+  |---|---|---|---|
+  | 0 | uint32 | 1 | `n` |
+  | 4 | uint32 | 1 | `nv` |
+  | 8 | float32 | 2 | `x0`, `y0`: the origin of this tile's vertices (image pixels) |
+  | 16 | uint32 | n | row in `positions.bin` |
+  | 16 + 4n | uint16 | n | vertices of each polygon; `0` = the cell has no outline |
+  | 16 + 6n | uint16 | 2 nv | `qx, qy` per vertex: x = `x0 + qx * step`, y = `y0 + qy * step` |
+
+  File size = 16 + 6n + 4nv. `step` (in `index.json`) is 1/16 pixel, or the next power of two
+  under which the largest tile still fits in 16 bits. Entries are ordered by row.
+- A **row** may appear more than once: a cell in several parts (a MultiPolygon, a cell with
+  two nuclei) is several polygons with the same row. In the **first** set every row of
+  `positions.bin` appears at least once; one with `count` 0 has no outline and keeps its dot.
+  Further sets list only cells that have a polygon. No cell id is written.
+- **Rings** are open (the first vertex is not repeated), **clockwise on screen** (x right, y
+  down; the shoelace sum Σ(xᵢ yᵢ₊₁ − xᵢ₊₁ yᵢ) is positive), outer rings only (holes are left out),
+  3 to 64 vertices.
+- **What is changed on the way in** (all counted in `index.json` `stats`): repeated points and
+  the closing vertex are dropped; vertices are removed where that moves the outline by no more
+  than 0.1 µm (Douglas-Peucker; `--outline-tolerance-um`, 0 = keep all; 1.5 mask pixels for
+  outlines traced from a label image), more for a polygon that would otherwise have over 64;
+  parts under 2 % of their cell's area, polygons with fewer than 3 points or no area and
+  polygons wider than two tiles are dropped; polygons of cells that are not in the count
+  matrix, or have no position, are left out.
+- `shapes/<set>/index.json`:
+
+  ```json
+  {"format": "poly-u16-tiles", "version": 1, "set": "cell", "label": "Cell boundaries",
+   "units": "full-resolution image pixels", "pixelSizeUm": 0.2125, "chunkPx": 2353, "chunkUm": 500.0,
+   "step": 0.0625, "overhangPx": 72.062,
+   "rings": "open (first vertex not repeated), clockwise on screen, outer rings only",
+   "nRows": 155754, "nRowsWithShape": 155754, "complete": true,
+   "nPolygons": 155754, "nVertices": 3505410, "bytes": 14960900, "source": "cell_boundaries.csv.gz",
+   "stats": {"polygonsRead": 155754, "polygonsNotInMatrix": 0, "polygonsOfCellsWithoutPosition": 0,
+             "dropped": {"degenerate": 0, "tooLarge": 0, "smallParts": 0, "holes": 0},
+             "rowsInSeveralParts": 0, "selfIntersecting": 10,
+             "centreInside": 0.99976, "centreWithin1um": 0.99998, "centreWithinOneDiameter": 1.0,
+             "verticesRead": 3890798, "verticesPerPolygon": [7, 23, 24], "meanVertices": 22.51,
+             "areaUm2": [49.513, 74.825, 114.831],
+             "simplify": {"toleranceUm": 0.1, "tolerancePx": 0.4706, "maxVertices": 64, "toleranceRaised": 0}},
+   "chunks": [{"tx": 0, "ty": 5, "n": 80, "nv": 1798, "bytes": 7688}, ...]}
+  ```
+
+  `nRows` is the number of rows of `positions.bin` the set was made for (the export leaves a
+  set out when it differs). `complete`: every row is listed (the first set). `centreInside`:
+  the share of cells whose own position lies inside (one of) its own polygon(s), and
+  `centreWithin1um` inside or within 1 µm; this is the importer's check that the outlines are
+  in the cells' frame: under 90 % it warns, under 50 % (or when under half of the polygons
+  belong to a cell of the matrix) it writes nothing. `selfIntersecting` polygons are kept as
+  they are. `source` names the kind of file, never a path. Readers add what they know
+  (`zPlane`, `zPlanes`, `otherPlane` for MERSCOPE; `traced` for label images).
+- Where the polygons come from, and the transform to image pixels (the same as the centroids'):
+
+  | Platform | Source | To image pixels |
+  |---|---|---|
+  | Xenium | `cell_boundaries` / `nucleus_boundaries` `.parquet`, `.csv.gz` (`cell_id, vertex_x, vertex_y, label_id`, µm); else `cells.zarr.zip` (`polygon_sets/<i>/{cell_index, num_vertices, vertices}`, or `polygon_vertices` of older runs) | µm ÷ pixel size |
+  | MERSCOPE | `cell_boundaries.parquet` or a VPT run's `*_micron_space.parquet` (`EntityID, ZIndex, Geometry` as WKB, µm); else `cell_boundaries/feature_data_<fov>.hdf5` | the manifest `frame`; the z-plane of the imported mosaic (else the middle one), and for a cell with no polygon there its nearest plane |
+  | CosMx | `*polygons.csv` (`fov, cellID, x_global_px, y_global_px`) when the export has one; else traced from `CellLabels/CellLabels_F<fov>.tif`, exactly along the pixel edges of every label, then simplified | the manifest `frame`; a traced FOV is placed as its image is in the mosaic |
+  | Stereo-seq | `cellBin/cellBorder` of the cell bin GEF: up to 32 (x, y) offsets from the cell's x, y in DNB | (cell + offset + file offset + 0.5 − image offset) × image pixels per DNB. The border points are the outermost DNBs of the cell, so the outline runs through their centres |
+  | any | your own file (`prepare.py outlines --boundaries`): GeoJSON polygons, a vertex table, or a parquet with WKB geometry | `--boundary-units` px, um or frame |
+
+The viewer draws dots while the median cell (`spotDiameterPx`) is under 5 screen pixels across,
+outlines alone from 9, both cross-faded in between, and stays on dots when more than 120,000
+outlines (20,000 on a touch device) would be in view (`config.js` `outlineFromPx`,
+`outlineFullPx`, `outlineBudget`).
+
+In the prepare cache the same files are in `<cache>/<id>/shapes/<layer key>/<set>/`.
+
 ### ROI segments as a layer (`kind: "rois"`, GeoMx DSP)
 
 `prepare.py geomx` (`geomx.py`) writes a GeoMx DSP study as one layer with key `rois`, in the
@@ -403,7 +503,7 @@ Written by `prepare.py cosmx` / `prepare.py merscope` (`cosmx.py`, `merscope.py`
 
 - `manifest.json` has a `frame` entry, the map from the platform's own coordinates to
   full-resolution image pixels, so that other data in those coordinates (cell outlines, your
-  own annotations) can be placed: `{"from": "<what the coordinates are>", "affine": [[a, b, c],
+  own annotations) can be placed (`cellshapes.py` uses it for the cell outlines): `{"from": "<what the coordinates are>", "affine": [[a, b, c],
   [d, e, f]]}` with `x_px = a*x + b*y + c`, `y_px = d*x + e*y + f`.
   - CosMx: from `x_global_px, y_global_px` (instrument pixels). `a` and `e` are +1 or -1
     (y is turned over when global y points up) and `c`, `f` move the mosaic's corner to
@@ -454,6 +554,8 @@ dataset (the image under a transcripts panel). What is specific to it:
 - In the cache, the `barcodes` of a bin layer are `x_y` of the bin's first DNB as the file
   stores it, and of the cells layer the cell `id` (with `--barcodes stereopy`, Stereopy's
   `x * 2^32 + y` for both). They are not exported.
+- The cells layer's outlines (`shapes/cell/`) come from `cellBin/cellBorder`, see
+  [Cell outlines](#cell-outlines-shapesset-cells-layers).
 
 ## Molecules: `molecules/`
 
@@ -705,5 +807,5 @@ your own trusted content there.
 For reference: `prepare.py` writes `<cache>/<id>/manifest.json`, `image.zarr/` (an
 OME-NGFF 0.4 multiscale image with `omero` channel metadata, readable by napari and
 other OME-Zarr tools), `expr/<key>.zarr/` (a gene-major sparse count matrix plus bin
-positions and, from 11 November 2026, the barcode of each bin, by which `userclusters.py` matches a lab's own clusters) and `overlays/`. `server.py` and `prepare.py export` read it. It holds the
+positions and, from 11 November 2026, the barcode of each bin, by which `userclusters.py` matches a lab's own clusters and `cellshapes.py` a platform's or a lab's own cell outlines), `shapes/` (the cell outlines, already in their export format) and `overlays/`. `server.py` and `prepare.py export` read it. It holds the
 full-resolution raw image and local file paths, so it should stay on your machine.
