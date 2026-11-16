@@ -2427,11 +2427,11 @@ def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
             want[ys - b0, xs - a0] = True
             iou.append((got & want).sum() / max(1, (got | want).sum()))
         iou = np.array(iou)
-        c.ok(float(np.median(iou)) > 0.95 and float(iou.min()) > 0.85,
+        c.ok(float(np.median(iou)) > 0.93 and float(iou.min()) > 0.85,
              f"{CX}: traced outlines against the label masks: IoU median {np.median(iou):.3f}, worst {iou.min():.3f}")
         _ol_centres(c, S, CX)
         mv = float(np.mean([len(r) for rs in S["rings"].values() for r in rs]))
-        c.ok(8 <= mv <= 24, f"{CX}: {mv:.1f} vertices a traced outline (a 28 px disk; the pixel staircase is simplified away)")
+        c.ok(6 <= mv <= 24, f"{CX}: {mv:.1f} vertices a traced outline (a 28 px disk; the pixel staircase is simplified away)")
         res["cosmxTraced"] = {"iouMedian": round(float(np.median(iou)), 4), "iouMin": round(float(iou.min()), 4), "meanVertices": round(mv, 1)}
         print(f"    traced outlines: IoU with the label mask median {np.median(iou):.3f}, worst {iou.min():.3f}; {mv:.1f} vertices each")
     R = _ol_read(c, export / CXN, CXN)

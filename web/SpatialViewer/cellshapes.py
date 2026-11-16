@@ -59,6 +59,7 @@ MAX_VERTICES = 64                # a polygon over this is simplified further
 STEP_MIN = 1.0 / 16              # finest vertex step, image pixels
 Q = 65535
 MIN_PART = 0.02                  # a part under this share of its cell's area is dropped
+TRACE_TOL_PX = 1.5               # outlines traced from a label image: tolerance in mask pixels (removes the staircase)
 MATCH_MIN = 0.5                  # under this share of polygons with a row, or of centres on their outline: not written
 MATCH_WARN = 0.9
 LABELS = {"cell": "Cell boundaries", "nucleus": "Nucleus boundaries"}
@@ -68,7 +69,7 @@ class ShapeSet:
     """One set of outlines for a layer: `start` (n + 1 offsets) into `xy` (vertices, image pixels),
     and for each polygon either the cache row of its cell (`rows`, -1 = none) or its cell id
     (`ids`, matched to the layer's barcodes). `tol_px_min`: a floor for the simplification
-    tolerance in image pixels (traced masks: one mask pixel). `info`: reader notes for index.json."""
+    tolerance in image pixels (traced masks: TRACE_TOL_PX mask pixels). `info`: reader notes for index.json."""
 
     def __init__(self, key, start, xy, rows=None, ids=None, source="", tol_px_min=0.0, info=None, label=None):
         self.key, self.label = key, label or LABELS.get(key, key)
@@ -1082,6 +1083,7 @@ def cosmx_sets(P, cells: dict, log=print) -> list:
     mos = getattr(P, "mosaic", None) or {}
     tiles = mos.get("tiles") or {}
     rows, starts, xys, holes, nv = [], [], [], 0, 0
+    tol = TRACE_TOL_PX * abs(P.frame.ax)                          # mask pixels -> image pixels
     for f in sorted(labels):
         if f not in origins:
             continue
@@ -1097,7 +1099,7 @@ def cosmx_sets(P, cells: dict, log=print) -> list:
             lx = W - xy[:, 0] if fx else xy[:, 0]
             ly = H - xy[:, 1] if fy else xy[:, 1]
             X, Y = P.frame.to_px(sx * lx + origins[f][0], sy * ly + origins[f][1])
-        st, pts, _ = simplify(st, np.column_stack([X, Y]), abs(P.frame.ax))
+        st, pts, _ = simplify(st, np.column_stack([X, Y]), tol)
         rows.append(row_of(np.full(len(lb), f), lb))
         starts.append(st[1:] + nv)
         xys.append(pts)
@@ -1108,7 +1110,7 @@ def cosmx_sets(P, cells: dict, log=print) -> list:
     start = np.concatenate([[0]] + starts)
     log(f"[outlines] traced {len(start) - 1:,} outlines from the CellLabels images of {len(rows)} FOVs  ({time.time() - t0:.0f}s)")
     return [ShapeSet("cell", start, np.concatenate(xys), rows=np.concatenate(rows), source="CellLabels images (traced)",
-                     tol_px_min=abs(P.frame.ax), info={"holes": holes, "traced": True})]
+                     tol_px_min=tol, info={"holes": holes, "traced": True, "traceTolerancePx": TRACE_TOL_PX})]
 
 
 def read_boundaries(path, id_col=None):
