@@ -1,0 +1,195 @@
+# The advanced way
+
+The [4 steps in the README](../README.md#show-your-own-data-in-4-steps) and
+[SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) are enough to share your data. This page is for
+everything past that: your own website, a password, your own names and colours, the
+notebook's settings, your own clusters, marker lists and the code. Each section is short
+and links to the full reference.
+
+1. [Your own copy and website](#1-your-own-copy-and-website)
+2. [Private data with a password](#2-private-data-with-a-password)
+3. [Your own labels, groups, colours and stains](#3-your-own-labels-groups-colours-and-stains)
+4. [Every notebook setting](#4-every-notebook-setting)
+5. [Your own clusters and UMAP](#5-your-own-clusters-and-umap)
+6. [Marker lists for suggested names](#6-marker-lists-for-suggested-names)
+7. [Changing the code](#7-changing-the-code)
+
+---
+
+## 1. Your own copy and website
+
+Copy SODA on GitHub, turn on its free website and point it at your data folder with one
+line in `config.js` (`data: "<your export folder's link>"`). The steps are in
+[SHARE_YOUR_DATA.md, "Make it your own"](SHARE_YOUR_DATA.md#2-make-it-your-own), including
+how to pull in SODA's later fixes.
+
+Other places the page can live:
+
+- your own computer, for a look before anything is uploaded:
+  [HOSTING.md A](HOSTING.md#a-on-your-own-computer) (the notebook's Section 6 does this for you);
+- any web server or static host: [HOSTING.md B](HOSTING.md#b-any-static-web-host-public-data);
+- a live tile server on your lab network: [HOSTING.md E](HOSTING.md#e-optional-live-tile-server-serverpy).
+
+Please put `soda` in your site's name, for example `yourlab-soda`.
+
+## 2. Private data with a password
+
+| Way | How it works | Steps |
+|---|---|---|
+| **Password site on Azure** (what runs in production) | The data stays in a private blob container. A small function, `/api/token`, checks one shared password and gives the browser a read-only pass that expires after an hour by default (`TOKEN_HOURS`, at most 24). The storage key stays on the server. In `config.js`: `tokenEndpoint: "/api/token"`. | [HOSTING.md C](HOSTING.md#c-azure-private-data-with-a-password), then [deploy/azure/README.md](../deploy/azure/README.md) |
+| **A link with a read pass** | The folder stays private; the link carries a read-only pass (an Azure SAS, an S3 pre-signed link). In the notebook: `READ_PASS`. Anyone holding the link can read the data until the pass expires, so treat the link like a password. | [SHARE_YOUR_DATA.md Step 5](SHARE_YOUR_DATA.md#step-5-make-the-link) |
+| **Encrypted link files** (no server) | `links.py` encrypts each dataset's address with a password; `linkPath` in `config.js` names the file. Changing the password does not lock anyone out. | [deploy/azure/README.md, "Without a server"](../deploy/azure/README.md#b-encrypted-link-files-a-password-no-server) |
+| **AWS or another cloud** | Your own token endpoint that behaves like the Azure one. A design, not built or tested. | [HOSTING.md D](HOSTING.md#d-aws-s3--cloudfront-or-another-backend) |
+
+Keep in mind:
+
+- On a password site (`tokenEndpoint` set) the page does not open `?data=` links from
+  outside, unless `config.js` sets `allowDataLinks: true`.
+- `config.js` is sent to every visitor before the password is asked. Put no name in it that
+  identifies a person.
+- Before any upload, go through the [checklist in HOSTING.md](HOSTING.md#before-you-upload-checklist).
+
+## 3. Your own labels, groups, colours and stains
+
+There are two places for these settings:
+
+- **`datasets.json`**, next to your data (written by `catalog.py` or the notebook). It works
+  on the shared SODA page and on your own copy. Edit it in any text editor and upload only
+  that file again.
+- **`web/SpatialViewer/config.js`**, in your own copy only. Copy it from `config.example.js`,
+  which explains every option. If `config.js` has `data:`, the dataset list, names and
+  groups come from that folder's `datasets.json`, so set them there.
+
+| What | In `datasets.json` | In `config.js` |
+|---|---|---|
+| title at the top of the page | `title` | `brand.title` |
+| line under the title | `byline` | `brand.byline` |
+| "Link to paper" | `paper` | `paperUrl` |
+| logos | (none) | `brand.logos`; make a folder `web/SpatialViewer/logos/` for the files (git ignores it: add them with `git add -f`) |
+| dataset opened first | `default` | `defaultDataset` |
+| a dataset's name in the list | `label` | `datasets.<id>.label` |
+| the heading it sits under | `group`: the heading text; headings appear in the order they first occur | `datasets.<id>.group`: a key of `groups`, whose order sets the order of the headings |
+| stains left out | `hideChannels` (exact names, per dataset) | `datasets.<id>.hideChannels`; the top-level `hideChannels` is one pattern for every dataset (default: open, blank, empty, unused, none) |
+| stains on when a dataset opens | `defaultChannels` (part of a name is enough) | `datasets.<id>.defaultChannels`, or `defaultChannels` for every dataset |
+| UMAP cluster label positions | `labelPositions` | `labelPositions`, keyed by dataset id; made with `tools/label_editor.html` |
+| gene colours | (none) | `geneColors` |
+| molecule colours | (none) | `moleculeColors` |
+| cluster colours | come with your own clusters (see [section 5](#5-your-own-clusters-and-umap)) | `catMinLuminance` and `labelMinLuminance` set how dark a colour may be |
+
+The full `datasets.json` example is in
+[SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md#what-you-can-change-in-datasetsjson). Never change a
+dataset's `id`: it is its folder's name. An `about.html` next to `datasets.json` is shown
+under "About".
+
+Stain colours and display windows are picked in the page (View tab) and are not saved in
+either file. The other `config.js` options (how many genes at once, the window slider, the
+tile cache, how many molecules are drawn) are explained one by one in
+[`config.example.js`](../web/SpatialViewer/config.example.js).
+
+## 4. Every notebook setting
+
+All in [`notebooks/SODA_pipeline.ipynb`](../notebooks/SODA_pipeline.ipynb). Only the first
+two need filling in; the rest have defaults, in the "Advanced settings (optional)" cell of
+Section 0. Run that cell even if you change nothing.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `WORK` | `D:\SODA_work` | one folder on a big disk; `inputs/`, `cache/` and `export/` go inside. Plan for 2-3 times the size of your raw files |
+| `CLOUD_URL` | empty | your cloud folder's address, without any key or `?sv=...` pass. Needed before Section 7 |
+| `KEY_FILE` | the file named by the `SPATIALVIZ_KEY` environment variable, else `sample_id_key.csv` in `private/soda/` in your home folder | the de-identification key. Keep it outside `WORK` and the repository; never upload it. Section 5 checks for sample IDs only when it exists |
+| `ALWAYS_CHECK_IDS` | `False` | `True` runs the sample ID check even without a key file |
+| `SODA_PAGE` | a placeholder | the address of the SODA page your link opens: the shared page or your own copy. Section 7 builds the link from it |
+| `TITLE` | empty | the name of the whole collection at the top of the page (passed to `catalog.py`); empty keeps the title already in `datasets.json` |
+| `READ_PASS` | empty | private folder only: a read-only pass (Azure SAS, starts with `sv=`), added to the link. Never a write pass |
+| `TILE_FORMAT` | `"jpg"` | image tiles as JPEG (several times smaller) or `"png"` (lossless, for exact intensities) |
+| `VISIUM_BINS` | `"008um,016um"` | the Visium HD bin sizes to keep. Add `002um` for the 2 µm layer (very large) |
+| `WORKERS` | `8` | how many tile writers run at once during the export |
+| `MARKERS` | `{"visium": "", "proteomics": ""}` | marker lists for suggested cluster names (see [section 6](#6-marker-lists-for-suggested-names)); empty uses the general list. `"visium"` is used for Visium and Stereo-seq, `"proteomics"` for every other image dataset |
+| `REBUILD` | `False` | `True` prepares datasets again even when `cache/<id>/` has them; also delete `export/<id>/`, or old tiles stay |
+
+Two more, outside Section 0:
+
+- **`OPTIONS`** (Section 2): settings per dataset, such as `label`, `pixel_size`, `crop`,
+  `flip`, `channels` or `user_layer`. The notebook's Section 2 lists every key.
+- **`IS_THIS_DATA_PUBLIC`** (Section 7): `"yes"` or `"no"`. The cell stops until you answer.
+
+The same steps without the notebook, one command each:
+[PREPARING_DATA.md](PREPARING_DATA.md).
+
+## 5. Your own clusters and UMAP
+
+If you already clustered a Visium HD or Visium dataset in Seurat or scanpy, SODA can show
+your clusters, with your names and colours, next to its own (or instead of them). In the
+notebook, put `my_umap.csv` and `my_clusters.csv` (or one `my_analysis.h5ad`) next to
+`outs/` and set `user_layer` for that dataset in `OPTIONS`. On the command line, use the
+`--user-*` options of `prepare.py export`, or `prepare.py userclusters` on an export that
+already exists. A column `<name>_color` with `#rrggbb` values (or the `.h5ad` palettes) sets
+the colours.
+
+File formats, how barcodes are matched and how to write the files from R or Python:
+[PREPARING_DATA.md, "Your own UMAP and clusters"](PREPARING_DATA.md#your-own-umap-and-clusters-seurat-scanpy).
+
+## 6. Marker lists for suggested names
+
+Each cluster gets a suggested name from a list of marker genes (or proteins). The lists are
+plain JSON files in [`web/SpatialViewer/markers/`](../web/SpatialViewer/markers/):
+
+| File | For |
+|---|---|
+| `rna_generic.json` | genes, any tissue (the default for Visium and the other sequencing data) |
+| `protein_generic.json` | protein panels, any tissue (the default for fluorescence images), with a table of marker-name aliases |
+| `nerve.json` | genes, peripheral nerve |
+| `akoya_nerve.json` | protein panel, peripheral nerve |
+
+To write your own, copy one and edit it: a `name`, and a list of `types`, each with a
+`name` and its `genes`. Gene names are matched without regard to case. Then use it:
+
+- notebook: `MARKERS` in the advanced settings;
+- command line: `prepare.py export --markers my_markers.json`;
+- in the browser, for Draw a region on gene data: `markerSet` in `config.js`. Without that
+  line the page uses `markers/rna_generic.json`; `config.example.js` sets
+  `markers/nerve.json`, so change or remove it.
+
+How a name is scored, and the confidence shown:
+[PREPARING_DATA.md, "Suggested cluster names"](PREPARING_DATA.md#suggested-cluster-names-marker-lists).
+
+## 7. Changing the code
+
+In your own copy you can change anything. Start with the table in
+[SHARE_YOUR_DATA.md, Step 4](SHARE_YOUR_DATA.md#step-4-change-what-you-want). The page is
+plain HTML, CSS and JavaScript with no build step: edit a file, reload the page.
+
+The page, in `web/SpatialViewer/`:
+
+| File | What it does |
+|---|---|
+| `index.html` | every control, with its id; loads the scripts and styles below |
+| `config.js` | your settings (copied from `config.example.js`) |
+| `viewer.js` | the main viewer: opens datasets, draws image tiles, genes, molecules and clusters with deck.gl, the password and `?data=` links, the UMAP view |
+| `layout.js` | the four tabs, folding sections, "More options", the "?" notes, the phone layout. It moves controls; it makes none |
+| `dspicker.js` | the searchable dataset list |
+| `qc.js` | the quality filter: per-bin histograms and thresholds |
+| `roi.js` | what differs for GeoMx ROI layers: words, drawing, notes |
+| `plots.js`, `plots_worker.js` | heatmap, dot plot and violin plots; the worker does the numbers |
+| `volcano.js`, `de_worker.js` | the volcano plot; the worker runs the differential expression test |
+| `lasso_worker.js` | Draw a region (circle → UMAP): PCA, UMAP, Leiden and markers in the browser |
+| `leiden.js` | Leiden clustering, used by `lasso_worker.js` |
+| `diag.js` | the `&diag=1` diagnostic panel |
+| `styles.css`, `layout.css`, `dspicker.css`, `plots.css`, `volcano.css` | how the page looks; each `.css` belongs to the `.js` of the same name, `styles.css` to the rest |
+
+The Python tools that write the data are in the same folder. `prepare.py` is the entry
+point (one subcommand per input type, plus `export`, `userclusters` and `inspect`); each
+other `.py` file starts with a note on what it does. What they write, file by file:
+[DATA_FORMAT.md](DATA_FORMAT.md). The password function is
+`deploy/azure/api/token/index.js`.
+
+When you change the page:
+
+- `index.html` loads each file with `?v=...` after its name (a date and a letter). Change
+  that part when you change the file, so browsers fetch the new copy instead of an old one.
+- Use only unsigned typed arrays in the page code. `deid.py check` reads the names of the
+  signed ones as sample IDs and stops the upload.
+- `index.html` allows scripts only from the page's own site and `cdn.jsdelivr.net` (its
+  Content-Security-Policy line). A library from anywhere else needs that line changed.
+- Test before you share: `python tests/smoke_test.py` runs the whole demo and checks every
+  output file (and `tests/diag_test.js` when Node is installed). Then open your own data.
