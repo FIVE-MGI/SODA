@@ -1,0 +1,136 @@
+{
+ "id": "old_multiplex",
+ "label": "old_multiplex",
+ "kind": "tiff",
+ "pixelSizeUm": 0.5,
+ "created": "2026-11-16T16:04:50",
+ "expr": [],
+ "overlays": [
+  {
+   "key": "00_Regions",
+   "label": "Regions",
+   "file": "00_Regions.geojson"
+  }
+ ],
+ "crop": {
+  "box": [
+   680,
+   680,
+   1320,
+   1320
+  ],
+  "ofFullSize": [
+   2000,
+   2000
+  ]
+ },
+ "image": {
+  "width": 640,
+  "height": 640,
+  "levels": 3,
+  "tileSize": 256,
+  "dtype": "uint16",
+  "levelShapes": [
+   [
+    640,
+    640
+   ],
+   [
+    320,
+    320
+   ],
+   [
+    160,
+    160
+   ]
+  ],
+  "channels": [
+   {
+    "index": 0,
+    "name": "DAPI",
+    "color": "#4040ff",
+    "bits": [
+     0,
+     34726.70399999188
+    ],
+    "window": [
+     0.46,
+     187.33
+    ],
+    "dataMax": 35507
+   },
+   {
+    "index": 1,
+    "name": "Synth-Membrane",
+    "color": "#ff00ff",
+    "bits": [
+     0,
+     31021.66349999589
+    ],
+    "window": [
+     0.9,
+     202.99
+    ],
+    "dataMax": 34087
+   },
+   {
+    "index": 2,
+    "name": "Synth-Axon",
+    "color": "#ffff00",
+    "bits": [
+     0,
+     35431.16439999989
+    ],
+    "window": [
+     0.36,
+     192.3
+    ],
+    "dataMax": 35524
+   },
+   {
+    "index": 3,
+    "name": "Synth-Vessel",
+    "color": "#00ffff",
+    "bits": [
+     0,
+     23832.77839999972
+    ],
+    "window": [
+     0.46,
+     241.12
+    ],
+    "dataMax": 24259
+   },
+   {
+    "index": 4,
+    "name": "Synth-Immune",
+    "color": "#ff8000",
+    "bits": [
+     0,
+     34593.57059999986
+    ],
+    "window": [
+     0.32,
+     203.4
+    ],
+    "dataMax": 35514
+   },
+   {
+    "index": 5,
+    "name": "Synth-Autofluor",
+    "color": "#ff4080",
+    "bits": [
+     0,
+     18729.0
+    ],
+    "window": [
+     109.03,
+     251.69
+    ],
+    "dataMax": 18820
+   }
+  ]
+ },
+ "static": true,
+ "tileFormat": "jpg"
+}

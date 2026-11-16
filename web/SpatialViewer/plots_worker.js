@@ -5,6 +5,8 @@
 //   bins kept: in a group, kept by the QC filter, and (with totals) total >= minUmi
 //   value of a bin for a gene:
 //     "cp10k": log1p(count x 10,000 / total)   (the volcano worker's normalisation)
+//     "q3":    log1p(count x scale[row])        (GeoMx ROI layers: scale = 1 / GeomxTools' Q3 normFactor,
+//                                               from the layer's "q3" entry; scale 0 = no factor: left out)
 //     "raw":   log1p(count)                    (no totals in the export: not depth-normalised)
 //     "asis":  the stored value                (single-cell datasets: normalised at export)
 //   per gene x group: mean over ALL kept bins (zeros included), fraction of bins with a
@@ -135,13 +137,15 @@ const PLOTS = (() => {
 
   // ---- the run ------------------------------------------------------------------------------
   // msg: { layout: "xyv" | "indexed", nRows, positions (xyv only), group: Uint16Array per row,
-  //        nGroups, totals: Float32Array | null, keep: Uint8Array | null,
+  //        nGroups, totals: Float32Array | null, keep: Uint8Array | null, scale: Float32Array | null ("q3" only),
   //        genes: [{ name, buf: ArrayBuffer | null }]   (null = the gene has no counts: all zeros)
-  //        params: { norm: "cp10k" | "raw" | "asis", minUmi, detail, kdeGrid, kdeMin, maxPoints, seed } }
+  //        params: { norm: "cp10k" | "q3" | "raw" | "asis", minUmi, detail, kdeGrid, kdeMin, maxPoints, seed } }
   function run(msg, progress = () => {}) {
     const t0 = Date.now(), P = Object.assign({ norm: "cp10k", minUmi: 10, detail: false, kdeGrid: 64, kdeMin: 5, maxPoints: 300, seed: 42 }, msg.params || {});
-    const N = msg.nRows, K = msg.nGroups, grp = msg.group, tot = msg.totals, keep = msg.keep;
+    const N = msg.nRows, K = msg.nGroups, grp = msg.group, tot = msg.totals, keep = msg.keep, sc = msg.scale;
     if (P.norm === "cp10k" && !tot) throw new Error("cp10k normalisation needs the per-bin totals");
+    if (P.norm === "q3" && !(sc && sc.length === N)) throw new Error("Q3 normalisation needs a factor per row");
+    const minTot = (P.norm === "cp10k" || P.norm === "q3") && tot;          // with totals, q3 keeps the same minimum
     if (grp.length !== N) throw new Error(`group map has ${grp.length} rows, the layer ${N}`);
     progress("Finding the bins", 0);
     // the group each row counts for, after the QC filter and the minimum total
@@ -152,7 +156,7 @@ const PLOTS = (() => {
       if (g === NONE || g >= K) continue;
       found[g]++;
       if (keep && !keep[r]) { qcOut[g]++; continue; }
-      if (P.norm === "cp10k" && !(tot[r] >= P.minUmi)) { low[g]++; continue; }
+      if ((minTot && !(tot[r] >= P.minUmi)) || (P.norm === "q3" && !(sc[r] > 0))) { low[g]++; continue; }
       eff[r] = g; n[g]++;
     }
     const Gn = msg.genes.length;
@@ -190,6 +194,7 @@ const PLOTS = (() => {
         if (P.norm === "asis" ? x === 0 || x !== x : !(x > 0)) continue;
         let val, lin;
         if (P.norm === "cp10k") { lin = (x * 1e4) / tot[r]; val = Math.log1p(lin); }
+        else if (P.norm === "q3") { lin = x * sc[r]; val = Math.log1p(lin); }
         else if (P.norm === "raw") { lin = x; val = Math.log1p(x); }
         else { val = x; lin = P.asisLog ? Math.expm1(x) : x; }
         v[k] = val; gOf[k] = g;
@@ -215,7 +220,7 @@ const PLOTS = (() => {
       }
       detail.push(per);
     }
-    const info = { norm: P.norm, minUmi: P.norm === "cp10k" ? P.minUmi : null, nGroups: K, nGenes: Gn, genes: geneInfo,
+    const info = { norm: P.norm, minUmi: minTot ? P.minUmi : null, nGroups: K, nGenes: Gn, genes: geneInfo,
                    kde: P.detail ? { rule: "scott", grid: P.kdeGrid, minPoints: P.kdeMin, exactUpTo: KDE_EXACT, bins: KDE_BINS } : null,
                    maxPoints: P.maxPoints, seed: P.seed, ms: Date.now() - t0 };
     return { mean, meanLin, frac, nExpr, n, found, qcOut, low, eff, detail, info };

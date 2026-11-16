@@ -1,0 +1,32 @@
+{
+ "id": "old_rnaseq",
+ "label": "old_rnaseq",
+ "kind": "rnaseq",
+ "static": true,
+ "nCells": 240,
+ "nGenes": 40,
+ "valueLabel": "expression (as provided)",
+ "bounds": [
+  -3.3199000358581543,
+  -2.647200107574463,
+  8.892999649047852,
+  7.6153998374938965
+ ],
+ "obs": [
+  {
+   "name": "group",
+   "type": "category",
+   "file": "00.bin",
+   "categories": [
+    "Group A",
+    "Group B",
+    "Group C"
+   ],
+   "counts": [
+    80,
+    80,
+    80
+   ]
+  }
+ ]
+}
