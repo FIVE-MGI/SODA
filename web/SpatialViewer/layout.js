@@ -37,8 +37,8 @@
   const SECTIONS = {
     panelChannels: { more: ["imgOpacity"],
       help: "The picture under everything else. Stains: tick one to show it, click its colour to change it, and drag the two handles under its histogram to set the darkest and the brightest value shown (reset puts them back). Type in the filter to shorten a long list. An H&E image has no stains to pick: Image off hides it. Image opacity is under More options." },
-    panelGenes: { more: ["geneOpacity", "pointScale", "tissueBins"],
-      help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. More options: opacity, point size, and an outline of every bin in the tissue." },
+    panelGenes: { more: ["geneOpacity", "pointScale", "tissueBins", "cellNuclei"],
+      help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. Cell shapes (segmented cells that came with their boundaries): Outlines draws every cell's own outline once you zoom in, Dots keeps the dots. More options: opacity, point size, an outline of every bin in the tissue, and the nucleus outlines." },
     panelMolecules: { more: ["molSize", "molOpacity"],
       help: "Every decoded molecule of the genes picked here, one dot each, one colour per gene. Zoomed out only a share of the dots is drawn; zoom in to see them all. More options: dot size and opacity." },
     panelOverlays: { help: "Outlines that came with the dataset (regions, cells, ROIs), drawn over the picture. Tick one to show it; hover an outline to read its name." },
