@@ -1487,10 +1487,10 @@ def _unit(cands: list[dict], extras: list[str]) -> dict:
         if len(alts) > 6:
             rep["extras"] = list(extras) + [f"{len(alts)} loose image / AnnData files are also in this folder; the first 6 are listed"]
             rep["candidates"] = [_public(x) for x in [c] + alts[:6]]
-        for alt in alts[:6]:
-            if True:
-                rep["suggestions"].append((f"--src {_quote(alt['args'].get('src') or alt['args'].get('h5ad'))}" if alt["_file"]
-                                           else f"--kind {alt['kind']}") + f"   (prepares {alt['label']} on its own)")
+        for alt in alts[:6]:                             # --kind as well: the file's name alone may say "platform"
+            src = alt["args"].get("src") or alt["args"].get("h5ad")
+            rep["suggestions"].append(f"--kind {alt['kind']}" + (f" --src {_quote(src)}" if alt["_file"] and src else "")
+                                      + f"   (prepares {alt['label']} on its own)")
     elif c["choices"]:
         rep.update(verdict="ambiguous", reason="open-choice",
                    message=f"this is {c['label']}, but a choice is open: " + "; ".join(ch["why"] for ch in c["choices"]))

@@ -186,7 +186,7 @@ def main(argv=None):
                         help="say what kind of dataset a folder (or file) holds, how sure that is, what was "
                              "found and what is missing; nothing is written (detect.py)")
     dt.add_argument("path", help="a dataset folder, a folder of datasets, or one file")
-    dt.add_argument("--kind", dest="force_kind", help="only consider this kind")
+    dt.add_argument("--kind", dest="force_kind", metavar="KIND", help="only consider this kind")
     dt.add_argument("--json", action="store_true", help="print the full report as JSON")
     au = sub.add_parser("auto", allow_abbrev=False,
                         help="detect the kind of a folder and run the matching command when that is certain; "
@@ -196,7 +196,7 @@ def main(argv=None):
     au.add_argument("--id", required=True, help="dataset id (folder name in the cache, URL-safe)")
     au.add_argument("--out", help="cache root folder (every kind except rnaseq)")
     au.add_argument("--dest", help="static export root (rnaseq only: it has no cache step)")
-    au.add_argument("--kind", dest="force_kind",
+    au.add_argument("--kind", dest="force_kind", metavar="KIND",
                     help="you say what it is (visium, xenium, cosmx, merscope, stereoseq, geomx, akoya, tiff, rnaseq): "
                          "used as given even when detection is unsure; stops with the reason when that kind's "
                          "required files are not there")
