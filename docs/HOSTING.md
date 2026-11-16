@@ -9,6 +9,11 @@ SODA has two halves:
   tiles, JSON and small binary arrays. Nothing has to run on the server.
 
 So hosting means putting those two sets of files somewhere a browser can fetch them.
+
+**Looking for the easy way?** [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) covers the two
+simplest: upload only the data and share a `?data=` link to the shared SODA page, or copy
+SODA on GitHub to get your own site. This page is the full reference.
+
 The options below are in order of effort.
 
 | | Who can see it | What you run | Effort |
