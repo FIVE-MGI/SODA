@@ -311,6 +311,7 @@
     if (here && spatialNow()) { const um = umOf(S), vs = S.viewState; off = { ds: S.dsId, o: [vs.target[0] * um, vs.target[1] * um], own: true }; }
     else off = { ds: S.dsId, o: centreUm(S), own: false };
     lastCam = null;
+    post("beat", { info: info() });                // the others show how the windows are shifted: tell them now
   }
 
   // ---- the three actions ------------------------------------------------------------------------------

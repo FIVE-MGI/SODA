@@ -163,6 +163,14 @@ the viewer runs in production. Step-by-step instructions, including CORS, upload
 AzCopy and the Static Web App setup:
 **[deploy/azure/README.md](../deploy/azure/README.md)**.
 
+**Compare** (a second window beside the first) does not ask for the password again: the new
+window asks the window that opened it for its token, over a channel that only the windows of
+that pair share and that never leaves the browser, and gets it only when both are the same
+page with the same `tokenEndpoint`. The token is handed over, never the password, and it is
+kept in memory only (not in the address, not in browser storage). A link made with **Copy link
+to this view** holds neither: whoever opens it is asked for the password first, then sees
+the view.
+
 The same file also describes a password without any server (encrypted link files made
 by `links.py`, set per dataset with `linkPath` in `config.js`), and its limits. The viewer
 still reads such files, but the token function above is the setup that runs in production.
