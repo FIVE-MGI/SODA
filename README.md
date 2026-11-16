@@ -15,6 +15,24 @@ needs an internet connection: it loads its libraries from a public CDN.
 <!-- SCREENSHOT PLACEHOLDER: docs/img/overview.png
      Whole-slide multiplex IF view with the channel panel open. Lead adds the image. -->
 
+## Show your own data in 4 steps
+
+No coding needed: you paste a few commands and fill in two lines.
+
+1. **Install** with one command: `bash install.sh` (macOS / Linux) or
+   `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows). It ends with **SODA is
+   installed**. Then activate it and run `pip install jupyter` ([details](#try-it-in-5-minutes)).
+2. **Convert.** Open `notebooks/SODA_pipeline.ipynb` and fill in your work folder (`WORK`) and
+   your cloud folder's link (`CLOUD_URL`). Run Sections 0 and 1, put your instrument files in
+   the `inputs/` folders Section 1 makes (one subfolder per dataset), then **Run All**.
+3. **Upload.** Answer Section 7's one question (is this data public?), then upload the
+   `export/` folder, as it is, to your own storage: Azure, AWS, Google Cloud or a web server.
+   Box, Google Drive and Dropbox do not work.
+4. **Share** the link the notebook prints: `<the SODA page>/index.html?data=<your folder>`.
+
+Every step in detail, with the one storage setting (CORS) the link needs:
+[docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). Everything beyond that: [docs/ADVANCED.md](docs/ADVANCED.md).
+
 ## Features
 
 - **Four tabs, one job each.** The controls sit beside the picture in four tabs: **View**
@@ -119,36 +137,47 @@ needs an internet connection: it loads its libraries from a public CDN.
 ## Try it in 5 minutes
 
 This makes a small synthetic dataset (no real tissue or patient data), prepares it and
-opens it. You need Python 3.10 or newer, Git, and an internet connection.
+opens it. You need Python 3.12 or 3.13 (64-bit), Git, and an internet connection.
 
-**1. Get the code and make a virtual environment.**
+**1. Get the code and install it with one command.**
 
 macOS / Linux:
 
 ```bash
 git clone <this repository's URL> spatial-viewer
 cd spatial-viewer
-python3 -m venv .venv
+bash install.sh
 source .venv/bin/activate
 ```
 
-Windows (PowerShell):
+Windows (PowerShell or Command Prompt):
 
 ```powershell
 git clone <this repository's URL> spatial-viewer
 cd spatial-viewer
-py -m venv .venv
+powershell -ExecutionPolicy Bypass -File install.ps1
 .venv\Scripts\Activate.ps1
 ```
 
-(If PowerShell refuses to run the activation script, use Command Prompt instead and run
+The install script finds Python 3.12 or 3.13, makes a virtual environment `.venv` in the
+repository, installs the exact, tested package versions from
+`web/SpatialViewer/requirements-lock.txt`, checks that they all import, and ends with
+**SODA is installed**. It needs no administrator rights, takes a few minutes the first time
+and is safe to run again. If no suitable Python is found, it says so and what to install.
+(`-ExecutionPolicy Bypass` only lets this one script run; it changes no setting. If
+PowerShell refuses the activation line, use Command Prompt and run
 `.venv\Scripts\activate.bat`.) Once the environment is active, `python` means the
 environment's Python on every system.
 
-**2. Install, make the demo data, prepare and export it.** Same commands on every system:
+> **By hand instead** (or where the script stops: Intel Macs, Linux on ARM, Python 3.10 or
+> 3.11): make and activate a venv yourself, then
+> `pip install -r web/SpatialViewer/requirements.txt -r web/SpatialViewer/requirements-clustering.txt`.
+> That takes the newest versions the ranges allow, not the tested set; with Python 3.12 or
+> 3.13, `pip install -r web/SpatialViewer/requirements-lock.txt` gives the tested set.
+
+**2. Make the demo data, prepare and export it.** Same commands on every system:
 
 ```bash
-pip install -r web/SpatialViewer/requirements.txt -r web/SpatialViewer/requirements-clustering.txt
 python examples/make_demo.py --out demo/raw
 python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/visiumhd/image.tif --outs demo/raw/visiumhd/outs --out demo/cache
 python web/SpatialViewer/prepare.py tiff   --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
@@ -230,6 +259,7 @@ email wbuchser@wustl.edu with any questions about hosting.
 |---|---|
 | [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | commands and options per input type, export, clustering, the circle tool, common problems |
 | [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways: a link to your data folder, or your own copy of SODA |
+| [docs/ADVANCED.md](docs/ADVANCED.md) | the advanced way in one place: your own site, passwords, labels and colours, every notebook setting, your own clusters, marker lists, which code file does what |
 | [docs/HOSTING.md](docs/HOSTING.md) | hosting options from a laptop to a password-protected cloud site; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure Static Web App + private blob container + password, step by step |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the upload gate, and its limits |
@@ -237,15 +267,30 @@ email wbuchser@wustl.edu with any questions about hosting.
 
 ## Requirements
 
-- **Python 3.10 or newer** for preparing data (the pinned NumPy 2 and SciPy 1.14 need it).
-  The automated test runs on Python 3.12 on Ubuntu. The tools are developed on Windows;
-  macOS has not been tested by us.
-- Packages: `web/SpatialViewer/requirements.txt` (reading images and counts, export, tile
-  server). `web/SpatialViewer/requirements-clustering.txt` is optional and adds the
-  whole-section UMAP and Leiden clusters (scikit-learn, umap-learn, igraph, leidenalg).
+- **Python 3.12 or 3.13 (64-bit)** for preparing data. Install everything with one command:
+  `bash install.sh` (macOS / Linux) or `powershell -ExecutionPolicy Bypass -File install.ps1`
+  (Windows), see [Try it in 5 minutes](#try-it-in-5-minutes). The script installs
+  `web/SpatialViewer/requirements-lock.txt`, which pins every package to one version. That
+  set is tested end to end on Windows (Python 3.13), and the automated test installs and
+  runs it on Ubuntu (Python 3.12) on every push. Every version in it is also published for
+  macOS 12 or newer on Apple Silicon and for Linux x86_64 with glibc 2.28 or newer, but we
+  have not run it on a Mac. Intel Macs, Linux on ARM and Python 3.14 are not covered by the
+  lock file yet.
+- Packages, as ranges (the human-edited lists the lock file is made from):
+  `web/SpatialViewer/requirements.txt` (reading images and counts, export, tile server) and
+  `web/SpatialViewer/requirements-clustering.txt` (optional: whole-section UMAP and Leiden
+  clusters with scikit-learn, umap-learn, igraph, leidenalg). Installing these by hand needs
+  Python 3.10 or newer (NumPy 2, SciPy 1.14) and gets the newest versions they allow.
+- **Memory (RAM):** no minimum has been benchmarked. Measured peaks: the demo above (its
+  Visium HD part, on Windows) 0.6 GB; a CosMx slide's counts (26 million transcripts, without its images) 0.76 GB; a
+  whole mouse brain Stereo-seq chip 2.7 GB to prepare (3.9 GB from `tissue.gem.gz`) and
+  **8.5 GB to export, the largest measured so far**. For whole-section datasets, have more
+  free memory than that. Visium HD with its 2 µm layer has not been measured and is
+  expected to need the most; if it runs out, leave that layer out with `--bins 008um,016um`
+  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
-  the export a tiled copy. Memory and time have not been benchmarked; large Visium HD
-  datasets need the most (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
+  the export a tiled copy. Time has not been benchmarked on a reference machine; measured
+  examples are in [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
 - Viewing needs no installation, only a browser and an internet connection, also for a copy
   on your own computer: the page loads its drawing library (deck.gl), and Draw a region its
   UMAP library (umap-js), from `cdn.jsdelivr.net`.
@@ -299,7 +344,9 @@ WebKit is the engine, not iOS Safari, so a real iPhone is still the only proof f
 ## Repository layout
 
 ```
+install.sh / install.ps1  one-command install (macOS, Linux / Windows) into .venv
 web/SpatialViewer/    the page (index.html, viewer.js, ...) and the Python tools (prepare.py, export.py, ...)
+web/SpatialViewer/requirements-lock.txt  every package at one tested version (made from requirements*.txt)
 web/SpatialViewer/markers/  marker-gene lists for suggested cluster names (edit for your tissue)
 web/SpatialViewer/detect.py  says what kind of dataset a folder holds (prepare.py detect / auto, the notebook)
 deploy/azure/         Azure Static Web Apps config and the /api/token function
@@ -313,6 +360,7 @@ tests/smoke_test.py   end-to-end test
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)
 tools/label_editor.html  place UMAP cluster labels by hand (writes labelPositions for config.js)
+tools/check_install.py   checks that the Python packages import, with the right versions
 ```
 
 ## Citing
