@@ -855,6 +855,26 @@
   // reads as density rather than a solid fill
   const MOL_PER_PX = cfg.moleculesPerPixel || 0.25;
   const MOL_RADIUS_UM = 0.8;                       // drawn dot; a transcript is a diffraction-limited spot
+  // That budget is per screen pixel of the whole view, and a dot is at least pi px^2, so a gene
+  // packed into part of the tissue still piled several dots on every pixel there and drew as a
+  // solid blob. Each gene's dots are therefore made fainter where they would pile up: at its
+  // dense end (the 90th percentile of its occupied 1/128-of-the-image squares) the dots drawn
+  // over one screen pixel together cover MOL_PEAK_COVER of it, sparser areas proportionally
+  // less, so density reads as brightness again. Never above the Opacity slider. The fading goes
+  // into the dots' fill alpha (linear): deck.gl applies a layer's `opacity` as opacity^(1/2.2).
+  const MOL_PEAK_COVER = 0.8;
+  function molPeakDensity(pos, n) {                // molecules per image px^2 where the gene is dense
+    const img = S.m && S.m.image, W = (img && img.width) || 1, H = (img && img.height) || 1;
+    const cw = Math.max(W, H) / 128, nx = Math.max(1, Math.ceil(W / cw)), ny = Math.max(1, Math.ceil(H / cw));
+    const c = new Uint32Array(nx * ny);
+    for (let i = 0; i < n; i++) {
+      const x = Math.min(nx - 1, Math.max(0, Math.floor(pos[2 * i] / cw)));
+      const y = Math.min(ny - 1, Math.max(0, Math.floor(pos[2 * i + 1] / cw)));
+      c[y * nx + x]++;
+    }
+    const occ = c.filter((v) => v > 0).sort();
+    return occ.length ? occ[Math.floor(0.9 * (occ.length - 1))] / (cw * cw) : 0;
+  }
   function molBlank() { return { index: null, genes: [], size: 1, opacity: 0.9, sig: "", loading: new Set() }; }
   function molReset() {
     S.mol = molBlank();
@@ -920,7 +940,7 @@
       for (let i = 0; i < n; i++) { pos[2 * i] = q[2 * i] * sx; pos[2 * i + 1] = q[2 * i + 1] * sy; }
       const used = new Set(M.genes.map((g) => g.hex));
       const hex = MOL_COLORS.find((c) => !used.has(c)) || MOL_COLORS[M.genes.length % MOL_COLORS.length];
-      M.genes.push({ name, n, pos, hex, rgb: hexToRgb255(hex), visible: true, data: null });
+      M.genes.push({ name, n, pos, hex, rgb: hexToRgb255(hex), visible: true, data: null, peak: molPeakDensity(pos, n) });
       buildMolUI(); render();
     } catch (e) { status(`Could not load ${name} molecules: ${e.message}`, true); return; }
     finally { M.loading.delete(name); }
@@ -963,34 +983,49 @@
     const want = budget / Math.max(1, on.length) / molVisibleFrac();
     return on.map((g) => [g, want >= g.n ? g.n : Math.min(g.n, Math.pow(2, Math.floor(Math.log2(Math.max(4096, want)))))]);
   }
+  // [gene, dots drawn, fill alpha 0..1] per visible gene; the alpha in quarter-octave steps so a
+  // zoom redraws only when it moves a step (MOL_PEAK_COVER above)
+  function molDrawPlan() {
+    const M = S.mol, um = S.m.pixelSizeUm || 0.2125, r = (MOL_RADIUS_UM / um) * M.size;
+    const s = Math.pow(2, (S.viewState && Number.isFinite(S.viewState.zoom)) ? S.viewState.zoom : 0);
+    const rPx = Math.min(8 * M.size, Math.max(1 * M.size, r * s));
+    const u = Math.pow(M.opacity, 1 / 2.2);      // one dot's alpha from the Opacity slider alone
+    return molDrawCounts().map(([g, k]) => {
+      const lam = ((g.peak || 0) * (k / g.n) / (s * s)) * Math.PI * rPx * rPx;   // dots over one screen px, dense end
+      const a = lam > 0 ? 1 - Math.pow(1 - MOL_PEAK_COVER, 1 / lam) : 1;          // the dot alpha that keeps it at the cover
+      const f = Math.min(1, a / u);
+      return [g, k, f >= 1 ? 1 : Math.max(0.02, Math.min(1, Math.pow(2, Math.round(Math.log2(f) * 4) / 4)))];
+    });
+  }
   function molLayers() {
     const M = S.mol;
     if (!M || !M.genes.length || inUmap()) { if (M) M.sig = ""; return []; }
     const um = S.m.pixelSizeUm || 0.2125;
     const r = (MOL_RADIUS_UM / um) * M.size;
-    const counts = molDrawCounts();
-    M.sig = counts.map(([g, k]) => `${g.name}:${k}`).join("|");
-    const thin = counts.filter(([g, k]) => k < g.n);
-    $("molNote").textContent = thin.length
+    const counts = molDrawPlan();
+    M.sig = counts.map(([g, k, a]) => `${g.name}:${k}:${a}`).join("|");
+    const thin = counts.filter(([g, k]) => k < g.n), faint = counts.filter(([, , a]) => a < 1);
+    $("molNote").textContent = (thin.length
       ? `Zoomed out: drawing a random ${thin.length === counts.length && counts.length > 1 ? "sample of each gene" : "sample"} (` +
         thin.map(([g, k]) => `${g.name} 1 in ${Math.round(g.n / k).toLocaleString()}`).join(", ") + "). Zoom in to see every molecule."
-      : (counts.length ? "Every molecule of the genes shown is drawn." : "");
-    return counts.map(([g, k]) => {
+      : (counts.length ? "Every molecule of the genes shown is drawn." : "")) +
+      (faint.length ? ` Dots of ${faint.map(([g]) => g.name).join(", ")} are drawn fainter so their densest areas do not fill in solid.` : "");
+    return counts.map(([g, k, a]) => {
       // the same data object while k holds: deck then keeps the uploaded buffer
       if (!g.data || g.data.length !== k) g.data = { length: k, attributes: { getPosition: { value: g.pos.subarray(0, 2 * k), size: 2 } } };
       return new ScatterplotLayer({
         id: `mol-${S.dsId}-${g.name}`, data: g.data,
-        getFillColor: [g.rgb[0], g.rgb[1], g.rgb[2], 255], updateTriggers: { getFillColor: [g.hex] },
+        getFillColor: [g.rgb[0], g.rgb[1], g.rgb[2], Math.round(255 * a)], updateTriggers: { getFillColor: [g.hex, a] },
         radiusUnits: "common", getRadius: r, radiusMinPixels: 1 * M.size, radiusMaxPixels: 8 * M.size,
         stroked: false, filled: true, opacity: M.opacity, parameters: NORMAL,
       });
     });
   }
-  // a view change redraws the molecules only when a gene's drawn sample changes size
+  // a view change redraws the molecules only when a gene's drawn sample or opacity step changes
   function molViewChanged() {
     const M = S.mol;
     if (!M || !M.genes.length || inUmap()) return;
-    const sig = molDrawCounts().map(([g, k]) => `${g.name}:${k}`).join("|");
+    const sig = molDrawPlan().map(([g, k, a]) => `${g.name}:${k}:${a}`).join("|");
     if (sig !== M.sig) requestRender();
   }
 
@@ -1523,6 +1558,9 @@
     ["#viewSwitch button[data-v=umap]", "title", null], ["#flyPlay", "title", null],
     ["#lassoMode option[value=bins]", "textContent", null],
     ["#lassoSaveCsv", "title", null], ["#selToShape", "title", null],
+    ["#bqGrey + span", "textContent", null], ["#bqReset", "title", null],
+    ["#lblVcMinPct", "textContent", null], ["#lblVcMinPct", "title", null], ["#vcCsv", "title", null],
+    ["#plCsv", "title", null], ["#lblPlPts", "title", null],
   ];
   const wordingOrig = new Map();
   function syncWording() {
@@ -1838,7 +1876,7 @@
         if (regionAt(g.positions[2 * i], g.positions[2 * i + 1]) === sel) { sum += g.values[i]; k++; }
       return `<div style="display:flex;justify-content:space-between;gap:12px">` +
         `<span><i style="display:inline-block;width:8px;height:8px;background:${g.hex};margin-right:5px"></i>${g.name}</span>` +
-        `<span>${k.toLocaleString()} bins · ${(k ? sum / k : 0).toFixed(2)} mean</span></div>`;
+        `<span>${k.toLocaleString()} ${wd().bins} · ${(k ? sum / k : 0).toFixed(2)} mean</span></div>`;
     }).join("");
     el.innerHTML =
       `<div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:4px">` +
@@ -1881,6 +1919,7 @@
     if (!window.SodaBinQc) return;
     binQc = window.SodaBinQc.create({
       $, esc: escHtml, ScatterplotLayer, NORMAL, requestRender, layerKey: () => S.exprKey,
+      words: (t) => (isCells() ? toCellWords(t) : t),     // bins -> cells on a cells layer
       positions: () => (S.lasso && S.lasso.pos ? Promise.resolve(S.lasso.pos)
         : S.tissue.positions && S.tissue.key === S.exprKey ? Promise.resolve(S.tissue.positions) : S.src.positions(S.exprKey)),
       onChange: () => {
@@ -2307,11 +2346,11 @@
     const sw = I.sweep && I.sweep.length > 1
       ? ` Sweep (resolution → clusters, stability): ${I.sweep.map((r) => `${r.resolution} → ${r.nClusters} (${r.stability.toFixed(2)})`).join(", ")}.` : "";
     if (I.stable) return `These clusters reproduce across reseeded and subsampled runs.${sw}`;
-    if (I.nClusters < 2) return `No split of these bins into clusters reproduces (stability ≥ 0.8), so they read as one population.` +
+    if (I.nClusters < 2) return `No split of these ${wd().bins} into clusters reproduces (stability ≥ 0.8), so they read as one population.` +
       (I.closest ? ` Closest: ${I.closest.nClusters} clusters at ${I.closest.resolution} (${I.closest.stability.toFixed(2)}); type that resolution to see them.` : "") + sw;
     if (I.closest) return `No resolution gave clusters that reproduce (stability ≥ 0.8), so this shows the coarsest. ` +
       `Closest: ${I.closest.nClusters} clusters at ${I.closest.resolution} (${I.closest.stability.toFixed(2)}); type that resolution to see them.${sw}`;
-    if (I.nClusters < 2) return `One cluster: no split of these bins reproduces.${sw}`;
+    if (I.nClusters < 2) return `One cluster: no split of these ${wd().bins} reproduces.${sw}`;
     return `These clusters do not reproduce (stability below 0.8): treat them as a sketch.${sw}`;
   }
 
@@ -2773,7 +2812,7 @@
     if (I.method === "pca") warns.push(`Fewer than ${LASSO.minShapesForUmap} shapes: a UMAP of so few points is meaningless, so this is PC1 vs PC2 (${(I.varFrac[0] * 100).toFixed(0)}% / ${((I.varFrac[1] || 0) * 100).toFixed(0)}% of variance).`);
     else if (I.mode === "bins" && I.nIn < LASSO.fewPoints) warns.push(`Few points (${I.nIn}): treat this layout as a sketch.`);
     if (R.cluster && I.stability != null && !I.stable) warns.push(lassoStabilityNote({ ...I, sweep: null }));   // numbers only: safe as HTML
-    if (I.sampledFrom) warns.push(`Showing ${I.nIn.toLocaleString()} of ${I.sampledFrom.toLocaleString()} bins (seeded sample, stratified by shape).`);
+    if (I.sampledFrom) warns.push(`Showing ${I.nIn.toLocaleString()} of ${I.sampledFrom.toLocaleString()} ${wd().bins} (seeded sample, stratified by shape).`);
     $("lpWarn").innerHTML = warns.join("<br>"); $("lpWarn").hidden = !warns.length;
     const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     if (byCl) {
@@ -2796,7 +2835,7 @@
         markerInfo: () => ({ ...ctMarkerInfo(ct, L.prot
           ? `Scored on the ${I.nIn.toLocaleString()} squares of this run, on the ${L.hvg ? L.hvg.nChannels : ""} markers of the section UMAP, ` +
             (ct && ct.scale === "slide" ? "each against the whole slide's average and spread." : "each against the other squares drawn (this export has no slide-wide averages).")
-          : `Scored on the ${I.nIn.toLocaleString()} bins of this run, using only the section's ` +
+          : `Scored on the ${I.nIn.toLocaleString()} ${wd().bins} of this run, using only the section's ` +
             `${L.hvg ? L.hvg.nGenes.toLocaleString() : ""} most variable genes: marker genes outside them are listed as not found.`) }),
         onAccept: (c, t) => { L.clNames[c] = t; renderLassoPanel(); },
         acceptAll: (count) => {
@@ -2965,7 +3004,7 @@
     // volcano plots (volcano.js, de_worker.js): handed only what they need from here
     if (window.SodaVolcano) window.SodaVolcano.init({
       state: () => S, touch: TOUCH, fetchChunks: lassoFetch, chunkOf: lassoChunkOf, addGene, download: lassoDownload,
-      say: (t) => (isRois() ? toRoiWords(t) : t),
+      say: (t) => (isRois() ? toRoiWords(t) : isCells() ? toCellWords(t) : t),
       geneXyv: (name) => S.src.gene(S.exprKey, name),
       hvgGenes: async () => { const L = S.lasso; if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { return null; } } return L.hvgGenes; },
       // the section's clustering on show (Leiden or the lab's own), with the names given in the Clusters panel
@@ -3845,7 +3884,7 @@
     // stack two highlights on the same bins
     U.sel = null; U.selN = 0; umapDirty(); syncUmapUI();
     lassoShapesChanged();
-    status(`Added "${name}" (${rows.length.toLocaleString()} bins) to Draw a region`);
+    status(`Added "${name}" (${rows.length.toLocaleString()} ${wd().bins}) to Draw a region`);
     setTimeout(() => status(null), 3500);
   }
 
@@ -3897,7 +3936,7 @@
         ? (o.markerTitle ? o.markerTitle
            : prot ? `Top markers (how much higher than in the rest of the section, in standard deviations; ` +
                   `share of the cluster's squares above that marker's typical level):\n`
-                : `Top marker genes (log fold change vs the rest, share of bins with the gene):\n`) +
+                : `Top marker genes (log fold change vs the rest, share of ${W.bins} with the gene):\n`) +
           mk.slice(0, 10).map((m) => `${markerName(m)}  ${m.lfc != null ? (+m.lfc).toFixed(2) : ""}  ${m.pct != null ? Math.round(m.pct * 100) + "%" : ""}`).join("\n") +
           `\nClick to highlight this cluster in every view.`
         : "Click to highlight this cluster in every view.";
@@ -3979,7 +4018,7 @@
       `<div class="ct-pop-h"><b>Marker lists${set.name ? `: ${esc(set.name)}` : ""}${set.version != null ? ` <small>v${esc(set.version)}</small>` : ""}</b>` +
       `<button class="ct-x" title="Close">×</button></div>` +
       (info.scope ? `<p class="meta">${esc(info.scope)}</p>` : "") +
-      `<p>${esc(prot ? CT_RULE_PROT : CT_RULE)}</p>` +
+      `<p>${esc(prot ? CT_RULE_PROT : isCells() ? toCellWords(CT_RULE) : CT_RULE)}</p>` +
       (info.note ? `<p class="meta">${esc(info.note)}</p>` : "") +
       `<div class="ct-types">` + (info.types || []).map((t) => {
         // missing genes: "absent" = no such gene in the data used, "rare" = in under 0.5% of the bins
@@ -3996,7 +4035,7 @@
           (absent.length && prot ? ` <span class="miss" title="No channel of this name on this panel">· not on this panel: ${esc(absent.join(", "))}</span>` : "") +
           (flat.length ? ` <span class="miss" title="Nearly the same in every tissue square: left out, as it cannot tell squares apart">· flat here: ${esc(flat.join(", "))}</span>` : "") +
           (absent.length && !prot ? ` <span class="miss" title="No gene of this name in the data used here">· not in the data: ${esc(absent.join(", "))}</span>` : "") +
-          (rare.length ? ` <span class="miss" title="Counted in under 0.5% of the bins: left out, as one stray count would decide a bin">· too rare: ${esc(rare.join(", "))}</span>` : "") +
+          (rare.length ? ` <span class="miss" title="Counted in under 0.5% of the ${wd().bins}: left out, as one stray count would decide a ${wd().bin}">· too rare: ${esc(rare.join(", "))}</span>` : "") +
           `</div></div>`;
       }).join("") +
       `</div>`;
@@ -4078,7 +4117,7 @@
     return { markerSet: ci.markerSet, types: ci.types, scope, prot: ctProt(ci), note: ms ? ms.note : null };
   };
   const ctScope = () => (isProt() ? "Scored on every marker of the panel, over all squares in the section UMAP."
-    : "Scored on every gene, over all bins in the section UMAP.");
+    : `Scored on every gene, over all ${wd().bins} in the section UMAP.`);
   function umapPickType(t) {
     const U = S.umap;
     U.ctPick = t === null || t === undefined || U.ctPick === t ? null : t;

@@ -26,6 +26,7 @@
 
   function create(ctx) {
     const $ = ctx.$, esc = ctx.esc;
+    const say = (t) => (ctx.words ? ctx.words(t) : t);   // "bin" -> "cell" on a cells layer (viewer.js)
     // the page's ?qc= value, applied once to the layer it names (on the dataset in ?ds=)
     const params = new URLSearchParams(location.search);
     let pending = parseParam(params.get("qc"), params.get("ds"));
@@ -116,7 +117,7 @@
         el.className = "bq-metric";
         el.innerHTML =
           `<div class="bq-head"><span class="bq-name" title="${esc(tipOf(m))}">${esc(m.label)}</span><span class="bq-cut"></span></div>` +
-          `<canvas class="bq-hist" title="Bins per value (square-root height${m.log ? ", log axis" : ""}); grey = removed"></canvas>` +
+          `<canvas class="bq-hist" title="${say("Bins")} per value (square-root height${m.log ? ", log axis" : ""}); grey = removed"></canvas>` +
           `<div class="bq-axis"><span>${esc(fmt(m, m.min))}</span><span>${esc(fmt(m, m.max))}</span></div>` +
           `<label class="bq-sl"><span>Min</span><input type="range" class="bq-lo" min="0" max="${STEPS}" step="1" value="0">` +
           `<input type="text" inputmode="decimal" class="bq-lon" placeholder="${NONE_TXT}"></label>` +
@@ -157,7 +158,8 @@
         : m.key === "genes" ? "Genes with at least one UMI in the bin"
         : m.key === "pctMt" ? `UMI of mitochondrial genes (${(Q.meta.mtGenes || []).length} genes named MT-…) as a share of the bin's total; 0 for an empty bin`
         : m.label;
-      return `${base}. Range ${fmt(m, m.min)} – ${fmt(m, m.max)}, median ${fmt(m, m.median)}.`;
+      const b = say(base);
+      return `${b.charAt(0).toUpperCase() + b.slice(1)}. Range ${fmt(m, m.min)} – ${fmt(m, m.max)}, median ${fmt(m, m.median)}.`;
     }
 
     // per metric: the bar counts on its own axis (computed once per layer)
@@ -232,12 +234,12 @@
         cut.classList.toggle("on", !!t);
       });
       $("bqCount").textContent = r ? `(${pct(r)}% removed)` : "";
-      $("bqSummary").innerHTML = r
+      $("bqSummary").innerHTML = say(r
         ? `Kept <b>${(n - r).toLocaleString()}</b> of ${n.toLocaleString()} bins · removed <b>${r.toLocaleString()}</b> (${pct(r)}%). ` +
           `Removed bins are grey on the slide and left out of Draw a region the next time it runs.`
         : Object.keys(Q.th).length
           ? `Kept all ${n.toLocaleString()} bins: no bin is outside these thresholds.`
-          : `Off: all ${n.toLocaleString()} bins are kept. Move a slider (or type a number) to remove bins from Draw a region.`;
+          : `Off: all ${n.toLocaleString()} bins are kept. Move a slider (or type a number) to remove bins from Draw a region.`);
       $("bqReset").disabled = !Object.keys(Q.th).length;
     }
 
