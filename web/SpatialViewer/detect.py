@@ -370,6 +370,24 @@ def h5ad_obsm(path) -> dict | None:
         return {"error": f"not a readable HDF5 file ({type(e).__name__})"}
 
 
+def pkc_panels(path) -> list[tuple[str, str]]:
+    """(panel name, version) of a .pkc probe kit file, or of every .pkc inside a zip, from the first
+    4 KB of each (geomx.py names a panel by the file's "Name" and takes one version of each)."""
+    def head(raw: bytes, fallback: str):
+        text = raw.decode("utf-8-sig", "replace")
+        n = re.search(r'"Name"[ ]*:[ ]*"([^"]*)"', text)
+        v = re.search(r'"Version"[ ]*:[ ]*"?([^",}]+)', text)
+        return (n.group(1) if n else fallback), (v.group(1).strip() if v else "")
+    try:
+        if str(path).lower().endswith(".zip"):
+            with zipfile.ZipFile(str(path)) as z:
+                return [head(z.open(i).read(4096), Path(i.filename).stem) for i in z.infolist() if i.filename.lower().endswith(".pkc")]
+        with open(path, "rb") as fh:
+            return [head(fh.read(4096), Path(path).stem)]
+    except (OSError, zipfile.BadZipFile, ValueError, NotImplementedError):
+        return []
+
+
 def geomx_sheet_roles(path) -> set | None:
     """The GeoMx column roles (sample_id, roi, segment ...) in the header of an annotation file,
     read with geomx.py's own header rules from the top of the file. None: could not be checked."""
@@ -1136,6 +1154,21 @@ def find_geomx(cx: Ctx, zips: dict | None = None) -> list[dict]:
             elif "pkc" not in cx.ov:
                 _miss(c, "the probe kit file(s) *.pkc of the panel(s) on the slide (from the vendor's PKC files page)",
                       "pkc", "add --pkc <file.pkc>")
+        if "pkc" in c["args"] and t.real and "pkc" not in cx.ov:      # two versions of one panel stop the reader
+            panels: dict[str, list[tuple[str, str]]] = {}
+            per_file = {}
+            for path in c["args"]["pkc"]:
+                per_file[path] = pkc_panels(path)
+                for name, ver in per_file[path]:
+                    panels.setdefault(name, []).append((Path(path).name, ver))
+            clash = {k: v for k, v in panels.items() if len(v) > 1}
+            if clash:
+                which = "; ".join(f"'{k}' is in " + " and ".join(f"{n} (version {ver or '?'})" for n, ver in v) for k, v in clash.items())
+                _choice(c, "pkc", f"the same panel is in more than one probe kit file ({which}); the GeoMx reader takes one "
+                                  f"version of each panel, so name the file(s) to use with --pkc",
+                        [{"path": path, "size": 0, "note": "holds " + ", ".join(f"{n} v{v or '?'}" for n, v in per_file[path])}
+                         for path in c["args"]["pkc"]])
+                c["args"].pop("pkc")
         # annotation sheets: Sample_ID is what names each AOI's DCC file
         cands = [(rel, n) for rel in t.below(top, 5) for n in sorted(t.f(rel))
                  if sheet_rx.search(n) and not n.startswith("~$") and t.f(rel)[n] < 50e6]

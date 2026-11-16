@@ -2239,6 +2239,8 @@ def make_detect_cases(root: Path) -> Path:
         for n in ("cell_by_gene.csv", "cell_metadata.csv"):
             _touch(neg / "merscope_two_runs" / run_ / n, b"a,b\n")
     _touch(neg / "not_data" / "notes.docx")
+    shutil.copytree(raw / "geomx", neg / "geomx_two_versions", ignore=shutil.ignore_patterns("*.ome.tiff"))
+    shutil.copyfile(raw / "geomx" / "pkc" / "Demo_Panel_v1.0.pkc", neg / "geomx_two_versions" / "pkc" / "Demo_Panel_v1.1_copy.pkc")
     try:                                                           # cases that need a real header
         import tifffile
         grey = np.zeros((50, 100), np.uint8)
@@ -2404,6 +2406,7 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
          "detect xenium_extra_tiffs: stains + transcripts without cells is certain, and says there is no cells layer")
     case("stereoseq_no_image", "incomplete", "missing-files", "stereoseq", say=["regist", "--image"])
     case("merscope_two_runs", "ambiguous", "open-choice", "merscope", say=["--cells-dir", "vpt-run-a", "vpt-run-b"])
+    case("geomx_two_versions", "ambiguous", "open-choice", "geomx", say=["demo panel", "--kind geomx --pkc", "Demo_Panel_v1.1_copy.pkc"])
     if (neg / "grey_unnamed").exists():
         case("grey_unnamed", "ambiguous", "two-kinds", say=["--kind akoya", "--src"])
         case("grey_unnamed", "certain", "one-kind", "akoya", kind="akoya")
