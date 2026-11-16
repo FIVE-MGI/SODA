@@ -1,0 +1,59 @@
+name: pages
+
+# Publishes the SODA page (web/SpatialViewer) as this repository's GitHub Pages site, so a
+# copy of SODA ("Use this template" on GitHub) has its own address with no server to run.
+# See docs/SHARE_YOUR_DATA.md ("Make it your own"). It needs Settings -> Pages -> Source:
+# "GitHub Actions" once.
+#
+# Only the page is published. The .py tools stay in the repository, and data never goes
+# here: it lives in your own storage and config.js (or a ?data= link) points at it.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    # Off in the original SODA repository (its page is hosted elsewhere); on in every copy.
+    if: github.repository != 'FIVE-MGI/SODA' && github.repository != 'FIVE-MGI/spatial-viewer-v2'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Collect the page files
+        run: |
+          mkdir _site
+          cp -r web/SpatialViewer/. _site/
+          # the Python tools, caches and anything private never go on the site
+          find _site -name '*.py' -delete
+          find _site -name '__pycache__' -type d -prune -exec rm -rf {} +
+          find _site \( -iname 'sample_id_key.csv' -o -iname '*_key.csv' -o -name '*.zarr' \) -prune -exec rm -rf {} +
+          rm -f _site/requirements*.txt _site/run.ps1
+          if [ -f _site/config.js ]; then
+            echo "config.js found: the site opens the data it names"
+          else
+            echo "no config.js: the site opens data only from ?data= links (see docs/SHARE_YOUR_DATA.md)"
+          fi
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

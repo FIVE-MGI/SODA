@@ -184,9 +184,16 @@ It runs the same steps and then checks every output file.
    `.h5ad` or 10x RNA-seq), then `prepare.py export`.
 2. **[De-identify and check](docs/DEIDENTIFICATION.md)** before anything leaves your
    computer.
-3. **[Host it](docs/HOSTING.md):** on your own computer, on any static web host for public
-   data, or privately on Azure with a password
-   ([step by step](deploy/azure/README.md)).
+3. **[Share it](docs/SHARE_YOUR_DATA.md), one of two ways:**
+   - **Share a link.** Upload the export folder to your own storage and add its address
+     to the SODA page's link (`index.html?data=<your folder>`). Names, groups and which
+     stains show are set in one text file next to your data. No code, no website of your own.
+   - **Make it your own.** Copy SODA on GitHub ("Use this template") and get your own
+     SODA website that you can change however you like, still reading your data from your
+     storage.
+
+   For everything else (your own computer, any web server, privately on Azure with a
+   password) see [Hosting](docs/HOSTING.md) and the [Azure steps](deploy/azure/README.md).
 
 The page reads `web/SpatialViewer/config.js` for your dataset list, institution name,
 logos and password endpoint. Copy `config.example.js` to `config.js`; every option is
@@ -200,6 +207,7 @@ email wbuchser@wustl.edu with any questions about hosting.
 | | |
 |---|---|
 | [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | commands and options per input type, export, clustering, the circle tool, common problems |
+| [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways: a link to your data folder, or your own copy of SODA |
 | [docs/HOSTING.md](docs/HOSTING.md) | hosting options from a laptop to a password-protected cloud site; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure Static Web App + private blob container + password, step by step |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the upload gate, and its limits |
