@@ -511,7 +511,7 @@ are in the folder, and says so in a line starting `[outlines]`:
 |---|---|---|
 | Xenium | `cell_boundaries.parquet` or `.csv.gz`, `nucleus_boundaries.parquet` or `.csv.gz`; without them `cells.zarr.zip` | `.csv.gz` (analysis 4.0: 155,754 cells of 24 vertices, 156,299 nuclei) and the same file re-saved as parquet; `cells.zarr.zip` only on the synthetic fixture |
 | MERSCOPE | `cell_boundaries.parquet`, or `*_micron_space.parquet` of a Vizgen Post-processing Tool run, beside the cell tables; older runs: `cell_boundaries/feature_data_<fov>.hdf5` | both parquet kinds (1,179 and 65,029 cells); the HDF5 layout only on the synthetic fixture |
-| CosMx | `*polygons.csv` when the export has one; otherwise the outlines are **traced** from `CellLabels/CellLabels_F<fov>.tif` (the label image is the instrument's segmentation; tracing follows its pixel edges and then removes the staircase) | traced labels (20 FOVs, 91,972 cells); the polygons file only on the synthetic fixture |
+| CosMx | `*polygons.csv` when the export has one; otherwise the outlines are **traced** from `CellLabels/CellLabels_F<fov>.tif` (the label image is the instrument's segmentation; tracing follows its pixel edges and then removes the staircase, moving the outline by at most 1.5 label pixels) | traced labels (20 FOVs, 91,972 cells: 24 vertices a cell, overlap with the label mask 97 % by intersection over union); the polygons file only on the synthetic fixture |
 | Stereo-seq | `cellBin/cellBorder` of `--cellbin` | 130,588 cells |
 
 - `--no-outlines` skips them. `--outline-tolerance-um` (default 0.1) is how far the outline
@@ -519,8 +519,9 @@ are in the folder, and says so in a line starting `[outlines]`:
 - **Checks made for you.** The log line says how many cells got an outline, how many polygons
   belonged to no cell of the count matrix, and what share of the cells' own centres lie inside
   their own outline. That share is the test that the outlines are in the cells' frame (right
-  units, right way up, same run): above 99.9 % on every real dataset tried; under 90 % you get
-  a warning, under 50 % the outlines are **not written** and the cells stay dots.
+  units, right way up, same run): 99.88 % to 99.99 % on the real datasets tried (the rest are
+  cells whose reported centre lies just outside a concave outline); under 90 % you get a
+  warning, under 50 % the outlines are **not written** and the cells stay dots.
 - A cell with no outline in the file stays a dot. A cell in several parts keeps its parts
   (crumbs under 2 % of the cell are dropped); holes are left out.
 - Size: about 60 to 100 bytes per cell and set (4 bytes per vertex + 6), in one file per
@@ -1004,7 +1005,8 @@ timing figures here. What can be said from the formats:
 - **Cell outlines**: 4 bytes per vertex + 6 per polygon, one file per 500 µm square. The mouse
   brain section above (155,754 cells of 24 vertices, as many nuclei) gave 15.0 MB + 13.8 MB in
   296 + 294 files and took 45 s to import from the two `.csv.gz` files; a zoomed-in view
-  (9 squares, 8,000 cells) downloads 0.8 MB.
+  (9 squares, 8,000 cells) downloads 0.8 MB. Tracing the label images of a 20-FOV CosMx slide
+  (91,972 cells) took 74 s and gave 9.2 MB; a 130,588-cell Stereo-seq chip 7.2 MB in 10 s.
 - **CosMx and MERSCOPE**: the same 4 bytes per transcript; measured sizes and times are at the
   end of the [CosMx](#cosmx-smi) and [MERSCOPE](#merscope) sections.
 - **UMAP time** grows with the number of bins with ≥ 10 UMI and runs on one core.
