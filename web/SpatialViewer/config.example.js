@@ -10,8 +10,14 @@ window.SpatialViewerConfig = {
   //   label         what the picker shows; the tissue and its condition, nothing else
   //   hideChannels  exact channel names to leave out of this dataset, e.g. stain
   //                 tests that are not panel markers. Matched case-insensitively.
+  //   tags          optional short labels, e.g. { tissue: "nerve", condition: "injured",
+  //                 slide: "S12" } (any names). The picker then gets one drop-down filter
+  //                 per name, its search also finds the values, and a name that has the
+  //                 same value everywhere gets no filter. Text only, a name up to 40
+  //                 characters, a value up to 80. No tags on any dataset: no filters.
   datasets: {
-    // example_visium:    { group: "transcriptomics", label: "Normal tissue" },
+    // example_visium:    { group: "transcriptomics", label: "Normal tissue",
+    //                      tags: { tissue: "nerve", condition: "normal", slide: "S1" } },
     // example_proteomics: { group: "proteomics", label: "Condition A",
     //                       hideChannels: ["CD11c FFPE"] },
     // example_rnaseq:    { group: "scrnaseq", label: "All cells" },

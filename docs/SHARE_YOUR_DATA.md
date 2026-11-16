@@ -125,7 +125,8 @@ Everything below is optional. Edit the file in any text editor, save, and upload
  "paper": "https://doi.org/10.1234/example",
  "default": "sciatic_01",
  "datasets": [
-  {"id": "sciatic_01", "label": "Sciatic nerve, injured", "group": "Spatial transcriptomics", "kind": "visium"},
+  {"id": "sciatic_01", "label": "Sciatic nerve, injured", "group": "Spatial transcriptomics", "kind": "visium",
+   "tags": {"tissue": "sciatic nerve", "condition": "injured", "slide": "S12"}},
   {"id": "sciatic_ifx", "label": "Sciatic nerve, 30-plex", "group": "Protein images", "kind": "akoya",
    "hideChannels": ["CD11c test"], "defaultChannels": ["DAPI", "CD3", "CD68"]}
  ]
@@ -141,6 +142,7 @@ Everything below is optional. Edit the file in any text editor, save, and upload
 | `label` | what the dataset list shows for that dataset |
 | `group` | the heading it sits under; headings appear in the order they first occur |
 | order of `datasets` | the order in the list |
+| `tags` | short labels such as `{"tissue": "nerve", "condition": "injured", "slide": "S12"}` (any names you like). The dataset list then gets one drop-down filter per name, and its search also finds the values. Text only: a name up to 40 characters, a value up to 80, at most 20 per dataset (anything else is ignored). A name that has the same value on every dataset gets no filter. |
 | `hideChannels` | stains to leave out of the list, e.g. test stains (exact names) |
 | `defaultChannels` | stains switched on when the dataset opens (part of a name is enough, so `"Axon"` also turns on `"Axon-488"`) |
 | `labelPositions` | hand-placed UMAP cluster labels, from `tools/label_editor.html` |
