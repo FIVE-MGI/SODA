@@ -38,7 +38,7 @@
     panel.id = "volcanoPanel"; panel.className = "vc-panel"; panel.hidden = true;
     panel.innerHTML = `
       <div class="vc-head"><b id="vcTitle">Volcano</b>
-        <span class="vc-btns"><button id="vcCsv" title="Every gene: log2FC, p, padj, % expressing, mean CP10k (no bins, no barcodes)">Save CSV</button><button id="vcClose" title="Hide">×</button></span></div>
+        <span class="vc-btns"><button id="vcPng" title="The plot as shown, with its title, as a PNG image (2x)">Save PNG</button><button id="vcSvg2" title="The plot as shown, with its title, as an SVG (vector) file">Save SVG</button><button id="vcCsv" title="Every gene: log2FC, p, padj, % expressing, mean CP10k (no bins, no barcodes)">Save CSV</button><button id="vcClose" title="Hide">×</button></span></div>
       <div id="vcWarn" class="lp-warn" hidden></div>
       <div class="vc-ctl">
         <label title="Fold-change threshold, both sides">|log2FC| ≥ <input id="vcLfc" type="text" inputmode="decimal" value="${DEFAULTS.lfc}" /></label>
@@ -57,7 +57,7 @@
     // the section's clustering can change in the Clusters panel without telling the lasso panel
     for (const id of ["vcA", "vcB"]) $(id).addEventListener("pointerdown", refresh);
     $("vcClose").onclick = () => { $("volcanoPanel").hidden = true; syncButtons(); };
-    $("vcCsv").onclick = saveCsv;
+    $("vcCsv").onclick = saveCsv; $("vcPng").onclick = savePng; $("vcSvg2").onclick = saveSvg;
     const num = (id, key, lo, hi) => { $(id).onchange = () => { const v = Number($(id).value); if (Number.isFinite(v) && v >= lo && v <= hi) V[key] = v; else $(id).value = V[key]; draw(); }; };
     num("vcLfc", "lfc", 0, 20); num("vcPadj", "padj", 1e-300, 1);
     $("vcY").onchange = () => { V.yScale = $("vcY").value; draw(); };
@@ -399,6 +399,57 @@
     }
     const slug = (s) => String(s).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40);
     api.download(`${R.dataset}_${R.layer}_volcano_${slug(R.nameA)}_vs_${slug(R.nameB)}.csv`, lines.join("\n") + "\n", "text/csv");
+  }
+
+  // ---- picture files: the plot as drawn, with its title and counts, as a stand-alone SVG (and that SVG as a PNG) ----
+  // The page styles the plot with CSS classes (volcano.css); a file has no page, so the same rules go inside it.
+  const SVG_NS = "http://www.w3.org/2000/svg", SVG_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  const SVG_STYLE = ".vc-frame{fill:none;stroke:#2a3242}.vc-grid{stroke:#232a37;stroke-width:1}.vc-tick{fill:#8b93a3;font-size:10px}" +
+    ".vc-axis{fill:#8b93a3;font-size:11px}.vc-thr{stroke:#c9ced8;stroke-width:1;stroke-dasharray:5 4;opacity:.7}.vc-pt{stroke:none}" +
+    ".vc-pt.ns{fill:#6b7385;opacity:.55}.vc-pt.up{fill:#ff5a5f}.vc-pt.down{fill:#4ea1ff}" +
+    ".vc-lab{font-size:11px;paint-order:stroke;stroke:rgba(14,17,23,.9);stroke-width:3px}.vc-lab.up{fill:#ffb3b5}.vc-lab.down{fill:#b5d8ff}.vc-lab.ns{fill:#aab1bf}";
+  function fileSvg() {
+    const svg = $("vcSvg");
+    if (!R || !geom || !svg || !svg.firstChild) return null;
+    const W = Number(svg.getAttribute("width")), H = Number(svg.getAttribute("height")), top = 42;
+    let nUp = 0, nDown = 0;
+    for (let j = 0; j < R.genes.length; j++) if (R.tested[j]) { const c = cls(j); if (c === "up") nUp++; else if (c === "down") nDown++; }
+    const mk = (tag, attrs, text) => { const e = document.createElementNS(SVG_NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+    const root = mk("svg", { xmlns: SVG_NS, width: W, height: H + top, viewBox: `0 0 ${W} ${H + top}`, "font-family": SVG_FONT });
+    root.appendChild(mk("style", {}, SVG_STYLE));
+    root.appendChild(mk("rect", { width: W, height: H + top, fill: "#161b24" }));
+    root.appendChild(mk("text", { x: 10, y: 17, "font-size": 13, "font-weight": 600, fill: "#e6e9ef" }, `${R.nameA}  vs  ${R.nameB}`));
+    const sub = mk("text", { x: 10, y: 34, "font-size": 11, fill: "#8b93a3" });
+    sub.appendChild(mk("tspan", { fill: COL.up }, `↑ A ${nUp}`));
+    sub.appendChild(document.createTextNode("  ·  "));
+    sub.appendChild(mk("tspan", { fill: COL.down }, `↑ B ${nDown}`));
+    sub.appendChild(document.createTextNode(`  ·  |log2FC| ≥ ${V.lfc}, padj ≤ ${V.padj}  ·  tested ${R.info.nTested} of ${R.info.nGenes}  ·  ${R.test === "welch" ? "Welch t-test" : "Wilcoxon rank-sum"}`));
+    root.appendChild(sub);
+    const g = mk("g", { transform: `translate(0 ${top})` });
+    for (const c of svg.childNodes) if (!(c.id === "vcHi")) g.appendChild(c.cloneNode(true));     // not the hover / picked rings
+    root.appendChild(g);
+    return { text: new XMLSerializer().serializeToString(root), w: W, h: H + top };
+  }
+  const fileBase = () => { const slug = (s) => String(s).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40); return `${R.dataset}_${R.layer}_volcano_${slug(R.nameA)}_vs_${slug(R.nameB)}`; };
+  function saveSvg() {
+    const f = fileSvg();
+    if (!f) { msg("Nothing to save: show the volcano first.", true); return; }
+    api.download(`${fileBase()}.svg`, `<?xml version="1.0" encoding="UTF-8"?>\n${f.text}\n`, "image/svg+xml");
+  }
+  function savePng() {
+    const f = fileSvg();
+    if (!f) { msg("Nothing to save: show the volcano first.", true); return; }
+    const scale = Math.min(2, 8000 / Math.max(f.w, f.h)), img = new Image(), name = `${fileBase()}.png`;
+    const fail = () => msg("The PNG could not be made: save the SVG instead.", true);
+    img.onload = () => {
+      try {
+        const c = document.createElement("canvas"); c.width = Math.round(f.w * scale); c.height = Math.round(f.h * scale);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob((b) => { if (b) api.download(name, b, "image/png"); else fail(); }, "image/png");
+      } catch (e) { fail(); }
+    };
+    img.onerror = fail;
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(f.text);
   }
 
   window.SodaVolcano = {
