@@ -256,9 +256,10 @@ email wbuchser@wustl.edu with any questions about hosting.
   Visium HD part, on Windows) 0.6 GB; a CosMx slide's counts (26 million transcripts, without its images) 0.76 GB; a
   whole mouse brain Stereo-seq chip 2.7 GB to prepare (3.9 GB from `tissue.gem.gz`) and
   **8.5 GB to export, the largest measured so far**. For whole-section datasets, have more
-  free memory than that. Visium HD with its 2 µm layer has not been measured and is
-  expected to need the most; if it runs out, leave that layer out with `--bins 008um,016um`
-  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
+  free memory than that. Visium HD is prepared with its 8 µm and 16 µm layers by default;
+  its 2 µm layer (`--bins all`) has not been measured and is expected to need the most
+  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)). The notebook
+  compares your free memory with these numbers before the Prepare step and warns.
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
   the export a tiled copy. Time has not been benchmarked on a reference machine; measured
   examples are in [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
