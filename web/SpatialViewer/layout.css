@@ -173,4 +173,10 @@
 @media (min-width: 701px) and (max-height: 500px) {
   .app.tabbed { --rail-w: 54px; --sidebar-w: 290px; }
   .tab { min-height: 46px; }
+  /* little height to spare: the top bar on one row */
+  .top-bar { gap: 6px; padding: 4px 8px; }
+  .top-bar .row.ds-row { flex: 1 1 110px; min-width: 100px; }
+  .top-bar .row.ds-row > span { display: none; }
+  .top-bar .view-switch { flex: none; }
+  .top-bar .view-switch .seg button { padding: 5px 9px; }
 }
