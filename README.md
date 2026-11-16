@@ -23,8 +23,8 @@ No coding needed: you paste a few commands and fill in two lines.
    `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows). It ends with **SODA is
    installed**. Then activate it and run `pip install jupyter` ([details](#try-it-in-5-minutes)).
 2. **Convert.** Open `notebooks/SODA_pipeline.ipynb` and fill in your work folder (`WORK`) and
-   your cloud folder's link (`CLOUD_URL`). Run Sections 0 and 1, put your instrument files in
-   the `inputs/` folders Section 1 makes (one subfolder per dataset), then **Run All**.
+   your cloud folder's link (`CLOUD_URL`). Run Section 0, put each dataset in its own folder
+   under `inputs/` (any name: SODA works out what each one is), then **Run All**.
 3. **Upload.** Answer Section 7's one question (is this data public?), then upload the
    `export/` folder, as it is, to your own storage: Azure, AWS, Google Cloud or a web server.
    Box, Google Drive and Dropbox do not work.
