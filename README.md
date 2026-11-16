@@ -100,7 +100,7 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   dataset as it looks now: position and zoom, the Tissue / Side by side / UMAP view, the
   layer, the genes on show with their colours and ranges, stains on or off with their colours
   and display ranges, molecule genes, outlines, the colour-by, the clustering with your
-  cluster names and hidden clusters, the quality filter and the open tab. Drawn shapes are in
+  cluster names, cell sets and hidden clusters, the quality filter and the open tab. Drawn shapes are in
   it when they fit: a link is kept to about 2,000 characters, so long outlines are simplified
   or left out, and the message under the button says so. The view travels in the part of the
   address after `#`, which the browser never sends to a server; `ds=`, `qc=` and a `data=` or

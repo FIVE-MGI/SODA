@@ -252,8 +252,8 @@ by `viewlink.js`):
 - `ch` lists the stains that are on or whose colour (`c`) or display range (`w`, 0–255) was
   changed; every other stain is off with its default. `genes[].r` is the range drawn, `on:
   false` a gene that is listed but switched off. `ov` = the keys of the outlines switched on.
-- The layer, drawn shapes, the clustering on show with cluster names and hidden clusters
-  (`sectionClusters`) and the quality thresholds (`qcFilter`) are where Save JSON always had
+- The layer, drawn shapes, the clustering on show with cluster names, cell sets and hidden
+  clusters (`sectionClusters`) and the quality thresholds (`qcFilter`) are where Save JSON always had
   them, one level up. A file without `view` (saved before 16 November 2026) loads as it did.
 
 The link is `<page>?ds=<dataset>[&data=…|&static=…][&qc=…]#v=<payload>`. The payload is
