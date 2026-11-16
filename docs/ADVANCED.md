@@ -139,6 +139,7 @@ plain JSON files in [`web/SpatialViewer/markers/`](../web/SpatialViewer/markers/
 | `rna_generic.json` | genes, any tissue (the default for Visium and the other sequencing data) |
 | `protein_generic.json` | protein panels, any tissue (the default for fluorescence images), with a table of marker-name aliases |
 | `nerve.json` | genes, peripheral nerve |
+| `brain.json` | genes, brain (mouse or human): excitatory and inhibitory neurons, astrocytes, oligodendrocytes, OPCs, microglia, border macrophages, vascular, meningeal, ependymal and choroid plexus cells |
 | `akoya_nerve.json` | protein panel, peripheral nerve |
 
 To write your own, copy one and edit it: a `name`, and a list of `types`, each with a

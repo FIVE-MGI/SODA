@@ -809,7 +809,7 @@ barcodes must be that layer's):
 | Option | File |
 |---|---|
 | `--user-umap umap.csv` | `barcode,UMAP_1,UMAP_2`: the first two numeric columns are used |
-| `--user-obs clusters.csv` | `barcode,<column>,...`, repeatable. Text columns and integer columns with at most 30 values become clusterings; an integer column named like a clustering (`seurat_clusters`, `leiden`, `SCT_snn_res.0.8`, ...) or listed in `--user-columns` may have up to 200. Other numeric columns are skipped. A column `<name>_color` with `#rrggbb` values gives the colours of `<name>` |
+| `--user-obs clusters.csv` | `barcode,<column>,...`, repeatable. Text columns and integer columns with at most 30 values become clusterings; an integer column named like a clustering (`seurat_clusters`, `leiden`, `SCT_snn_res.0.8`, ...) or listed in `--user-columns` may have up to 200. Other numeric columns are skipped. A column `<name>_color` with `#rrggbb` values gives the colours of `<name>` (so does a bare `color` column next to a single other column, as in Xenium Explorer's cell groups CSV `cell_id,group,color`) |
 | `--user-h5ad analysis.h5ad` | instead of the CSVs: obs columns, `obsm/X_umap` (or `--user-embedding <key>`) and the `uns/<column>_colors` palettes |
 | `--user-columns a,b` | only these columns (default: every usable one) |
 | `--user-barcode-prefix S1_` / `--user-barcode-suffix _2` | a merged object holding several sections: keep this section's barcodes |
@@ -822,6 +822,14 @@ python web/SpatialViewer/prepare.py export --id sample1 --out <cache> --dest <ex
 
 On an export that already exists, `prepare.py userclusters` does only this step (same
 options, plus `--id`, `--out`, `--dest`), in seconds to minutes instead of a whole export.
+If the export used a marker list from outside `web/SpatialViewer/markers/`, pass the same
+`--markers` again, or the suggested names fall back to the default list (it warns).
+
+**Cells (Xenium, CosMx, MERSCOPE, Stereo-seq cell bins).** The same, with `--user-layer cells`:
+the barcodes are the platform's cell ids (Xenium `aaabbbcc-1`, as in `cells.csv.gz` and
+Seurat's `LoadXenium` / spatialdata-io). The barcode column is the one headed `barcode`,
+`cell_id`, `cell`, ... (else the first), so `adata.obs.to_csv()` from a spatialdata-io table,
+with its row numbers first and the ids in `cell_id`, works as it is.
 
 **From Seurat** (R; a Visium HD object loaded at one bin size):
 
@@ -887,7 +895,11 @@ Tissue-specific lists can be passed instead: `markers/nerve.json` has marker gen
 cell types found in and around peripheral nerve (myelinating and non-myelinating Schwann cells,
 perineurial cells, fibroblasts, endothelial cells, pericytes / smooth muscle, macrophages,
 mast cells, T / NK cells, B / plasma cells, adipocytes, skeletal muscle), and
-`markers/akoya_nerve.json` the protein version. **Edit them for your tissue**, or write your
+`markers/akoya_nerve.json` the protein version. `markers/brain.json` has canonical marker genes for
+thirteen brain cell classes (excitatory and inhibitory neurons, astrocytes, oligodendrocytes, OPCs,
+microglia, border-associated macrophages, endothelial cells, pericytes, vascular smooth muscle,
+meningeal fibroblasts, ependymal and choroid plexus cells), for mouse or human; its `sources` list
+names the papers and atlas the markers come from. **Edit them for your tissue**, or write your
 own file in the same shape and pass it with `prepare.py export --markers my_markers.json`.
 Gene names are matched without regard to case, so one file serves human and mouse. In the
 browser the circle tool uses the list the export used for protein layers, and for genes the
