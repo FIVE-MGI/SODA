@@ -1006,6 +1006,7 @@
       palette: S.genePalette, palettes: PALETTES, rampCss: rampCss(S.genePalette), hexToRgb255, unit: countUnit(),
       radius: Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale), opacity: S.geneOpacity,
       rowName: names ? (r) => names.get(R.ids[r]) || "" : null, dsId: S.dsId, exprKey: S.exprKey, ScatterplotLayer, PolygonLayer, NORMAL,
+      expr: e, render: requestRender,             // the layer's Q3 factors; redraw when the Normalise menu changes
       // the ROI outlines (the layer's region overlay, once loaded) and each row's ROI
       regionIds: R.ids, outlines: ((S.overlays || []).find((o) => o.data && (o.file === R.overlayKey || o.key === R.overlayKey)) || {}).data || null };
   }
@@ -3633,7 +3634,10 @@
       }));
     }
     const C = umapCloud("tissue");
-    if (C.n) out.push(umapCloudLayer(C, "tissue"));
+    // an ROI layer coloured by a grouping: each ROI's outline filled with its group's colour (roi.js)
+    if (C.n && byCl && isRois()) out.push(...window.SodaRoi.groupLayers(roiCtx(), C,
+      { discs: (c) => umapCloudLayer(c, "tissue", "roi-"), register: (id, c) => U.drawn.set(id, c) }));
+    else if (C.n) out.push(umapCloudLayer(C, "tissue"));
     return out;
   }
 
