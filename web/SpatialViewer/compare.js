@@ -433,9 +433,7 @@
       `<div id="cmpMsg" class="meta cmp-msg" role="status"></div>`;
     (document.getElementById("sidebar") || document.body).appendChild(sec);
     if (window.SodaLayout) window.SodaLayout.adopt(sec);
-    // under Save and load and Save image (the layout puts a section it does not know last)
-    const after = [$("panelImage"), $("panelSave")].find((x) => x && x.parentElement === sec.parentElement);
-    if (after) after.after(sec);
+    place();
 
     $("cmpLink").onchange = (e) => setLinked(e.target.checked);
     $("cmpAlign").onclick = linkFromHere;
@@ -462,6 +460,13 @@
       if (fit && fit.parentElement === bar) fit.before(b); else bar.appendChild(b);
     }
     paint();
+  }
+  // Under Save and load and Save image. The layout puts a section it does not know last, and Save image is
+  // built later than this one, so the place is taken again when a dataset has opened.
+  function place() {
+    const sec = $("panelCompare");
+    const after = [$("panelImage"), $("panelSave")].find((x) => x && sec && x.parentElement === sec.parentElement);
+    if (after && after.nextElementSibling !== sec) after.after(sec);
   }
   function resetPicker() {
     if (!picker) return;
@@ -533,6 +538,7 @@
       window.addEventListener("soda:opened", () => {
         const S = H.state();
         openedDs = S.m ? S.dsId : null;
+        place();
         if (picker && S.datasets) { picker.setItems(S.datasets, S.dataGroups || (window.SpatialViewerConfig || {}).groups || {}); resetPicker(); }
         missing = []; lastCam = null; snap();
         if (chan) { post("beat", { info: info() }); if (linked && peers.size) askSync(); }
