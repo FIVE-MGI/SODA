@@ -31,7 +31,7 @@ writes <out>/geomx/:
                              ROI 003 of demoA has two segments; ROI 005 is a "C" whose centroid lies
                              outside it.
     <out>/truth_geomx.json   what the test checks against: target values (collapsed here by plain
-                             loops), background, LOQ, positions, areas, groups.
+                             loops), background, LOQ, Q3 normalisation factors, positions, areas, groups.
 """
 from __future__ import annotations
 
@@ -350,6 +350,29 @@ def main(argv=None):
         values[r["sample_id"]] = col
         gm, gsd = geo([float(c[x]) for x in probes[("Demo Panel", "NegProbe-DEMO")]])
         bg[r["sample_id"]] = {"negGeoMean": gm, "loq": max(2.0, gm * gsd ** 2)}
+
+    # ---- truth: Q3 normalisation by plain loops (GeomxTools quantileNorm after the GeoMx workflow's
+    # target filter: targets above their panel's LOQ in >= 10% of the AOIs, plus the negative-probe targets)
+    def pct75(v):                                                        # R quantile type 7
+        s = sorted(v)
+        h = (len(s) - 1) * 0.75
+        lo = int(math.floor(h))
+        return s[lo] + (h - lo) * (s[min(lo + 1, len(s) - 1)] - s[lo])
+    neg_of = {"Demo Panel": "NegProbe-DEMO", "Demo Addon": "Addon Negative"}
+
+    def q3_truth(rs):
+        loq, negv = {}, {}
+        for r in rs:
+            c = counts[r["sample_id"]]
+            for pname, nn in neg_of.items():
+                gm, gsd = geo([float(c[x]) for x in probes[(pname, nn)]])
+                loq[(r["sample_id"], pname)], negv[(r["sample_id"], pname)] = max(2.0, gm * gsd ** 2), gm
+        kept = [k for k, (nm, pname, name) in enumerate(names)
+                if sum(values[r["sample_id"]][k] > loq[(r["sample_id"], pname)] for r in rs) / len(rs) >= 0.1]
+        q3 = [pct75([values[r["sample_id"]][k] for k in kept] + [negv[(r["sample_id"], p)] for p in neg_of]) for r in rs]
+        gq = geo(q3)[0]                                                  # GeomxTools ngeoMean (+0.5 rule)
+        return {"targets": [names[k][0] for k in kept], "q3": q3, "normFactors": [q / gq for q in q3]}
+    q3t = {"scan": q3_truth([r for r in rows if r["scan"] in SCANS]), "grid": q3_truth(rows)}
     truth = {
         "note": "SYNTHETIC", "pixelSizeUm": PX_UM, "scans": {k: list(v) for k, v in SCANS.items()}, "gap": 512,
         "genes": [n for n, _, _ in names], "negativeTargets": ["NegProbe-DEMO", "Addon Negative"],
@@ -358,6 +381,7 @@ def main(argv=None):
                   "tissue": r["tissue"], "genotype": r["genotype"], "area": r["area"], "nuclei": r["nuclei"],
                   "values": values[r["sample_id"]], **bg[r["sample_id"]], **seq[r["sample_id"]],
                   "mask": facts.get((r["scan"], r["roi"], r["segment"]))} for r in rows],
+        "q3": q3t,
     }
     (out / "truth_geomx.json").write_text(json.dumps(truth), encoding="utf-8")
     print(f"synthetic GeoMx study -> {d}  ({len(rows)} AOIs + 1 NTC, {len(names)} targets, 2 scans)")
