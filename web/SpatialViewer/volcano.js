@@ -24,7 +24,7 @@
       <label class="row slim"><span>vs B</span><select id="vcB"></select></label>
       <label class="row slim"><span title="Wilcoxon rank-sum (tie-corrected, as scanpy method='wilcoxon', tie_correct=True), or Welch's t on log1p CP10k (scanpy method='t-test')">Test</span>
         <select id="vcTest"><option value="wilcoxon">Wilcoxon rank-sum</option><option value="welch">Welch t-test</option></select></label>
-      <label class="row slim"><span title="Test a gene only if it is counted in at least this share of the bins of A or of B">Min. % bins</span>
+      <label class="row slim"><span id="lblVcMinPct" title="Test a gene only if it is counted in at least this share of the bins of A or of B">Min. % bins</span>
         <input id="vcMinPct" type="text" inputmode="decimal" value="${DEFAULTS.minPct}" /></label>
       <label class="row slim"><span title="Genes outside the section's variable genes, by name (comma or space separated, up to ${DEFAULTS.maxExtra}); each is one more download">Extra genes</span>
         <input id="vcExtra" type="text" placeholder="e.g. GAPDH, ACTB" autocomplete="off" /></label>
@@ -172,7 +172,7 @@
     }
     return { g, nA, nB, both };
   }
-  const labelOf = (sel, v) => { const o = [...sel.options].find((x) => x.value === v); return o ? o.textContent.replace(/\s*\([^)]*(?:bins|ROIs)\)$/, "").replace(/\s*\(res [^)]*\)$/, "") : v; };
+  const labelOf = (sel, v) => { const o = [...sel.options].find((x) => x.value === v); return o ? o.textContent.replace(/\s*\([^)]*(?:bins|cells|ROIs)\)$/, "").replace(/\s*\(res [^)]*\)$/, "") : v; };
 
   function cancel() {
     if (worker && running) { worker.terminate(); worker = null; }

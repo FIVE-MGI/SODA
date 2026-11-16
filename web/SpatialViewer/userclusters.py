@@ -263,19 +263,24 @@ def read_h5ad(path: Path, embedding: str | None) -> dict:
 
 
 def _palettes(columns: dict) -> dict:
-    """Colour columns of a CSV: '<col>_color' / '<col>.colour' / '<col>_colors' holding #rrggbb per row."""
+    """Colour columns of a CSV: '<col>_color' / '<col>.colour' / '<col>_colors' holding #rrggbb per row,
+    or a bare 'color' column next to exactly one other column (Xenium Explorer's cell groups CSV:
+    cell_id,group,color)."""
     out = {}
     for name, (vals, _) in list(columns.items()):
         m = _COLOR_COL.match(name)
-        if not m or m.group(1) not in columns:
+        target = m.group(1) if m else None
+        if m is None and name.lower() in ("color", "colour", "colors", "colours") and len(columns) == 2:
+            target = next(k for k in columns if k != name)
+        if target is None or target not in columns:
             continue
-        cats = columns[m.group(1)][0]
+        cats = columns[target][0]
         pal = {}
         for c, v in zip(cats, vals):
             h = _HEX.match(v.strip())
             if h and c.lower() not in _NA:
                 pal.setdefault(c, "#" + h.group(1).lower())
-        out[m.group(1)] = pal
+        out[target] = pal
         del columns[name]
     return out
 
@@ -757,6 +762,10 @@ def apply_to_export(ds_dir: Path, dest: Path, specs: list[dict], markers: Path |
                 f = (json.loads(old.read_text(encoding="utf-8")).get("markerSet") or {}).get("file") or ""
                 cand = Path(__file__).resolve().parent / f
                 mk = cand if f.startswith("markers/") and cand.exists() else None
+                if mk is None and f:                  # e.g. an --markers file from outside markers/
+                    log(f"[userclusters] WARNING {key}: the export's marker list ({f}) is not in "
+                        f"web/SpatialViewer/markers/, so suggested names fall back to the default list. "
+                        f"Pass the same --markers file as the export to keep its names.")
             c = celltypes_mod.write_celltypes(er, d, markers=mk, log=log)
             if c:
                 u = {**u, "celltypes": c}

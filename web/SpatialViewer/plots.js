@@ -42,6 +42,8 @@
   const words = () => (modeNow() === "rna" ? { bin: "cell", bins: "cells", above: "a value above 0", indep: "Cells of one sample are not independent replicates" }
     : (curExpr(api.state()) || {}).kind === "rois"      // GeoMx ROI segments (roi.js)
     ? { bin: "ROI", bins: "ROIs", above: "a count above 0", indep: "ROIs of one slide or animal are not independent replicates" }
+    : (curExpr(api.state()) || {}).kind === "cells"     // segmented cells (Xenium, CosMx, MERSCOPE)
+    ? { bin: "cell", bins: "cells", above: "a count above 0", indep: "Neighbouring cells are not independent samples" }
     : { bin: "bin", bins: "bins", above: "a count above 0", indep: "Neighbouring bins are not independent samples" });
   const cacheKey = () => { const S = api.state(); return `${S.dsId}|${S.mode === "rna" ? "rna" : S.exprKey}`; };
   // a clustering is known by its "id" when it has one (a lab's own), else by its Leiden resolution
@@ -81,7 +83,7 @@
         <label class="pl-m" title="Order of the genes (rows)">Genes <select id="plOrderG"><option value="listed">as listed</option><option value="cluster">clustered</option><option value="az">A–Z</option></select></label>
         <label title="Order of the groups">Groups <select id="plOrderK"><option value="listed">as listed</option><option value="size">by size</option><option value="cluster">clustered</option></select></label>
         <label class="pl-v" title="Leave out the bins (or cells) where the gene was not counted: the violin then shows only the expressing ones"><input id="plExpr" type="checkbox" /> expressing only</label>
-        <label class="pl-v" title="A seeded sample of the bins behind each violin"><input id="plPts" type="checkbox" checked /> points</label>
+        <label class="pl-v" id="lblPlPts" title="A seeded sample of the bins behind each violin"><input id="plPts" type="checkbox" checked /> points</label>
         <label title="White background, for print"><input id="plLight" type="checkbox" /> light</label>
       </div>
       <div class="pl-ctl pl-v" id="plVRow"><span id="plVChips" class="pl-chips"></span><select id="plVAdd"></select></div>

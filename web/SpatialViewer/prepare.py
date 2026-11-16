@@ -27,8 +27,8 @@ writes the static tree. For an image dataset (akoya / tiff / xenium) it also add
 of marker means (from full-resolution pixels) as a "protein" expression layer with a QC report,
 a UMAP, Leiden clusters and suggested names (--grid-um N to change the square size, 0 to skip;
 --markers picks the marker list, default markers/protein_generic.json for protein and
-markers/rna_generic.json for Visium genes; tissue-specific lists such as markers/nerve.json and
-markers/akoya_nerve.json are passed with --markers). The --user-* options attach the lab's own
+markers/rna_generic.json for Visium genes; tissue-specific lists such as markers/nerve.json,
+markers/brain.json and markers/akoya_nerve.json are passed with --markers). The --user-* options attach the lab's own
 UMAP and clusterings (Seurat / scanpy, matched by barcode) to one spatial layer (userclusters.py);
 `userclusters` does the same on an existing export without re-running it.
 """
@@ -133,7 +133,7 @@ def main(argv=None):
                                      "holds: markers/rna_generic.json (genes) for Visium / RNA layers, "
                                      "markers/protein_generic.json (\"modality\": \"protein\") for the grid layer "
                                      "of an image dataset. Tissue-specific lists: markers/nerve.json, "
-                                     "markers/akoya_nerve.json. A list of the other modality is skipped with a message.")
+                                     "markers/brain.json, markers/akoya_nerve.json. A list of the other modality is skipped with a message.")
     e.add_argument("--grid-um", type=float, default=16.0,
                    help="image datasets (Akoya / multiplex TIFF, not Visium or H&E): size in µm of the grid squares "
                         "whose marker means become a 'protein' expression layer with a UMAP and clusters "
