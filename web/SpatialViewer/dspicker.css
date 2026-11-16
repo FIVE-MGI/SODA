@@ -14,6 +14,18 @@
 .dsp-search { flex: 1 1 auto; min-width: 0; background: var(--panel); }
 .dsp-search:focus { outline: none; border-color: var(--accent); }
 .dsp-x { display: none; flex: 0 0 auto; padding: 0 10px; font-size: 16px; line-height: 1; }
+/* Filters (only when some dataset has tags): one drop-down per tag name, in columns that keep
+   their width whatever the counts in them say, so nothing moves while one types or chooses. */
+.dsp-fil { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 8px;
+  padding: 6px; border-bottom: 1px solid var(--line); }
+.dsp-f { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dsp-fk { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsp-fs { width: 100%; min-width: 0; padding: 3px 4px; background: var(--panel); text-overflow: ellipsis; }
+.dsp-fs:focus { outline: none; border-color: var(--accent); }
+.dsp-fs.on { border-color: var(--accent); color: var(--accent); }
+.dsp-clr { align-self: end; justify-self: start; padding: 3px 8px; font-size: 11px; color: var(--muted); visibility: hidden; }
+.dsp-clr.on { visibility: visible; }
 .dsp-list { position: relative; overflow-y: auto; max-height: min(420px, 58vh); overscroll-behavior: contain; outline: none; }
 .dsp-g[hidden], .dsp-o[hidden] { display: none; }
 .dsp-h { position: sticky; top: 0; z-index: 1; padding: 5px 8px 4px; background: var(--panel2); color: var(--muted);

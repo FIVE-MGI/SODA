@@ -679,6 +679,10 @@ def find_visium(cx: Ctx) -> list[dict]:
         if layers:
             _ev(c, "Space Ranger output", (rel + "/") if rel else ".", "layers " + ", ".join(layers))
             c["notes"] += [b + ": that layer is skipped" for b in bad]
+            more = [k for k in layers if k not in ("008um", "016um", "spots")]
+            if more and len(more) < len([k for k in layers if k != "spots"]):
+                c["notes"].append("prepare.py builds the 008um / 016um layers unless told otherwise: --bins all (or a list "
+                                  "of layers) also builds " + ", ".join(more))
         else:
             _ev(c, "Space Ranger output", (rel + "/") if rel else ".", "no complete count layer")
             for b in bad:

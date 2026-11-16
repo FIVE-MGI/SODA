@@ -117,6 +117,10 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   automatically, and a slide QC box lists weak and saturated stains and outlines folds and
   bright edges. Set a cut-off per marker (by eye or Otsu) to read the % of tissue squares
   positive for it, or count squares per cluster. No cell segmentation (yet).
+- **Save as image.** **Save image** (Save tab, or the camera beside Fit) saves the map as a
+  PNG exactly as shown in Tissue, UMAP or Side by side, with a legend, the scale bar and the
+  dataset's name, at 1x, 2x or 4x the screen's pixels (finer image tiles at 2x / 4x), on a
+  black, white or transparent background. The volcano plot saves as PNG or SVG, like the plots.
 - **Region overlays.** GeoJSON regions (for example from QuPath) drawn over the image;
   click a region to restrict the gene density to its bins.
 - **Single-cell RNA-seq.** UMAP from AnnData (`.h5ad`) or 10x output, coloured by cluster
@@ -285,9 +289,10 @@ email wbuchser@wustl.edu with any questions about hosting.
   Visium HD part, on Windows) 0.6 GB; a CosMx slide's counts (26 million transcripts, without its images) 0.76 GB; a
   whole mouse brain Stereo-seq chip 2.7 GB to prepare (3.9 GB from `tissue.gem.gz`) and
   **8.5 GB to export, the largest measured so far**. For whole-section datasets, have more
-  free memory than that. Visium HD with its 2 µm layer has not been measured and is
-  expected to need the most; if it runs out, leave that layer out with `--bins 008um,016um`
-  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
+  free memory than that. Visium HD is prepared with its 8 µm and 16 µm layers by default;
+  its 2 µm layer (`--bins all`) has not been measured and is expected to need the most
+  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)). The notebook
+  compares your free memory with these numbers before the Prepare step and warns.
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
   the export a tiled copy. Time has not been benchmarked on a reference machine; measured
   examples are in [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
