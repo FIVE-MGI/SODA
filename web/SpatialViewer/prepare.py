@@ -1,5 +1,10 @@
 r"""Build the viewer cache for one dataset.
 
+    python prepare.py detect <folder or file>          (what is in there? read-only; --json for a script)
+    python prepare.py auto   --src <folder or file> --id sample1 --out <cache folder> [--kind <kind>]
+           (looks at the files, and when it is certain what they are runs the matching command below;
+            when it is not, it stops, lists what it found and prints the --kind ... to add. detect.py)
+
     python prepare.py akoya  --src <folder of NN_Marker_Sample_gray.tif> --id sample1 --out <cache folder>
     python prepare.py tiff   --src <stack.tif|qptiff|ome.tif>            --id x        --out <cache folder>
     python prepare.py visium --image <hires.tif> --outs <spaceranger outs> --id sample1_visiumhd --out <cache folder>
@@ -99,9 +104,102 @@ def parse_geojson_args(items, ds_dir: Path):
     return out
 
 
+# exit codes of `prepare.py auto` when it does not run a command
+AUTO_EXIT = {"ambiguous": 3, "incomplete": 4, "unknown": 5}
+
+
+def _detect_overrides(extra):
+    """The file options a user added to `auto` / `detect` (--image, --gef, --cells-dir ...): they
+    settle the matching missing file or open choice. Everything else in `extra` is handed to
+    the kind's own command untouched. Returns (overrides, the remaining arguments)."""
+    import detect
+    op = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    for k in sorted({a for v in detect.KIND_ARGS.values() for a in v} - {"src"}):
+        opt = "--" + k.replace("_", "-")
+        if k == "pkc":
+            op.add_argument(opt, nargs="+")
+        elif k in ("annotation", "image", "obs"):
+            op.add_argument(opt, action="append")
+        else:
+            op.add_argument(opt)
+    op.add_argument("--images")
+    op.add_argument("--embedding")
+    ns, rest = op.parse_known_args(list(extra))
+    ov = {k: v for k, v in vars(ns).items() if v is not None}
+    for k in ("images", "embedding"):                 # the kind's command needs these two as well
+        if k in ov:
+            rest += ["--" + k, ov[k]]
+    return ov, rest
+
+
+def run_detect(args, extra) -> int:
+    import detect
+    ov, rest = _detect_overrides(extra)
+    rest = [r for i, r in enumerate(rest) if not (r in ("--images", "--embedding") or (i and rest[i - 1] in ("--images", "--embedding")))]
+    if rest:
+        raise SystemExit(f"prepare.py detect: unrecognized arguments: {' '.join(rest)}")
+    try:
+        rep = detect.detect(args.path, kind=args.force_kind, overrides=ov)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    print(json.dumps(rep, indent=1) if args.json else detect.format_report(rep), flush=True)
+    return 0
+
+
+def run_auto(args, extra):
+    """Detect, then run the matching subcommand, or stop with what was found."""
+    import detect
+    ov, rest = _detect_overrides(extra)
+    try:
+        rep = detect.detect(args.src, kind=args.force_kind, overrides=ov)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    if rep["verdict"] != "certain":
+        log(detect.format_report(rep, ds_id=args.id, out=args.out or "<cache>", dest=args.dest or "<export>"))
+        log("")
+        log(f"[auto] not prepared: the verdict is '{rep['verdict']}'"
+            + (", even with --kind " + args.force_kind if args.force_kind else "")
+            + ". Nothing was written. Add what is asked for above (for example --kind <kind>) and run it again.")
+        sys.exit(AUTO_EXIT[rep["verdict"]])
+    c = rep["candidates"][0]
+    if c["kind"] == "rnaseq" and not args.dest:
+        raise SystemExit("[auto] this is single-cell RNA-seq, which is written straight to the export folder: "
+                         "add --dest <export folder> (there is no cache step)")
+    if c["kind"] != "rnaseq" and not args.out:
+        raise SystemExit("[auto] --out <cache folder> is needed")
+    argv2 = detect.prepare_argv(c, args.id, out=args.out, dest=args.dest, extra=rest)
+    if args.threads is not None:
+        argv2 += ["--threads", str(args.threads)]
+    log(f"[auto] {rep['path']}: {c['label']}" + (f" (--kind {args.force_kind})" if args.force_kind else " (detected)"))
+    for e in c["evidence"]:
+        log(f"[auto]   found {e['what']}: {e['where']}" + (f"  ({e['detail']})" if e["detail"] else ""))
+    for n in c["notes"] + rep["extras"]:
+        log(f"[auto]   note: {n}")
+    log("[auto] running: python prepare.py " + " ".join(detect._quote(a) for a in argv2))
+    return main(argv2)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="kind", required=True)
+    dt = sub.add_parser("detect", allow_abbrev=False,
+                        help="say what kind of dataset a folder (or file) holds, how sure that is, what was "
+                             "found and what is missing; nothing is written (detect.py)")
+    dt.add_argument("path", help="a dataset folder, a folder of datasets, or one file")
+    dt.add_argument("--kind", dest="force_kind", help="only consider this kind")
+    dt.add_argument("--json", action="store_true", help="print the full report as JSON")
+    au = sub.add_parser("auto", allow_abbrev=False,
+                        help="detect the kind of a folder and run the matching command when that is certain; "
+                             "otherwise stop (exit 3 ambiguous, 4 incomplete, 5 unknown) and say what to add. "
+                             "Options of the kind's own command are passed through")
+    au.add_argument("--src", required=True, help="the dataset folder (or one file: a QPTIFF, an OME-TIFF, an .h5ad)")
+    au.add_argument("--id", required=True, help="dataset id (folder name in the cache, URL-safe)")
+    au.add_argument("--out", help="cache root folder (every kind except rnaseq)")
+    au.add_argument("--dest", help="static export root (rnaseq only: it has no cache step)")
+    au.add_argument("--kind", dest="force_kind",
+                    help="you say what it is (visium, xenium, cosmx, merscope, stereoseq, geomx, akoya, tiff, rnaseq): "
+                         "used as given even when detection is unsure; stops with the reason when that kind's "
+                         "required files are not there")
 
     def common(p):
         p.add_argument("--id", required=True, help="dataset id (folder name in the cache, URL-safe)")
@@ -234,9 +332,16 @@ def main(argv=None):
         p.add_argument("--threads", type=int,
                        help="BLAS / OpenMP threads for numpy and scipy (default: min(8, CPUs this process may use); "
                             "also the SODA_THREADS environment variable). See threadcap.py.")
-    args = ap.parse_args(argv)
+    args, extra = ap.parse_known_args(argv)
+    if extra and args.kind not in ("auto", "detect"):
+        ap.error("unrecognized arguments: " + " ".join(extra))
     if args.threads is not None and args.threads < 1:
         ap.error("--threads must be 1 or more")
+
+    if args.kind == "detect":
+        return run_detect(args, extra)
+    if args.kind == "auto":
+        return run_auto(args, extra)
 
     if args.kind == "rnaseq":
         import rnaseq
