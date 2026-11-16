@@ -87,6 +87,9 @@ a.linkish { text-decoration: none; }
 .row.check { grid-template-columns: auto 1fr; }
 select, input[type=text] { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
   border-radius: 5px; padding: 5px 7px; font: inherit; }
+/* Safari (WebKit) draws a <select> natively and ignores its background: light grey on white, unreadable. A dark
+   colour scheme makes its own drawing dark; Chrome and Edge keep the background above and get a light arrow. */
+select { color-scheme: dark; }
 input[type=range] { width: 100%; accent-color: var(--accent); height: 18px; }
 input[type=color] { width: 22px; height: 22px; border: 0; padding: 0; background: none; cursor: pointer; }
 input[type=checkbox] { accent-color: var(--accent); }

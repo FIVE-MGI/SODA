@@ -57,7 +57,8 @@ Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
 tile and graphics failures, and, when node is installed, tests/diag_test.js passes (the
-panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright).
+panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright); tests/browsers_test.js
+runs the page on this export in Chromium, WebKit (Safari's engine), Edge and an iPhone-sized WebKit (Playwright).
 Also: prepare.py caps the BLAS / OpenMP threads before numpy loads (threadcap.py: default,
 SODA_THREADS, --threads, a variable already set), the PCA runs on one thread and gives the same
 numbers as on the cap's threads; and the dataset picker (dspicker.js) is wired into the page with its
@@ -2367,6 +2368,15 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
     c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions (exit code)")
+    # the same page in Chromium, WebKit (Safari's engine), Edge and a phone-sized WebKit, on this run's demo export
+    # (SKIPPED without Playwright; a browser that is not installed is skipped on its own)
+    p = subprocess.run([node, str(REPO / "tests" / "browsers_test.js"), "--export", str(root / "export"),
+                        "--shots", str(root / "browsers_shots")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/browsers_test.js: the page works in Chromium, WebKit and Edge (exit code)")
 
 
 THREAD_PROBE = r"""
