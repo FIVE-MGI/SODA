@@ -117,6 +117,10 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   automatically, and a slide QC box lists weak and saturated stains and outlines folds and
   bright edges. Set a cut-off per marker (by eye or Otsu) to read the % of tissue squares
   positive for it, or count squares per cluster. No cell segmentation (yet).
+- **Save as image.** **Save image** (Save tab, or the camera beside Fit) saves the map as a
+  PNG exactly as shown in Tissue, UMAP or Side by side, with a legend, the scale bar and the
+  dataset's name, at 1x, 2x or 4x the screen's pixels (finer image tiles at 2x / 4x), on a
+  black, white or transparent background. The volcano plot saves as PNG or SVG, like the plots.
 - **Region overlays.** GeoJSON regions (for example from QuPath) drawn over the image;
   click a region to restrict the gene density to its bins.
 - **Single-cell RNA-seq.** UMAP from AnnData (`.h5ad`) or 10x output, coloured by cluster
