@@ -213,10 +213,49 @@
   // ---- private container: short-lived read-only access token --------------------
   // The exported datasets live in a private blob container, so a URL on its own
   // fetches nothing. /api/token checks the shared password on the server and
-  // returns a read-only SAS that expires after a few hours; the storage key never
+  // returns a read-only SAS that expires after TOKEN_HOURS (default 1, at most 24; a preset
+  // BLOB_SAS keeps its own expiry; see deploy/azure/api/token/index.js); the storage key never
   // reaches the browser. A session cookie set by that call lets an open tab renew
   // silently, so nobody has to retype the password in the middle of a session.
   const TOKEN_URL = cfg.tokenEndpoint || "";
+  // ---- ?data=<folder link>: someone else's export folder, no config.js needed ----------------
+  // The page reads <folder>/datasets.json (written by catalog.py) and lists every dataset in
+  // it; each one is read from <folder>/<id>/. A query string on the link (a read-only
+  // pass) is added to every file. Off on a password-protected site unless config.js sets
+  // allowDataLinks: a link built by anyone could otherwise point a signed-in reader's page
+  // at a folder they control.
+  // A copy of SODA on someone's own site can name its own folder in config.js (`data:`); the
+  // page then opens it with no ?data= on the link. That one is the site owner's choice, so it
+  // is allowed even where links from outside are not. A ?data= on the link still wins.
+  const DATA_LINKS = cfg.allowDataLinks !== undefined ? !!cfg.allowDataLinks : !TOKEN_URL;
+  const DATA = (() => {
+    const fromLink = (params.get("data") || "").trim();
+    const raw = fromLink || (typeof cfg.data === "string" ? cfg.data.trim() : "");
+    if (!raw) return null;
+    if (fromLink && !DATA_LINKS) return { error: "this site does not open data links (it is password-protected)" };
+    let u;
+    try { u = new URL(raw, location.href); } catch (e) { return { error: `"${raw}" is not a web address` }; }
+    if (!/^https?:$/.test(u.protocol)) return { error: "the data link must start with https://" };
+    const qs = u.search;
+    u.search = ""; u.hash = "";
+    return { root: u.href.replace(/\/?$/, "/"), qs, fromLink: !!fromLink };
+  })();
+  // Settings a data folder may carry in its datasets.json. The folder can be anyone's, so only
+  // these, each checked for its type: nothing in it can name a script, a server or a password.
+  const strList = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, 1000) : undefined);
+  const plainObj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : undefined);
+  function folderSettings(d) {
+    const s = {};
+    if (strList(d.hideChannels)) s.hideChannels = strList(d.hideChannels);
+    if (strList(d.defaultChannels)) s.defaultChannels = strList(d.defaultChannels);
+    if (plainObj(d.labelPositions)) s.labelPositions = plainObj(d.labelPositions);
+    return s;
+  }
+  // Per-dataset settings: from the data folder for a ?data= dataset, else config.js.
+  const dsSettings = (id) => {
+    const d = (S.datasets || []).find((x) => x.id === id);
+    return (d && d.settings) || (cfg.datasets && cfg.datasets[id]) || {};
+  };
   let token = null, tokenWait = null;
   const tokenQuery = () => (token ? "?" + token.sas : "");
   async function requestToken(password) {
@@ -266,7 +305,8 @@
   async function resolveLink(path) {
     // "<id>.link.txt" holds the real URL,
     // either plain or encrypted with the shared password ("enc:v1:...", see links.py).
-    // Legacy: only used for datasets still configured with `linkPath`.
+    // Only used for datasets configured with `linkPath`: the no-server password option
+    // ("Encrypted link files" in deploy/azure/README.md). Production uses /api/token instead.
     if (!/\.link\.txt$/i.test(path)) return path;
     const r = await fetch(path, { cache: "no-cache" });
     if (!r.ok) throw new Error(`${r.status} ${path}`);
@@ -5243,7 +5283,7 @@
     // Positions placed by hand in content/label_editor.html win outright. No solver
     // gets this as right as someone looking at the plot, and once a figure is settled
     // it should not move because the heuristic was retuned.
-    const fixed = (cfg.labelPositions && cfg.labelPositions[S.dsId]) || {};
+    const fixed = dsSettings(S.dsId).labelPositions || (cfg.labelPositions && cfg.labelPositions[S.dsId]) || {};
     const order = Array.from({ length: K }, (_, k) => k).filter((k) => cnt[k] > 0)
       .sort((a, c) => cnt[c] - cnt[a]);
     const placed = [], out = [];
@@ -5742,7 +5782,7 @@
         src = staticSource(`${t.base}${id}/`, tokenQuery);
       }
       else if (d && d.linkPath) src = staticSource(await resolveLink(d.linkPath));
-      else if (d && d.base) src = staticSource(d.base);
+      else if (d && d.base) src = staticSource(d.base, d.qs ? () => d.qs : undefined);   // d.qs: a ?data= link's read pass
       else src = apiSource(id);
       if (stale()) return;                       // another dataset was picked while the password box was up
       S.src = liveSource(src, seq, openCtl.signal);
@@ -5756,7 +5796,8 @@
       return;
     }
     const img = S.m.image;
-    const wanted = (cfg.defaultChannels || []).map((s) => s.toLowerCase());
+    const dsCfg = dsSettings(S.dsId);
+    const wanted = (dsCfg.defaultChannels || cfg.defaultChannels || []).map((s) => String(s).toLowerCase());
     // "open-atto550", "open AF488", "open-cy5": detector slots with no antibody in
     // them. They carry autofluorescence and nothing a viewer should reason about,
     // and on the Akoya panels they are the three biggest files in the set.
@@ -5770,7 +5811,6 @@
     // Some panels carry an antibody that was only ever there to test the stain; it is
     // real data but not part of the panel, and leaving it in the list invites someone
     // to read it as one more marker.
-    const dsCfg = (cfg.datasets && cfg.datasets[S.dsId]) || {};
     const dropped = new Set((dsCfg.hideChannels || []).map((x) => String(x).trim().toLowerCase()));
     const named = img.channels.filter((c) =>
       !HIDE_CHANNEL.test(c.name) && !dropped.has(c.name.trim().toLowerCase()));
@@ -5873,8 +5913,47 @@
     // ?static=<root>&ds=<id> can open an exported dataset that is not in config.js yet
     if (params.get("static") && params.get("ds") && !S.datasets.some((d) => d.id === params.get("ds")))
       S.datasets.push({ id: params.get("ds"), label: `${params.get("ds")} (local export)` });
-    const useServer = !!(params.get("api") || cfg.apiBase || cfg.useLocalServer);
-    $("apiInfo").textContent = useServer ? `server: ${API || location.origin}` : "data: static links (blob)";
+    let dataTitle = "", dataByline = "", dataPaper = "", dataDefault = "";
+    if (DATA && DATA.error) { status(`Cannot open the data link: ${DATA.error}.`, true); return; }
+    if (DATA) {                                     // ?data=: that folder's datasets replace config.js's
+      const at = (id) => ({ base: `${DATA.root}${encodeURIComponent(id)}/`, qs: DATA.qs });
+      const text = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+      try {
+        const cat = await getJSON(`${DATA.root}datasets.json${DATA.qs}`, true);
+        S.datasets = (Array.isArray(cat.datasets) ? cat.datasets : []).filter((d) => d && d.id).map((d) => ({
+          id: String(d.id), label: String(d.label || d.id), group: d.group ? String(d.group) : undefined,
+          settings: folderSettings(d), ...at(String(d.id)) }));
+        S.dataGroups = {};
+        for (const d of S.datasets) if (d.group) S.dataGroups[d.group] = d.group;   // first-seen order
+        dataTitle = text(cat.title, 120);
+        dataByline = text(cat.byline, 300);
+        const paper = text(cat.paper, 2000);
+        dataPaper = /^https:\/\//i.test(paper) ? paper : "";         // a link that opens a page, nothing else
+        dataDefault = text(cat.default, 200);
+        if (!S.datasets.length) { status(`The folder's datasets.json lists no datasets: ${DATA.root}`, true); return; }
+      } catch (e) {
+        const ds = params.get("ds");
+        // the link may name one dataset's own folder (the one holding manifest.json), not the folder above
+        const one = /^404 /.test(e.message) && !ds
+          ? await getJSON(`${DATA.root}manifest.json${DATA.qs}`, true).catch(() => null) : null;
+        if (one) {
+          const id = String(one.id || "dataset");
+          S.datasets = [{ id, label: String(one.label || id), base: DATA.root, qs: DATA.qs }];
+        }
+        else if (ds && /^404 /.test(e.message)) S.datasets = [{ id: ds, label: ds, ...at(ds) }];   // no list, one named set
+        else {
+          status(/^404 /.test(e.message)
+            ? `No datasets.json in ${DATA.root} — run catalog.py on the export folder (the notebook does this) and upload it, or check the link.`
+            : /^40[13] /.test(e.message)
+            ? `${DATA.root} is not readable (${e.message.slice(0, 3)}). The folder must allow public reading, or the link must carry a read pass.`
+            : `Could not reach ${DATA.root}. Check the link. If it is right, the storage must allow this page to read it (a CORS rule, see docs/HOSTING.md).`, true);
+          return;
+        }
+      }
+    }
+    const useServer = !DATA && !!(params.get("api") || cfg.apiBase || cfg.useLocalServer);
+    $("apiInfo").textContent = DATA ? `data: ${new URL(DATA.root).host}`
+      : useServer ? `server: ${API || location.origin}` : "data: static links (blob)";
     if (useServer) {
       try {
         const fromServer = await getJSON(apiUrl("datasets"));
@@ -5893,9 +5972,10 @@
     // The list itself is dspicker.js: search, group headings (cfg.groups in their order, then
     // "Other"; an ungrouped ?ds= local export or server listing goes in flat when there are no
     // groups), arrow keys that only move the highlight. Opening happens on Enter or a click.
+    // A ?data= folder brings its own groups (S.dataGroups, from its datasets.json).
     if (!window.SodaDatasetPicker || !$("dsPicker")) { status("This page is out of date: reload it (Ctrl+F5).", true); return; }
     dsPicker = window.SodaDatasetPicker.create({ host: $("dsPicker"), labelledBy: "dsLabel", onPick: (id) => openDataset(id) });
-    dsPicker.setItems(S.datasets, cfg.groups || {});
+    dsPicker.setItems(S.datasets, S.dataGroups || cfg.groups || {});
     Object.assign(window.__spatialViewer, { dsPicker, openDataset });   // for testing from the console
     $("btnFit").onclick = fitView;
     // One button for both directions: if anything is on it turns everything off,
@@ -5965,15 +6045,38 @@
     // the private container, behind the same password and the same expiring
     // credential the imaging data uses.
     let aboutLoaded = false;
+    // about.html from a folder named in the link: rebuild it from an allow-list of tags,
+    // so no script, handler, style or frame from someone else's file reaches this page
+    function safeAbout(html) {
+      const KEEP = new Set(["P", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "B", "STRONG", "I", "EM", "BR", "CODE", "A", "SMALL"]);
+      const src = new DOMParser().parseFromString(html, "text/html").body;
+      const copy = (from, to) => {
+        for (const n of from.childNodes) {
+          if (n.nodeType === 3) { to.appendChild(document.createTextNode(n.nodeValue)); continue; }
+          if (n.nodeType !== 1) continue;
+          if (!KEEP.has(n.tagName)) { if (!/^(SCRIPT|STYLE|IFRAME|OBJECT|TEMPLATE)$/.test(n.tagName)) copy(n, to); continue; }
+          const el = document.createElement(n.tagName);
+          if (n.tagName === "A") {
+            const href = n.getAttribute("href") || "";
+            if (/^https?:\/\//i.test(href)) { el.href = href; el.target = "_blank"; el.rel = "noopener noreferrer"; }
+          }
+          copy(n, el); to.appendChild(el);
+        }
+      };
+      const frag = document.createDocumentFragment();
+      copy(src, frag);
+      return frag;
+    }
     async function loadAbout() {
       if (aboutLoaded) return;
       const body = $("aboutBody");
       body.innerHTML = '<p class="pending">Loading…</p>';
       try {
         const staticRoot = params.get("static");
-        let url;
-        if (staticRoot) url = `${staticRoot.replace(/\/$/, "")}/about.html`;
-        else if (TOKEN_URL) { const t = await ensureToken(); url = `${t.base}about.html${tokenQuery()}`; }
+        let url, trusted = false;
+        if (DATA) url = `${DATA.root}about.html${DATA.qs}`;
+        else if (staticRoot) url = `${staticRoot.replace(/\/$/, "")}/about.html`;
+        else if (TOKEN_URL) { const t = await ensureToken(); url = `${t.base}about.html${tokenQuery()}`; trusted = true; }
         else throw new Error("no source configured");
         const r = await dataFetch(url, { cache: "no-cache" });
         if (r.status === 404) {
@@ -5981,7 +6084,10 @@
           return;                                   // not an error: it just is not written
         }
         if (!r.ok) throw new Error(`${r.status}`);
-        body.innerHTML = await r.text();            // our own authored copy, from our own container
+        // our own container's copy goes in as written; a folder named in the link could be
+        // anyone's, so its text keeps only plain formatting and https links
+        const html = await r.text();
+        if (trusted) body.innerHTML = html; else body.replaceChildren(safeAbout(html));
         aboutLoaded = true;
       } catch (e) {
         body.innerHTML = `<p class="pending">Could not load the description: ${e.message}</p>`;
@@ -5995,8 +6101,11 @@
     $("brandLogos").innerHTML = (brand.logos || []).map((l) =>
       `<img class="${l.className || ""}" src="${l.src}" alt="${l.alt || ""}" />`).join("");
     $("colophon").textContent = brand.byline || "";
+    if (dataTitle) { $("brandTitle").textContent = dataTitle; document.title = `${dataTitle} · SODA`; }
+    if (dataByline) $("colophon").textContent = dataByline;
 
-    const paper = $("lnkPaper"), paperUrl = (cfg.paperUrl || "").trim();
+    // someone else's folder (?data= on the link) never shows this site's own paper
+    const paper = $("lnkPaper"), paperUrl = DATA && DATA.fromLink ? dataPaper : dataPaper || (cfg.paperUrl || "").trim();
     if (paperUrl) {
       paper.href = paperUrl;
       paper.title = paperUrl;
@@ -6058,7 +6167,7 @@
     }).observe($("viewport"));
 
     if (!S.datasets.length) { status("No datasets: add entries to config.js (static links) or set apiBase", true); return; }
-    const want = params.get("ds") || cfg.defaultDataset;
+    const want = params.get("ds") || dataDefault || cfg.defaultDataset;
     const first = S.datasets.find((d) => d.id === want) || S.datasets[0];
     await openDataset(first.id);
   }
