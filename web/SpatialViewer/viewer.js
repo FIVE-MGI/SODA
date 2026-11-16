@@ -251,9 +251,11 @@
     if (plainObj(d.labelPositions)) s.labelPositions = plainObj(d.labelPositions);
     return s;
   }
-  // `tags` ({tissue: "nerve", ...}) for the picker's filters: short strings only, at most 20.
+  // `tags` ({tissue: "nerve", ...}) for the picker's filters: short strings only, at most 20;
+  // names starting with "_" (e.g. __proto__) are dropped.
   const folderTags = (v) => (plainObj(v) ? Object.fromEntries(Object.entries(v)
-    .filter(([k, x]) => typeof x === "string" && k.length <= 40 && x.length <= 80).slice(0, 20)) : undefined);
+    .filter(([k, x]) => typeof x === "string" && k && k[0] !== "_" && k.length <= 40 && x.length <= 80)
+    .slice(0, 20)) : undefined);
   // Per-dataset settings: from the data folder for a ?data= dataset, else config.js.
   const dsSettings = (id) => {
     const d = (S.datasets || []).find((x) => x.id === id);
