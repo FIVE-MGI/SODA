@@ -21,6 +21,9 @@ kind "rois") has one row per AOI:
     overlay       rois.geojson: one polygon per ROI, the dataset's region overlay
     groupings     every categorical annotation column, de-identified as userclusters.py does,
                   written at export as named clusterings with "source": "user"
+    q3            GeomxTools' Q3 normalisation (Q3_RULE): each AOI's Q3 in the cache, the normFactors
+                  per exported row in the layer's manifest entry ("q3") at export; the viewer
+                  multiplies a count by 1 / normFactor (its default for plots, volcano, colours)
 
 Several --image scans are put side by side on one canvas (a study is usually 2-4 slides and
 its comparisons run across them). Without an image (or with --layout grid) the AOIs are drawn
@@ -74,6 +77,25 @@ DISC = 0.6                          # drawn disc: this share of the diameter of 
 COLLAPSE_RULE = ("probes -> targets as GeomxTools aggregateCounts: a target with one probe keeps its count; "
                  "with several, the geometric mean of its probes, 0.5 added to all of them first when any is 0")
 LOQ_RULE = "LOQ = max(2, NegGeoMean * NegGeoSD^2) of the module's negative probes, per AOI"
+# Q3 (upper-quartile) normalisation, as GeomxTools defines it. Source: GeomxTools (Bioconductor,
+# R/NanoStringGeoMxSet-normalize.R), quantileNorm, called by normalize(object, norm_method = "quant",
+# desiredQuantile = 0.75):
+#     qs <- apply(exprs(object), 2, function(x) stats::quantile(x, desiredQuantile))
+#     normFactors <- qs / ngeoMean(qs);   normalised = counts / normFactors   (per segment)
+# ngeoMean (R/utils.R) = geometric mean after thresholdValues (+0.5 on every value when the minimum
+# is under 0.5): _geo below. stats::quantile's default (type 7) = numpy's linear percentile.
+# exprs() holds whatever targets are left at that point; the GeoMx workflow vignette (Bioconductor
+# GeoMxWorkflows, "GeomxTools_RNA-NGS_Analysis") first keeps the targets above the LOQ in >= 10% of
+# the segments plus the negative-probe targets ("DetectionRate >= 0.1 | TargetName %in% neg_probes"),
+# and calls Q3 "typically the preferred normalization strategy for most DSP-NGS RNA studies".
+# Without negative probes (no LOQ) every target is used.
+Q3_QUANTILE = 75.0
+Q3_MIN_DETECTION = 0.10
+Q3_RULE = ("Q3 normalisation as GeomxTools normalize(norm_method = 'quant', desiredQuantile = 0.75): per AOI, Q3 = the "
+           "75th percentile (R quantile type 7) of its target counts; normFactor = Q3 / geometric mean of the Q3s of the "
+           "AOIs (GeomxTools ngeoMean); value = count / normFactor, so values stay count-like. Targets: those above the "
+           "LOQ in >= 10% of the AOIs plus the negative-probe targets, as the GeoMx workflow vignette filters before "
+           "normalising (every target when the panel has no negative probes)")
 NO_EMBED_WHY = ("a few dozen hand-drawn regions: no UMAP or Leiden clusters are computed for an ROI layer; "
                 "the groupings are the annotation columns")
 
@@ -490,6 +512,54 @@ def collapse(P: np.ndarray, probe_target: np.ndarray, n_targets: int) -> np.ndar
     for t in np.flatnonzero(counts > 1):
         T[t] = _geo(P[order[start[t]:start[t + 1]]], axis=0)[0]
     return T
+
+
+def q3_values(G: np.ndarray, neg_T: np.ndarray, detected: np.ndarray | None, n: int, log=print) -> dict:
+    """Each AOI's Q3 for Q3_RULE (cache only; the factors are made at export, over the AOIs exported).
+
+    G: gene targets x AOIs; neg_T: negative-probe targets x AOIs (collapsed as the genes);
+    detected: per gene target, the number of AOIs where it is above its module's LOQ (None: no LOQ).
+    """
+    if detected is not None and n:
+        keep = detected / n >= Q3_MIN_DETECTION
+        Q = np.vstack([G[keep], neg_T])
+        n_neg = int(len(neg_T))
+    else:
+        keep = np.ones(len(G), bool)
+        Q, n_neg = G, 0
+    q = np.percentile(Q, Q3_QUANTILE, axis=0) if len(Q) else np.zeros(n)
+    log(f"[geomx] Q3 normalisation: Q3 over {int(keep.sum()):,} of {len(G):,} targets"
+        + (f" (above LOQ in >= {Q3_MIN_DETECTION:.0%} of the AOIs) + {n_neg} negative-probe target(s)" if detected is not None
+           else " (no negative probes, so no LOQ: every target)")
+        + (f"; median Q3 {np.median(q):.2f}" if len(q) else "")
+        + (f"; WARNING {int((q <= 0).sum())} AOI(s) with Q3 = 0 cannot be Q3-normalised" if (q <= 0).any() else ""))
+    return {"q3": [float(x) for x in q], "genesKept": int(keep.sum()), "genes": int(len(G)), "negativeTargets": n_neg,
+            "loqFilter": detected is not None}
+
+
+def q3_entry(rows: dict, on: np.ndarray, log=print) -> dict | None:
+    """The layer's "q3" entry: GeomxTools' normFactors (Q3 / ngeoMean of the Q3s) per exported row,
+    in positions.bin order. The browser multiplies a count by 1 / normFactor. None for a cache
+    prepared before Q3 was written (the viewer then keeps counts per 10,000)."""
+    qn = rows.get("q3norm")
+    if not qn or len(qn.get("q3", [])) != rows["n"]:
+        log("[geomx] no Q3 values in this cache (prepared by an older version): the plots stay on counts per 10,000. "
+            "Run prepare.py geomx again for Q3 normalisation.")
+        return None
+    q = np.array([np.nan if x is None else x for x in qn["q3"]], np.float64)[on]
+    if not len(q) or not np.isfinite(q).all() or not (q > 0).any():
+        log("[geomx] Q3 normalisation left out: no AOI has a Q3 above 0")
+        return None
+    gm = float(_geo(q)[0])                            # GeomxTools ngeoMean(qs): thresholdValues, then the geometric mean
+    f = q / gm
+    zero = int((q <= 0).sum())
+    log(f"[geomx] Q3 normFactors for {len(q)} AOIs: geometric mean of the Q3s {gm:.3f}, factors {f.min():.3f} .. {f.max():.3f}"
+        + (f"; {zero} AOI(s) with Q3 = 0 get no factor (left out of the Q3 plots)" if zero else ""))
+    return {"method": "Q3", "quantile": Q3_QUANTILE / 100, "normFactors": [float(f"{x:.7g}") for x in f],
+            "geoMeanQ3": round(gm, 6), "genesKept": qn.get("genesKept"), "genes": qn.get("genes"),
+            "negativeTargets": qn.get("negativeTargets"), "loqFilter": qn.get("loqFilter"),
+            "minDetection": Q3_MIN_DETECTION if qn.get("loqFilter") else None, "zeroQ3": zero,
+            "default": True, "rule": Q3_RULE}
 
 
 # ---------------------------------------------------------------------------------------
@@ -941,12 +1011,17 @@ def prepare(args, log=print, geojson=None) -> Path:
     neg.sort(key=lambda b: -pk["modules"][b["module"]]["targets"])     # the main panel first: its values are the QC metrics
     mod_of_gene = np.array([pk["targets"][i]["module"] for i in gene_t])
     above = np.zeros(n)
+    detected = np.zeros(len(gene_t))                     # per target: in how many AOIs it is above its module's LOQ
     if neg:
         loq_by_mod = {b["module"]: b["loq"] for b in neg}
         first = neg[0]["loq"]
         for mi in np.unique(mod_of_gene):
-            above += (G[mod_of_gene == mi] > loq_by_mod.get(int(mi), first)[None, :]).sum(0)
+            sel = mod_of_gene == mi
+            hit = G[sel] > loq_by_mod.get(int(mi), first)[None, :]
+            above += hit.sum(0)
+            detected[sel] = hit.sum(1)
     q3 = np.percentile(G, 75, axis=0) if len(G) else np.zeros(n)
+    q3norm = q3_values(G, T[neg_t], detected if neg else None, n, log)
     area = np.array([_float(col("area", r)) for r in rows])
     nuclei = np.array([_float(col("nuclei", r)) for r in rows])
     log(f"[geomx] {len(genes):,} targets ({len(neg_t)} negative-probe target(s) kept out of the genes), "
@@ -1107,7 +1182,8 @@ def prepare(args, log=print, geojson=None) -> Path:
     cd.mkdir(exist_ok=True)
     (cd / "rows.json").write_text(json.dumps({
         "n": n, "keepSlideNames": bool(args.keep_slide_names), "slide": slide_of, "columns": columns,
-        "qc": {k: [None if not np.isfinite(x) else float(x) for x in v] for k, v in qc.items()}}), encoding="utf-8")
+        "qc": {k: [None if not np.isfinite(x) else float(x) for x in v] for k, v in qc.items()},
+        "q3norm": q3norm}), encoding="utf-8")
 
     # ---- manifest ---------------------------------------------------------------------------
     plate_ord, _ = ordinal(plates)
@@ -1118,7 +1194,9 @@ def prepare(args, log=print, geojson=None) -> Path:
                     "targets": m["targets"], "probes": m["probes"], "negativeProbes": m["negativeProbes"]}
                    for m in pk["modules"]],
         "collapse": COLLAPSE_RULE, "loq": LOQ_RULE if neg else None,
-        "normalisation": "stored: target counts as collapsed, not normalised; plots and volcano: log1p counts per 10,000",
+        "normalisation": "stored: target counts as collapsed, not normalised; plots and volcano: log1p of the Q3-normalised "
+                         "counts (GeomxTools Q3, factors in the layer's 'q3' entry at export; the default), or log1p counts per "
+                         "10,000; the colours on the slide: Q3-normalised counts, or the raw counts",
         "dcc": {"used": int(n), "inFolder": len(store.files), "sharePkcMapped": round(mapped, 5)},
         "scans": scan_meta,
         "ntc": [{"plate": int(ntc_plate[x["plate"]]) + 1, "total": x["total"]} for x in ntc],
@@ -1346,10 +1424,17 @@ def write_groupings(er, d: Path, rows: dict, on: np.ndarray, log=print) -> dict 
 
 def export_layer(er, d: Path, ds_dir: Path, layer: dict, log=print) -> tuple[dict | None, dict | None, dict | None]:
     """export.py's hook for a layer of kind "rois": (binQc block, hvg entry, umap entry).
-    No section UMAP, no Leiden, no suggested cell types, no variable-gene selection."""
+    No section UMAP, no Leiden, no suggested cell types, no variable-gene selection.
+    Also sets layer["q3"] (q3_entry) on the manifest's layer dict itself: export.py writes the
+    exported manifest's "expr" entries from these same dicts."""
     rows, on = _cache_rows(ds_dir, er)
     log(f"[geomx] {layer.get('key')}: ROI layer ({int(on.sum())} AOIs): no UMAP, Leiden clusters or cell-type "
         f"suggestions are computed; groupings come from the annotation")
+    q3 = q3_entry(rows, on, log)
+    layer.pop("q3", None)
+    if q3:
+        deid.assert_clean(q3, f"q3 entry of {layer.get('key')}")
+        layer["q3"] = q3
     q = write_qc(er, Path(d), rows, on, log)
     h = write_target_chunks(er, Path(d), layer.get("micronsPerPixel"), log=log)
     u = write_groupings(er, Path(d), rows, on, log)

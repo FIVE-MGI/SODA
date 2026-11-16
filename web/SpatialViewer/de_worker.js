@@ -153,9 +153,11 @@ const DE = (() => {
   // ---- the run ------------------------------------------------------------------------
   // msg: { chunks: [ArrayBuffer], group: Uint8Array per row, nGenes, geneNames,
   //        extra: [{ name, xyv: Float32Array }], positions: Float32Array (only with extra),
-  //        params: { minUmi, cap, seed, minPct, test: "wilcoxon" | "welch" } }
+  //        params: { minUmi, cap, seed, minPct, test: "wilcoxon" | "welch" },
+  //        scale: Float32Array per row | null }  scale (GeoMx Q3, volcano.js): a count x scale[row] replaces
+  //        CP10k (scale = 1 / GeomxTools' Q3 normFactor; 0 = no factor: the row is left out with the low ones)
   function run(msg, progress = () => {}) {
-    const P = msg.params, t0 = Date.now(), times = {};
+    const P = msg.params, t0 = Date.now(), times = {}, sc = msg.scale || null;
     const minUmi = P.minUmi != null ? P.minUmi : 10, cap = P.cap || Infinity, minPct = P.minPct != null ? P.minPct : 0.05;
     progress("Reading bins", 0);
     const parsed = msg.chunks.map(parseChunk);
@@ -166,7 +168,7 @@ const DE = (() => {
         const g = msg.group[c.row[i]];
         if (g !== 1 && g !== 2) continue;
         found[g]++;
-        if (c.lib[i] < minUmi) { low[g]++; continue; }
+        if (c.lib[i] < minUmi || (sc && !(sc[c.row[i]] > 0))) { low[g]++; continue; }
         refRow.push(c.row[i]); refC.push(ci); refI.push(i);
       }
     });
@@ -178,7 +180,7 @@ const DE = (() => {
     for (const g of [1, 2]) if (byG[g].length > cap) { sampledFrom[g] = byG[g].length; byG[g] = sample(byG[g], cap, rand); }
     const nA = byG[1].length, nB = byG[2].length;
     const info = { foundA: found[1], foundB: found[2], lowA: low[1], lowB: low[2], nA, nB,
-                   sampledFromA: sampledFrom[1], sampledFromB: sampledFrom[2], minUmi, cap: Number.isFinite(cap) ? cap : null, minPct, test: P.test };
+                   sampledFromA: sampledFrom[1], sampledFromB: sampledFrom[2], minUmi, cap: Number.isFinite(cap) ? cap : null, minPct, test: P.test, norm: sc ? "q3" : "cp10k" };
     if (nA < 3 || nB < 3) throw new Error(`Each group needs at least 3 bins with >= ${minUmi} UMI; A has ${nA}, B has ${nB}.`);
     times.gather = Date.now() - t0;
 
@@ -198,7 +200,7 @@ const DE = (() => {
     for (const g of [1, 2]) {
       const fill = off[g].slice(0, G), V = vals[g];
       for (const k of byG[g]) {
-        const c = parsed[refC[k]], i = refI[k], f = 1e4 / c.lib[i];
+        const c = parsed[refC[k]], i = refI[k], f = sc ? sc[c.row[i]] : 1e4 / c.lib[i];
         for (let p = c.ip[i]; p < c.ip[i + 1]; p++) {
           const x = c.ct[p]; if (!(x > 0)) continue;
           const j = c.gi[p], cp = x * f, v = Math.log1p(cp);
@@ -216,7 +218,8 @@ const DE = (() => {
       // kept bin of each row (A or B) and its library size
       const NONE = 0xFFFFFFFF, keptOf = new Uint32Array(nRows).fill(NONE), libOf = new Float64Array(nA + nB), grpOf = new Uint8Array(nA + nB);
       let q = 0;
-      for (const g of [1, 2]) for (const k of byG[g]) { keptOf[refRow[k]] = q; libOf[q] = parsed[refC[k]].lib[refI[k]]; grpOf[q] = g; q++; }
+      // libOf holds the multiplier: 1e4 / library, or the Q3 scale
+      for (const g of [1, 2]) for (const k of byG[g]) { keptOf[refRow[k]] = q; libOf[q] = sc ? sc[refRow[k]] : 1e4 / parsed[refC[k]].lib[refI[k]]; grpOf[q] = g; q++; }
       let hash = null;
       const keyOf = (x, y) => `${x},${y}`;
       msg.extra.forEach((ex, e) => {
@@ -237,7 +240,7 @@ const DE = (() => {
           if (rows[k] === NONE) continue;
           const kb = keptOf[rows[k]]; if (kb === NONE) continue;
           const x = xyv[3 * k + 2]; if (!(x > 0)) continue;
-          const cp = x * (1e4 / libOf[kb]), v = Math.log1p(cp), g = grpOf[kb];   // rounded as the chunk genes are: ties stay ties
+          const cp = x * libOf[kb], v = Math.log1p(cp), g = grpOf[kb];   // rounded as the chunk genes are: ties stay ties
           (g === 1 ? a : b).push(v); sLog[g][j] += v; qLog[g][j] += v * v; sCp[g][j] += cp; nz[g][j]++;
         }
         extraVals.push([Float64Array.from(a), Float64Array.from(b)]);

@@ -51,7 +51,8 @@ annotation workbook / CSV / lab worksheet, two scans with ROI polygons and masks
 twice, with its scans and without (a drawn grid): one row per ROI segment, target values =
 the generator's own probe collapse, negative probes out of the genes and behind the LOQ,
 positions inside the ROI outlines, the annotation columns as groupings with no UMAP, the GeoMx
-QC values, and no slide name or Sample_ID in the export (check_geomx).
+QC values, the Q3 normalisation factors (= the generator's plain-loop GeomxTools Q3), and no slide
+name or Sample_ID in the export (check_geomx).
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
@@ -1476,6 +1477,12 @@ def check_geomx(c: Checker, root: Path) -> dict:
     c.ok(np.allclose(qv("area"), [a["area"] for a in aois], rtol=1e-5) and np.allclose(qv("nuclei"), [a["nuclei"] for a in aois]),
          "binqc area and nuclei from the annotation")
     c.ok(np.allclose(qv("q3"), np.percentile(V, 75, axis=0), rtol=1e-5), "binqc q3 = third quartile of the AOI's target values")
+    q3e, q3t = L.get("q3") or {}, (tr.get("q3") or {}).get("scan") or {}
+    c.ok(len(q3e.get("normFactors", [])) == len(aois) == len(q3t.get("normFactors", []))
+         and np.allclose(q3e["normFactors"], q3t["normFactors"], rtol=1e-5),
+         "rois q3 normFactors = GeomxTools Q3 (75th pct over targets above LOQ in >= 10% of AOIs + negative probes) / ngeoMean, as the generator's plain loops")
+    c.eq((q3e.get("genesKept"), q3e.get("negativeTargets"), q3e.get("default")), (len(q3t.get("targets", [])), 2, True),
+         "rois q3 entry: targets kept by the LOQ filter, two negative-probe targets, Q3 the default")
 
     # ---- groupings from the annotation, no embedding, nothing computed for cells / bins ----------
     u = L.get("umap") or {}
@@ -1537,6 +1544,8 @@ def check_geomx(c: Checker, root: Path) -> dict:
     Vg = np.array([a["values"] for a in tr["aois"]], np.float64).T
     c.ok([g["n"] for g in tg] == genes and np.allclose([g["t"] for g in tg], Vg.sum(1), rtol=1e-5, atol=1e-3),
          "grid dataset: the same targets and totals over all 15 AOIs")
+    fg, ft = (Lg.get("q3") or {}).get("normFactors", []), ((tr.get("q3") or {}).get("grid") or {}).get("normFactors", [])
+    c.ok(len(fg) == len(ft) == len(tr["aois"]) and np.allclose(fg, ft, rtol=1e-5), "grid dataset: Q3 normFactors over its 15 AOIs, as the generator's plain loops")
     blob = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in og.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson"))
     c.ok(tr["fakeId"][-4:] not in blob and "block" not in blob and "DSP-" not in blob, "grid dataset: no slide name or Sample_ID in the export text")
     return {"aois": len(aois), "targets": len(genes), "geneFiles": files, "groupings": names, "gridAois": int(len(pg))}
@@ -2607,6 +2616,10 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     for f in ("viewer.js", "diag.js"):
         q = subprocess.run([node, "--check", str(APP / f)], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         c.eq(q.returncode, 0, f"node --check {f}")
+    p = subprocess.run([node, str(REPO / "tests" / "compat_test.js"), "--python", sys.executable], cwd=str(REPO),   # old exports still open (SKIPPED without Playwright)
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions (exit code)")
 
 
 THREAD_PROBE = r"""
