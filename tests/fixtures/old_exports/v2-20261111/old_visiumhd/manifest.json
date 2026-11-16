@@ -1,0 +1,147 @@
+{
+ "id": "old_visiumhd",
+ "label": "old_visiumhd",
+ "kind": "visium",
+ "pixelSizeUm": 0.32,
+ "created": "2026-11-16T16:08:56",
+ "expr": [
+  {
+   "key": "016um",
+   "label": "16 \u00b5m bins",
+   "nBins": 3388,
+   "nGenes": 300,
+   "binSizeUm": 16.0,
+   "spotDiameterPx": 50.0,
+   "micronsPerPixel": 0.32,
+   "imageScale": 1.0,
+   "regions": [
+    {
+     "id": 1,
+     "name": "Left",
+     "nBins": 48
+    },
+    {
+     "id": 2,
+     "name": "Right",
+     "nBins": 48
+    },
+    {
+     "id": 3,
+     "name": "Core",
+     "nBins": 4
+    }
+   ],
+   "regionOverlay": "00_Regions.geojson",
+   "hvg": {
+    "nGenes": 299,
+    "chunkPx": 1562,
+    "chunks": 1,
+    "bytes": 62972
+   },
+   "umap": {
+    "nEmbedded": 100,
+    "clusterings": [
+     {
+      "resolution": 0.3,
+      "n": 2
+     },
+     {
+      "resolution": 0.6,
+      "n": 3
+     },
+     {
+      "resolution": 1.0,
+      "n": 4
+     }
+    ],
+    "default": 1,
+    "celltypes": {
+     "nTypes": 6,
+     "markerSet": "Synthetic demo regions"
+    }
+   }
+  }
+ ],
+ "overlays": [
+  {
+   "key": "00_Regions",
+   "label": "Regions",
+   "file": "00_Regions.geojson"
+  }
+ ],
+ "crop": {
+  "box": [
+   1744,
+   1744,
+   2256,
+   2256
+  ],
+  "ofFullSize": [
+   4000,
+   4000
+  ]
+ },
+ "image": {
+  "width": 512,
+  "height": 512,
+  "levels": 2,
+  "tileSize": 256,
+  "dtype": "uint8",
+  "levelShapes": [
+   [
+    512,
+    512
+   ],
+   [
+    256,
+    256
+   ]
+  ],
+  "channels": [
+   {
+    "index": 0,
+    "name": "Red",
+    "color": "#ff0000",
+    "bits": [
+     0,
+     255
+    ],
+    "window": [
+     93.0,
+     255.0
+    ],
+    "dataMax": 255
+   },
+   {
+    "index": 1,
+    "name": "Green",
+    "color": "#00ff00",
+    "bits": [
+     0,
+     255
+    ],
+    "window": [
+     52.0,
+     225.0
+    ],
+    "dataMax": 231
+   },
+   {
+    "index": 2,
+    "name": "Blue",
+    "color": "#0000ff",
+    "bits": [
+     0,
+     255
+    ],
+    "window": [
+     137.0,
+     233.0
+    ],
+    "dataMax": 238
+   }
+  ]
+ },
+ "static": true,
+ "tileFormat": "jpg"
+}

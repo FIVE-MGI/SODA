@@ -2252,6 +2252,10 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     for f in ("viewer.js", "diag.js"):
         q = subprocess.run([node, "--check", str(APP / f)], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         c.eq(q.returncode, 0, f"node --check {f}")
+    p = subprocess.run([node, str(REPO / "tests" / "compat_test.js"), "--python", sys.executable], cwd=str(REPO),   # old exports still open (SKIPPED without Playwright)
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions (exit code)")
 
 
 THREAD_PROBE = r"""
