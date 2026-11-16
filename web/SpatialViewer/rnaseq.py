@@ -11,8 +11,11 @@ Output  <dest>/<id>/   (upload like the image datasets)
     manifest.json      kind "rnaseq", cell/gene counts, UMAP bounds, color-by columns
     umap.bin           float32 [x, y] per cell
     obs/<n>.bin        uint16 category code per cell   (or float32 for numeric columns)
-    genes.json         [{n: name, p: fraction of cells expressing, m: max value}]
-    gene/<NAME>.bin    uint32 k, uint32[k] cell index, float32[k] value   (expressing cells only)
+    genes.json         [{n: name, p: fraction of cells expressing, m: max value, s, o, b}]
+    genepack/<hash>-<i>.pack   every gene's  uint32 k, uint32[k] cell index, float32[k] value
+                       (expressing cells only) end to end; s / o / b in genes.json say where
+                       (genepack.py, read with one HTTP Range request per gene)
+    gene/<NAME>.bin    the same, one file per gene: only with gene_files "loose" / "both"
 
 Values: if the matrix holds integer counts they are normalised to log1p(counts per 10k);
 otherwise they are exported as provided (already normalised).
@@ -35,6 +38,7 @@ import numpy as np
 from scipy import sparse
 
 import deid
+import genepack
 
 MAX_CATEGORIES = 200          # columns with more distinct values (barcodes, ids) are not exported
 
@@ -223,12 +227,16 @@ def write_obs(out: Path, obs: dict, ds_id: str, colors: dict | None = None, log=
     return obs_meta
 
 
-def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=print) -> Path:
+def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=print,
+                  gene_files: str = genepack.DEFAULT_MODE, shard_mb: float = genepack.SHARD_MB) -> Path:
     t0 = time.time()
     ds_id = deid.anonymize(ds_id, form="slug", context=f"rnaseq id")
     label = deid.anonymize(label, form="text", context=f"rnaseq label {ds_id}")
     out = Path(dest) / ds_id
-    (out / "gene").mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    loose = gene_files in ("loose", "both")
+    if loose:
+        (out / "gene").mkdir(exist_ok=True)
     (out / "obs").mkdir(exist_ok=True)
     n_cells, n_genes = X.shape
     log(f"[rnaseq] {n_cells:,} cells x {n_genes:,} genes -> {out}")
@@ -254,6 +262,8 @@ def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=pr
 
     # ---- genes -----------------------------------------------------------------------
     listing = []
+    pw = genepack.PackWriter(out, shard_mb=shard_mb, log=log) if gene_files in ("pack", "both") else None
+    where = {}
     for gi, name in enumerate(genes):
         a, b = X.indptr[gi], X.indptr[gi + 1]
         k = int(b - a)
@@ -261,16 +271,26 @@ def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=pr
             continue
         idx = X.indices[a:b].astype("<u4")
         val = X.data[a:b].astype("<f4")
-        (out / "gene" / f"{_encode(name)}.bin").write_bytes(np.uint32(k).tobytes() + idx.tobytes() + val.tobytes())
+        payload = np.uint32(k).tobytes() + idx.tobytes() + val.tobytes()
+        if pw is not None and name not in where:
+            where[name] = pw.add(name, payload)
+        if loose:
+            (out / "gene" / f"{_encode(name)}.bin").write_bytes(payload)
         listing.append({"n": name, "p": round(k / n_cells, 4), "m": _safe_max(val)})
+    pack = pw.finish() if pw is not None else None
+    if pack and not loose:
+        genepack.note_loose(out, log=log)
     listing.sort(key=lambda d: -d["p"])
-    (out / "genes.json").write_text(json.dumps(listing, separators=(",", ":"), allow_nan=False), encoding="utf-8")
-    log(f"[rnaseq] {len(listing):,} gene files  ({time.time() - t0:.0f}s)")
+    genepack.atomic_json(out / "genes.json", genepack.with_index(listing, where), allow_nan=False)
+    log(f"[rnaseq] {len(listing):,} genes" + (f" -> {len(pack['shards'])} pack shard(s)" if pack else "")
+        + (" + one file each" if loose else "") + f"  ({time.time() - t0:.0f}s)")
 
     lo, hi = np.nanmin(emb, axis=0), np.nanmax(emb, axis=0)
     manifest = {"id": ds_id, "label": label, "kind": "rnaseq", "static": True,
                 "nCells": int(n_cells), "nGenes": len(listing), "valueLabel": value_label,
                 "bounds": [float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1])], "obs": obs_meta}
+    if pack:
+        manifest["genePack"] = pack
     deid.assert_clean({k: v for k, v in manifest.items()}, f"manifest of {ds_id}")
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     log(f"[rnaseq] done -> {out}  ({time.time() - t0:.0f}s)")
@@ -285,11 +305,13 @@ QC_COLUMNS = {"n_genes", "n_genes_by_counts", "total_counts", "pct_counts_mt", "
 
 def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedding: str = "X_umap",
                           tmpdir: Path | None = None, min_cells: int = 3, chunk_nnz: int = 20_000_000,
-                          log=print) -> Path:
+                          log=print, gene_files: str = genepack.DEFAULT_MODE,
+                          shard_mb: float = genepack.SHARD_MB) -> Path:
     """Two passes over the sparse matrix (raw/X if present, else X):
     1) count non-zeros per gene;  2) normalise each cell (log1p counts-per-10k when the values
     are integer counts) and scatter every entry into a gene-major memmap on local disk.
-    Then one small file per gene.  Peak RAM ~1 GB per 20M non-zeros."""
+    Then each gene's arrays into the pack (or one small file per gene, gene_files "loose").
+    Peak RAM ~1 GB per 20M non-zeros."""
     import tempfile
     t0 = time.time()
     f = h5py.File(path, "r")
@@ -315,7 +337,11 @@ def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedd
     ds_id = deid.anonymize(ds_id, form="slug", context="rnaseq id")
     label = deid.anonymize(label, form="text", context=f"rnaseq label {ds_id}")
     out = Path(dest) / ds_id
-    (out / "gene").mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    loose = gene_files in ("loose", "both")
+    if loose:
+        (out / "gene").mkdir(exist_ok=True)
+    pw, where, pack = None, {}, None
     log(f"[rnaseq] {n_cells:,} cells x {n_genes:,} genes, {nnz:,} non-zeros (source {src.name}) -> {out}")
 
     # ---- obs + palettes (small) -----------------------------------------------------------
@@ -394,20 +420,30 @@ def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedd
             log(f"[rnaseq]   pass 2 {done / nnz:5.1%}  ({time.time() - t0:.0f}s)")
         mm_idx.flush(); mm_val.flush()
 
-        # ---- one file per gene --------------------------------------------------------------
+        # ---- each gene into the pack (or one file per gene) -----------------------------------
         listing = []
+        pw = genepack.PackWriter(out, shard_mb=shard_mb, log=log) if gene_files in ("pack", "both") else None
         for gi, name in enumerate(genes):
             a, b = int(offsets[gi]), int(offsets[gi + 1])
             k = b - a
             if k < min_cells:
                 continue
             v = np.array(mm_val[a:b], dtype="<f4")          # copies: no view may keep the memmap open
-            (out / "gene" / f"{_encode(name)}.bin").write_bytes(
-                np.uint32(k).tobytes() + np.array(mm_idx[a:b], dtype="<u4").tobytes() + v.tobytes())
+            payload = np.uint32(k).tobytes() + np.array(mm_idx[a:b], dtype="<u4").tobytes() + v.tobytes()
+            if pw is not None and name not in where:
+                where[name] = pw.add(name, payload)
+            if loose:
+                (out / "gene" / f"{_encode(name)}.bin").write_bytes(payload)
             listing.append({"n": name, "p": round(k / n_cells, 4), "m": _safe_max(v)})
             if len(listing) % 5000 == 0:
-                log(f"[rnaseq]   {len(listing):,} gene files ({time.time() - t0:.0f}s)")
+                log(f"[rnaseq]   {len(listing):,} genes ({time.time() - t0:.0f}s)")
+        pack = pw.finish() if pw is not None else None
+        pw = None
+        if pack and not loose:
+            genepack.note_loose(out, log=log)
     finally:
+        if pw is not None:                                 # failed half way: no half-written shards left
+            pw.abort()
         import gc
         import shutil
         for mm in ("mm_idx", "mm_val"):                    # Windows cannot delete a mapped file
@@ -420,12 +456,14 @@ def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedd
         if tmp.exists():
             log(f"[rnaseq] WARNING: could not remove temporary folder {tmp} - delete it by hand")
     listing.sort(key=lambda d: -d["p"])
-    (out / "genes.json").write_text(json.dumps(listing, separators=(",", ":"), allow_nan=False), encoding="utf-8")
+    genepack.atomic_json(out / "genes.json", genepack.with_index(listing, where), allow_nan=False)
 
     lo, hi = np.nanmin(emb, axis=0), np.nanmax(emb, axis=0)
     manifest = {"id": ds_id, "label": label, "kind": "rnaseq", "static": True,
                 "nCells": int(n_cells), "nGenes": len(listing), "valueLabel": value_label,
                 "bounds": [float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1])], "obs": obs_meta}
+    if pack:
+        manifest["genePack"] = pack
     deid.assert_clean(manifest, f"manifest of {ds_id}")
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     f.close()
@@ -441,13 +479,15 @@ def _safe_max(v) -> float:
 
 
 def repair_gene_listing(ds_dir: Path, log=print) -> int:
-    """Recompute any non-finite "m" in genes.json from the gene files themselves."""
+    """Recompute any non-finite "m" in genes.json from the gene files (or the pack) themselves."""
     p = Path(ds_dir) / "genes.json"
     listing = json.loads(p.read_text(encoding="utf-8").replace(":NaN", ":null").replace(":Infinity", ":null"))
+    man = json.loads((Path(ds_dir) / "manifest.json").read_text(encoding="utf-8"))
+    group = genepack.groups(man)[0]
     fixed = 0
     for e in listing:
         if not isinstance(e.get("m"), (int, float)):
-            b = (Path(ds_dir) / "gene" / f"{_encode(e['n'])}.bin").read_bytes()
+            b = genepack.gene_bytes(ds_dir, group, e)
             k = int(np.frombuffer(b, np.uint32, 1)[0])
             e["m"] = _safe_max(np.frombuffer(b, np.float32, k, 4 + 4 * k))
             fixed += 1

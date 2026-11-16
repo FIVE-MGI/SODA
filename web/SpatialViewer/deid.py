@@ -220,6 +220,38 @@ def check_paths(paths) -> list[str]:
                         continue
                     for i in find_ids(line):
                         problems.append(f"content {q}:{ln}  ->  {i}")
+        problems += check_packs(items)
+    return problems
+
+
+def check_packs(items) -> list[str]:
+    """Gene packs (genepack.py) are binary, so their contents cannot be scanned like text. What can
+    be checked is that they hold nothing but the listed genes: for every exported dataset among
+    `items` (a folder with a manifest.json), each pack's shards exist with the manifest's sizes and
+    the listing's entries tile them byte for byte (no gap, no overlap, nothing unaccounted for), the
+    listing carries only gene names and numbers (n, t / c / p, m, s, o, b), and every gene name is
+    scanned for sample IDs here (whatever the listing's size)."""
+    import genepack
+    problems = []
+    for mf in [q for q in items if q.name == "manifest.json" and q.is_file()]:
+        ds = mf.parent
+        try:
+            m = json.loads(mf.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(m, dict):
+            continue
+        for g in genepack.groups(m):
+            if not g.get("pack"):
+                continue
+            problems += [f"pack    {ds}  ->  {p}" for p in genepack.check_group(ds, g)]
+            try:
+                names = [e.get("n") for e in genepack.read_listing(ds, g)]
+            except (OSError, ValueError, KeyError, TypeError):
+                continue                                  # reported by check_group
+            for n in names:
+                for i in find_ids(str(n)):
+                    problems.append(f"gene    {ds} {g['what']}: {n!r}  ->  {i}")
     return problems
 
 

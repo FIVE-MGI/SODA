@@ -31,6 +31,12 @@ markers/rna_generic.json for Visium genes; tissue-specific lists such as markers
 markers/brain.json and markers/akoya_nerve.json are passed with --markers). The --user-* options attach the lab's own
 UMAP and clusterings (Seurat / scanpy, matched by barcode) to one spatial layer (userclusters.py);
 `userclusters` does the same on an existing export without re-running it.
+
+Gene files: by default each expression layer's (and the molecules', and an RNA-seq set's) per-gene
+arrays are written as a few packs of about 64 MB that the viewer reads with HTTP Range requests
+(genepack.py): a Visium HD layer is a handful of files instead of ~16,000. --gene-files loose
+writes one file per gene as before (for a host that ignores Range requests); --gene-files both
+writes the two side by side (a viewer older than the packs reads that too).
 """
 from __future__ import annotations
 
@@ -130,6 +136,17 @@ def parse_geojson_args(items, ds_dir: Path):
     return out
 
 
+def gene_file_args(p):
+    import genepack
+    p.add_argument("--gene-files", choices=genepack.MODES, default=genepack.DEFAULT_MODE,
+                   help="pack (default): each layer's per-gene arrays in a few ~64 MB packs, read with HTTP Range "
+                        "requests (a handful of files per layer instead of ~16,000); loose: one file per gene, "
+                        "for a host that ignores Range requests; both: the two side by side")
+    p.add_argument("--shard-mb", type=float, default=genepack.SHARD_MB,
+                   help=f"pack shard size in MB (default {genepack.SHARD_MB}; a gene is never split, so one "
+                        f"bigger than this gets a shard of its own)")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="kind", required=True)
@@ -185,6 +202,7 @@ def main(argv=None):
     e.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
+    gene_file_args(e)
     userclusters.add_args(e)
     uc = sub.add_parser("userclusters", help="add your own UMAP / clusters (Seurat, scanpy) to a layer of an existing export")
     uc.add_argument("--id", required=True)
@@ -203,6 +221,7 @@ def main(argv=None):
     r.add_argument("--umap", help="CSV: barcode, UMAP1, UMAP2 (with --mtx)")
     r.add_argument("--obs", action="append", default=[], help="CSV: barcode, column... (repeatable, with --mtx)")
     r.add_argument("--tmp", help="local folder for the temporary gene-major arrays of big files (needs ~8 bytes per non-zero)")
+    gene_file_args(r)
     i = sub.add_parser("inspect", help="print channels / levels / dtype of a TIFF or qptiff without building")
     i.add_argument("--src", required=True)
     x = sub.add_parser("xenium", help="Xenium output folder: morphology_focus stains, cells (cells.csv.gz + "
@@ -275,7 +294,8 @@ def main(argv=None):
         import rnaseq
         if args.h5ad and Path(args.h5ad).stat().st_size > 2e9:          # large files: stream, never load
             rnaseq.export_h5ad_streaming(Path(args.h5ad), Path(args.dest), args.id, args.label or args.id,
-                                         embedding=args.embedding, tmpdir=args.tmp, log=log)
+                                         embedding=args.embedding, tmpdir=args.tmp, log=log,
+                                         gene_files=args.gene_files, shard_mb=args.shard_mb)
             return
         if args.h5ad:
             X, genes, emb, obs = rnaseq.read_h5ad(Path(args.h5ad), args.embedding)
@@ -283,7 +303,8 @@ def main(argv=None):
             X, genes, emb, obs = rnaseq.read_10x(Path(args.mtx), Path(args.umap), [Path(p) for p in args.obs])
         else:
             sys.exit("rnaseq needs --h5ad, or --mtx together with --umap")
-        rnaseq.export_rnaseq(X, genes, emb, obs, Path(args.dest), args.id, args.label or args.id, log=log)
+        rnaseq.export_rnaseq(X, genes, emb, obs, Path(args.dest), args.id, args.label or args.id, log=log,
+                             gene_files=args.gene_files, shard_mb=args.shard_mb)
         return
 
     if args.kind == "export":
@@ -293,7 +314,8 @@ def main(argv=None):
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
                       grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample,
-                      seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args))
+                      seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args),
+                      gene_files=args.gene_files, shard_mb=args.shard_mb)
         return
 
     if args.kind == "userclusters":

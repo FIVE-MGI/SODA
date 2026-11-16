@@ -65,8 +65,11 @@ What the pieces do:
 
 - `static_serve.py <folder> <port>` serves an export folder with the
   `Access-Control-Allow-Origin: *` header the page needs, and `Cache-Control: no-store`
-  so a re-export shows up without a hard reload. It listens on `127.0.0.1` only, so
-  nobody else on your network can reach it.
+  so a re-export shows up without a hard reload. It answers HTTP Range requests (`206
+  Partial Content`), which the page uses to read one gene out of a gene pack; plain
+  `python -m http.server` does not, so do not serve the **export** folder with it (the
+  page itself is fine). It listens on `127.0.0.1` only, so nobody else on your network
+  can reach it.
 - `?static=<url>` tells the page to read every dataset from `<url>/<id>/` and to skip
   passwords and tokens entirely. `?ds=<id>` picks the dataset. With both, the dataset
   does not need to be listed in `config.js`, and `config.js` does not need to exist.
@@ -108,17 +111,34 @@ the de-identification key file.
 
 - **Serve files by exact name.** The viewer never lists folders; it asks for
   `manifest.json`, `tiles/0/3/2/5.png` and so on. Directory listing can (and should) be off.
+- **Answer HTTP Range requests.** An export keeps each layer's per-gene data in a few
+  packs of about 64 MB (`expr/<key>/genepack/*.pack`, see
+  [DATA_FORMAT.md](DATA_FORMAT.md#gene-packs-genepackhash-ipack)) and the page reads one gene
+  with `Range: bytes=<from>-<to>`, expecting `206 Partial Content`. Blob storage (Azure, S3,
+  Google Cloud Storage), Apache, nginx, IIS, GitHub Pages and Netlify do this for static
+  files. Do not let the host or a proxy compress the `.pack` files (`Content-Encoding`): a
+  compressed file cannot be read by range. A host that ignores Range sends the whole pack;
+  the page then manages with packs up to 160 MB (`packWholeMaxMB` in `config.js`), slowly,
+  and refuses larger ones with a message. For such a host, export with
+  `prepare.py export ... --gene-files loose` (one file per gene, as before the packs).
 - **Allow cross-origin reads, if the data is on a different site than the page.**
   The data host must answer `GET` with `Access-Control-Allow-Origin: <page origin>`
-  (or `*` for public data). Same site: nothing to set.
+  (or `*` for public data), allow the `Range` request header in a CORS preflight
+  (`Access-Control-Allow-Headers: Range`; newer browsers send a simple `bytes=a-b` range
+  without asking, older ones and Safari versions ask first) and expose `Content-Range`
+  (`Access-Control-Expose-Headers: Content-Range, Content-Length`), which the page uses to
+  check that a ranged answer comes from the pack the manifest lists. Same site: nothing to set.
 - **Sensible content types.** The viewer reads `.json` and `.bin` as raw bytes whatever
   the server declares, so `application/octet-stream` for `.bin` is fine. Tiles should come
   as `image/png` or `image/jpeg`. If the host adds `X-Content-Type-Options: nosniff`, make
   sure tile types are right.
-- **Cope with many small files.** One imaging dataset is often tens of thousands of files
-  and can pass a hundred thousand (tiles grow with channels × image area; see
-  [PREPARING_DATA.md](PREPARING_DATA.md#how-big-and-how-long)). Check your host's limits on
-  file count and total size before you start.
+- **Cope with many files.** An imaging dataset is mostly image tiles: hundreds to tens of
+  thousands of files (tiles grow with channels × image area; see
+  [PREPARING_DATA.md](PREPARING_DATA.md#how-big-and-how-long)); its genes add only a few packs
+  per layer. (Exports made before the packs, or with `--gene-files loose`, add one file per
+  gene and layer: 50,000-70,000 more for a Visium HD dataset.) Check your host's limits on
+  file count, file size (packs are about 64 MB; a single very abundant gene can make one
+  larger) and total size before you start.
 - **Keep names exact.** File names are case-sensitive on most hosts. Do not let a
   deploy tool rename, minify or "optimise" anything in the data folders.
 
@@ -136,11 +156,17 @@ the de-identification key file.
   ```nginx
   location /viewer-data/ {
       add_header Access-Control-Allow-Origin "https://viewer.example.org" always;
-      types { application/json json geojson; application/octet-stream bin; image/png png; image/jpeg jpg; }
+      add_header Access-Control-Expose-Headers "Content-Range, Content-Length" always;
+      add_header Access-Control-Allow-Headers "Range" always;
+      types { application/json json geojson; application/octet-stream bin pack; image/png png; image/jpeg jpg; }
+      gzip off;                     # a compressed .pack cannot be read by range
   }
   ```
 
-  For IIS, add MIME maps for `.bin` (`application/octet-stream`) and `.geojson`
+  nginx answers Range requests for static files by itself (`206`); a preflight `OPTIONS`
+  request then gets the headers above.
+
+  For IIS, add MIME maps for `.bin` and `.pack` (`application/octet-stream`) and `.geojson`
   (`application/json`), or IIS refuses to serve those files.
 - **Amazon S3 static website / a public S3 bucket.** Upload with
   `aws s3 sync demo/export s3://<bucket>/ ` (it sets content types from the extension).
@@ -148,7 +174,7 @@ the de-identification key file.
 
   ```json
   [{ "AllowedOrigins": ["https://viewer.example.org"], "AllowedMethods": ["GET", "HEAD"],
-     "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
+     "AllowedHeaders": ["*"], "ExposeHeaders": ["Content-Range", "Content-Length"], "MaxAgeSeconds": 3600 }]
   ```
 
 - **A public Azure blob container.** See option A in

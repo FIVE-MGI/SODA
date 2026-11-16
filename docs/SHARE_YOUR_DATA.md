@@ -70,22 +70,35 @@ each file its own web address:
 ### Step 4. Let the SODA page read it (one setting, once)
 
 Browsers only let a page read files from another website if that website says so. This is
-called CORS. Set it once on your storage, allowing the address of the SODA page:
+called CORS. Set it once on your storage, allowing the address of the SODA page.
+
+The page reads one gene at a time out of the export's gene packs (a few large files per layer)
+with an HTTP **Range** request ("bytes 4,128 to 6,563 of this file"). So the rule must also
+allow the `Range` request header (some browsers ask first, in a "preflight") and let the page
+see the `Content-Range` answer header. The rules below do both:
 
 - **Azure:** Storage account → Resource sharing (CORS) → Blob service: Allowed origins
-  `<the SODA page's address, e.g. https://soda.example.org>`, Allowed methods `GET, HEAD`,
-  Allowed headers `*`, Exposed headers `*`, Max age `3600`.
+  `<the SODA page's address, e.g. https://soda.example.org>`, Allowed methods `GET, HEAD, OPTIONS`,
+  Allowed headers `*`, Exposed headers `*`, Max age `3600`. (`*` includes `Range` and
+  `Content-Range`. If you list headers instead, allow at least `range` and expose
+  `content-range, content-length`.) Blob storage answers Range requests by itself, also
+  through a read pass (SAS) on the link.
 - **Amazon S3:** Bucket → Permissions → CORS:
   ```json
   [{ "AllowedOrigins": ["https://soda.example.org"], "AllowedMethods": ["GET", "HEAD"],
-     "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
+     "AllowedHeaders": ["*"], "ExposeHeaders": ["Content-Range", "Content-Length"], "MaxAgeSeconds": 3600 }]
   ```
 - **Google Cloud Storage:** save the same rule as `cors.json`
-  (`[{"origin": ["https://soda.example.org"], "method": ["GET", "HEAD"], "responseHeader": ["*"], "maxAgeSeconds": 3600}]`)
+  (`[{"origin": ["https://soda.example.org"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
   and run `gcloud storage buckets update gs://<bucket> --cors-file=cors.json`.
-- **A web server:** see the nginx example in [HOSTING.md](HOSTING.md#host-notes).
+- **A web server:** see the nginx example in [HOSTING.md](HOSTING.md#host-notes). Apache,
+  nginx and IIS answer Range requests for static files by default.
 
-If you skip this, the page says it "could not reach" your folder and points here.
+If you skip this, the page says it "could not reach" your folder and points here. If the
+storage does not answer Range requests at all (a few file-sharing services and proxies), a
+gene comes back as its whole pack: the page copes with packs up to 160 MB, slowly, and
+otherwise says the host does not support Range requests. For such a host, export with
+`--gene-files loose` (one file per gene, the layout before the packs).
 
 ### Step 5. Make the link
 
