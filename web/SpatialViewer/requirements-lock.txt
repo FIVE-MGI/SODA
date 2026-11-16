@@ -1,0 +1,74 @@
+# SODA lock file: every package with one exact version. install.ps1 / install.sh use this.
+#
+# Do not edit by hand. The human-edited lists are requirements.txt (core) and
+# requirements-clustering.txt (whole-section UMAP and Leiden clusters); this file pins both
+# and everything they pull in. To refresh it after changing them:
+#   1. make a new, empty venv with Python 3.12 or 3.13
+#   2. pip install -r requirements.txt -r requirements-clustering.txt
+#   3. pip freeze, and copy the versions here (keep the platform markers below)
+#   4. run tests/smoke_test.py with that venv, and let the CI run it on Linux
+#
+# Generated 2026-11-16 from pip freeze of a clean Python 3.13.9 venv on Windows 11 x64.
+# Tested end to end (tests/smoke_test.py) on Windows x64 with Python 3.13 only.
+# Cross-platform: checked with a resolver (uv pip compile --only-binary :all:) that every
+# version below has a ready-made wheel for Python 3.12 and 3.13 on Windows x64, Linux x86_64
+# (glibc 2.28 or newer: Ubuntu 20.04, RHEL 8 and later) and macOS 12 or newer on Apple
+# Silicon (arm64), and that nothing outside this list gets pulled in. The CI installs it on
+# Linux, Python 3.12, and runs the smoke test. Not run on a Mac by us.
+# Not covered: Python 3.11 or older (imagecodecs, numpy, scipy here need 3.12+), Python 3.14
+# (no numcodecs 0.15 wheels), Intel Macs (no cryptography / llvmlite wheels), Linux on ARM
+# (no numcodecs wheels). Use the manual install in the README there.
+#
+# Platform-only packages: colorama is Windows-only (click, tqdm); uvloop is used by
+# uvicorn[standard] everywhere except Windows, so it is not in a Windows pip freeze and was
+# added from the resolver's output.
+annotated-doc==0.0.6
+annotated-types==0.8.0
+anyio==4.16.0
+asciitree==1.0.0
+cffi==2.1.1 ; platform_python_implementation != "PyPy"
+click==8.5.1
+cloudpickle==3.1.2
+colorama==0.4.6 ; sys_platform == "win32"
+cryptography==50.0.2
+Deprecated==3.0.1
+fastapi==0.163.1
+fasteners==0.20
+h11==0.16.0
+h5py==3.16.0
+httptools==0.9.0
+idna==3.20
+igraph==1.0.0
+imagecodecs==2026.11.11
+joblib==1.6.0
+leidenalg==0.12.0
+llvmlite==0.50.0
+narwhals==2.28.0
+numba==0.68.1
+numcodecs==0.15.2
+numpy==2.5.5
+opentelemetry-api==1.45.2
+pillow==13.0.0
+pyarrow==26.0.1
+pycparser==3.12 ; platform_python_implementation != "PyPy"
+pydantic==2.14.3
+pydantic_core==2.50.4
+pynndescent==0.7.0
+python-dotenv==1.2.4
+PyYAML==6.0.3
+scikit-learn==1.9.1
+scipy==1.18.1
+starlette==1.10.0
+texttable==1.7.3
+threadpoolctl==3.8.0
+tifffile==2024.12.12
+tqdm==4.70.1
+typing-inspection==0.4.5
+typing_extensions==4.16.0
+umap-learn==0.6.0
+uvicorn==0.54.0
+uvloop==0.23.0 ; sys_platform != "win32" and sys_platform != "cygwin" and platform_python_implementation != "PyPy"
+watchfiles==1.3.0
+websockets==17.4
+wrapt==2.5.2
+zarr==2.18.7
