@@ -104,7 +104,7 @@ Section 0. Run that cell even if you change nothing.
 | `TILE_FORMAT` | `"jpg"` | image tiles as JPEG (several times smaller) or `"png"` (lossless, for exact intensities) |
 | `VISIUM_BINS` | `"008um,016um"` | the Visium HD bin sizes to keep. Add `002um` for the 2 µm layer (very large) |
 | `WORKERS` | `8` | how many tile writers run at once during the export |
-| `MARKERS` | `{"visium": "", "proteomics": ""}` | marker lists for suggested cluster names (see [section 6](#6-marker-lists-for-suggested-names)); empty uses the general list. `"visium"` is used for Visium and Stereo-seq, `"proteomics"` for every other image dataset |
+| `MARKERS` | `{"visium": "", "proteomics": ""}` | marker lists for suggested cluster names (see [section 6](#6-marker-lists-for-suggested-names)); empty uses the general list. `"visium"` is the gene list (Visium, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx), `"proteomics"` the protein list (multichannel protein images) |
 | `REBUILD` | `False` | `True` prepares datasets again even when `cache/<id>/` has them; also delete `export/<id>/`, or old tiles stay |
 
 Two more, outside Section 0:
