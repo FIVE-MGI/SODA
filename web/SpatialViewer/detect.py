@@ -1729,7 +1729,7 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
                 e = "".join(Path(n).suffixes[-2:]).lower() or "(no extension)"
                 exts[e] = exts.get(e, 0) + 1
         top = ", ".join(f"{n} {e}" for e, n in sorted(exts.items(), key=lambda kv: -kv[1])[:6])
-        what = "this file is" if t.single else "nothing in this folder is"
+        what = "this file is not" if t.single else "nothing in this folder is"
         return done(reason="nothing-recognised",
                     message=f"{what} recognised as a dataset SODA can prepare" + (f" (files here: {top})" if top else "")
                             + ". If you know what it is, say so with --kind")

@@ -2296,7 +2296,7 @@ def clean_detect(root: Path):
 
 def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = False):
     """Two cache folders of one dataset hold the same thing: manifests equal (creation time and the spelling of
-    source paths aside) and every layer file byte for byte."""
+    source paths aside), the same files, and the same values in every array."""
     if not c.ok((a / "manifest.json").exists() and (b / "manifest.json").exists(), f"{what}: both caches have a manifest"):
         return
 
@@ -2318,9 +2318,21 @@ def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = 
     c.ok(norm(ma) == norm(mb), f"{what}: the manifest is the explicit subcommand's (kind {ma.get('kind')!r} / {mb.get('kind')!r})")
     fa = sorted(q.relative_to(a).as_posix() for q in a.rglob("*") if q.is_file() and q.name != "manifest.json")
     fb = sorted(q.relative_to(b).as_posix() for q in b.rglob("*") if q.is_file() and q.name != "manifest.json")
-    if c.ok(fa == fb and len(fa) > 3, f"{what}: the same {len(fa)} cache files ({len(fb)} from the explicit subcommand)"):
-        diff = [n for n in fa if (a / n).read_bytes() != (b / n).read_bytes()]
-        c.ok(not diff, f"{what}: every image and layer file is byte-identical to the explicit subcommand's (differ: {diff[:5]})")
+    if not c.ok(fa == fb and len(fa) > 3, f"{what}: the same {len(fa)} cache files ({len(fb)} from the explicit subcommand)"):
+        return
+    # Blosc does not pack a chunk into the same bytes on every run, so array chunks are compared by their
+    # values; everything else (array metadata, attributes, molecule files, overlays) byte for byte
+    arrays = sorted(q.parent.relative_to(a).as_posix() for q in a.rglob(".zarray"))
+    chunks = {n for n in fa for d in arrays if n.startswith(d + "/") and not n.rsplit("/", 1)[1].startswith(".z")}
+    diff = [n for n in fa if n not in chunks and (a / n).read_bytes() != (b / n).read_bytes()]
+    c.ok(not diff, f"{what}: array metadata, attributes and the other files are byte-identical to the explicit subcommand's (differ: {diff[:5]})")
+    try:
+        import zarr
+    except ImportError:
+        print(f"    ({what}: zarr not importable here, array values not compared)")
+        return
+    bad = [d for d in arrays if not np.array_equal(zarr.open(str(a / d), mode="r")[:], zarr.open(str(b / d), mode="r")[:])]
+    c.ok(len(arrays) > 0 and not bad, f"{what}: all {len(arrays)} arrays (image levels, counts, positions, barcodes) hold the explicit subcommand's values (differ: {bad[:5]})")
 
 
 def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
