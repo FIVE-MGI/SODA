@@ -10,6 +10,9 @@ Getting a dataset into the viewer takes two steps:
 
 Single-cell RNA-seq is the exception: `prepare.py rnaseq` writes the static tree directly.
 
+Each kind of data has its own command below. If you would rather not pick one,
+[let SODA look at the folder](#not-sure-what-you-have-let-soda-look).
+
 All commands below are run from the repository folder, with the virtual environment
 active (see the [README](../README.md#try-it-in-5-minutes)). Forward slashes in paths
 work on Windows too. Each command is one line; paste it as is.
@@ -17,6 +20,60 @@ work on Windows too. Each command is one line; paste it as is.
 > **Before your first real dataset**, decide where the de-identification key lives and
 > set `SPATIALVIZ_KEY` (see [DEIDENTIFICATION.md](DEIDENTIFICATION.md)). Otherwise the key
 > file is created in whatever folder you run the command from.
+
+## Not sure what you have? Let SODA look
+
+Point it at a folder (or one file). It reads names, sizes and file headers only, writes
+nothing, and takes well under a second for most folders:
+
+```bash
+python web/SpatialViewer/prepare.py detect path/to/folder
+```
+
+It answers in plain words: what kind of dataset the folder holds, **how sure** that is, which
+files it found, which are missing, and the exact command it would run. To go straight on:
+
+```bash
+python web/SpatialViewer/prepare.py auto --src path/to/folder --id my_dataset --out cache
+```
+
+`auto` runs the matching command from this page (`visium`, `xenium`, `tiff` ...) when the
+verdict is **certain**. Options of that command (`--label`, `--pixel-size`, `--bins`,
+`--no-transcripts` ...) can be added and are passed on. For single-cell RNA-seq give
+`--dest export` instead of `--out cache`, as there is no cache step.
+
+| Verdict | Meaning | What `auto` does |
+|---|---|---|
+| certain | one kind fits and every file it requires is there | runs it |
+| ambiguous | more than one kind fits, or a choice is open: several TIFFs next to a Visium `outs/`, two segmentation runs, several datasets in one folder | stops (exit code 3) and prints each choice with the option to add, e.g. `--kind visium --image "path/to/he.tif"` |
+| incomplete | a kind is recognised but a required file is missing, or the data is still zipped | stops (4) and names the file |
+| unknown | nothing recognised, an empty folder, a path that is not there | stops (5) |
+
+**It does not guess.** When it is not certain it shows what it found and you choose:
+`--kind <kind>` says what the folder is (`visium`, `xenium`, `cosmx`, `merscope`, `stereoseq`,
+`geomx`, `tiff`, `akoya`, `rnaseq`), and file options such as `--image`, `--gef` or
+`--cells-dir` settle a single open choice. `--kind` is used as given even where detection is
+unsure; if that kind's required files are not there it stops and says which.
+
+How each kind is recognised (from what its reader needs, see the sections below):
+
+| Kind | Recognised by |
+|---|---|
+| `visium` | a Space Ranger folder: `binned_outputs/square_NNNum/` (Visium HD) or `filtered_feature_bc_matrix.h5` + `spatial/tissue_positions*` (classic). **The full-resolution image is not in that folder:** a TIFF next to `outs/` (or in a folder next to it) is taken when it is the only one, or the only one whose pixel size is the one Space Ranger recorded (`tissue_hires_image.png` ÷ `tissue_hires_scalef`). Several that fit: ambiguous, listed with their sizes. None: incomplete. |
+| `xenium` | `morphology_focus/*.ome.tif` (required); `experiment.xenium`, cells and transcripts are optional and their absence is listed. Other TIFFs in the folder are reported as not used. |
+| `cosmx` | `*_exprMat_file`, `*_metadata_file`, `*_fov_positions_file`, `*_tx_file` (up to two folders down) and the FOV image folders. Two slides' tables in one folder: ambiguous. |
+| `merscope` | `detected_transcripts`, `cell_by_gene` + `cell_metadata` (also one or two folders down, e.g. `vpt-run/`), `images/mosaic_*.tif`. Mosaics without `micron_to_mosaic_pixel_transform.csv`: incomplete. Several segmentation runs and none in the region folder itself: ambiguous (`--cells-dir`). |
+| `stereoseq` | `<SN>_<stain>_regist.tif` (required) with `<SN>.tissue.gef`, else `.raw.gef`, else a `.gem(.gz)`; `<SN>.cellbin.gef`. With several, the order is H&E before ssDNA before DAPI and tissue before raw; the ones not used are listed. |
+| `geomx` | `*.dcc` files (or a zip of them), `*.pkc`, and a sheet whose header has `Sample_ID` (checked by reading the top of each `.xlsx` / `.csv` / `*_LabWorksheet.txt`); `*.ome.tiff` scans if present. Two probe kit files that are versions of the same panel: ambiguous (`--pkc`). |
+| `akoya` | a folder of TIFFs named `NN_Marker_..._gray.tif`. Grey TIFFs of one size without that naming could be markers or separate images: ambiguous. |
+| `tiff` | one image file. The header says which: QPTIFF, multi-channel OME-TIFF, a TIFF stack, an RGB (H&E) image or one grey channel. |
+| `rnaseq` | an `.h5ad` with the embedding in `obsm`, or a 10x matrix folder with `analysis/umap/.../projection.csv` or `umap.csv`. A matrix folder with `spatial/` beside it is Visium, not single-cell. |
+
+A folder that holds several datasets is reported dataset by dataset and never merged; run
+`auto` once per dataset. Zipped instrument output is recognised from the zip's file list
+(nothing is unpacked) and must be unzipped first. `python web/SpatialViewer/prepare.py detect path --json`
+prints the full report for scripts. The notebook (`notebooks/SODA_pipeline.ipynb`) uses the
+same check: put each dataset in its own folder under `inputs/`, with any name.
 
 ## Options shared by every image kind
 
