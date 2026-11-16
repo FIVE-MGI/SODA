@@ -5,7 +5,8 @@ This folder sets up the viewer the way it is run in production:
 - the page is an **Azure Static Web App** (free plan is enough),
 - the data is in a **private** Azure blob container,
 - a small function, `/api/token`, checks one shared password and hands the browser a
-  read-only access token (a SAS) that expires after an hour. The storage key stays on
+  read-only access token (a SAS) that expires after an hour by default (`TOKEN_HOURS`, at
+  most 24). The storage key stays on
   the server.
 
 ```

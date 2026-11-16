@@ -3,11 +3,14 @@
 SODA shows very large spatial biology datasets in a web browser:
 multiplexed immunofluorescence, H&E, Visium and Visium HD spatial transcriptomics,
 Xenium (stains, cells and single transcripts), and single-cell RNA-seq UMAPs. Each slide
-is converted once into a pyramid of small image tiles plus compact per-gene files. The browser then
-fetches only what is on screen, so a 30-channel whole slide opens in seconds and pans
-without downloading the rest. The output is plain static files: you can look at it on
+is converted once into a pyramid of small image tiles plus compact per-gene files. For the
+image, the browser fetches only the tiles on screen, so a 30-channel whole slide opens in
+seconds and pans without downloading the rest. Genes are different: picking a gene downloads
+its whole file (its value in every bin or cell of the section, or every molecule of it).
+The output is plain static files: you can look at it on
 your own computer, put it on any web host for public data, or keep it in a private cloud
-container behind a password. No database and no always-on server are needed.
+container behind a password. No database and no always-on server are needed, but the page
+needs an internet connection: it loads its libraries from a public CDN.
 
 <!-- SCREENSHOT PLACEHOLDER: docs/img/overview.png
      Whole-slide multiplex IF view with the channel panel open. Lead adds the image. -->
@@ -34,7 +37,8 @@ container behind a password. No database and no always-on server are needed.
   UMAP and Leiden clusters, suggested names, QC, Draw a region and the volcano panel work on
   cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
   panel and each one's molecules are drawn as coloured dots on the stains, several genes at
-  once, fetched one gene at a time.
+  once, fetched one gene at a time. Cell outlines are not drawn yet: each cell is a dot at
+  its centre.
 - **GeoMx DSP.** A study of hand-drawn regions (ROIs) rather than cells or bins: the scans
   (several slides side by side), the ROI outlines, and one disc per ROI segment coloured by a
   gene. The columns of the annotation sheet are the groups: legend, heatmap / dot plot /
@@ -70,6 +74,13 @@ container behind a password. No database and no always-on server are needed.
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
   slide and left out of Draw a region, and the thresholds are saved with the shapes and in
   the page link.
+- **Save and share.** **Copy link** (Save tab) copies the page's address. It opens the same
+  dataset (`ds=`) with the quality filter, if one is set (`qc=`), and keeps a `data=` or
+  `static=` already in the address. Zoom, genes, stains, the Tissue / UMAP view, clusters
+  and drawn shapes are not in it. To pass on a Draw a region result, use **Save JSON**: the
+  file holds the shapes, every setting, the clusters and their names and the quality filter,
+  and the other person loads it with **Load JSON** on the same dataset. Zoom, genes and
+  stains are in neither.
 - **Heatmap, dot plot and violin plots.** Compare genes across groups: the section's clusters
   at any resolution, the shapes you drew, the clusters of a Draw a region run, the regions of an overlay,
   or (single-cell datasets) any annotation column. Genes are each group's top markers plus any
@@ -99,7 +110,8 @@ container behind a password. No database and no always-on server are needed.
 - **Host it yourself.** Static files work on any web host. Optional password protection
   for private data on Azure, or a small live tile server for a lab network.
 - **De-identification tools.** Sample IDs are replaced by numbers through a private key,
-  and a check command gates uploads.
+  and a check command gates uploads. They know only our lab's ID formats: edit `_ID` in
+  `deid.py` for yours first (see [DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md)).
 
 ![The synthetic demo section in Side by side mode: tissue on the left, its UMAP on the right, both coloured by Leiden cluster](docs/img/demo_side_by_side.jpg)
 
@@ -111,36 +123,47 @@ container behind a password. No database and no always-on server are needed.
 ## Try it in 5 minutes
 
 This makes a small synthetic dataset (no real tissue or patient data), prepares it and
-opens it. You need Python 3.10 or newer, Git, and an internet connection.
+opens it. You need Python 3.12 or 3.13 (64-bit), Git, and an internet connection.
 
-**1. Get the code and make a virtual environment.**
+**1. Get the code and install it with one command.**
 
 macOS / Linux:
 
 ```bash
 git clone <this repository's URL> spatial-viewer
 cd spatial-viewer
-python3 -m venv .venv
+bash install.sh
 source .venv/bin/activate
 ```
 
-Windows (PowerShell):
+Windows (PowerShell or Command Prompt):
 
 ```powershell
 git clone <this repository's URL> spatial-viewer
 cd spatial-viewer
-py -m venv .venv
+powershell -ExecutionPolicy Bypass -File install.ps1
 .venv\Scripts\Activate.ps1
 ```
 
-(If PowerShell refuses to run the activation script, use Command Prompt instead and run
+The install script finds Python 3.12 or 3.13, makes a virtual environment `.venv` in the
+repository, installs the exact, tested package versions from
+`web/SpatialViewer/requirements-lock.txt`, checks that they all import, and ends with
+**SODA is installed**. It needs no administrator rights, takes a few minutes the first time
+and is safe to run again. If no suitable Python is found, it says so and what to install.
+(`-ExecutionPolicy Bypass` only lets this one script run; it changes no setting. If
+PowerShell refuses the activation line, use Command Prompt and run
 `.venv\Scripts\activate.bat`.) Once the environment is active, `python` means the
 environment's Python on every system.
 
-**2. Install, make the demo data, prepare and export it.** Same commands on every system:
+> **By hand instead** (or where the script stops: Intel Macs, Linux on ARM, Python 3.10 or
+> 3.11): make and activate a venv yourself, then
+> `pip install -r web/SpatialViewer/requirements.txt -r web/SpatialViewer/requirements-clustering.txt`.
+> That takes the newest versions the ranges allow, not the tested set; with Python 3.12 or
+> 3.13, `pip install -r web/SpatialViewer/requirements-lock.txt` gives the tested set.
+
+**2. Make the demo data, prepare and export it.** Same commands on every system:
 
 ```bash
-pip install -r web/SpatialViewer/requirements.txt -r web/SpatialViewer/requirements-clustering.txt
 python examples/make_demo.py --out demo/raw
 python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/visiumhd/image.tif --outs demo/raw/visiumhd/outs --out demo/cache
 python web/SpatialViewer/prepare.py tiff   --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
@@ -219,23 +242,40 @@ email wbuchser@wustl.edu with any questions about hosting.
 
 ## Requirements
 
-- **Python 3.10 or newer** for preparing data (the pinned NumPy 2 and SciPy 1.14 need it).
-  The automated test runs on Python 3.12 on Ubuntu. The tools are developed on Windows;
-  macOS has not been tested by us.
-- Packages: `web/SpatialViewer/requirements.txt` (reading images and counts, export, tile
-  server). `web/SpatialViewer/requirements-clustering.txt` is optional and adds the
-  whole-section UMAP and Leiden clusters (scikit-learn, umap-learn, igraph, leidenalg).
+- **Python 3.12 or 3.13 (64-bit)** for preparing data. Install everything with one command:
+  `bash install.sh` (macOS / Linux) or `powershell -ExecutionPolicy Bypass -File install.ps1`
+  (Windows), see [Try it in 5 minutes](#try-it-in-5-minutes). The script installs
+  `web/SpatialViewer/requirements-lock.txt`, which pins every package to one version. That
+  set is tested end to end on Windows (Python 3.13), and the automated test installs and
+  runs it on Ubuntu (Python 3.12) on every push. Every version in it is also published for
+  macOS 12 or newer on Apple Silicon and for Linux x86_64 with glibc 2.28 or newer, but we
+  have not run it on a Mac. Intel Macs, Linux on ARM and Python 3.14 are not covered by the
+  lock file yet.
+- Packages, as ranges (the human-edited lists the lock file is made from):
+  `web/SpatialViewer/requirements.txt` (reading images and counts, export, tile server) and
+  `web/SpatialViewer/requirements-clustering.txt` (optional: whole-section UMAP and Leiden
+  clusters with scikit-learn, umap-learn, igraph, leidenalg). Installing these by hand needs
+  Python 3.10 or newer (NumPy 2, SciPy 1.14) and gets the newest versions they allow.
+- **Memory (RAM):** no minimum has been benchmarked. Measured peaks: the demo above (its
+  Visium HD part, on Windows) 0.6 GB; a CosMx slide's counts (26 million transcripts, without its images) 0.76 GB; a
+  whole mouse brain Stereo-seq chip 2.7 GB to prepare (3.9 GB from `tissue.gem.gz`) and
+  **8.5 GB to export, the largest measured so far**. For whole-section datasets, have more
+  free memory than that. Visium HD with its 2 µm layer has not been measured and is
+  expected to need the most; if it runs out, leave that layer out with `--bins 008um,016um`
+  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
-  the export a tiled copy. Memory and time have not been benchmarked; large Visium HD
-  datasets need the most (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
-- Viewing needs no installation, only a browser and an internet connection (the page loads
-  its drawing library from a public CDN).
+  the export a tiled copy. Time has not been benchmarked on a reference machine; measured
+  examples are in [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
+- Viewing needs no installation, only a browser and an internet connection, also for a copy
+  on your own computer: the page loads its drawing library (deck.gl), and Draw a region its
+  UMAP library (umap-js), from `cdn.jsdelivr.net`.
 
 ## Browser support
 
 The viewer needs **WebGL2**. It is developed and tested in **Google Chrome** on desktop.
 Other desktop browsers (Edge, Firefox, Safari) have not been tested; they may work if they
-support WebGL2. Password-encrypted dataset links need the page to be served over
+support WebGL2. On an iPhone every browser runs on Safari's engine (WebKit); what was tested
+there is below. Password-encrypted dataset links need the page to be served over
 `https://` or from `localhost`.
 
 **Phones and tablets** open the same page and link; the layout follows the screen.
@@ -257,9 +297,9 @@ support WebGL2. Password-encrypted dataset links need the page to be served over
   a computer, a selection of more than 20,000 bins is sampled up to 50,000 instead.
 
 Touch handling and the image path were tested in Chrome's phone emulation and on an
-iPhone, opening a password-protected Azure deployment. The tabbed layout (the bottom bar
-and its sheet) has so far been tested in Chromium's phone emulation only, not on a real
-phone or in Safari.
+iPhone (so on WebKit, Safari's engine), opening a password-protected Azure deployment. The
+tabbed layout (the bottom bar and its sheet) has so far been tested in Chromium's phone
+emulation only, not on a real phone or on WebKit.
 
 **If the image does not appear** (most often on a phone), the page now says why in the
 status line: tiles the data store refused, tiles that did not download or decode, no
@@ -279,7 +319,9 @@ WebKit is the engine, not iOS Safari, so a real iPhone is still the only proof f
 ## Repository layout
 
 ```
+install.sh / install.ps1  one-command install (macOS, Linux / Windows) into .venv
 web/SpatialViewer/    the page (index.html, viewer.js, ...) and the Python tools (prepare.py, export.py, ...)
+web/SpatialViewer/requirements-lock.txt  every package at one tested version (made from requirements*.txt)
 web/SpatialViewer/markers/  marker-gene lists for suggested cluster names (edit for your tissue)
 deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
@@ -292,6 +334,7 @@ tests/smoke_test.py   end-to-end test
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)
 tools/label_editor.html  place UMAP cluster labels by hand (writes labelPositions for config.js)
+tools/check_install.py   checks that the Python packages import, with the right versions
 ```
 
 ## Citing

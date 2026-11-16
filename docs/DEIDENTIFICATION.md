@@ -13,6 +13,10 @@ names, category values or `config.js`.
 
 It is a pattern matcher, not a guarantee. Read [Limits](#limits) before relying on it.
 
+**It only knows our lab's ID formats.** Before you use it, edit the `_ID` pattern near the
+top of `web/SpatialViewer/deid.py` to match your sample IDs, and test it with `deid.py text`
+(see [What it recognises](#what-it-recognises)). Until then it does not find your IDs.
+
 ## What it recognises
 
 An ID, for `deid.py`, is one of the prefixes `INT`, `TFI`, `UTD`, `IO`, `NM`, `T` or `I`

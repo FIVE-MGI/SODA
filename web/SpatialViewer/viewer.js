@@ -216,7 +216,8 @@
   // ---- private container: short-lived read-only access token --------------------
   // The exported datasets live in a private blob container, so a URL on its own
   // fetches nothing. /api/token checks the shared password on the server and
-  // returns a read-only SAS that expires after a few hours; the storage key never
+  // returns a read-only SAS that expires after TOKEN_HOURS (default 1, at most 24; a preset
+  // BLOB_SAS keeps its own expiry; see deploy/azure/api/token/index.js); the storage key never
   // reaches the browser. A session cookie set by that call lets an open tab renew
   // silently, so nobody has to retype the password in the middle of a session.
   const TOKEN_URL = cfg.tokenEndpoint || "";
@@ -307,7 +308,8 @@
   async function resolveLink(path) {
     // "<id>.link.txt" holds the real URL,
     // either plain or encrypted with the shared password ("enc:v1:...", see links.py).
-    // Legacy: only used for datasets still configured with `linkPath`.
+    // Only used for datasets configured with `linkPath`: the no-server password option
+    // ("Encrypted link files" in deploy/azure/README.md). Production uses /api/token instead.
     if (!/\.link\.txt$/i.test(path)) return path;
     const r = await fetch(path, { cache: "no-cache" });
     if (!r.ok) throw new Error(`${r.status} ${path}`);
