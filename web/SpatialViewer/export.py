@@ -16,6 +16,7 @@
                                                 (protgrid.py)
     <dest>/<id>/molecules/index.json, gene/<NAME>.bin   imaging platforms (Xenium): every transcript,
                                                 uint16 x, y per molecule, one file per gene (molecules.py)
+    <dest>/<id>/expr/<key>/shapes/<set>/...     cell (and nucleus) outlines in spatial tiles (cellshapes.py)
     <dest>/<id>/expr/rois/...                   GeoMx ROI segments (geomx.py): gene files, binqc/ with the GeoMx
                                                 QC values, hvg/ with every target, umap/ with the annotation
                                                 columns as groupings and no embedding
@@ -38,6 +39,7 @@ from urllib.parse import quote
 import numpy as np
 
 import binqc
+import cellshapes
 import celltypes as celltypes_mod
 import hvgchunks
 import layerids
@@ -269,6 +271,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     if m.get("molecules"):
         molecules.export_molecules(ds_dir, out, log=log)
 
+    # ---- cell outlines (cellshapes.py): tiles of polygons, already in their static format ----
+    layer_shapes = cellshapes.export_shapes(ds_dir, out, m, log=log)
+
     # ---- protein grid layer (image datasets): marker means per square ----------
     grid_layer = None
     if grid_um and grid_um > 0 and protgrid.applies_to(m):
@@ -316,6 +321,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     if layer_umap:
         sm["expr"] = [({**layer, "umap": layer_umap[layer["key"]]} if layer["key"] in layer_umap else layer)
                       for layer in sm.get("expr", [])]
+    sm["expr"] = cellshapes.manifest_layers(sm.get("expr", []), layer_shapes)
     if layer_ids:
         sm["expr"] = [({**layer, "ids": layer_ids[layer["key"]]} if layer["key"] in layer_ids else layer)
                       for layer in sm.get("expr", [])]

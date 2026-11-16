@@ -252,7 +252,7 @@
         if (Q.key === key && p && p.length === 2 * Q.n) { Q.pos = p; Q.layerData = null; ctx.requestRender(); }
       } catch (e) { /* no grey layer; the filter still works */ }
     }
-    function layer(radius) {
+    function layer(radius, opacity) {
       if (!Q.keep || !Q.grey || !Q.pos) return null;
       if (!Q.layerData) {
         const xy = new Float32Array(2 * Q.removed);
@@ -263,6 +263,7 @@
       return new ctx.ScatterplotLayer({
         id: `binqc-${Q.ds}-${Q.key}-${Q.ver}`, data: Q.layerData,
         radiusUnits: "common", getRadius: radius, radiusMinPixels: 0.8, stroked: false, filled: true,
+        opacity: opacity == null ? 1 : opacity,      // cell outlines (outlines.js) take over from the dots when zoomed in
         getFillColor: GREY, parameters: ctx.NORMAL,
       });
     }
@@ -319,6 +320,9 @@
       reset, onLayer, layer, state, setState,
       // the mask for the worker: one byte per row, 1 = keep; null when nothing is removed
       keepMask: () => (Q.keep && Q.key === ctx.layerKey() ? Q.keep : null),
+      // the same mask while "Grey out removed bins" is on (what outlines.js greys), and a number that changes with it
+      greyMask: () => (Q.keep && Q.grey && Q.key === ctx.layerKey() ? Q.keep : null),
+      ver: () => Q.ver,
       removed: () => (Q.key === ctx.layerKey() ? Q.removed : 0),
       available: () => !!Q.meta,
       describe: () => {
