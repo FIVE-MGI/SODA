@@ -10,6 +10,7 @@
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
     <dest>/<id>/expr/<key>/umap/clusters_user*  the lab's own clusterings / UMAP, matched by barcode (userclusters.py)
+    <dest>/<id>/expr/<key>/ids.txt.gz           only with ids=True (--ids): the barcode / cell id of each row (layerids.py)
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
@@ -39,6 +40,7 @@ import numpy as np
 import binqc
 import celltypes as celltypes_mod
 import hvgchunks
+import layerids
 import molecules
 import protgrid
 import regions
@@ -120,7 +122,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                   grid_um: float = protgrid.DEFAULT_GRID_UM,
                   tissue_smooth_um: float = protgrid.DEFAULT_TISSUE_SMOOTH_UM,
                   umap_sample: int | None = None, seam_correct: bool = False,
-                  user_clusters: list[dict] | None = None) -> Path:
+                  user_clusters: list[dict] | None = None, write_ids: bool = False) -> Path:
     """`markers`: the marker list for suggested cluster names. Default by modality:
     markers/rna_generic.json for RNA (Visium) layers, markers/protein_generic.json for the
     protein grid layer of an image dataset. `grid_um` (image datasets only): grid square size
@@ -129,7 +131,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     `umap_sample`: the grid layer's UMAP is fitted on a sample of this many squares above it
     (None = sectionumap.UMAP_SAMPLE, 0 = all). `seam_correct`: correct the grid layer's square
     means for per-tile differences where tile seams are found (off: detected and reported only).
-    `user_clusters`: the lab's own UMAP / clusterings per layer (userclusters.make_spec)."""
+    `user_clusters`: the lab's own UMAP / clusterings per layer (userclusters.make_spec).
+    `write_ids`: also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, layerids.py); off by default,
+    an export holds no barcode otherwise."""
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
     userclusters.check_layers(user_clusters, m)
@@ -180,6 +184,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     layer_hvg: dict[str, dict] = {}
     layer_umap: dict[str, dict] = {}
     layer_binqc: dict[str, dict] = {}
+    layer_ids: dict[str, dict] = {}
 
     # ---- expression --------------------------------------------------------
     for layer in m.get("expr", []):
@@ -197,6 +202,10 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                 layer_regions[key] = table
                 log(f"[export] expr {key}: {len(table)} regions, "
                     f"{int(np.count_nonzero(ids)):,}/{len(ids):,} bins assigned")
+        if write_ids:
+            entry = layerids.write_layer_ids(er, d, layer, ds_dir, log=log)
+            if entry:
+                layer_ids[key] = entry
         # GeoMx ROI segments (geomx.py): a few dozen rows. Their own QC values, every target in hvg/,
         # the annotation columns as groupings; no UMAP, Leiden, cell types or variable-gene selection.
         roi = layer.get("kind") == "rois"
@@ -306,6 +315,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                       for layer in sm.get("expr", [])]
     if layer_umap:
         sm["expr"] = [({**layer, "umap": layer_umap[layer["key"]]} if layer["key"] in layer_umap else layer)
+                      for layer in sm.get("expr", [])]
+    if layer_ids:
+        sm["expr"] = [({**layer, "ids": layer_ids[layer["key"]]} if layer["key"] in layer_ids else layer)
                       for layer in sm.get("expr", [])]
     if grid_layer:
         sm["expr"] = [L for L in sm.get("expr", []) if L.get("key") != grid_layer["key"]] + [grid_layer]

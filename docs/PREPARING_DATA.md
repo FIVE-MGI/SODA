@@ -900,6 +900,22 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   without them loads with the filter off). The whole-section UMAP made at export is not filtered.
 - "Save JSON" stores the shapes, layer, seed and every parameter so a result can be redone;
   "Save CSV" saves bin row, shape and UMAP coordinates (no barcodes).
+- **Combine and export shapes** (Analyze tab, under Draw a region). Tick two or more shapes:
+  *Combine* makes a new shape of the bins inside any of them, *Overlap* of the bins inside all of
+  them, *Subtract* of the bins of the first ticked shape (the highest in the list) that are in none
+  of the others. It works on the bins inside each shape, counting every shape whole even where a
+  later one covers it; the result is one more shape (drawn last, so it takes its bins from the
+  earlier ones, as every new shape does) that Run UMAP, the volcano and the plots use like a drawn
+  one, and it is found again from the outlines on another layer. *Save GeoJSON* writes the shapes
+  in the image's full-resolution pixels with `name`, `shape_type`, `microns_per_pixel` and
+  `dataset` per feature (an outline as a Polygon, a combined shape or a selection as a MultiPoint
+  of its bins' centres); *Load GeoJSON* reads such a file, or Polygon / MultiPolygon annotations
+  from QuPath (holes kept, detections left out). A QuPath file lines up only when QuPath opened the
+  same full-resolution image the export was made from (no `--crop` or `--flip` in between, same
+  scale); the viewer warns when points fall outside the image or the file's pixel size differs.
+  *Save barcodes (CSV)* writes one row per bin and shape: the barcode or cell id, bin row, x, y and
+  the shape name. It needs an export made with `prepare.py export --ids` (or `prepare.py ids` run
+  on it); see `ids.txt.gz` in [DATA_FORMAT.md](DATA_FORMAT.md).
 - It works with exported data only, not with the live tile server.
 
 ## Region overlays

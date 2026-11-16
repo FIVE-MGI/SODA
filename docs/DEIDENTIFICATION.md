@@ -52,7 +52,9 @@ A letter suffix is kept: an ID ending in `b` becomes `3b`.
   written.
 - **`prepare.py export`** refuses to write the highly variable gene list or the UMAP
   index if they contain an ID or a Space Ranger barcode, and drops the local file paths
-  from the manifest.
+  from the manifest. Barcodes and cell ids are written only when asked for (`--ids`, or
+  `prepare.py ids` later: `expr/<key>/ids.txt.gz`); that list is checked for sample IDs
+  first and the export stops on a hit. `deid.py check` does not open `.gz` files.
 
 It does **not** rewrite the labels, channel names or overlay names of image datasets.
 For those, `deid.py check` is the gate.

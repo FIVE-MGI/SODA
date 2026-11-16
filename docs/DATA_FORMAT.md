@@ -16,7 +16,8 @@ General rules:
   of the image the pyramid was built from (after any `--crop` and `--flip`): x to the
   right, y down, origin at the top-left corner of the image.
 - A **row** means a position in `expr/<key>/positions.bin`. `region.bin`, `binqc/`, `hvg/`
-  and `umap/` all refer to bins by row. No file contains a barcode.
+  and `umap/` all refer to bins by row. No file contains a barcode, except the optional
+  `ids.txt.gz` written only when asked for (`prepare.py export --ids`, see below).
 - File names made from gene names use JavaScript's `encodeURIComponent` (Python:
   `urllib.parse.quote(name, safe="-_.!~*'()")`). Known issue: for a name that actually
   changes under encoding (a space, `/`, `|`, `+` ...), the file on disk contains a literal
@@ -118,6 +119,7 @@ The prepare cache's own manifest also has a `source` block with local file paths
 | `binQc` | only if `binqc/` was written (RNA layers of 8 µm or more, and classic spots; exports from 11 November 2026): the files and ranges of the per-bin QC values, see below |
 | `hvg` | only if `hvg/` was written: `{"nGenes", "chunkPx", "chunks", "bytes"}` |
 | `mat` | protein grid layers (`"kind": "protein"`) only, if `mat/` was written: `{"nChannels", "chunkPx", "chunks", "bytes"}` |
+| `ids` | only with `prepare.py export --ids` or `prepare.py ids`: `{"file": "ids.txt.gz", "n": rows, "bytes": file size, "column": "barcode" \| "cell_id"}`, see `ids.txt.gz` below |
 | `umap` | only if `umap/` was written: `{"nEmbedded", "clusterings": [{"resolution", "name", "source", "n"}], "default"}`; with the lab's own results also `id` per clustering and `"embedding": "user"` (see umap/ below) |
 
 ## Tiles: `tiles/<c>/<z>/<x>/<y>.<tileFormat>`
@@ -176,6 +178,24 @@ Genes with no counts are listed but have no `gene/` file (the request returns 40
 
 float32 pairs `x, y`, one per bin that has a position, in count-matrix barcode order.
 Number of rows = file size / 8. This order defines **row** numbers.
+
+### `ids.txt.gz` (optional): barcode / cell id per row
+
+Only when the export was made with `prepare.py export --ids`, or `prepare.py ids --id <id> --out <cache>
+--dest <export root>` was run on it later (it reads the barcodes from the prepare cache and adds the files and
+the manifest entries; nothing else changes). gzip of UTF-8 text, one id per line, one line per row of
+`positions.bin` and in its order, no header. `column` in the manifest entry says what they are: `barcode`
+(Visium spots, Visium HD and Stereo-seq bins) or `cell_id` (cells layers: Xenium `cell_id`, CosMx
+`<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id). GeoMx ROI layers and protein grid layers get none.
+The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes; without it that button says how
+to add one. The ids pass `deid.find_ids` before they are written (the export stops on a hit). A host that
+unpacks `.gz` files itself is fine: the viewer reads the text either way.
+
+Size, measured on the smoke-test demo data: 8 µm bins 13,291 rows 35.1 kB (2.64 bytes per row), 16 µm
+bins 3,388 rows 8.5 kB (2.50 B/row), Xenium cells 838 rows 2.3 kB (2.69 B/row). As plain text a Visium HD
+barcode is 22 bytes per row and a Xenium cell id 11, so gzip takes off 85-90 %; for comparison
+`positions.bin` is 8 bytes per row. Grid barcodes compress this well because neighbouring rows differ in a
+digit or two; ids with no order (random cell ids) cost more, up to their plain-text size divided by 2-3.
 
 ### `gene/<NAME>.bin`
 

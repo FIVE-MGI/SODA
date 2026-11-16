@@ -22,6 +22,7 @@ the server just scans <out> for manifest.json files.
     python prepare.py export --id sample1 --out <cache folder> --dest <static folder> [--fmt jpg]
            [--user-layer 008um --user-umap umap.csv --user-obs clusters.csv | --user-h5ad analysis.h5ad]
     python prepare.py userclusters --id sample1 --out <cache folder> --dest <static folder> --user-layer 008um ...
+    python prepare.py ids --id sample1 --out <cache folder> --dest <static folder>
 
 writes the static tree. For an image dataset (akoya / tiff / xenium) it also adds a 16 µm grid
 of marker means (from full-resolution pixels) as a "protein" expression layer with a QC report,
@@ -31,6 +32,8 @@ markers/rna_generic.json for Visium genes; tissue-specific lists such as markers
 markers/brain.json and markers/akoya_nerve.json are passed with --markers). The --user-* options attach the lab's own
 UMAP and clusterings (Seurat / scanpy, matched by barcode) to one spatial layer (userclusters.py);
 `userclusters` does the same on an existing export without re-running it.
+--ids also writes each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, for the viewer's "Save barcodes";
+off by default: an export holds no barcode otherwise); `ids` adds them to an existing export (layerids.py).
 """
 from __future__ import annotations
 
@@ -185,6 +188,9 @@ def main(argv=None):
     e.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
+    e.add_argument("--ids", action="store_true",
+                   help="also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz) so the viewer can save the "
+                        "bins or cells inside drawn shapes with them. Off by default: without it no barcode is written.")
     userclusters.add_args(e)
     uc = sub.add_parser("userclusters", help="add your own UMAP / clusters (Seurat, scanpy) to a layer of an existing export")
     uc.add_argument("--id", required=True)
@@ -193,6 +199,10 @@ def main(argv=None):
     uc.add_argument("--markers", help="marker list for the suggested names (default: the one the export used)")
     uc.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     userclusters.add_args(uc)
+    ids = sub.add_parser("ids", help="add each layer's barcodes / cell ids to an existing export (as export --ids)")
+    ids.add_argument("--id", required=True)
+    ids.add_argument("--out", required=True, help="cache root that prepare wrote into")
+    ids.add_argument("--dest", required=True, help="export root holding <dest>/<id>/")
     r = sub.add_parser("rnaseq", help="single-cell / nucleus RNA-seq -> static UMAP dataset (written straight to --dest)")
     r.add_argument("--id", required=True)
     r.add_argument("--label")
@@ -293,7 +303,12 @@ def main(argv=None):
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
                       grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample,
-                      seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args))
+                      seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args), write_ids=args.ids)
+        return
+
+    if args.kind == "ids":
+        import layerids
+        layerids.add_to_export(Path(args.out) / args.id, Path(args.dest), log=log)
         return
 
     if args.kind == "userclusters":

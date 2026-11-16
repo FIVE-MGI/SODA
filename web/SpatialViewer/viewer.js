@@ -2017,6 +2017,8 @@
     const L = S.lasso;
     if (!L.pos) return;
     const pos = L.pos, n = pos.length / 2, a = new Uint16Array(n).fill(LASSO_NONE);
+    // a list of bins belongs to one layer: selections.js finds a combined shape's bins again on this one
+    if (window.SodaShapes) window.SodaShapes.remap(L.shapes, pos, S.exprKey);
     L.shapes.forEach((s) => { s.bins = 0; s.shared = 0; s.lost = 0; });
     L.shapes.forEach((s, si) => {
       const take = (i) => {
@@ -2312,6 +2314,7 @@
     buildRoiTable();
     if (window.SodaVolcano) window.SodaVolcano.refresh();
     if (window.SodaPlots) window.SodaPlots.refresh();
+    if (window.SodaShapes) window.SodaShapes.refresh();
   }
 
   function lassoCancel() {
@@ -6141,6 +6144,21 @@
     });
   }
 
+  // ---- Combine and export shapes (selections.js): what it needs from here --------------------------------------
+  function shapesInit() {
+    if (!window.SodaShapes) return;
+    window.SodaShapes.init({
+      state: () => S, touch: TOUCH, words: wd, download: lassoDownload, colors: LASSO_COLORS, inPoly,
+      layer: () => (S.m && S.mode !== "rna" ? currentExpr() : null),
+      changed: lassoShapesChanged,                   // the shapes changed: assign the bins again, redraw, tell the volcano and plots
+      buf: (p) => S.src.buf(p),
+      layers: () => [...$("exprSelect").options].map((o) => o.value),
+      setLayer: async (k) => { $("exprSelect").value = k; return setExprKey(k); },
+      image: () => (S.m && S.m.image) || null,
+      um: () => (S.m && S.m.pixelSizeUm) || 0,
+    });
+  }
+
   async function init() {
     sheetEvents();                                  // first, so the controls open even if loading fails
     initDeck();
@@ -6151,6 +6169,7 @@
     touchInit();
     snapshotInit();
     cellSetsInit();
+    shapesInit();
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
       group: cfgSets[id].group, base: cfgSets[id].base, tags: cfgSets[id].tags }));
