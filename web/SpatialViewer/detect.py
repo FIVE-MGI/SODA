@@ -1777,6 +1777,39 @@ def format_report(rep: dict, ds_id: str = "<id>", out: str = "<cache>", dest: st
     return "\n".join(L)
 
 
+def option_lines(rep: dict, ds_id: str, name: str = "OPTIONS") -> list[str]:
+    """For the notebook: what to type into its options dictionary to settle a report that is
+    not `certain` (the same choices `prepare.py auto` prints as --kind ... options)."""
+    def entry(**kv):
+        body = ", ".join(f'"{k}": ' + (f'r"{v}"' if k != "kind" else f'"{v}"') for k, v in kv.items())
+        return f'{name}["{ds_id}"] = {{{body}}}'
+    out = []
+    if rep["reason"] == "several-datasets":
+        return ["this folder holds several datasets: give each its own folder under inputs/"]
+    if rep["reason"] in ("two-kinds", "kind-mismatch"):
+        return ["pick one:"] + ["  " + entry(kind=k) for k in dict.fromkeys(c["kind"] for c in rep["candidates"])]
+    if rep["reason"] == "several-in-one-folder":
+        return ["several datasets of one kind share this folder: move each into its own folder under inputs/"]
+    if not rep["candidates"]:
+        return ["if you know what it is: " + entry(kind="<" + " | ".join(KINDS) + ">")] if rep["reason"] == "nothing-recognised" else []
+    c = rep["candidates"][0]
+    for ch in c["choices"]:
+        out.append(ch["why"])
+        for o in ch["options"]:
+            extra = ", ".join(x for x in (o.get("sizeText"), o.get("note")) if x)
+            out.append("  " + (entry(kind=c["kind"], **{ch["arg"]: o["path"]}) if ch["arg"] and ch["arg"] != "src"
+                               else o["path"]) + (f"   # {extra}" if extra else ""))
+    for m in c["missing"]:
+        out.append("missing: " + m["what"])
+        if c.get("zipped"):
+            out.append("  " + m["fix"])
+        elif m["arg"] and m["arg"] in KIND_ARGS[c["kind"]]:
+            out.append("  or point at it: " + entry(kind=c["kind"], **{m["arg"]: "<path>"}))
+        elif m["arg"]:
+            out.append("  " + m["fix"].replace("add --" + m["arg"], f'set "{m["arg"]}" in {name}["{ds_id}"]:'))
+    return out
+
+
 def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Say what kind of dataset a folder holds (read-only).")
