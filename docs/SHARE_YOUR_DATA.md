@@ -18,6 +18,13 @@ redoing anything, because both read the same data folder.
 Either way, **your data is never copied onto anyone else's website.** The page only reads
 your files from your storage while someone is looking at them.
 
+**Using the notebook?** `notebooks/SODA_pipeline.ipynb` does most of the first way for you.
+Its Section 4 runs `catalog.py` (Step 1; the title is `TITLE` in its advanced settings),
+Section 5 runs the check (Step 2) when you have a de-identification key file, and Section 7
+asks whether the data is public, prints the upload command (Step 3) and the link (Step 5,
+built from `SODA_PAGE`), then tests the CORS rule (Step 4) and prints the exact fix for
+your storage if it is missing.
+
 ---
 
 ## 1. Share a link
