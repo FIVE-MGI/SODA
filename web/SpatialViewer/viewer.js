@@ -254,6 +254,11 @@
     if (plainObj(d.labelPositions)) s.labelPositions = plainObj(d.labelPositions);
     return s;
   }
+  // `tags` ({tissue: "nerve", ...}) for the picker's filters: short strings only, at most 20;
+  // names starting with "_" (e.g. __proto__) are dropped.
+  const folderTags = (v) => (plainObj(v) ? Object.fromEntries(Object.entries(v)
+    .filter(([k, x]) => typeof x === "string" && k && k[0] !== "_" && k.length <= 40 && x.length <= 80)
+    .slice(0, 20)) : undefined);
   // Per-dataset settings: from the data folder for a ?data= dataset, else config.js.
   const dsSettings = (id) => {
     const d = (S.datasets || []).find((x) => x.id === id);
@@ -5998,7 +6003,7 @@
     snapshotInit();
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
-      group: cfgSets[id].group, base: cfgSets[id].base }));
+      group: cfgSets[id].group, base: cfgSets[id].base, tags: cfgSets[id].tags }));
     // ?static=<root>&ds=<id> can open an exported dataset that is not in config.js yet
     if (params.get("static") && params.get("ds") && !S.datasets.some((d) => d.id === params.get("ds")))
       S.datasets.push({ id: params.get("ds"), label: `${params.get("ds")} (local export)` });
@@ -6011,7 +6016,7 @@
         const cat = await getJSON(`${DATA.root}datasets.json${DATA.qs}`, true);
         S.datasets = (Array.isArray(cat.datasets) ? cat.datasets : []).filter((d) => d && d.id).map((d) => ({
           id: String(d.id), label: String(d.label || d.id), group: d.group ? String(d.group) : undefined,
-          settings: folderSettings(d), ...at(String(d.id)) }));
+          tags: folderTags(d.tags), settings: folderSettings(d), ...at(String(d.id)) }));
         S.dataGroups = {};
         for (const d of S.datasets) if (d.group) S.dataGroups[d.group] = d.group;   // first-seen order
         dataTitle = text(cat.title, 120);
