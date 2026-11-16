@@ -32,6 +32,7 @@
       <div id="vcMsg" class="meta vc-msg"></div>`;
     const anchor = $("lassoSaveJson") && $("lassoSaveJson").parentElement;
     if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(block, anchor); else $("panelLasso").appendChild(block);
+    if (window.SodaLayout) window.SodaLayout.adopt(block);       // layout.js: its own section in the Analyze tab
 
     const panel = document.createElement("div");
     panel.id = "volcanoPanel"; panel.className = "vc-panel"; panel.hidden = true;
@@ -101,7 +102,7 @@
     sel.innerHTML = "";
     const add = (parent, o) => { const e = document.createElement("option"); e.value = o.v; e.textContent = say(o.t); parent.appendChild(e); };
     for (const o of extra) add(sel, o);
-    for (const [k, label] of [["shapes", "Drawn shapes"], ["run", "Clusters of the Circle → UMAP run"], ["section", "Clusters of the whole section"]]) {
+    for (const [k, label] of [["shapes", "Drawn shapes"], ["run", "Clusters of the Draw a region run"], ["section", "Clusters of the whole section"]]) {
       const list = groups[k].filter((o) => o.v !== $("vcA").value || sel.id === "vcA");
       if (!list.length) continue;
       const g = document.createElement("optgroup"); g.label = label; list.forEach((o) => add(g, o)); sel.appendChild(g);

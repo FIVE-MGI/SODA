@@ -234,10 +234,10 @@
       $("bqCount").textContent = r ? `(${pct(r)}% removed)` : "";
       $("bqSummary").innerHTML = r
         ? `Kept <b>${(n - r).toLocaleString()}</b> of ${n.toLocaleString()} bins · removed <b>${r.toLocaleString()}</b> (${pct(r)}%). ` +
-          `Removed bins are grey on the slide and left out of Circle → UMAP the next time it runs.`
+          `Removed bins are grey on the slide and left out of Draw a region the next time it runs.`
         : Object.keys(Q.th).length
           ? `Kept all ${n.toLocaleString()} bins: no bin is outside these thresholds.`
-          : `Off: all ${n.toLocaleString()} bins are kept. Move a slider (or type a number) to remove bins from Circle → UMAP.`;
+          : `Off: all ${n.toLocaleString()} bins are kept. Move a slider (or type a number) to remove bins from Draw a region.`;
       $("bqReset").disabled = !Object.keys(Q.th).length;
     }
 
@@ -309,6 +309,7 @@
       $("bqReset").onclick = () => { Q.th = {}; Q.metrics.forEach(syncMetric); recompute(false); };
       $("bqGrey").onchange = (e) => { Q.grey = greyPref = e.target.checked; if (Q.grey && Q.removed) ensurePositions(); ctx.requestRender(); };
       window.addEventListener("resize", () => Q.metrics.forEach(drawHist));
+      window.addEventListener("soda:shown", () => Q.metrics.forEach(drawHist));   // layout.js: the section was folded or in another tab when drawn
     }
     init();
 
