@@ -157,6 +157,9 @@ Your own copy of SODA, on your own free web address, that you can change however
 like. Your data still lives in your storage (Steps 1–4 above); your copy just opens it
 without the `?data=` part, and can have your name, logos and code changes.
 
+Passwords, every label and colour setting, the notebook's settings and a map of the code
+are in one guide: [ADVANCED.md](ADVANCED.md).
+
 ### Step 1. Copy SODA on GitHub
 
 On SODA's GitHub page, click **Use this template → Create a new repository**. Pick a name
