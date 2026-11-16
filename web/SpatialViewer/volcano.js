@@ -94,7 +94,7 @@
       for (let c = 0; c < n; c++) out.run.push({ v: `c:${c}`, t: `${(L.clNames && L.clNames[c]) || `Cluster ${c}`} of the UMAP run${sizes[c] ? ` (${sizes[c].toLocaleString()} bins)` : ""}` });
     }
     const sec = api.sectionClusters();
-    if (sec) for (let c = 0; c < sec.n; c++) out.section.push({ v: `k:${c}`, t: `${sec.names[c] || `Cluster ${c}`} of the section (${sec.label || `res ${sec.res}`}${sec.sizes && sec.sizes[c] ? `, ${sec.sizes[c].toLocaleString()} bins` : ""})` });
+    if (sec) for (let c = 0; c < sec.n; c++) if (!(sec.gone && sec.gone.includes(c))) out.section.push({ v: `k:${c}`, t: `${sec.names[c] || `Cluster ${c}`} of the section (${sec.label || `res ${sec.res}`}${sec.sizes && sec.sizes[c] ? `, ${sec.sizes[c].toLocaleString()} bins` : ""})` });
     return out;
   }
   function fillSelect(sel, groups, extra, keep) {
@@ -140,7 +140,7 @@
   // what a result depends on: layer, shapes, run, section clustering
   function sigNow(a, b) {
     const S = api.state(), L = S.lasso, sec = api.sectionClusters();
-    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? L.result.id : "", sec ? sec.res : "", a, b].join("|");
+    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? L.result.id : "", sec ? `${sec.res}${sec.sets || ""}` : "", a, b].join("|");
   }
 
   // ---- group codes per row: 1 = A, 2 = B (A wins a bin in both) ----------------------------
