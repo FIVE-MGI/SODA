@@ -24,11 +24,12 @@ The options below are in order of effort.
 | [D. AWS (or another cloud), private](#d-aws-s3--cloudfront-or-another-backend) | people you give the password | your own token endpoint | a day, needs cloud experience |
 | [E. Live tile server](#e-optional-live-tile-server-serverpy) | people on your network | `server.py` | minutes, but a machine must stay on |
 
-Visitors need an internet connection in every case: the page loads its drawing library
-(deck.gl) and, for the circle tool, umap-js from `cdn.jsdelivr.net`. The viewer needs a
-browser with WebGL2; it is developed and tested in Chrome. Other browsers have not been
-tested. The same link works on phones and tablets: the page lays itself out for the screen
-(see [Browser support](../README.md#browser-support)).
+Visitors need an internet connection in every case, also for option A: the page loads its
+drawing library (deck.gl) and, for the circle tool, umap-js from `cdn.jsdelivr.net`. The
+viewer needs a browser with WebGL2; it is developed and tested in Chrome on desktop, and the
+image path was also tested on an iPhone (WebKit, Safari's engine). Other browsers have not
+been tested. The same link works on phones and tablets: the page lays itself out for the
+screen (see [Browser support](../README.md#browser-support)).
 
 Before anything leaves your computer, go through the
 [checklist at the end](#before-you-upload-checklist).
@@ -156,13 +157,15 @@ the de-identification key file.
 ## C. Azure, private data with a password
 
 The data stays in a private Azure blob container. A small function checks one shared
-password and gives the browser a read-only token that expires after an hour. This is how
+password and gives the browser a read-only token that expires after an hour by default
+(`TOKEN_HOURS`, at most 24). This is how
 the viewer runs in production. Step-by-step instructions, including CORS, upload with
 AzCopy and the Static Web App setup:
 **[deploy/azure/README.md](../deploy/azure/README.md)**.
 
 The same file also describes a password without any server (encrypted link files made
-by `links.py`), and its limits.
+by `links.py`, set per dataset with `linkPath` in `config.js`), and its limits. The viewer
+still reads such files, but the token function above is the setup that runs in production.
 
 ## D. AWS S3 + CloudFront, or another backend
 
