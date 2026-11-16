@@ -395,6 +395,11 @@ outlines. An export without `shapes` is drawn as dots, as before.
   | Stereo-seq | `cellBin/cellBorder` of the cell bin GEF: up to 32 (x, y) offsets from the cell's x, y in DNB | (cell + offset + file offset + 0.5 − image offset) × image pixels per DNB. The border points are the outermost DNBs of the cell, so the outline runs through their centres |
   | any | your own file (`prepare.py outlines --boundaries`): GeoJSON polygons, a vertex table, or a parquet with WKB geometry | `--boundary-units` px, um or frame |
 
+The viewer draws dots while the median cell (`spotDiameterPx`) is under 5 screen pixels across,
+outlines alone from 9, both cross-faded in between, and stays on dots when more than 120,000
+outlines (20,000 on a touch device) would be in view (`config.js` `outlineFromPx`,
+`outlineFullPx`, `outlineBudget`).
+
 In the prepare cache the same files are in `<cache>/<id>/shapes/<layer key>/<set>/`.
 
 ### ROI segments as a layer (`kind: "rois"`, GeoMx DSP)
