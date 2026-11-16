@@ -432,6 +432,8 @@
       `<div id="cmpMsg" class="meta cmp-msg" role="status"></div>`;
     (document.getElementById("sidebar") || document.body).appendChild(sec);
     if (window.SodaLayout) window.SodaLayout.adopt(sec);
+    const after = $("panelSave");                  // under Save and load (the layout puts a section it does not know last)
+    if (after && after.parentElement === sec.parentElement) after.after(sec);
 
     $("cmpLink").onchange = (e) => setLinked(e.target.checked);
     $("cmpAlign").onclick = linkFromHere;
@@ -529,7 +531,7 @@
       window.addEventListener("soda:opened", () => {
         const S = H.state();
         openedDs = S.m ? S.dsId : null;
-        if (picker && S.datasets) { picker.setItems(S.datasets, (window.SpatialViewerConfig || {}).groups || {}); resetPicker(); }
+        if (picker && S.datasets) { picker.setItems(S.datasets, S.dataGroups || (window.SpatialViewerConfig || {}).groups || {}); resetPicker(); }
         missing = []; lastCam = null; snap();
         if (chan) { post("beat", { info: info() }); if (linked && peers.size) askSync(); }
         paint();

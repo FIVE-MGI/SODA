@@ -56,16 +56,16 @@
       help: "Compares two groups of bins gene by gene: a drawn shape, a cluster, or the rest of the section. Genes to the right are higher in A, to the left higher in B; click a dot to draw that gene on the slide. More options: the test (Wilcoxon rank-sum or Welch's t), the smallest share of bins a gene must be counted in to be tested, and extra genes to test by name." },
     panelPlots: { more: ["plTop"], moreAt: { before: "plRun" },
       help: "Draws genes across groups (clusters, drawn shapes, regions or annotations) as a heatmap, a dot plot or violins. Pick the grouping, type gene names or let it take each group's top marker genes (how many: More options), then Draw plots. + shown genes adds the genes now on the picture." },
-    panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, the quality filter and the view (position and zoom, genes, stains, colours). Load JSON reads such a file and runs it again. Copy link to this view copies an address that opens this dataset as it looks now; shapes too big for a link are left out, and it says so." },
-    panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },
+    panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link copies this page's address: it opens this dataset, with the quality filter if one is set (not the genes, stains or zoom)." },
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
     panelHelp: {},
+    panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
   };
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
     clusters: ["panelUmap", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelVolcano", "panelPlots"],
-    save: ["panelSave", "panelCompare", "panelDataset", "panelHelp"],
+    save: ["panelSave", "panelDataset", "panelHelp"],
   };
   // a section that lives inside another one keeps its own heading and does not fold by itself
   const NESTED = { panelGate: "panelCount" };
@@ -164,8 +164,8 @@
     const jsonRow = el("div", "btnrow", "saveJsonRow"), linkRow = el("div", "btnrow"), msg = el("div", "meta save-msg", "saveMsg");
     for (const id of ["lassoSaveJson", "lassoLoadBtn", "lassoLoad"]) if ($(id)) jsonRow.appendChild($(id));
     const copy = el("button", "", "btnCopyLink");
-    copy.type = "button"; copy.textContent = "Copy link to this view"; copy.title = "Copy an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters and the quality filter";
-    copy.onclick = () => (window.SodaViewLink ? window.SodaViewLink.copy() : copyLink());      // viewlink.js; without it, the page's address as before
+    copy.type = "button"; copy.textContent = "Copy link"; copy.title = "Copy this page's address: it opens this dataset, with the quality filter if one is set";
+    copy.onclick = copyLink;
     linkRow.appendChild(copy);
     msg.setAttribute("role", "status");
     save.append(jsonRow, linkRow, msg);

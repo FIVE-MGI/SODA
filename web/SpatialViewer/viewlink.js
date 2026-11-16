@@ -530,7 +530,9 @@
   }
 
   // ---- the link ---------------------------------------------------------------------------------------
-  const KEEP_PARAMS = ["static", "api", "fmt", "qc"];          // ?diag= and ?decode= are for looking at a problem, not for sharing
+  // what else of the address a link keeps: where the data is (?data= a shared folder, ?static= a local test
+  // folder, ?api= a tile server) and the quality filter. ?diag= and ?decode= are for looking at a problem, not for sharing.
+  const KEEP_PARAMS = ["data", "static", "api", "fmt", "qc"];
   function baseUrl(dsId) {
     const now = new URLSearchParams(location.search), q = new URLSearchParams();
     q.set("ds", dsId);
@@ -623,12 +625,31 @@
     } finally { busy = false; }
   }
 
+  // The Save tab's "Copy link" (layout.js builds it to copy the page's address) becomes "Copy link to this
+  // view": its words, its click and the sentence about it in the section's "?" note. Done from here so that
+  // layout.js stays as it is; without this file the button copies the address as before.
+  const HELP = "Copy link to this view copies an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters, the quality filter and the open tab. Drawn shapes too big for a link are left out, and it says so. Save JSON keeps the same view in a file.";
+  function takeButton() {
+    const b = $("btnCopyLink");
+    if (!b) return;
+    b.textContent = "Copy link to this view";
+    b.title = "Copy an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters and the quality filter";
+    b.onclick = () => { copy(); };
+    const p = document.querySelector("#secHelp-panelSave p");
+    if (p && p.dataset.text && !p.dataset.text.includes(HELP)) {
+      const old = /\s*Copy link copies this page's address[^.]*\.?/;
+      p.dataset.text = old.test(p.dataset.text) ? p.dataset.text.replace(old, " " + HELP) : `${p.dataset.text} ${HELP}`;
+      p.textContent = p.dataset.text;
+    }
+  }
+
   const api = {
     FORMAT, VIEW_V, BUDGET, MAX_PAYLOAD, MAX_JSON,
     encode, decode, clean, cleanView, forLink, fit,
     // viewer.js
     init(hooks) {
       H = hooks;
+      takeButton();
       window.addEventListener("soda:opened", (e) => { opened(e.detail && e.detail.id); });
       // a link pasted into a page that is already open
       window.addEventListener("hashchange", () => { const p = hashPayload(); if (p) { pending = p; opened(H.state().dsId); } });

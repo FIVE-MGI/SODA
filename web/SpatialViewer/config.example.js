@@ -41,6 +41,16 @@ window.SpatialViewerConfig = {
   // Shown as "Link to paper". Empty renders it greyed and inert.
   paperUrl: "",
 
+  // ---- your own copy of SODA -------------------------------------------------------
+  // The link to your export folder (the one holding datasets.json, written by catalog.py).
+  // Set this and leave `datasets` above empty: the page then lists every dataset in that
+  // folder, with the titles, groups and settings in its datasets.json.
+  // data: "https://yourstorage.example.org/soda-export/",
+
+  // Whether this page also opens other people's folders from a link
+  // (index.html?data=<their folder>). On by default, off when tokenEndpoint is set.
+  // allowDataLinks: true,
+
   // ---- data access ----------------------------------------------------------------
   // The managed function that checks the shared password and returns a short-lived,
   // read-only SAS for the private container. Empty disables the password entirely,

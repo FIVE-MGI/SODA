@@ -3,11 +3,14 @@
 SODA shows very large spatial biology datasets in a web browser:
 multiplexed immunofluorescence, H&E, Visium and Visium HD spatial transcriptomics,
 Xenium (stains, cells and single transcripts), and single-cell RNA-seq UMAPs. Each slide
-is converted once into a pyramid of small image tiles plus compact per-gene files. The browser then
-fetches only what is on screen, so a 30-channel whole slide opens in seconds and pans
-without downloading the rest. The output is plain static files: you can look at it on
+is converted once into a pyramid of small image tiles plus compact per-gene files. For the
+image, the browser fetches only the tiles on screen, so a 30-channel whole slide opens in
+seconds and pans without downloading the rest. Genes are different: picking a gene downloads
+its whole file (its value in every bin or cell of the section, or every molecule of it).
+The output is plain static files: you can look at it on
 your own computer, put it on any web host for public data, or keep it in a private cloud
-container behind a password. No database and no always-on server are needed.
+container behind a password. No database and no always-on server are needed, but the page
+needs an internet connection: it loads its libraries from a public CDN.
 
 <!-- SCREENSHOT PLACEHOLDER: docs/img/overview.png
      Whole-slide multiplex IF view with the channel panel open. Lead adds the image. -->
@@ -34,7 +37,8 @@ container behind a password. No database and no always-on server are needed.
   UMAP and Leiden clusters, suggested names, QC, Draw a region and the volcano panel work on
   cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
   panel and each one's molecules are drawn as coloured dots on the stains, several genes at
-  once, fetched one gene at a time.
+  once, fetched one gene at a time. Cell outlines are not drawn yet: each cell is a dot at
+  its centre.
 - **GeoMx DSP.** A study of hand-drawn regions (ROIs) rather than cells or bins: the scans
   (several slides side by side), the ROI outlines, and one disc per ROI segment coloured by a
   gene. The columns of the annotation sheet are the groups: legend, heatmap / dot plot /
@@ -70,6 +74,13 @@ container behind a password. No database and no always-on server are needed.
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
   slide and left out of Draw a region, and the thresholds are saved with the shapes and in
   the page link.
+- **Save and share.** **Copy link** (Save tab) copies the page's address. It opens the same
+  dataset (`ds=`) with the quality filter, if one is set (`qc=`), and keeps a `data=` or
+  `static=` already in the address. Zoom, genes, stains, the Tissue / UMAP view, clusters
+  and drawn shapes are not in it. To pass on a Draw a region result, use **Save JSON**: the
+  file holds the shapes, every setting, the clusters and their names and the quality filter,
+  and the other person loads it with **Load JSON** on the same dataset. Zoom, genes and
+  stains are in neither.
 - **Heatmap, dot plot and violin plots.** Compare genes across groups: the section's clusters
   at any resolution, the shapes you drew, the clusters of a Draw a region run, the regions of an overlay,
   or (single-cell datasets) any annotation column. Genes are each group's top markers plus any
@@ -95,7 +106,8 @@ container behind a password. No database and no always-on server are needed.
 - **Host it yourself.** Static files work on any web host. Optional password protection
   for private data on Azure, or a small live tile server for a lab network.
 - **De-identification tools.** Sample IDs are replaced by numbers through a private key,
-  and a check command gates uploads.
+  and a check command gates uploads. They know only our lab's ID formats: edit `_ID` in
+  `deid.py` for yours first (see [DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md)).
 
 ![The synthetic demo section in Side by side mode: tissue on the left, its UMAP on the right, both coloured by Leiden cluster](docs/img/demo_side_by_side.jpg)
 
@@ -184,9 +196,16 @@ It runs the same steps and then checks every output file.
    `.h5ad` or 10x RNA-seq), then `prepare.py export`.
 2. **[De-identify and check](docs/DEIDENTIFICATION.md)** before anything leaves your
    computer.
-3. **[Host it](docs/HOSTING.md):** on your own computer, on any static web host for public
-   data, or privately on Azure with a password
-   ([step by step](deploy/azure/README.md)).
+3. **[Share it](docs/SHARE_YOUR_DATA.md), one of two ways:**
+   - **Share a link.** Upload the export folder to your own storage and add its address
+     to the SODA page's link (`index.html?data=<your folder>`). Names, groups and which
+     stains show are set in one text file next to your data. No code, no website of your own.
+   - **Make it your own.** Copy SODA on GitHub ("Use this template") and get your own
+     SODA website that you can change however you like, still reading your data from your
+     storage.
+
+   For everything else (your own computer, any web server, privately on Azure with a
+   password) see [Hosting](docs/HOSTING.md) and the [Azure steps](deploy/azure/README.md).
 
 The page reads `web/SpatialViewer/config.js` for your dataset list, institution name,
 logos and password endpoint. Copy `config.example.js` to `config.js`; every option is
@@ -200,6 +219,7 @@ email wbuchser@wustl.edu with any questions about hosting.
 | | |
 |---|---|
 | [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | commands and options per input type, export, clustering, the circle tool, common problems |
+| [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways: a link to your data folder, or your own copy of SODA |
 | [docs/HOSTING.md](docs/HOSTING.md) | hosting options from a laptop to a password-protected cloud site; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure Static Web App + private blob container + password, step by step |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the upload gate, and its limits |
@@ -216,14 +236,16 @@ email wbuchser@wustl.edu with any questions about hosting.
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
   the export a tiled copy. Memory and time have not been benchmarked; large Visium HD
   datasets need the most (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
-- Viewing needs no installation, only a browser and an internet connection (the page loads
-  its drawing library from a public CDN).
+- Viewing needs no installation, only a browser and an internet connection, also for a copy
+  on your own computer: the page loads its drawing library (deck.gl), and Draw a region its
+  UMAP library (umap-js), from `cdn.jsdelivr.net`.
 
 ## Browser support
 
 The viewer needs **WebGL2**. It is developed and tested in **Google Chrome** on desktop.
 Other desktop browsers (Edge, Firefox, Safari) have not been tested; they may work if they
-support WebGL2. Password-encrypted dataset links need the page to be served over
+support WebGL2. On an iPhone every browser runs on Safari's engine (WebKit); what was tested
+there is below. Password-encrypted dataset links need the page to be served over
 `https://` or from `localhost`.
 
 **Phones and tablets** open the same page and link; the layout follows the screen.
@@ -245,9 +267,9 @@ support WebGL2. Password-encrypted dataset links need the page to be served over
   a computer, a selection of more than 20,000 bins is sampled up to 50,000 instead.
 
 Touch handling and the image path were tested in Chrome's phone emulation and on an
-iPhone, opening a password-protected Azure deployment. The tabbed layout (the bottom bar
-and its sheet) has so far been tested in Chromium's phone emulation only, not on a real
-phone or in Safari.
+iPhone (so on WebKit, Safari's engine), opening a password-protected Azure deployment. The
+tabbed layout (the bottom bar and its sheet) has so far been tested in Chromium's phone
+emulation only, not on a real phone or on WebKit.
 
 **If the image does not appear** (most often on a phone), the page now says why in the
 status line: tiles the data store refused, tiles that did not download or decode, no
