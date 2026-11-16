@@ -46,6 +46,8 @@
       help: "Each dot is a cell, placed by the UMAP that came with the data and coloured by its cluster. Add a gene to get one small UMAP per gene, coloured by how much of it each cell has. View: Normal draws the cells, Density a smoothed map. More options: bin size (Density) and point size." },
     panelUmap: { notes: ["umapNote"],
       help: "Colour the bins by the genes picked in View, by cluster, or by suggested cell type. Click a cluster in the list to light it in every view; the pencil renames it and the tick box hides it. Box and Freehand select bins by drawing around them, on the tissue or on the UMAP." },
+    panelSets: {
+      help: "Merge clusters of the clustering on show into one named set: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour of its first cluster and counts as one group everywhere: the maps, the legend, the volcano and plot groups, Count clusters and the saved image. Rename a set in its box or with the pencil in the legend; Un-merge splits it again and Undo takes back the last change made here. Save JSON keeps the sets with the cluster names. Export CSV writes one row per bin: its row number in the export, its position in image pixels, its cluster and the set it is in (bins left out of the clustering have empty cells)." },
     panelBinQc: { more: ["bqGrey"], moreAt: "end", notes: ["bqNote"],
       help: "One histogram per measure (counts, genes detected, % mitochondrial). Move a slider or type a number to set a minimum or a maximum: bins outside are removed." },
     panelSlideQc: { help: "Checks made when the slide was prepared: stains with no or little signal, stains at the detector's limit, tile seams, and squares where everything is bright (folds, bubbles, edges). Each marker lists every stain with its numbers." },
@@ -64,7 +66,7 @@
   };
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
-    clusters: ["panelUmap", "panelBinQc", "panelSlideQc", "panelCount"],
+    clusters: ["panelUmap", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelVolcano", "panelPlots"],
     save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
   };
@@ -515,6 +517,7 @@
       else t = `by ${(by.options[0] ? by.options[0].textContent : "genes").split(" ")[0].toLowerCase()}`;
       return sel ? `${t} · ${sel}` : t;
     },
+    panelSets() { const n = $("csSets") ? $("csSets").querySelectorAll(".cs-set").length : 0; return n ? plural(n, "set") : up("csPick") ? "no sets" : ""; },
     panelBinQc: () => txt("bqCount").replace(/[()]/g, "") || "off",
     panelSlideQc() { const q = $("qcSummary"), n = q ? q.querySelectorAll(".qc-warn").length : 0; return n ? plural(n, "warning") : "ok"; },
     panelCount: () => (up("panelGate") ? txt("gateTitle") : up("gatePub") ? "published cut-offs" : "closed"),
@@ -608,7 +611,7 @@
       for (const p of side.querySelectorAll("[data-text]")) { const t = say(p.dataset.text); if (p.textContent !== t) p.textContent = t; }
       schedule();
     },
-    // volcano.js, plots.js: a block or a section built after this file ran
+    // volcano.js, plots.js, snapshot.js, cellsets.js: a block or a section built after this file ran
     adopt(node) {
       if (!node) return;
       if (node.id === "volcanoBlock") {
