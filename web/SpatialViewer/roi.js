@@ -167,14 +167,15 @@
     const $ = (id) => document.getElementById(id);
     for (const id of ["lassoRun", "lassoSaveCsv"]) if ($(id)) $(id).hidden = on;
     for (const id of ["lassoMode", "lassoSeed", "lassoRes"]) { const el = $(id) && $(id).closest("label"); if (el) el.hidden = on; }
-    const h = document.querySelector("#panelLasso h2");
+    // layout.js wraps the heading's words in a button: the title is that button's first text
+    const h = document.querySelector("#panelLasso h2 .sec-name") || document.querySelector("#panelLasso h2");
     if (h && h.firstChild && h.firstChild.nodeType === 3) {
       if (!h.dataset.orig) h.dataset.orig = h.firstChild.textContent;
       h.firstChild.textContent = on ? "Groups drawn on the slide " : h.dataset.orig;
     }
     if (on && $("lassoNote")) $("lassoNote").textContent =
       `Draw a circle or a loop around ROIs to make a group of them; two groups (drawn, or from the annotation) can be compared in the ` +
-      `volcano below and in the heatmap / violin panel. No UMAP is run on ROIs. The volcano tests ` +
+      `Volcano plot and Heatmap and violin sections. No UMAP is run on ROIs. The volcano tests ` +
       `${hvg && hvg.nGenes ? hvg.nGenes.toLocaleString() : "all"} targets (every target with a count), on counts per 10,000` +
       (hvg && hvg.rounded ? `; the multi-probe targets' geometric means are rounded to whole counts for it` : "") +
       (hvg && hvg.clipped ? `; ${hvg.clipped.toLocaleString()} values above 65,535 are capped there` : "") +

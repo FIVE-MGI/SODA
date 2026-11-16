@@ -53,8 +53,9 @@
   function buildDom() {
     const sec = document.createElement("section");
     sec.id = "panelPlots"; sec.className = "panel pl-side"; sec.hidden = true;
+    sec.dataset.tab = "analyze";                                 // layout.js: which tab this section belongs to
     sec.innerHTML = `
-      <h2>Heatmap · dot plot · violin</h2>
+      <h2>Heatmap and violin</h2>
       <label class="row slim"><span title="Which groups to compare: every group is one column of the heatmap and one violin">Group by</span><select id="plGroup"></select></label>
       <label class="row slim" id="plTopRow"><span title="The first N marker genes of each group, from the grouping's own marker lists (0 = none)">Markers / group</span>
         <input id="plTop" type="text" inputmode="numeric" value="${D.topN}" /></label>
@@ -65,6 +66,7 @@
       <div id="plMsg" class="meta pl-msg"></div>`;
     const before = $("panelOverlays") || null, side = $("sidebar") || document.body;
     if (before && before.parentElement === side) side.insertBefore(sec, before); else side.appendChild(sec);
+    if (window.SodaLayout) window.SodaLayout.adopt(sec);
 
     const panel = document.createElement("div");
     panel.id = "plotsPanel"; panel.className = "pl-panel"; panel.hidden = true;
@@ -152,7 +154,7 @@
       const live = L.shapes.filter((s) => s.bins > 0).length;
       if (live) out.push({ v: "shapes", t: `The drawn shapes (${live})`, og: "Drawn on the slide" });
       const Rr = L.result;
-      if (Rr && Rr.cluster && Rr.info.mode === "bins" && Rr.layer === S.exprKey && Rr.info.nClusters > 0) out.push({ v: "run", t: `Clusters of the Circle → UMAP run (${Rr.info.nClusters})`, og: "Drawn on the slide" });
+      if (Rr && Rr.cluster && Rr.info.mode === "bins" && Rr.layer === S.exprKey && Rr.info.nClusters > 0) out.push({ v: "run", t: `Clusters of the Draw a region run (${Rr.info.nClusters})`, og: "Drawn on the slide" });
     }
     if (S.region && S.region.meta && S.region.ids && S.region.meta.length) out.push({ v: "reg", t: `Regions (${S.region.meta.length})`, og: "Regions of the overlay" });
     return out;
@@ -249,7 +251,7 @@
     }
     if (gv === "run") {
       const Rr = L && L.result;
-      if (!Rr || !Rr.cluster) throw new Error("There is no Circle → UMAP run with clusters.");
+      if (!Rr || !Rr.cluster) throw new Error("There is no Draw a region run with clusters.");
       const K = Rr.info.nClusters, g = new Uint16Array(N).fill(NONE);
       for (let j = 0; j < Rr.rows.length; j++) { const c = Rr.cluster[j]; if (c !== NONE && c < K) g[Rr.rows[j]] = c; }
       const names = [], colors = [];
@@ -347,7 +349,7 @@
             for (let i = 0; i < n; i++) if (row[i] < N) cache.chunkTot[row[i]] = lib[i];
           }
           todo.forEach((k) => cache.chunkDone.add(k));
-          return { totals: cache.chunkTot, from: "chunks", bytes: mb * 1e6, note: `Per-${words().bin} totals read from the Circle → UMAP data chunks (this export has no binqc/ totals).` };
+          return { totals: cache.chunkTot, from: "chunks", bytes: mb * 1e6, note: `Per-${words().bin} totals read from the Draw a region data chunks (this export has no binqc/ totals).` };
         }
         return { totals: null, from: "none", bytes: 0, note: `${got.missing.length} data chunk(s) with the per-${words().bin} totals could not be loaded: showing log1p of the raw counts, NOT depth-normalised.` };
       }
@@ -562,7 +564,7 @@
     const panel = $("plotsPanel");
     panel.classList.toggle("pl-is-violin", V.view === "violin");
     panel.classList.toggle("pl-light", V.light);
-    $("plTitle").textContent = `${V.view === "violin" ? "Violin" : V.view === "dot" ? "Dot plot" : "Heatmap"} · ${R.grouping.label}`;
+    $("plTitle").textContent = `${V.view === "violin" ? "Violin" : V.view === "dot" ? "Dot plot" : "Heatmap"} · ${R.grouping.label.replace("Circle → UMAP", "Draw a region")}`;   // (the label is also in the saved files: unchanged there)
     const svg = V.view === "violin" ? drawViolin() : drawMatrix(V.view === "dot");
     lastSvg = svg;
     $("plSvgBox").innerHTML = svg;

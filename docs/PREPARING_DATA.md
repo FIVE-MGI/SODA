@@ -209,8 +209,8 @@ what matters.
 - **No UMAP, no Leiden clusters, no suggested cell types.** A few dozen hand-picked regions
   are not a sample of the tissue; an embedding and clusters of them would mostly redraw the
   annotation or the slide. The Tissue / UMAP switch is hidden and the panel says why.
-- **Circle → UMAP** keeps its drawing tools (a drawn shape is a group of ROIs for the volcano
-  and the plots) but does not run a UMAP.
+- **Draw a region** (titled "Groups drawn on the slide" on ROI data) keeps its drawing tools
+  (a drawn shape is a group of ROIs for the volcano and the plots) but does not run a UMAP.
 - **The volcano tests every target** (not 2,000 variable genes). In its data the multi-probe
   geometric means are rounded to whole counts and values above 65,535 are capped (the log says
   how many; the per-gene files are exact). With this few ROIs, and ROIs of one slide or one
@@ -537,7 +537,7 @@ Everything after that is automatic, so a slide needs no hand-tuning:
   bright marker moves the mean as much as brightness does). Then z-scores, PCA and UMAP as
   for genes. Squares with no marker above about 10%
   of its range (rims, gaps, empty squares: a quarter of one test slide) are left out of the
-  UMAP and the clusters, and counted in the slide QC as low signal; Circle → UMAP leaves
+  UMAP and the clusters, and counted in the slide QC as low signal; Draw a region leaves
   them out the same way.
 - **Slide QC** (`expr/<layer>/qc.json`, shown in the viewer under the layer): weak stains
   (signal under 15x background: kept, flagged), saturated stains (more than 1% of tissue
@@ -641,7 +641,7 @@ What it writes, per dataset (layout in [DATA_FORMAT.md](DATA_FORMAT.md)):
 2. Per expression layer: the gene list, bin positions, one file per gene, and, if a region
    overlay exists, a region id per bin. Layers of 8 µm or more (and classic spots) also get
    per-bin QC values (`binqc/`: total counts, genes detected, % mitochondrial) for the
-   viewer's Bin QC filter.
+   viewer's Quality filter.
 3. Per layer with bins of 8 µm or more (or classic spots): the data for the circle → UMAP
    tool (`hvg/`) and the whole-section UMAP with Leiden clusters (`umap/`). See below.
 4. Overlays and the manifest, without your local file paths.
@@ -818,6 +818,9 @@ are available, so some markers are reported as absent.
 
 ## The circle → UMAP tool
 
+In the viewer this is the **Draw a region** section of the **Analyze** tab; its Save JSON and
+Load JSON buttons are in the **Save** tab, and the Quality filter in the **Clusters** tab.
+
 On an exported Visium / Visium HD dataset, you can draw circles or freehand shapes on the
 tissue and get a UMAP of just the bins inside them, computed in the browser. It uses the
 `hvg/` files written at export.
@@ -849,8 +852,8 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
     slide as a whole; against the other drawn squares lists what tells the clusters apart.
   - **Suggested names** are scored against the whole slide, so an all-immune circle is named
     immune.
-- **Bin QC filter.** On exports that carry `binqc/` (see [DATA_FORMAT.md](DATA_FORMAT.md)), a
-  panel above Circle → UMAP shows a histogram of total counts, genes detected and % mitochondrial
+- **Quality filter.** On exports that carry `binqc/` (see [DATA_FORMAT.md](DATA_FORMAT.md)), a
+  section of the Clusters tab shows a histogram of total counts, genes detected and % mitochondrial
   per bin, each with a min and a max slider (or type the number). It is **off by default**:
   nothing is removed until you move a slider, so results do not change by themselves. Bins
   outside a threshold are greyed on the slide and left out of the next run (PCA, UMAP,

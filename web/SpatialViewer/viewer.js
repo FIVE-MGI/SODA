@@ -1459,14 +1459,14 @@
   const toProtWords = (t) => t.replace(/\bbins\b/g, "squares").replace(/\bbin\b/g, "square")
     .replace(/\bgenes\b/g, "markers").replace(/\bgene\b/g, "marker").replace(/\bUMI\b/g, "intensity");
   const WORDING = [
-    ["#geneTitle", "textContent", "Marker expression (grid)"],
+    ["#geneTitle", "textContent", "Markers per square"],
     ["#geneSearch", "placeholder", "Search marker… (Enter adds top hit)"],
     ["#genePalette option[value=genes]", "textContent", "Marker colors (overlap darkens)"],
     ["#lblGeneOpacity", "textContent", "Square opacity"],
     ["#lblPointScale", "textContent", "Square size ×"],
     ["#lblTissueBins", "textContent", "Show all tissue squares"],
     ["#lblColorBy", "textContent", "Colour squares by"],
-    ["#colorBy option[value=gene]", "textContent", "Markers (chosen above)"],
+    ["#colorBy option[value=gene]", "textContent", "Markers (picked in View)"],
     ["#subSel", "textContent", null],
     ["#rowRes span", "title", null], ["#clusterRes", "title", null],
     ["#viewSwitch button[data-v=tissue]", "title", null], ["#viewSwitch button[data-v=sbs]", "title", null],
@@ -1490,6 +1490,7 @@
     // (ROI segments are always one disc each: neither view applies)
     $("rowGeneBlend").hidden = prot || rois;
     $("lassoOff").hidden = !prot || !!(currentExpr() || {}).mat;
+    if (window.SodaLayout) window.SodaLayout.wording(prot ? toProtWords : cells ? toCellWords : rois ? toRoiWords : null);
   }
   async function loadGeneIndex() {
     S.geneIndex = [];
@@ -2076,7 +2077,7 @@
   function lassoSyncSel() {
     const t = lassoPickTxt();
     $("lpSel").hidden = !t;
-    $("lpSelTxt").textContent = t.replace(/^Circle → UMAP: /, "");
+    $("lpSelTxt").textContent = t.replace(/^Drawn region: /, "");
     $("lpHint").hidden = !!t || !(S.lasso && S.lasso.result) || !!S.lasso.hinted;
   }
 
@@ -2099,9 +2100,9 @@
   function lassoPickTxt() {
     const L = S.lasso, R = L && L.result;
     if (!L) return "";
-    if (L.brush) { let k = 0; for (const b of L.brush) k += b; return `Circle → UMAP: ${k.toLocaleString()} point${k === 1 ? "" : "s"} selected`; }
-    if (L.selShape !== null && L.shapes[L.selShape]) return `Circle → UMAP: ${L.shapes[L.selShape].name}`;
-    if (L.selCluster !== null && R) return `Circle → UMAP: ${L.clNames[L.selCluster] || `cluster ${L.selCluster}`}`;
+    if (L.brush) { let k = 0; for (const b of L.brush) k += b; return `Drawn region: ${k.toLocaleString()} point${k === 1 ? "" : "s"} selected`; }
+    if (L.selShape !== null && L.shapes[L.selShape]) return `Drawn region: ${L.shapes[L.selShape].name}`;
+    if (L.selCluster !== null && R) return `Drawn region: ${L.clNames[L.selCluster] || `cluster ${L.selCluster}`}`;
     return "";
   }
   const lassoByCluster = () => { const R = S.lasso && S.lasso.result; return !!(R && R.cluster && S.lasso.lpColor === "cluster"); };
@@ -3791,7 +3792,7 @@
     // stack two highlights on the same bins
     U.sel = null; U.selN = 0; umapDirty(); syncUmapUI();
     lassoShapesChanged();
-    status(`Added "${name}" (${rows.length.toLocaleString()} bins) to Circle → UMAP`);
+    status(`Added "${name}" (${rows.length.toLocaleString()} bins) to Draw a region`);
     setTimeout(() => status(null), 3500);
   }
 
@@ -4154,11 +4155,11 @@
     $("umapNote").textContent = noEmb && window.SodaRoi ? window.SodaRoi.umapNote(e, list.length) : prot
       ? (nEmb ? (nEmb >= e.nBins ? `All ${e.nBins.toLocaleString()} tissue squares` : `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} tissue squares`) +
                 ` (${e.binSizeUm ? `${e.binSizeUm} µm` : "each"} across) are in the UMAP, placed by how alike their markers are. ` : "") +
-        `Switch between Tissue, Side by side and UMAP at the top left of the picture; markers, clusters and selections stay.`
+        `Switch between Tissue, Side by side and UMAP in the bar above the picture; markers, clusters and selections stay.`
       : m.embedding === "user" ? (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} are in the UMAP, which came with the data (the lab's own analysis). ` : "") +
-        `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`
+        `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`
       : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} (those with at least 10 ${countUnit()}${m.minHvgDetected ? ` and ${m.minHvgDetected} variable genes` : ""}) are in the UMAP. ` : "") +
-        `Switch between Tissue, Side by side and UMAP at the top left of the picture; genes, clusters and selections stay.`;
+        `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`;
     const ctLit = umapCtLit(), phLit = umapPhLit(), has = !!(U.sel || U.pick !== null || ctLit || phLit);
     const lpTxt = !has ? lassoPickTxt() : "";
     $("selClear").disabled = !has && !lpTxt;
@@ -5060,6 +5061,7 @@
     $("gateLoadBtn").onclick = () => $("gateLoad").click();
     $("gateLoad").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) gateLoadFile(f); };
     window.addEventListener("resize", () => { if (S.gate && S.gate.cur) drawGateHist(); });
+    window.addEventListener("soda:shown", () => { if (S.gate && S.gate.cur) drawGateHist(); });   // layout.js: a folded section or another tab opened
     // for testing from the console: the texts the buttons would download, and loading without a file
     Object.assign(window.__spatialViewer, {
       gate: () => S.gate, gateUi: () => S.gateUi, gateSelect, gateOpenPanel,
@@ -5700,7 +5702,14 @@
   }
 
   let dsPicker = null;                             // dspicker.js: the searchable dataset list
+  // layout.js (the tabs) is told when a dataset starts and stops opening: every panel shows or hides on the way,
+  // and the tab on show is only re-chosen once they have settled. An open that a later one overtakes never
+  // returns (see liveSource), so each start gets a number and only the latest one's end counts.
   async function openDataset(id) {
+    const lay = window.SodaLayout, tok = lay ? lay.opening(true) : 0;
+    try { return await openDatasetNow(id); } finally { if (lay) lay.opening(false, tok); }
+  }
+  async function openDatasetNow(id) {
     if (dsPicker) dsPicker.setValue(id);           // whoever asked (the picker, ?ds=, the console): the picker shows it
     // This open is now the only one that counts (see liveSource): the one before it stops at
     // its next await, its downloads are cancelled, and so is a layer switch still under way.
