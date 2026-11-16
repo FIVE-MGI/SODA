@@ -97,10 +97,14 @@
   const sectionOf = (node) => { let s = node && node.closest ? node.closest("section.panel") : null; while (s && s.parentElement && s.parentElement.closest("section.panel")) s = s.parentElement.closest("section.panel"); return s; };
   let words = null;                                 // viewer.js's wording function for the layer on show
   const say = (t) => (words ? words(t) : t);
-  // keep `dst` hidden exactly when `src` is
-  function mirror(src, dst) {
-    const f = () => { if (dst.hidden !== src.hidden) dst.hidden = src.hidden; };
-    new MutationObserver(f).observe(src, { attributes: true, attributeFilter: ["hidden"] });
+  // Keep `dst` hidden exactly when any of `srcs` is. A block that used to sit inside a panel was hidden
+  // with that panel; in a section of its own it has to follow the panel as well as itself, or it would show a
+  // previous dataset's content (viewer.js only resets what the panel's hiding used to cover).
+  function mirror(dst, ...srcs) {
+    srcs = srcs.filter(Boolean);
+    const f = () => hide(dst, srcs.some((x) => x.hidden));
+    const mo = new MutationObserver(f);
+    srcs.forEach((x) => mo.observe(x, { attributes: true, attributeFilter: ["hidden"] }));
     f();
   }
 
@@ -112,7 +116,7 @@
     const brand = side.querySelector("header.brand"), mark = side.querySelector("footer.soda-mark");
     if (brand) body.appendChild(brand);
     body.appendChild(panelsBox);
-    if (mark) body.appendChild(mark);
+    if (mark) panelsBox.appendChild(mark);          // under the sections: pinned to the bottom edge on a desktop, at the end of the sheet on a phone
     panelsBox.hidden = false;
 
     // the first panel held the picker, Fit and the stain buttons: it becomes "Dataset details"
@@ -130,7 +134,7 @@
         box.hidden = true;
         sp.before(more); more.after(box); box.appendChild(sp);
         more.onclick = () => { box.hidden = !box.hidden; more.setAttribute("aria-expanded", String(!box.hidden)); if (!box.hidden) { const s = $("flySpeed"); if (s) s.focus(); } };
-        mirror(sp, more);
+        mirror(more, sp);
       }
     }
     if (fit) topBar.appendChild(fit);
@@ -165,11 +169,11 @@
     msg.setAttribute("role", "status");
     save.append(jsonRow, linkRow, msg);
     side.appendChild(save);
-    if (lasso) mirror(lasso, jsonRow);
+    if (lasso) mirror(jsonRow, lasso);
 
     // Slide QC and the counting tools leave the Genes panel for the Clusters tab
     const qcBox = $("qcBox");
-    if (qcBox) { const s = newSection("panelSlideQc", "clusters", "Slide QC"); s.appendChild(qcBox); $("panelBinQc").after(s); mirror(qcBox, s); }
+    if (qcBox) { const s = newSection("panelSlideQc", "clusters", "Slide QC"); s.appendChild(qcBox); $("panelBinQc").after(s); mirror(s, qcBox, $("panelGenes")); }
     const gateRow = $("rowGateOpen"), gate = $("panelGate");
     if (gateRow) {
       const s = newSection("panelCount", "clusters", "Counting tools");
@@ -177,7 +181,7 @@
       if ($("gatePub")) s.appendChild($("gatePub"));
       if (gate) s.appendChild(gate);
       ($("panelSlideQc") || $("panelBinQc")).after(s);
-      mirror(gateRow, s);
+      mirror(s, gateRow, $("panelGenes"));
     }
 
     // every section into its tab, in the tab's order; then its heading and body
@@ -214,6 +218,7 @@
     btn.innerHTML = CHEV;
     while (h2.firstChild) name.appendChild(h2.firstChild);      // the title's own nodes (#geneTitle, #chanCount ...) keep their ids
     dot.hidden = true; dot.title = "Something changed here";
+    dot.setAttribute("role", "img"); dot.setAttribute("aria-label", "changed");      // read out with the title while it shows
     btn.append(name, sum, dot);
     h2.appendChild(btn);
     head.appendChild(h2);
@@ -284,13 +289,16 @@
     if (open) { seen(); announceShown(); }
     schedule();
   }
-  // when a dataset has opened: remembered state, else the default; and never a tab with every section folded
+  // When a dataset has opened: the remembered state, else the default. A tab's only section is always open
+  // (a lone folded header helps nobody), and a tab whose sections are all folded by default, because the usual
+  // open one is not there for this dataset, opens its first; sections the user folded themselves stay folded.
   function applyOpen() {
     for (const tab of TABS) {
       const secs = sections(tab);
       secs.forEach((s) => setOpen(s, isOpenWanted(s.id), false));
       const live = secs.filter((s) => !s.hidden);
-      if (live.length && live.every((s) => s.classList.contains("closed"))) setOpen(live.find((s) => defaultOpen(s.id)) || live[0], true, false);
+      if (!live.length || !live.every((s) => s.classList.contains("closed"))) continue;
+      if (live.length === 1 || !live.some((s) => store.open[s.id] === false)) setOpen(live.find((s) => defaultOpen(s.id)) || live[0], true, false);
     }
   }
   // histograms drawn while their box was folded or in another tab need drawing again (qc.js, viewer.js listen)
@@ -319,7 +327,7 @@
     panelsBox.scrollTop = scrollAt[tab] || 0;
     if (byUser) { wanted = tab; store.tab = tab; remember(); }
     syncSheetAria();
-    seen(); announceShown(); schedule();
+    seen(); paintFlags(); announceShown(); schedule();
   }
   function setSideHidden(hide, byUser) {
     app.classList.toggle("side-hidden", hide);
@@ -342,6 +350,8 @@
   }
   function tabEvents() {
     for (const t of TABS) {
+      const d = tabBtn[t].querySelector(".tab-dot");
+      if (d) { d.setAttribute("role", "img"); d.setAttribute("aria-label", "something changed"); }
       tabBtn[t].addEventListener("click", () => {
         if (phone.matches) {
           if (sheet() === "peek") { select(t, true); setSheet("half"); }
@@ -397,12 +407,14 @@
     for (const id of [...flags.keys()]) if (onShow($(id)) || !$(id) || $(id).hidden) { flags.delete(id); any = true; }
     if (any) paintFlags();
   }
+  // a state that lasts (not a one-off change): marked for as long as it holds and its section is out of sight
+  const standing = (id) => (id === "panelLasso" && up("bqStale") && up("panelBinQc") ? "warn" : null);   // the result on show was made before the quality filter changed
   const toolOn = (tab) => (tab === "analyze" ? ["lassoCircle", "lassoFree"] : tab === "clusters" ? ["selBox", "selFree"] : []).some((id) => $(id) && $(id).classList.contains("on"));
   function paintFlags() {
     for (const tab of TABS) {
       let kind = null;
       for (const s of sections(tab)) {
-        const k = flags.get(s.id), d = s.querySelector(":scope > .sec-head .sec-dot");
+        const k = flags.get(s.id) || (!s.hidden && !onShow(s) ? standing(s.id) : null), d = s.querySelector(":scope > .sec-head .sec-dot");
         if (d) { hide(d, !k); d.classList.toggle("warn", k === "warn"); }
         if (k && kind !== "warn") kind = k;
       }
@@ -419,9 +431,15 @@
   function watchSignals() {
     // a run ends (its Cancel button goes away): the result or the error is in that section
     watchRun("lassoCancel", "panelLasso");
-    // the quality thresholds changed since the last run: Run UMAP is in the Analyze tab
-    const stale = $("bqStale");
-    if (stale) new MutationObserver(() => { if (!stale.hidden) flag("panelLasso", "warn"); }).observe(stale, { attributes: true, attributeFilter: ["hidden"] });
+    // the quality thresholds changed since the last run: the warning is beside the sliders (Clusters tab); the
+    // button that applies them is Run UMAP, so Draw a region says it too and carries a dot while it holds (standing)
+    const stale = $("bqStale"), run = $("lassoRun");
+    if (stale && run) {
+      const note = el("div", "meta bq-stale", "lassoStale");
+      note.textContent = "The quality filter changed since this run: press Run UMAP to apply it.";
+      (run.closest(".btnrow") || run).after(note);
+      mirror(note, stale, $("panelBinQc"));
+    }
     // a gene added from somewhere else (a volcano dot, a plot): it is now in the View tab's list
     for (const [list, secId] of [["geneList", "panelGenes"], ["rnaGeneList", "panelRna"]]) {
       const box = $(list); if (!box) continue;
@@ -432,7 +450,7 @@
     watchMsg("gateMsg", "panelCount");
     // the user's own action sends them to another tab: show it
     const load = $("lassoLoad"), toShape = $("selToShape");
-    if (load) load.addEventListener("change", () => { if (load.files && load.files.length) show("panelLasso"); });
+    if (load) load.addEventListener("change", () => show("panelLasso"));      // a file was chosen: the run and its messages are in Draw a region
     if (toShape) toShape.addEventListener("click", () => show("panelLasso"));
     for (const id of ["gateOpenPos", "gateOpenCl"]) if ($(id)) $(id).addEventListener("click", () => { const s = $("panelCount"); if (s) setOpen(s, true, false); });
   }
@@ -512,7 +530,7 @@
       const t = txt("plTitle"), has = up("plShow") || up("plotsPanel");
       return has && t && t !== "Plots" ? t : "not drawn";
     },
-    panelDataset: () => txt("dsInfo").split(" · ").slice(0, 2).join(" · "),
+    panelDataset() { const p = txt("dsInfo").split(" · "); return p.length > 3 ? `${p[0]} · ${p[p.length - 1]}` : p.slice(0, 2).join(" · "); },   // size and pixel size
   };
   function paintSummaries() {
     for (const tab of TABS) for (const s of sections(tab)) {
@@ -554,7 +572,7 @@
   }
 
   // ---- keeping up with the page -----------------------------------------------------------------
-  let timer = 0, opening = 0, firstOpen = false;
+  let timer = 0, opening = 0, openTok = 0, firstOpen = false;
   function schedule() { if (!timer) timer = setTimeout(refresh, 60); }
   function refresh() {
     timer = 0;
@@ -572,11 +590,12 @@
 
   // ---- what the other scripts call ---------------------------------------------------------------
   window.SodaLayout = {
-    // viewer.js: a dataset starts (true) / has finished (false) opening
-    opening(on) {
-      if (on) { opening++; return; }
-      opening = Math.max(0, opening - 1);
-      if (opening > 0) return;
+    // viewer.js: a dataset starts opening (true; returns that open's number) / has finished (false, its number).
+    // An open overtaken by a later one never finishes, so only the latest number's end counts.
+    opening(on, tok) {
+      if (on) { opening = 1; return ++openTok; }
+      if (tok !== openTok) return;
+      opening = 0;
       firstOpen = true;
       if (layerKind() === "rna") this.wording(null);          // the labels of a single-cell dataset are not reworded
       applyOpen(); settle(true); flags.clear(); flagOpenState(); refresh();
@@ -598,7 +617,7 @@
           if (after && after.parentElement === tabBox.analyze) after.after(sec); else tabBox.analyze.insertBefore(sec, tabBox.analyze.firstChild);
         }
         sec.appendChild(node);
-        mirror(node, sec);
+        mirror(sec, node, $("panelLasso"));
         wrap(sec);
         watchRun("vcCancel", "panelVolcano"); watchMsg("vcMsg", "panelVolcano");
       } else if (node.matches && node.matches("section.panel")) {

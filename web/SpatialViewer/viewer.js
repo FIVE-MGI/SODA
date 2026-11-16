@@ -5703,11 +5703,11 @@
 
   let dsPicker = null;                             // dspicker.js: the searchable dataset list
   // layout.js (the tabs) is told when a dataset starts and stops opening: every panel shows or hides on the way,
-  // and the tab on show is only re-chosen once they have settled
+  // and the tab on show is only re-chosen once they have settled. An open that a later one overtakes never
+  // returns (see liveSource), so each start gets a number and only the latest one's end counts.
   async function openDataset(id) {
-    const lay = window.SodaLayout;
-    if (lay) lay.opening(true);
-    try { return await openDatasetNow(id); } finally { if (lay) lay.opening(false); }
+    const lay = window.SodaLayout, tok = lay ? lay.opening(true) : 0;
+    try { return await openDatasetNow(id); } finally { if (lay) lay.opening(false, tok); }
   }
   async function openDatasetNow(id) {
     if (dsPicker) dsPicker.setValue(id);           // whoever asked (the picker, ?ds=, the console): the picker shows it

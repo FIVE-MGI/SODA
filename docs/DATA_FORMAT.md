@@ -212,10 +212,10 @@ The manifest layer names them:
 ```
 
 `scale` is the histogram axis the viewer uses (`log` = log10(1 + x)); `min` … `q3` are over all
-rows. The viewer's **Bin QC filter** panel (`qc.js`) draws a histogram per metric with a min and
+rows. The viewer's **Quality filter** section (`qc.js`, Clusters tab) draws a histogram per metric with a min and
 a max threshold. It is off until a threshold is set; a bin outside any threshold is greyed on
-the slide and left out of Circle → UMAP (PCA, UMAP, Leiden, markers). The thresholds are stored
-in Circle → UMAP's saved JSON as
+the slide and left out of Draw a region (PCA, UMAP, Leiden, markers). The thresholds are stored
+in the JSON that Save JSON writes as
 
 ```json
 "qcFilter": {"layer": "008um", "thresholds": {"total": {"min": 13, "max": null}, "pctMt": {"min": null, "max": 25}},
@@ -228,14 +228,14 @@ before 11 November 2026 have no `binQc` block; the panel is then hidden and noth
 
 ### What the heatmap, dot plot and violin plots read
 
-The **Heatmap · dot plot · violin** panel (`plots.js`, numbers from `plots_worker.js`) computes
+The **Heatmap and violin** section (heatmap, dot plot and violins; `plots.js`, numbers from `plots_worker.js`) computes
 everything in the browser from files already described here; nothing extra is exported.
 
 | Needed for | File |
 |---|---|
 | each gene shown | `gene/<NAME>.bin` (one request per gene, whole layer; placed on rows by walking `positions.bin` in order, or by exact position if the file is not in row order) |
 | counts per 10k | `binqc/total.bin`. Without it (exports before 11 November 2026): the library sizes in the `hvg/` chunks under the groups; without those: log1p of the raw counts, labelled "not depth-normalised" |
-| groups | `umap/index.json` and `umap/<file>` of the chosen clustering (labelled by its `name` if it has one, else "Leiden <resolution>"); `region.bin` and the layer's `regions[]`; drawn shapes and Circle → UMAP clusters come from the page itself |
+| groups | `umap/index.json` and `umap/<file>` of the chosen clustering (labelled by its `name` if it has one, else "Leiden <resolution>"); `region.bin` and the layer's `regions[]`; drawn shapes and the clusters of a Draw a region run come from the page itself |
 | default genes | `clusterings[].markers` (the first N per cluster) |
 | single-cell datasets | `obs/<NN>.bin` of a `category` column, `gene/<NAME>.bin` (values used as stored) |
 
@@ -348,7 +348,7 @@ What differs from a layer of bins or cells:
   `background` (median background and LOQ per panel).
 
 The viewer words such a layer as ROIs and counts, fills each ROI's outline with the colour of
-the genes on show (one disc per segment where an ROI has several; no density grid), hides the Tissue / UMAP switch and Circle → UMAP's own run, and leaves the rest
+the genes on show (one disc per segment where an ROI has several; no density grid), hides the Tissue / UMAP switch and Draw a region's own UMAP run, and leaves the rest
 (legend, groups, plots, volcano, QC filter) as for any layer (`roi.js`).
 
 In the prepare cache, `geomx/rows.json` keeps the annotation's raw text and the QC values per

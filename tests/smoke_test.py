@@ -60,7 +60,10 @@ panel's token-stripping). The browser half is tests/phone_browser_test.js (Playw
 Also: prepare.py caps the BLAS / OpenMP threads before numpy loads (threadcap.py: default,
 SODA_THREADS, --threads, a variable already set), the PCA runs on one thread and gives the same
 numbers as on the cap's threads; and the dataset picker (dspicker.js) is wired into the page with its
-roles, and every .js of the page parses when node is installed.
+roles, and every .js of the page parses when node is installed. The tabbed layout (layout.js): the
+tab rail, its four tabs and tab panels with their roles and ids, every section.panel named into one of
+the four tabs (those in index.html and those the scripts build), no id twice, the controls layout.js
+moves by id all there, and the hooks the other scripts need.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -2382,6 +2385,85 @@ def check_picker(c: Checker):
         c.ok(p.returncode == 0, f"node --check {f.name}" + ("" if p.returncode == 0 else f": {p.stdout.strip()[:200]}"))
 
 
+def check_layout(c: Checker):
+    """The tabbed layout (layout.js, layout.css): the markup it needs is in index.html, every section
+    belongs to a tab, no id is used twice, and the hooks in the other scripts are in place."""
+    from html.parser import HTMLParser
+
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js")}
+    names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
+    c.ok("layout.js" in names and "layout.css" in names, "index.html loads layout.js and layout.css")
+    c.ok("layout.js" in names and "viewer.js" in names and names.index("layout.js") < names.index("viewer.js"),
+         "layout.js loads before viewer.js (and before the scripts that hand it their panels)")
+
+    class Tags(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.tags = []
+
+        def handle_starttag(self, tag, attrs):
+            self.tags.append((tag, dict(attrs)))
+
+    t = Tags()
+    t.feed(html)
+    ids = [a["id"] for _, a in t.tags if a.get("id")]
+    dup = sorted({i for i in ids if ids.count(i) > 1})
+    c.ok(not dup, f"index.html: an id is used twice: {dup}")
+    by_id = {a["id"]: (tag, a) for tag, a in t.tags if a.get("id")}
+    tabs = {"view": "tabView", "clusters": "tabClusters", "analyze": "tabAnalyze", "save": "tabSave"}
+    c.ok(by_id.get("tabList", ("", {}))[1].get("role") == "tablist" and "tabRail" in by_id and "topBar" in by_id,
+         "index.html: the tab rail (#tabRail, #tabList role=tablist) and the top bar (#topBar)")
+    for key, tid in tabs.items():
+        tag, a = by_id.get(tid, ("", {}))
+        c.ok(tag == "button" and a.get("role") == "tab" and a.get("data-tab") == key and a.get("aria-selected") in ("true", "false"),
+             f"index.html: #{tid} is a button with role=tab, data-tab={key} and aria-selected")
+        box = by_id.get(a.get("aria-controls", ""), ("", {}))[1]
+        c.ok(box.get("role") == "tabpanel" and box.get("aria-labelledby") == tid,
+             f"index.html: #{tid} controls a role=tabpanel box that is labelled by it")
+    c.eq(sum(1 for _, a in t.tags if a.get("role") == "tab" and a.get("aria-selected") == "true"), 1,
+         "index.html: one tab is selected to begin with")
+    # every section names one of the four tabs: in the page, and in the scripts that build one
+    secs = [(a.get("id", "(no id)"), a.get("data-tab")) for tag, a in t.tags
+            if tag == "section" and "panel" in (a.get("class") or "").split()]
+    c.ok(len(secs) >= 10, f"index.html: the sections are there ({len(secs)} section.panel)")
+    for sid, tab in secs:
+        c.ok(tab in tabs and sid != "(no id)", f"index.html: section #{sid} has an id and names its tab (data-tab={tab!r})")
+    made = re.findall(r'newSection\("(\w+)", "(\w+)"', js["layout.js"])
+    c.ok(len(made) >= 4 and all(tab in tabs for _, tab in made), f"layout.js: the sections it makes name a tab: {made}")
+    c.ok('sec.dataset.tab = "analyze"' in js["plots.js"] and "SodaLayout.adopt(sec)" in js["plots.js"],
+         "plots.js: its section names its tab and is handed to the layout")
+    c.ok("SodaLayout.adopt(block)" in js["volcano.js"], "volcano.js: its block is handed to the layout")
+    # ids the layout makes must be new; ids it moves must exist (in the page or in the script that builds them)
+    new_ids = set(i for i, _ in made) | set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
+    clash = sorted(new_ids & set(ids))
+    c.ok(not clash, f"layout.js makes ids that index.html already has: {clash}")
+    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"])) | set(ids) | new_ids
+    block = js["layout.js"][js["layout.js"].index("const SECTIONS = {"):js["layout.js"].index("const ORDER = {")]
+    moved = set(re.findall(r'"(\w+)"', " ".join(re.findall(r'(?:more|notes): \[([^\]]*)\]', block))))
+    c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
+    order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
+    ordered = set(re.findall(r'"(panel\w+)"', order))
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots"}
+    c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
+    for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
+                            ("SodaLayout.wording", "viewer.js", "hands its wording function to the layout"),
+                            ('addEventListener("soda:shown"', "viewer.js", "redraws the gate histogram when its section is shown"),
+                            ('addEventListener("soda:shown"', "qc.js", "redraws the QC histograms when their section is shown"),
+                            ("#panelLasso h2 .sec-name", "roi.js", "finds the section title inside the layout's heading button"),
+                            ('"role", "note"', "layout.js", "the ? notes carry role=note"),
+                            ("aria-expanded", "layout.js", "section headers and More options carry aria-expanded"),
+                            ("localStorage", "layout.js", "remembers the tab and the open sections")):
+        c.ok(needle in js[f], f"{f}: {what} ({needle!r} not found)")
+    # the page must work with storage blocked: every access inside a try
+    lines = [ln for ln in js["layout.js"].splitlines() if "localStorage." in ln]
+    c.ok(lines and all("try" in ln or "JSON.parse(localStorage" in ln for ln in lines),
+         f"layout.js: a localStorage access outside try / catch: {[ln.strip()[:60] for ln in lines]}")
+    css = (APP / "layout.css").read_text(encoding="utf-8")
+    c.ok("@media (max-width: 700px)" in css and ".app.tabbed" in css and ":focus-visible" in css,
+         "layout.css: the phone layout, the .tabbed scope and a visible focus ring")
+
+
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
     texts = [p for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS for p in (export / ds).rglob("*")
@@ -2469,6 +2551,8 @@ def main(argv=None) -> int:
     check_threadcap(c, log_path)
     print("checks: dataset picker, JavaScript syntax")
     check_picker(c)
+    print("checks: tabbed layout (tabs, sections, ids)")
+    check_layout(c)
     print("checks: publishable")
     check_publishable(c, root, log_path)
     timings["checks"] = time.time() - t0

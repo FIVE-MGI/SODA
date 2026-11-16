@@ -14,6 +14,15 @@ container behind a password. No database and no always-on server are needed.
 
 ## Features
 
+- **Four tabs, one job each.** The controls sit beside the picture in four tabs: **View**
+  (image and stains, genes, molecules, outlines), **Clusters** (colour by clusters or cell
+  types, select, quality filter, slide QC and counting tools for protein images),
+  **Analyze** (draw a region, volcano plot, heatmap and violin) and **Save** (save / load,
+  a link, dataset details, about and help). A tab shows only when the dataset has something
+  for it. Sections fold, and a folded one says its state on its header ("3 stains on",
+  "Leiden 0.6", "12% removed"); rarely used settings are under **More options** and each
+  section's explanation is behind its **?**. The dataset picker and the Tissue / Side by
+  side / UMAP switch are in a bar over the picture.
 - **Multiplexed fluorescence.** Any number of channels, each with its own colour and
   display window (slider with histogram), blended on the GPU. Channel search, all on/off,
   nuclear stain pinned to the top, empty detector slots hidden.
@@ -22,7 +31,7 @@ container behind a password. No database and no always-on server are needed.
 - **Spatial transcriptomics (Visium, Visium HD).** Search genes and show up to eight at
   once on the tissue, as points or as a density map, at 8 µm, 16 µm or coarser bins.
 - **Xenium.** The morphology stains, the segmented cells as an expression layer (gene maps,
-  UMAP and Leiden clusters, suggested names, QC, Circle → UMAP and the volcano panel work on
+  UMAP and Leiden clusters, suggested names, QC, Draw a region and the volcano panel work on
   cells exactly as on bins), and the individual transcripts: pick genes in the Molecules
   panel and each one's molecules are drawn as coloured dots on the stains, several genes at
   once, fetched one gene at a time.
@@ -42,7 +51,7 @@ container behind a password. No database and no always-on server are needed.
 - **Stereo-seq (STOmics).** The registered H&E or ssDNA image with square-bin layers summed
   from the DNB counts of a GEF or GEM file (bin20 / bin50 / bin100 = 10 / 25 / 50 µm, cut to
   the tissue) and the segmented cells of the cell bin file as a layer of their own; gene maps,
-  UMAP and clusters, QC, Circle → UMAP and the plots work on both.
+  UMAP and clusters, QC, Draw a region and the plots work on both.
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
@@ -53,16 +62,16 @@ container behind a password. No database and no always-on server are needed.
   high-confidence ones, or type your own. General lists for any tissue (genes and protein
   panels, with common marker-name aliases) are used by default; peripheral nerve lists are
   included too.
-- **Circle → UMAP.** Draw circles or freehand shapes on the tissue and get a UMAP, with
+- **Draw a region (circle → UMAP).** Draw circles or freehand shapes on the tissue and get a UMAP, with
   optional Leiden clusters, of just the bins inside, computed in the browser. Drag a box or
   a loop over dots in its UMAP (Shift or **+** adds more) to light those bins on the slide,
   and **Show on slide** to frame them. Save the shapes and every parameter to redo it later.
-- **Bin QC filter.** Histograms of total counts, genes detected and % mitochondrial per bin,
+- **Quality filter (per-bin QC).** Histograms of total counts, genes detected and % mitochondrial per bin,
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
-  slide and left out of Circle → UMAP, and the thresholds are saved with the shapes and in
+  slide and left out of Draw a region, and the thresholds are saved with the shapes and in
   the page link.
 - **Heatmap, dot plot and violin plots.** Compare genes across groups: the section's clusters
-  at any resolution, the shapes you drew, Circle → UMAP clusters, the regions of an overlay,
+  at any resolution, the shapes you drew, the clusters of a Draw a region run, the regions of an overlay,
   or (single-cell datasets) any annotation column. Genes are each group's top markers plus any
   you type. A bin's value is log1p(counts per 10k); the heatmap shows the group mean (as it
   is, or z-scored / scaled 0–1 per gene), the dot plot adds the share of bins expressing, and
@@ -74,7 +83,7 @@ container behind a password. No database and no always-on server are needed.
 - **Multiplexed protein images (Akoya / PhenoCycler and other multi-channel TIFFs).** The
   slide is cut into 16 µm squares holding each marker's mean intensity (from full-resolution
   pixels), and the squares get everything above: UMAP, Leiden clusters, suggested names from
-  protein marker lists, and Circle → UMAP. Each marker is normalised per slide (background
+  protein marker lists, and Draw a region. Each marker is normalised per slide (background
   off, scaled to its 99.5th percentile, asinh), empty and duplicate channels are dropped
   automatically, and a slide QC box lists weak and saturated stains and outlines folds and
   bright edges. Set a cut-off per marker (by eye or Otsu) to read the % of tissue squares
@@ -93,7 +102,7 @@ container behind a password. No database and no always-on server are needed.
 *The synthetic demo dataset (below) in "Side by side" mode, coloured by Leiden cluster.*
 
 <!-- SCREENSHOT PLACEHOLDER: docs/img/circle_umap.png
-     Circle -> UMAP: two circles on the tissue and the resulting UMAP panel. -->
+     Draw a region (circle -> UMAP): two circles on the tissue and the resulting UMAP panel. -->
 
 ## Try it in 5 minutes
 
@@ -219,22 +228,26 @@ support WebGL2. Password-encrypted dataset links need the page to be served over
 
 **Phones and tablets** open the same page and link; the layout follows the screen.
 
-- On a phone held upright the map fills the screen and the controls sit in a sheet under
-  it: tap or drag its handle. Side by side puts the tissue above the UMAP. Tablets and
-  phones on their side keep the sidebar.
+- On a phone held upright the map fills the screen and the four tabs are a bar along the
+  bottom: tap a tab to open its controls in a sheet over the lower half, tap it again (or
+  the sheet's handle) to close it, drag the handle for more or less of it. The dataset
+  picker and the view buttons float at the top of the map. Side by side puts the tissue
+  above the UMAP. Tablets and phones on their side keep the tabs and the panel at the left.
 - Touch: pinch to zoom, drag to pan, tap a spot to read it (what hovering shows on a
   computer). While drawing a shape, one finger draws and two fingers move the picture.
   "Add to the selection" and "Done drawing" stand in for Shift and Esc.
 - A phone has far less memory and a slower single core than a desktop, so on a touch
   screen the viewer draws at most 2× the screen's CSS pixels, keeps fewer image tiles,
   notes when more than 10 stains are on (a phone can run out of memory and reload the
-  page), and Circle → UMAP samples at most 20,000 bins (50,000 on a computer) and keeps
+  page), and Draw a region samples at most 20,000 bins (50,000 on a computer) and keeps
   the screen on while it runs. Heatmaps and violins take up to 40 genes at a time (150 on a
   computer) and ask before downloading more than 30 MB of gene files. A shape file saved on a phone records that limit; rerun on
   a computer, a selection of more than 20,000 bins is sampled up to 50,000 instead.
 
-The phone layout and touch handling were tested in Chrome's phone emulation and on an
-iPhone, opening a password-protected Azure deployment.
+Touch handling and the image path were tested in Chrome's phone emulation and on an
+iPhone, opening a password-protected Azure deployment. The tabbed layout (the bottom bar
+and its sheet) has so far been tested in Chromium's phone emulation only, not on a real
+phone or in Safari.
 
 **If the image does not appear** (most often on a phone), the page now says why in the
 status line: tiles the data store refused, tiles that did not download or decode, no

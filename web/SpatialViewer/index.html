@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>SODA</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <link href="styles.css?v=20261116a" rel="stylesheet" />
+  <link href="styles.css?v=20261111y" rel="stylesheet" />
   <link href="volcano.css?v=20261111a" rel="stylesheet" />
   <link href="plots.css?v=20261111a" rel="stylesheet" />
   <link href="dspicker.css?v=20261111sf" rel="stylesheet" />
@@ -12,6 +12,9 @@
 </head>
 <body>
   <div class="app" data-sheet="peek">
+    <!-- layout.js moves the dataset picker, the Tissue / Side by side / UMAP switch and Fit up here
+         (first in the page so the keyboard reaches the dataset before the controls) -->
+    <header id="topBar" class="top-bar" aria-label="Dataset and view" hidden></header>
     <aside id="sidebar" class="sidebar" aria-label="Controls">
       <!-- phones only (CSS): the controls sit in a sheet under the map; tap or drag this to open it -->
       <button id="sheetHandle" class="sheet-handle" type="button" aria-controls="sidebar" aria-expanded="false"><i></i><span>Controls</span></button>
@@ -292,9 +295,6 @@
       </div>
       <footer class="soda-mark"><b>SODA</b> · Spatial Omics Data Annex</footer>
     </aside>
-
-    <!-- layout.js moves the dataset picker, the Tissue / Side by side / UMAP switch and Fit up here -->
-    <header id="topBar" class="top-bar" aria-label="Dataset and view" hidden></header>
 
     <main class="main">
       <div id="viewport"></div>
