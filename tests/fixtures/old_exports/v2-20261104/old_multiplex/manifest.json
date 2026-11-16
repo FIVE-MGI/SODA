@@ -1,0 +1,225 @@
+{
+ "id": "old_multiplex",
+ "label": "old_multiplex",
+ "kind": "tiff",
+ "pixelSizeUm": 0.5,
+ "created": "2026-11-16T16:06:00",
+ "expr": [
+  {
+   "key": "grid020um",
+   "label": "20 \u00b5m squares \u00b7 marker means",
+   "kind": "protein",
+   "binSizeUm": 20.0,
+   "nBins": 158,
+   "nGenes": 6,
+   "micronsPerPixel": 0.5,
+   "spotDiameterPx": 40.0,
+   "imageScale": 1,
+   "channels": [
+    "Synth-Membrane",
+    "Synth-Axon",
+    "Synth-Immune",
+    "Synth-Autofluor"
+   ],
+   "geneSummary": "mean intensity per square (8-bit units)",
+   "grid": {
+    "level": 2,
+    "levelPixelUm": 2.0,
+    "nx": 16,
+    "ny": 16,
+    "tissueBy": "DAPI",
+    "tissueThreshold": 32.797,
+    "tissueRule": "Otsu on log1p of the means after a 5x5-square (100 \u00b5m) moving average (edges: nearest square)",
+    "tissueSmoothUm": 100.0,
+    "tissueSmoothSquares": 5,
+    "holesFilled": 0,
+    "squares": 256
+   },
+   "dropped": [
+    {
+     "name": "DAPI",
+     "reason": "nuclear stain: written (and the tissue mask), not embedded"
+    },
+    {
+     "name": "Synth-Vessel",
+     "reason": "flat over the tissue (p99.5 - p1 = 0.15): written, not embedded"
+    }
+   ],
+   "mat": {
+    "nChannels": 4,
+    "chunkPx": 1000,
+    "chunks": 1,
+    "bytes": 1900
+   },
+   "umap": {
+    "nEmbedded": 158,
+    "clusterings": [
+     {
+      "resolution": 0.3,
+      "n": 5
+     },
+     {
+      "resolution": 0.6,
+      "n": 6
+     },
+     {
+      "resolution": 1.0,
+      "n": 9
+     }
+    ],
+    "default": 1,
+    "celltypes": {
+     "nTypes": 4,
+     "markerSet": "Synthetic demo regions, protein channels",
+     "modality": "protein"
+    }
+   },
+   "regions": [
+    {
+     "id": 1,
+     "name": "Left",
+     "nBins": 78
+    },
+    {
+     "id": 2,
+     "name": "Right",
+     "nBins": 79
+    },
+    {
+     "id": 3,
+     "name": "Core",
+     "nBins": 1
+    }
+   ],
+   "regionOverlay": "00_Regions.geojson"
+  }
+ ],
+ "overlays": [
+  {
+   "key": "00_Regions",
+   "label": "Regions",
+   "file": "00_Regions.geojson"
+  }
+ ],
+ "crop": {
+  "box": [
+   680,
+   680,
+   1320,
+   1320
+  ],
+  "ofFullSize": [
+   2000,
+   2000
+  ]
+ },
+ "image": {
+  "width": 640,
+  "height": 640,
+  "levels": 3,
+  "tileSize": 256,
+  "dtype": "uint16",
+  "levelShapes": [
+   [
+    640,
+    640
+   ],
+   [
+    320,
+    320
+   ],
+   [
+    160,
+    160
+   ]
+  ],
+  "channels": [
+   {
+    "index": 0,
+    "name": "DAPI",
+    "color": "#4040ff",
+    "bits": [
+     0,
+     34726.70399999188
+    ],
+    "window": [
+     0.46,
+     187.33
+    ],
+    "dataMax": 35507
+   },
+   {
+    "index": 1,
+    "name": "Synth-Membrane",
+    "color": "#ff00ff",
+    "bits": [
+     0,
+     31021.66349999589
+    ],
+    "window": [
+     0.9,
+     202.99
+    ],
+    "dataMax": 34087
+   },
+   {
+    "index": 2,
+    "name": "Synth-Axon",
+    "color": "#ffff00",
+    "bits": [
+     0,
+     35431.16439999989
+    ],
+    "window": [
+     0.36,
+     192.3
+    ],
+    "dataMax": 35524
+   },
+   {
+    "index": 3,
+    "name": "Synth-Vessel",
+    "color": "#00ffff",
+    "bits": [
+     0,
+     23832.77839999972
+    ],
+    "window": [
+     0.46,
+     241.12
+    ],
+    "dataMax": 24259
+   },
+   {
+    "index": 4,
+    "name": "Synth-Immune",
+    "color": "#ff8000",
+    "bits": [
+     0,
+     22224.19499999995
+    ],
+    "window": [
+     0.49,
+     155.13
+    ],
+    "dataMax": 23538
+   },
+   {
+    "index": 5,
+    "name": "Synth-Autofluor",
+    "color": "#ff4080",
+    "bits": [
+     0,
+     18729.0
+    ],
+    "window": [
+     109.03,
+     251.69
+    ],
+    "dataMax": 18820
+   }
+  ]
+ },
+ "static": true,
+ "tileFormat": "jpg"
+}

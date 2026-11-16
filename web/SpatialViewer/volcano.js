@@ -24,6 +24,7 @@
       <label class="row slim"><span>vs B</span><select id="vcB"></select></label>
       <label class="row slim"><span title="Wilcoxon rank-sum (tie-corrected, as scanpy method='wilcoxon', tie_correct=True), or Welch's t on log1p CP10k (scanpy method='t-test')">Test</span>
         <select id="vcTest"><option value="wilcoxon">Wilcoxon rank-sum</option><option value="welch">Welch t-test</option></select></label>
+      ${window.SodaRoi ? window.SodaRoi.normRow("vcNorm") : ""}
       <label class="row slim"><span id="lblVcMinPct" title="Test a gene only if it is counted in at least this share of the bins of A or of B">Min. % bins</span>
         <input id="vcMinPct" type="text" inputmode="decimal" value="${DEFAULTS.minPct}" /></label>
       <label class="row slim"><span title="Genes outside the section's variable genes, by name (comma or space separated, up to ${DEFAULTS.maxExtra}); each is one more download">Extra genes</span>
@@ -38,7 +39,7 @@
     panel.id = "volcanoPanel"; panel.className = "vc-panel"; panel.hidden = true;
     panel.innerHTML = `
       <div class="vc-head"><b id="vcTitle">Volcano</b>
-        <span class="vc-btns"><button id="vcCsv" title="Every gene: log2FC, p, padj, % expressing, mean CP10k (no bins, no barcodes)">Save CSV</button><button id="vcClose" title="Hide">×</button></span></div>
+        <span class="vc-btns"><button id="vcPng" title="The plot as shown, with its title, as a PNG image (2x)">Save PNG</button><button id="vcSvg2" title="The plot as shown, with its title, as an SVG (vector) file">Save SVG</button><button id="vcCsv" title="Every gene: log2FC, p, padj, % expressing, mean CP10k (no bins, no barcodes)">Save CSV</button><button id="vcClose" title="Hide">×</button></span></div>
       <div id="vcWarn" class="lp-warn" hidden></div>
       <div class="vc-ctl">
         <label title="Fold-change threshold, both sides">|log2FC| ≥ <input id="vcLfc" type="text" inputmode="decimal" value="${DEFAULTS.lfc}" /></label>
@@ -54,10 +55,11 @@
     $("vcCancel").onclick = () => { cancel(); msg("Cancelled."); };
     $("vcShow").onclick = () => { if (R) { $("volcanoPanel").hidden = false; draw(); } };
     $("vcA").onchange = () => fillB();
+    if (window.SodaRoi && $("vcNorm")) { window.SodaRoi.bindNorm("vcNorm"); $("vcNorm").addEventListener("change", refresh); }
     // the section's clustering can change in the Clusters panel without telling the lasso panel
     for (const id of ["vcA", "vcB"]) $(id).addEventListener("pointerdown", refresh);
     $("vcClose").onclick = () => { $("volcanoPanel").hidden = true; syncButtons(); };
-    $("vcCsv").onclick = saveCsv;
+    $("vcCsv").onclick = saveCsv; $("vcPng").onclick = savePng; $("vcSvg2").onclick = saveSvg;
     const num = (id, key, lo, hi) => { $(id).onchange = () => { const v = Number($(id).value); if (Number.isFinite(v) && v >= lo && v <= hi) V[key] = v; else $(id).value = V[key]; draw(); }; };
     num("vcLfc", "lfc", 0, 20); num("vcPadj", "padj", 1e-300, 1);
     $("vcY").onchange = () => { V.yScale = $("vcY").value; draw(); };
@@ -129,6 +131,7 @@
     const ok = !!(L && L.hvg && !L.prot && L.pos);
     $("volcanoBlock").hidden = !ok;
     if (!ok) { if (!$("volcanoPanel").hidden) $("volcanoPanel").hidden = true; return; }
+    if (window.SodaRoi) window.SodaRoi.normShown("vcNorm", curExpr());          // GeoMx: Q3 or per 10,000
     // rebuild the menus only when what they offer changed (a rebuild closes an open menu)
     const G = groupsNow(), key = JSON.stringify(G);
     if (key !== lastGroups) { lastGroups = key; fillSelect($("vcA"), G, []); fillB(); }
@@ -140,8 +143,12 @@
   // what a result depends on: layer, shapes, run, section clustering
   function sigNow(a, b) {
     const S = api.state(), L = S.lasso, sec = api.sectionClusters();
-    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? L.result.id : "", sec ? sec.res : "", a, b].join("|");
+    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? L.result.id : "", sec ? sec.res : "", a, b, q3Scale() ? "q3" : ""].join("|");
   }
+  // GeoMx ROI layer: GeomxTools' Q3 normalisation instead of CP10k when the layer has factors and Q3 is chosen (roi.js)
+  const curExpr = () => { const S = api.state(); return ((S.m && S.m.expr) || []).find((e) => e.key === S.exprKey) || null; };
+  const q3Scale = () => (window.SodaRoi ? window.SodaRoi.scale(curExpr()) : null);
+  const normWord = () => (R && R.norm === "q3" ? "Q3-normalised counts" : "CP10k");
 
   // ---- group codes per row: 1 = A, 2 = B (A wins a bin in both) ----------------------------
   async function groupMap(a, b) {
@@ -228,8 +235,9 @@
       }
       T.extra = performance.now() - t0 - T.fetch;
       msg("Testing…");
-      if (!worker) worker = new Worker("de_worker.js?v=20261111a");
+      if (!worker) worker = new Worker("de_worker.js?v=20261116q3");
       const cap = api.touch ? DEFAULTS.capTouch : DEFAULTS.cap;
+      const sc = q3Scale(), scale = sc && sc.length === L.pos.length / 2 ? sc : null;
       const res = await new Promise((resolve, reject) => {
         worker.onmessage = (ev) => {
           const d = ev.data;
@@ -237,12 +245,12 @@
           if (d.type === "error") reject(new Error(d.message)); else resolve(d);
         };
         worker.onerror = (e) => reject(new Error(e.message || "worker failed"));
-        worker.postMessage({ chunks: bufs, group: g, nGenes: genes.length, extra, positions: extra.length ? L.pos : null,
+        worker.postMessage({ chunks: bufs, group: g, nGenes: genes.length, extra, positions: extra.length ? L.pos : null, scale,
                              params: { minUmi: DEFAULTS.minUmi, cap, seed: DEFAULTS.seed, minPct: minPct / 100, test } });
       });
       if (!running) return;
       T.worker = performance.now() - t0 - T.fetch - T.extra;
-      R = { ...res, genes: genes.concat(extra.map((e) => e.name)), a, b, nameA, nameB, sig, test, layer: S.exprKey, dataset: S.dsId,
+      R = { ...res, genes: genes.concat(extra.map((e) => e.name)), a, b, nameA, nameB, sig, test, layer: S.exprKey, dataset: S.dsId, norm: scale ? "q3" : "cp10k",
             nHvg: genes.length, both, missingChunks: missing.length, givenGroups: !!((api.sectionClusters() || {}).user), secs: (performance.now() - t0) / 1000, ms: { ...T, ...res.info.ms } };
       window.SodaVolcano.result = R;                // for tests from the console
       pickedJ = -1; hoverJ = -1; tip(null);
@@ -347,10 +355,12 @@
       warns.push("Clusters were found from these same genes, so testing them against the rest is circular: p-values are inflated. Use the ranking, not the p-values.");
     $("vcWarn").innerHTML = warns.map((w) => esc(say(w))).join("<br>"); $("vcWarn").hidden = !warns.length;
     $("vcFoot").textContent = say(
-      `${R.test === "welch" ? "Welch t-test" : "Wilcoxon rank-sum (tie-corrected)"} on log1p CP10k (library = all genes), bins with ≥ ${I.minUmi} UMI; ` +
+      `${R.test === "welch" ? "Welch t-test" : "Wilcoxon rank-sum (tie-corrected)"} on ` +
+      (R.norm === "q3" ? `log1p Q3-normalised counts (count / the bin's Q3 factor, GeomxTools' Q3 normalisation; bins without a factor left out), bins with ≥ ${I.minUmi} UMI; `
+                       : `log1p CP10k (library = all genes), bins with ≥ ${I.minUmi} UMI; `) +
       `A ${I.nA.toLocaleString()} bins, B ${I.nB.toLocaleString()} bins. Tested: genes counted in ≥ ${+(I.minPct * 100).toFixed(2)}% of the bins of A or B, ` +
       `of the section's ${R.nHvg.toLocaleString()} variable genes${I.nExtra ? ` plus ${I.nExtra} named` : ""}; Benjamini-Hochberg over the ${I.nTested.toLocaleString()} tested. ` +
-      `log2FC = log2((mean CP10k A + 1) / (mean CP10k B + 1)). ` +
+      `log2FC = log2((mean ${normWord()} A + 1) / (mean ${normWord()} B + 1)). ` +
       (Math.max(I.nA, I.nB) > 5000 ? "With this many bins nearly every difference is 'significant': bins are neighbours, not independent samples, so read the fold change and % expressing, and confirm on other sections. " : "Bins are neighbours, not independent samples: the p-values describe this section only. ") +
       `Hover a dot for its numbers; click it to show the gene on the tissue.`);
   }
@@ -376,8 +386,8 @@
     el.innerHTML = `<b>${esc(R.genes[j])}</b>${j >= R.nHvg ? " <small>(named gene)</small>" : ""}<br>` + say(
       `log2FC ${R.lfc[j] >= 0 ? "+" : ""}${R.lfc[j].toFixed(2)} <small>(scanpy-style ${Number.isFinite(R.lfcScanpy[j]) ? R.lfcScanpy[j].toFixed(2) : "–"})</small><br>` +
       `padj ${fmtP(R.log10padj[j])} · p ${fmtP(R.log10p[j])}<br>` +
-      `in A ${(R.pctA[j] * 100).toFixed(1)}% of bins, mean ${R.cpA[j].toFixed(1)} CP10k<br>` +
-      `in B ${(R.pctB[j] * 100).toFixed(1)}% of bins, mean ${R.cpB[j].toFixed(1)} CP10k<br><small>click: show on the tissue</small>`);
+      `in A ${(R.pctA[j] * 100).toFixed(1)}% of bins, mean ${R.cpA[j].toFixed(1)} ${normWord()}<br>` +
+      `in B ${(R.pctB[j] * 100).toFixed(1)}% of bins, mean ${R.cpB[j].toFixed(1)} ${normWord()}<br><small>click: show on the tissue</small>`);
     el.hidden = false;
     const x = ev.clientX - r.left, y = ev.clientY - r.top;
     el.style.left = `${Math.min(x + 12, r.width - el.offsetWidth - 4)}px`;
@@ -389,7 +399,8 @@
     if (!R) return;
     const q = (t) => `"${String(t).replace(/"/g, '""')}"`, f = (x, d) => (Number.isFinite(x) ? (+x).toFixed(d) : "");
     const pTxt = (l10) => (l10 > -300 ? Math.pow(10, l10).toExponential(4) : `${Math.pow(10, l10 - Math.floor(l10)).toFixed(4)}e${Math.floor(l10)}`);
-    const I = R.info, lines = ["dataset,layer,group_a,group_b,test,bins_a,bins_b,gene,source,tested,log2fc,log2fc_scanpy,statistic,pval,padj,neg_log10_padj,pct_a,pct_b,mean_cp10k_a,mean_cp10k_b"];
+    const I = R.info, lines = ["dataset,layer,group_a,group_b,test,bins_a,bins_b,gene,source,tested,log2fc,log2fc_scanpy,statistic,pval,padj,neg_log10_padj,pct_a,pct_b," +
+      (R.norm === "q3" ? "mean_q3norm_a,mean_q3norm_b" : "mean_cp10k_a,mean_cp10k_b")];
     const ord = R.genes.map((_, j) => j).sort((p, q2) => R.tested[q2] - R.tested[p] || R.log10padj[p] - R.log10padj[q2] || Math.abs(R.lfc[q2]) - Math.abs(R.lfc[p]));
     for (const j of ord) {
       const t = R.tested[j] === 1;
@@ -399,6 +410,57 @@
     }
     const slug = (s) => String(s).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40);
     api.download(`${R.dataset}_${R.layer}_volcano_${slug(R.nameA)}_vs_${slug(R.nameB)}.csv`, lines.join("\n") + "\n", "text/csv");
+  }
+
+  // ---- picture files: the plot as drawn, with its title and counts, as a stand-alone SVG (and that SVG as a PNG) ----
+  // The page styles the plot with CSS classes (volcano.css); a file has no page, so the same rules go inside it.
+  const SVG_NS = "http://www.w3.org/2000/svg", SVG_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  const SVG_STYLE = ".vc-frame{fill:none;stroke:#2a3242}.vc-grid{stroke:#232a37;stroke-width:1}.vc-tick{fill:#8b93a3;font-size:10px}" +
+    ".vc-axis{fill:#8b93a3;font-size:11px}.vc-thr{stroke:#c9ced8;stroke-width:1;stroke-dasharray:5 4;opacity:.7}.vc-pt{stroke:none}" +
+    ".vc-pt.ns{fill:#6b7385;opacity:.55}.vc-pt.up{fill:#ff5a5f}.vc-pt.down{fill:#4ea1ff}" +
+    ".vc-lab{font-size:11px;paint-order:stroke;stroke:rgba(14,17,23,.9);stroke-width:3px}.vc-lab.up{fill:#ffb3b5}.vc-lab.down{fill:#b5d8ff}.vc-lab.ns{fill:#aab1bf}";
+  function fileSvg() {
+    const svg = $("vcSvg");
+    if (!R || !geom || !svg || !svg.firstChild) return null;
+    const W = Number(svg.getAttribute("width")), H = Number(svg.getAttribute("height")), top = 42;
+    let nUp = 0, nDown = 0;
+    for (let j = 0; j < R.genes.length; j++) if (R.tested[j]) { const c = cls(j); if (c === "up") nUp++; else if (c === "down") nDown++; }
+    const mk = (tag, attrs, text) => { const e = document.createElementNS(SVG_NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+    const root = mk("svg", { xmlns: SVG_NS, width: W, height: H + top, viewBox: `0 0 ${W} ${H + top}`, "font-family": SVG_FONT });
+    root.appendChild(mk("style", {}, SVG_STYLE));
+    root.appendChild(mk("rect", { width: W, height: H + top, fill: "#161b24" }));
+    root.appendChild(mk("text", { x: 10, y: 17, "font-size": 13, "font-weight": 600, fill: "#e6e9ef" }, `${R.nameA}  vs  ${R.nameB}`));
+    const sub = mk("text", { x: 10, y: 34, "font-size": 11, fill: "#8b93a3" });
+    sub.appendChild(mk("tspan", { fill: COL.up }, `↑ A ${nUp}`));
+    sub.appendChild(document.createTextNode("  ·  "));
+    sub.appendChild(mk("tspan", { fill: COL.down }, `↑ B ${nDown}`));
+    sub.appendChild(document.createTextNode(`  ·  |log2FC| ≥ ${V.lfc}, padj ≤ ${V.padj}  ·  tested ${R.info.nTested} of ${R.info.nGenes}  ·  ${R.test === "welch" ? "Welch t-test" : "Wilcoxon rank-sum"}`));
+    root.appendChild(sub);
+    const g = mk("g", { transform: `translate(0 ${top})` });
+    for (const c of svg.childNodes) if (!(c.id === "vcHi")) g.appendChild(c.cloneNode(true));     // not the hover / picked rings
+    root.appendChild(g);
+    return { text: new XMLSerializer().serializeToString(root), w: W, h: H + top };
+  }
+  const fileBase = () => { const slug = (s) => String(s).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40); return `${R.dataset}_${R.layer}_volcano_${slug(R.nameA)}_vs_${slug(R.nameB)}`; };
+  function saveSvg() {
+    const f = fileSvg();
+    if (!f) { msg("Nothing to save: show the volcano first.", true); return; }
+    api.download(`${fileBase()}.svg`, `<?xml version="1.0" encoding="UTF-8"?>\n${f.text}\n`, "image/svg+xml");
+  }
+  function savePng() {
+    const f = fileSvg();
+    if (!f) { msg("Nothing to save: show the volcano first.", true); return; }
+    const scale = Math.min(2, 8000 / Math.max(f.w, f.h)), img = new Image(), name = `${fileBase()}.png`;
+    const fail = () => msg("The PNG could not be made: save the SVG instead.", true);
+    img.onload = () => {
+      try {
+        const c = document.createElement("canvas"); c.width = Math.round(f.w * scale); c.height = Math.round(f.h * scale);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob((b) => { if (b) api.download(name, b, "image/png"); else fail(); }, "image/png");
+      } catch (e) { fail(); }
+    };
+    img.onerror = fail;
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(f.text);
   }
 
   window.SodaVolcano = {

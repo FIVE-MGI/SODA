@@ -117,6 +117,9 @@
   const MAX_RNA_GENES = Math.max(1, Math.min(cfg.rnaseqMaxGenes || 12, 24));
   const MAX_SPATIAL_GENES = Math.max(1, Math.min(cfg.maxGenes || 8, 16));
   let deckgl = null;
+  // Save image (snapshot.js): while a 2x / 4x picture is drawn, the image tiles are fetched this many
+  // levels finer than the screen needs (TileLayer zoomOffset); 0 the rest of the time
+  let snapZoom = 0;
 
   // ---- helpers ----------------------------------------------------------------
   const hexToRgb01 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
@@ -251,6 +254,11 @@
     if (plainObj(d.labelPositions)) s.labelPositions = plainObj(d.labelPositions);
     return s;
   }
+  // `tags` ({tissue: "nerve", ...}) for the picker's filters: short strings only, at most 20;
+  // names starting with "_" (e.g. __proto__) are dropped.
+  const folderTags = (v) => (plainObj(v) ? Object.fromEntries(Object.entries(v)
+    .filter(([k, x]) => typeof x === "string" && k && k[0] !== "_" && k.length <= 40 && x.length <= 80)
+    .slice(0, 20)) : undefined);
   // Per-dataset settings: from the data folder for a ?data= dataset, else config.js.
   const dsSettings = (id) => {
     const d = (S.datasets || []).find((x) => x.id === id);
@@ -550,6 +558,7 @@
       tileSize: img.tileSize,
       minZoom: -maxLevel,
       maxZoom: 0,
+      zoomOffset: snapZoom,
       extent: [0, 0, img.width, img.height],
       maxRequests: 12,
       // touch: the stains share one budget, but each keeps enough for a phone screen and its parents
@@ -1041,6 +1050,7 @@
       palette: S.genePalette, palettes: PALETTES, rampCss: rampCss(S.genePalette), hexToRgb255, unit: countUnit(),
       radius: Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale), opacity: S.geneOpacity,
       rowName: names ? (r) => names.get(R.ids[r]) || "" : null, dsId: S.dsId, exprKey: S.exprKey, ScatterplotLayer, PolygonLayer, NORMAL,
+      expr: e, render: requestRender,             // the layer's Q3 factors; redraw when the Normalise menu changes
       // the ROI outlines (the layer's region overlay, once loaded) and each row's ROI
       regionIds: R.ids, outlines: ((S.overlays || []).find((o) => o.data && (o.file === R.overlayKey || o.key === R.overlayKey)) || {}).data || null };
   }
@@ -3672,7 +3682,10 @@
       }));
     }
     const C = umapCloud("tissue");
-    if (C.n) out.push(umapCloudLayer(C, "tissue"));
+    // an ROI layer coloured by a grouping: each ROI's outline filled with its group's colour (roi.js)
+    if (C.n && byCl && isRois()) out.push(...window.SodaRoi.groupLayers(roiCtx(), C,
+      { discs: (c) => umapCloudLayer(c, "tissue", "roi-"), register: (id, c) => U.drawn.set(id, c) }));
+    else if (C.n) out.push(umapCloudLayer(C, "tissue"));
     return out;
   }
 
@@ -5938,6 +5951,86 @@
     const u = new URL(location.href); u.searchParams.set("ds", id); history.replaceState(null, "", u);
   }
 
+  // ---- Save image (snapshot.js): what it needs from here -------------------------------------
+  // The legend of what the map shows right now, as plain data: [{ title, items: [{ label, rgb | stops | outline }] }].
+  // rgb: one colour; stops: a colour ramp (low to high); outline: a ring of that colour.
+  const rgbOfCss = (s) => { const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(String(s || "")); return m ? [+m[1], +m[2], +m[3]] : null; };
+  const lutStops = (name) => { const lut = PALETTES[name] || PALETTES.viridis, out = []; for (let i = 0; i <= 6; i++) { const t = Math.round((i / 6) * 255) * 3; out.push([lut[t], lut[t + 1], lut[t + 2]]); } return out; };
+  const inkStops = (hex) => { const c = hexToRgb255(hex); return [c.map((v) => Math.round((1 - 0.2 * (1 - v / 255)) * 255)), c]; };
+  // the rows of a legend in the sidebar, as drawn there (hidden or unscored rows left out)
+  const domLegend = (host, rowSel, nameSel) => (host ? [...host.querySelectorAll(rowSel)] : []).map((r) => {
+    const i = r.querySelector("i"), n = r.querySelector(nameSel), rgb = i ? rgbOfCss(i.style.background) : null;
+    return rgb && n ? { label: n.textContent.trim(), rgb } : null;
+  }).filter(Boolean);
+  function snapLegend() {
+    const out = [];
+    if (S.mode === "rna") {
+      const R = S.rna; if (!R) return out;
+      const o = R.colorBy ? R.obs.find((x) => x.name === R.colorBy) : null;
+      if (o && R.cat) out.push({ title: o.name, items: o.categories.map((c, i) => ({ label: String(c), rgb: R.cat.lut[i] })) });
+      else if (o && o.type !== "category") out.push({ title: o.name, items: [{ label: `${(+o.min).toFixed(2)} to ${(+o.max).toFixed(2)}`, stops: lutStops("viridis") }] });
+      const shown = rnaShownGenes();
+      if (shown.length) out.push({ title: "Genes", items: shown.map((g) => ({ label: `${g.name} (${g.min.toFixed(2)} to ${g.max.toFixed(2)})`, stops: R.palette === "genes" ? inkStops(g.hex) : lutStops(R.palette) })) });
+      return out;
+    }
+    if (!S.m) return out;
+    const W = wd(), umap = inUmap();
+    // stains (not for an H&E photo: it has no stain list); the UMAP view has no image
+    const chanList = $("chanList");
+    if (!umap && S.imgOn && chanList && !chanList.hidden) {
+      const on = S.channels.filter((ch) => ch.visible);
+      if (on.length) out.push({ title: "Stains", items: on.map((ch) => ({ label: ch.name, rgb: hexToRgb255(ch.hex) })) });
+    }
+    if (gatePreviewOn() && !umapByCat()) {
+      const G = S.gate, c = G.cut.get(G.cur);
+      out.push({ title: "% positive", items: [{ label: `${G.cur} above ${gateFmt(c.v)}`, outline: gateLineRgb(G.cur) }] });
+    } else if (umapByCat()) {
+      const U = S.umap, info = umapClusterInfo();
+      const title = U.colorBy === "celltype" ? "Suggested cell type" : U.colorBy === "phenotype" ? "Cell types (your rules)" : info ? clLabel(info) : "Clusters";
+      const items = domLegend($("clusterLegend"), ".cl-row:not(.off)", ".nm");
+      if (items.length) out.push({ title, items });
+    } else {
+      const on = S.genes.filter((g) => g.visible !== false);
+      if (on.length) {
+        const dens = S.geneBlend === "heatmap" || umap;
+        if (!dens || isRois()) out.push({ title: W.Genes, items: on.map((g) => ({ label: g.name, rgb: hexToRgb255(g.hex) })) });
+        else if (S.genePalette === "genes") out.push({ title: `${W.Genes} (pale = few, saturated = many)`, items: on.map((g) => ({ label: g.name, stops: inkStops(g.hex) })) });
+        else out.push({ title: on.length > 1 ? `${W.Genes}, averaged (low to high)` : `${W.Gene} (low to high)`, items: [{ label: on.map((g) => g.name).join(", "), stops: lutStops(S.genePalette) }] });
+      }
+    }
+    if (!umap && S.mol && S.mol.genes.length) {
+      const on = S.mol.genes.filter((g) => g.visible !== false && g.rgb);
+      if (on.length) out.push({ title: "Molecules", items: on.map((g) => ({ label: g.name, rgb: g.rgb.slice(0, 3) })) });
+    }
+    if (!umap) {
+      const ov = S.overlays.filter((o) => o.on && o.data);
+      if (ov.length) out.push({ title: "Outlines", items: ov.map((o) => ({ label: o.label, outline: [255, 220, 80] })) });
+    }
+    return out;
+  }
+  function snapshotInit() {
+    if (!window.SodaSnapshot) return;
+    window.SodaSnapshot.init({
+      deck: () => deckgl, state: () => S, touch: TOUCH, download: lassoDownload, legend: snapLegend,
+      // "tissue" | "umap" | "sbs" (a single-cell dataset's UMAP panels count as "umap")
+      mode: () => (S.mode === "rna" ? "umap" : inUmap() ? "umap" : umapSbs() ? "sbs" : "tissue"),
+      ready: () => !!(deckgl && S.m && S.dsId) && !(S.umap && S.umap.anim),
+      // the name in the dataset picker, and the layer (e.g. "8 µm bins"): never the address or its query
+      label: () => { const d = S.datasets.find((x) => x.id === S.dsId); return d ? d.label : String(S.dsId || ""); },
+      layer: () => { if (S.mode === "rna" || !S.m) return ""; const e = currentExpr(); return e && e.label ? e.label : ""; },
+      // the slide's scale: image µm per pixel and the slide view's zoom (null in the UMAP)
+      scale: () => (S.mode === "rna" || !S.m || inUmap() || !S.viewState ? null : { um: S.m.pixelSizeUm || 0, zoom: S.viewState.zoom }),
+      // image tiles this many levels finer (0 = as on screen); redraws
+      // (a tile layer only picks its tiles again when the view moves, so the camera moves by a hair, and back after)
+      setTileBoost: (k) => {
+        if (snapZoom === k || S.mode === "rna") return;
+        snapZoom = k; render();
+        if (S.viewState) deckgl.setProps({ viewState: { ...deckVs(), ortho: { ...S.viewState, zoom: S.viewState.zoom + (k ? 1e-6 : 0) } } });
+      },
+      render,
+    });
+  }
+
   async function init() {
     sheetEvents();                                  // first, so the controls open even if loading fails
     initDeck();
@@ -5946,9 +6039,10 @@
     umapInit();
     gateInit();
     touchInit();
+    snapshotInit();
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
-      group: cfgSets[id].group, base: cfgSets[id].base }));
+      group: cfgSets[id].group, base: cfgSets[id].base, tags: cfgSets[id].tags }));
     // ?static=<root>&ds=<id> can open an exported dataset that is not in config.js yet
     if (params.get("static") && params.get("ds") && !S.datasets.some((d) => d.id === params.get("ds")))
       S.datasets.push({ id: params.get("ds"), label: `${params.get("ds")} (local export)` });
@@ -5961,7 +6055,7 @@
         const cat = await getJSON(`${DATA.root}datasets.json${DATA.qs}`, true);
         S.datasets = (Array.isArray(cat.datasets) ? cat.datasets : []).filter((d) => d && d.id).map((d) => ({
           id: String(d.id), label: String(d.label || d.id), group: d.group ? String(d.group) : undefined,
-          settings: folderSettings(d), ...at(String(d.id)) }));
+          tags: folderTags(d.tags), settings: folderSettings(d), ...at(String(d.id)) }));
         S.dataGroups = {};
         for (const d of S.datasets) if (d.group) S.dataGroups[d.group] = d.group;   // first-seen order
         dataTitle = text(cat.title, 120);

@@ -58,13 +58,17 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   once, fetched one gene at a time. Cell outlines are not drawn yet: each cell is a dot at
   its centre.
 - **GeoMx DSP.** A study of hand-drawn regions (ROIs) rather than cells or bins: the scans
-  (several slides side by side), the ROI outlines, and one disc per ROI segment coloured by a
-  gene. The columns of the annotation sheet are the groups: legend, heatmap / dot plot /
-  violin and the volcano compare groups of ROIs, and the QC panel has the GeoMx values (reads,
-  saturation, nuclei, area, negative-probe background, LOQ). What works for ROI data is the
-  comparing of groups; a UMAP, clusters, cell-type suggestions and density maps are not made
-  for a few dozen regions, and the viewer says so instead of showing them. Counts are shown as
-  counts per 10,000 in the plots (Q3 normalisation is not built in).
+  (several slides side by side), and each ROI's outline filled with the colour of a gene or
+  of its group (a disc per segment where an ROI has several). The columns of the annotation
+  sheet are the groups: legend, heatmap / dot plot / violin and the volcano compare groups of
+  ROIs, and the QC panel has the GeoMx values (reads, saturation, nuclei, area, negative-probe
+  background, LOQ). What works for ROI data is the comparing of groups; a UMAP, clusters,
+  cell-type suggestions and density maps are not made for a few dozen regions, and the viewer
+  says so instead of showing them. Values are **Q3-normalised** by default, as GeomxTools and
+  the GeoMx software do (factors worked out at export; "Normalise" in the plots and volcano
+  switches to counts per 10,000; older exports stay on counts per 10,000). Untested: several
+  segments per ROI on real data; and the statistics treat ROIs as independent samples, which
+  ROIs of one slide or animal are not.
 - **CosMx SMI and MERSCOPE.** The same three parts as Xenium, from the vendors' flat files:
   the per-FOV CosMx images stitched into one mosaic (raw stains or the rendered composite),
   or one z-plane of the MERSCOPE mosaic stains; the cells as an expression layer; and
@@ -117,6 +121,10 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   automatically, and a slide QC box lists weak and saturated stains and outlines folds and
   bright edges. Set a cut-off per marker (by eye or Otsu) to read the % of tissue squares
   positive for it, or count squares per cluster. No cell segmentation (yet).
+- **Save as image.** **Save image** (Save tab, or the camera beside Fit) saves the map as a
+  PNG exactly as shown in Tissue, UMAP or Side by side, with a legend, the scale bar and the
+  dataset's name, at 1x, 2x or 4x the screen's pixels (finer image tiles at 2x / 4x), on a
+  black, white or transparent background. The volcano plot saves as PNG or SVG, like the plots.
 - **Region overlays.** GeoJSON regions (for example from QuPath) drawn over the image;
   click a region to restrict the gene density to its bins.
 - **Single-cell RNA-seq.** UMAP from AnnData (`.h5ad`) or 10x output, coloured by cluster
@@ -275,9 +283,10 @@ email wbuchser@wustl.edu with any questions about hosting.
   Visium HD part, on Windows) 0.6 GB; a CosMx slide's counts (26 million transcripts, without its images) 0.76 GB; a
   whole mouse brain Stereo-seq chip 2.7 GB to prepare (3.9 GB from `tissue.gem.gz`) and
   **8.5 GB to export, the largest measured so far**. For whole-section datasets, have more
-  free memory than that. Visium HD with its 2 µm layer has not been measured and is
-  expected to need the most; if it runs out, leave that layer out with `--bins 008um,016um`
-  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)).
+  free memory than that. Visium HD is prepared with its 8 µm and 16 µm layers by default;
+  its 2 µm layer (`--bins all`) has not been measured and is expected to need the most
+  (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)). The notebook
+  compares your free memory with these numbers before the Prepare step and warns.
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
   the export a tiled copy. Time has not been benchmarked on a reference machine; measured
   examples are in [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
