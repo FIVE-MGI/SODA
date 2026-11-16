@@ -208,6 +208,19 @@
         if (Object.keys(per).length) s.names[rk] = per;
       }
       s.hidden = list(c.hidden, 2000, (x) => int(x, 0, 65534)) || [];
+      // cell sets (cellsets.js): clusters merged into one set, per clustering. viewer.js cleans them again as it reads them.
+      if (isObj(c.sets)) {
+        const sets = {};
+        for (const rk of Object.keys(c.sets).slice(0, 40)) {
+          if (UNSAFE_KEY.test(rk) || rk.length > 80 || !Array.isArray(c.sets[rk])) continue;
+          const l = c.sets[rk].slice(0, 500).map((x) => {
+            const ids = isObj(x) ? list(x.ids, 2000, (k) => int(k, 0, 65534)) : null;
+            return ids && ids.length >= 2 ? { ids, prev: str(x.prev, 60) } : null;
+          }).filter(Boolean);
+          if (l.length) sets[rk] = l;
+        }
+        if (Object.keys(sets).length) s.sets = sets;
+      }
       if (s.layer && s.resolution !== undefined) o.sectionClusters = s;
     }
     if (isObj(j.qcFilter) && isObj(j.qcFilter.thresholds)) {
@@ -236,7 +249,7 @@
     if (st.resolution !== "auto" && Number.isFinite(st.resolution)) o.resolution = st.resolution;
     if (Array.isArray(st.shapes) && st.shapes.length) o.shapes = st.shapes;
     const sc = st.sectionClusters;
-    if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [] };
+    if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [], ...(sc.sets ? { sets: sc.sets } : {}) };
     if (st.qcFilter && st.qcFilter.thresholds) o.qcFilter = { layer: st.qcFilter.layer, thresholds: st.qcFilter.thresholds };
     if (st.view) o.view = st.view;
     return o;

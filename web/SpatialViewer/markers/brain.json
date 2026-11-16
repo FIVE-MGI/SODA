@@ -1,0 +1,27 @@
+{
+  "name": "Brain (mouse / human)",
+  "note": "Starting lists of canonical marker genes for the major cell classes of the brain (cortex, hippocampus, white matter and the vascular, ventricular and meningeal cells around them). Neuron types are the two broad classes, excitatory (glutamatergic) and inhibitory (GABAergic), not subtypes or regions; add your own types (e.g. PVALB, SST, VIP interneurons) for finer names. Review and edit them for your tissue: the suggested cluster names are only as good as these lists. Gene names are matched case-insensitively, so the same file works for human (GFAP) and mouse (Gfap). A type needs at least 2 of its genes in the data to be scored. Sources: the class markers used in Zeisel et al. 2015 (Science 347:1138) and 2018 (Cell 174:999), Tasic et al. 2018 (Nature 563:72), Vanlandewijck et al. 2018 (Nature 554:475, vascular and perivascular cells) and the Allen Brain Cell Atlas.",
+  "version": 1,
+  "sources": [
+    "Zeisel A et al. (2015) Cell types in the mouse cortex and hippocampus revealed by single-cell RNA-seq. Science 347:1138-1142",
+    "Zeisel A et al. (2018) Molecular architecture of the mouse nervous system. Cell 174:999-1014",
+    "Tasic B et al. (2018) Shared and distinct transcriptomic cell types across neocortical areas. Nature 563:72-78",
+    "Vanlandewijck M et al. (2018) A molecular atlas of cell types and zonation in the brain vasculature. Nature 554:475-480",
+    "Allen Brain Cell Atlas, https://portal.brain-map.org/atlases-and-data/bkp/abc-atlas"
+  ],
+  "types": [
+    { "name": "Excitatory neuron", "genes": ["SLC17A7", "SLC17A6", "SATB2", "NEUROD6", "TBR1", "CAMK2A"] },
+    { "name": "Inhibitory neuron", "genes": ["GAD1", "GAD2", "SLC32A1", "DLX1", "DLX5"] },
+    { "name": "Astrocyte", "genes": ["AQP4", "ALDH1L1", "GFAP", "SLC1A3", "SLC1A2", "GJA1"] },
+    { "name": "Oligodendrocyte", "genes": ["MOG", "MOBP", "MAG", "MBP", "PLP1", "CLDN11"] },
+    { "name": "Oligodendrocyte precursor (OPC)", "genes": ["PDGFRA", "CSPG4", "VCAN", "OLIG1", "OLIG2"] },
+    { "name": "Microglia", "genes": ["P2RY12", "TMEM119", "CX3CR1", "CSF1R", "C1QA", "HEXB"] },
+    { "name": "Border-associated macrophage", "genes": ["MRC1", "CD163", "LYVE1", "F13A1"] },
+    { "name": "Endothelial", "genes": ["CLDN5", "FLT1", "PECAM1", "CDH5", "SLC2A1"] },
+    { "name": "Pericyte", "genes": ["PDGFRB", "RGS5", "KCNJ8", "ABCC9", "VTN"] },
+    { "name": "Vascular smooth muscle", "genes": ["ACTA2", "MYH11", "TAGLN", "CNN1"] },
+    { "name": "Fibroblast / meningeal (VLMC)", "genes": ["DCN", "COL1A1", "COL1A2", "SLC6A13", "LUM"] },
+    { "name": "Ependymal", "genes": ["FOXJ1", "CCDC153", "TMEM212", "DYNLRB2"] },
+    { "name": "Choroid plexus epithelium", "genes": ["TTR", "KL", "FOLR1", "CLIC6", "KCNJ13"] }
+  ]
+}

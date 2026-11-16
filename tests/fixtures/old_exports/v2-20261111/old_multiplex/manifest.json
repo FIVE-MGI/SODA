@@ -1,0 +1,293 @@
+{
+ "id": "old_multiplex",
+ "label": "old_multiplex",
+ "kind": "tiff",
+ "pixelSizeUm": 0.5,
+ "created": "2026-11-16T16:09:06",
+ "expr": [
+  {
+   "key": "grid016um",
+   "label": "16 \u00b5m squares \u00b7 marker means",
+   "kind": "protein",
+   "binSizeUm": 16.0,
+   "nBins": 229,
+   "nGenes": 7,
+   "micronsPerPixel": 0.5,
+   "spotDiameterPx": 32.0,
+   "imageScale": 1,
+   "channels": [
+    "Synth-Membrane",
+    "Synth-Axon",
+    "Synth-Immune",
+    "Synth-Autofluor",
+    "Synth-Saturated"
+   ],
+   "geneSummary": "mean intensity per square (8-bit units, full-resolution pixels)",
+   "grid": {
+    "level": 0,
+    "levelPixelUm": 0.5,
+    "nx": 20,
+    "ny": 20,
+    "tissueBy": "DAPI",
+    "tissueThreshold": 16.597,
+    "tissueRule": "Otsu on log1p of the means after a 7x7-square (112 \u00b5m) moving average (edges: nearest square)",
+    "tissueSmoothUm": 112.0,
+    "tissueSmoothSquares": 7,
+    "holesFilled": 0,
+    "squares": 400
+   },
+   "normalize": "bg-asinh-v1",
+   "qc": {
+    "file": "qc.json",
+    "flags": "qc_flags.bin",
+    "everythingBright": 0,
+    "saturatedSquares": 0,
+    "lowSignalSquares": 0,
+    "lowSignalRule": "no embedded marker at x >= 0.2",
+    "weak": [
+     "Synth-Membrane",
+     "Synth-Immune",
+     "Synth-Autofluor"
+    ],
+    "saturated": [],
+    "seamsFlagged": false,
+    "seamsCorrected": []
+   },
+   "dropped": [
+    {
+     "name": "open-cy5",
+     "reason": "open / blank channel: not written"
+    },
+    {
+     "name": "Synth-Axon-488",
+     "reason": "duplicate of channel 3 (Synth-Axon), which has the stronger signal: not written"
+    },
+    {
+     "name": "DAPI",
+     "reason": "nuclear stain: written (and the tissue mask), not embedded"
+    },
+    {
+     "name": "Synth-Vessel",
+     "reason": "flat over the tissue (p99.5 - background = 0.09): written, not embedded"
+    }
+   ],
+   "mat": {
+    "nChannels": 5,
+    "chunkPx": 1000,
+    "chunks": 1,
+    "bytes": 3210
+   },
+   "umap": {
+    "nEmbedded": 229,
+    "clusterings": [
+     {
+      "resolution": 0.3,
+      "n": 6
+     },
+     {
+      "resolution": 0.6,
+      "n": 6
+     },
+     {
+      "resolution": 1.0,
+      "n": 9
+     }
+    ],
+    "default": 1,
+    "celltypes": {
+     "nTypes": 4,
+     "markerSet": "Synthetic demo regions, protein channels",
+     "modality": "protein"
+    }
+   },
+   "regions": [
+    {
+     "id": 1,
+     "name": "Left",
+     "nBins": 110
+    },
+    {
+     "id": 2,
+     "name": "Right",
+     "nBins": 118
+    },
+    {
+     "id": 3,
+     "name": "Core",
+     "nBins": 1
+    }
+   ],
+   "regionOverlay": "00_Regions.geojson"
+  }
+ ],
+ "overlays": [
+  {
+   "key": "00_Regions",
+   "label": "Regions",
+   "file": "00_Regions.geojson"
+  }
+ ],
+ "crop": {
+  "box": [
+   680,
+   680,
+   1320,
+   1320
+  ],
+  "ofFullSize": [
+   2000,
+   2000
+  ]
+ },
+ "image": {
+  "width": 640,
+  "height": 640,
+  "levels": 3,
+  "tileSize": 256,
+  "dtype": "uint16",
+  "levelShapes": [
+   [
+    640,
+    640
+   ],
+   [
+    320,
+    320
+   ],
+   [
+    160,
+    160
+   ]
+  ],
+  "channels": [
+   {
+    "index": 0,
+    "name": "DAPI",
+    "color": "#4040ff",
+    "bits": [
+     0,
+     34726.70399999188
+    ],
+    "window": [
+     0.46,
+     187.33
+    ],
+    "dataMax": 35507
+   },
+   {
+    "index": 1,
+    "name": "Synth-Membrane",
+    "color": "#ff00ff",
+    "bits": [
+     0,
+     31021.66349999589
+    ],
+    "window": [
+     0.9,
+     202.99
+    ],
+    "dataMax": 34087
+   },
+   {
+    "index": 2,
+    "name": "Synth-Axon",
+    "color": "#ffff00",
+    "bits": [
+     0,
+     35431.16439999989
+    ],
+    "window": [
+     0.36,
+     192.3
+    ],
+    "dataMax": 35524
+   },
+   {
+    "index": 3,
+    "name": "Synth-Vessel",
+    "color": "#00ffff",
+    "bits": [
+     0,
+     23832.77839999972
+    ],
+    "window": [
+     0.46,
+     241.12
+    ],
+    "dataMax": 24259
+   },
+   {
+    "index": 4,
+    "name": "Synth-Immune",
+    "color": "#ff8000",
+    "bits": [
+     0,
+     22224.19499999995
+    ],
+    "window": [
+     0.49,
+     155.13
+    ],
+    "dataMax": 23538
+   },
+   {
+    "index": 5,
+    "name": "Synth-Autofluor",
+    "color": "#ff4080",
+    "bits": [
+     0,
+     18729.0
+    ],
+    "window": [
+     109.03,
+     251.69
+    ],
+    "dataMax": 18820
+   },
+   {
+    "index": 6,
+    "name": "Synth-Saturated",
+    "color": "#80ff80",
+    "bits": [
+     0,
+     65535.0
+    ],
+    "window": [
+     0.17,
+     255.0
+    ],
+    "dataMax": 65535
+   },
+   {
+    "index": 7,
+    "name": "Synth-Axon-488",
+    "color": "#8080ff",
+    "bits": [
+     0,
+     8235.26279999991
+    ],
+    "window": [
+     1.52,
+     191.75
+    ],
+    "dataMax": 8320
+   },
+   {
+    "index": 8,
+    "name": "open-cy5",
+    "color": "#ffffff",
+    "bits": [
+     0,
+     404.0
+    ],
+    "window": [
+     26.66,
+     222.81
+    ],
+    "dataMax": 468
+   }
+  ]
+ },
+ "static": true,
+ "tileFormat": "jpg"
+}

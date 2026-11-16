@@ -24,7 +24,8 @@
       <label class="row slim"><span>vs B</span><select id="vcB"></select></label>
       <label class="row slim"><span title="Wilcoxon rank-sum (tie-corrected, as scanpy method='wilcoxon', tie_correct=True), or Welch's t on log1p CP10k (scanpy method='t-test')">Test</span>
         <select id="vcTest"><option value="wilcoxon">Wilcoxon rank-sum</option><option value="welch">Welch t-test</option></select></label>
-      <label class="row slim"><span title="Test a gene only if it is counted in at least this share of the bins of A or of B">Min. % bins</span>
+      ${window.SodaRoi ? window.SodaRoi.normRow("vcNorm") : ""}
+      <label class="row slim"><span id="lblVcMinPct" title="Test a gene only if it is counted in at least this share of the bins of A or of B">Min. % bins</span>
         <input id="vcMinPct" type="text" inputmode="decimal" value="${DEFAULTS.minPct}" /></label>
       <label class="row slim"><span title="Genes outside the section's variable genes, by name (comma or space separated, up to ${DEFAULTS.maxExtra}); each is one more download">Extra genes</span>
         <input id="vcExtra" type="text" placeholder="e.g. GAPDH, ACTB" autocomplete="off" /></label>
@@ -54,6 +55,7 @@
     $("vcCancel").onclick = () => { cancel(); msg("Cancelled."); };
     $("vcShow").onclick = () => { if (R) { $("volcanoPanel").hidden = false; draw(); } };
     $("vcA").onchange = () => fillB();
+    if (window.SodaRoi && $("vcNorm")) { window.SodaRoi.bindNorm("vcNorm"); $("vcNorm").addEventListener("change", refresh); }
     // the section's clustering can change in the Clusters panel without telling the lasso panel
     for (const id of ["vcA", "vcB"]) $(id).addEventListener("pointerdown", refresh);
     $("vcClose").onclick = () => { $("volcanoPanel").hidden = true; syncButtons(); };
@@ -94,7 +96,7 @@
       for (let c = 0; c < n; c++) out.run.push({ v: `c:${c}`, t: `${(L.clNames && L.clNames[c]) || `Cluster ${c}`} of the UMAP run${sizes[c] ? ` (${sizes[c].toLocaleString()} bins)` : ""}` });
     }
     const sec = api.sectionClusters();
-    if (sec) for (let c = 0; c < sec.n; c++) out.section.push({ v: `k:${c}`, t: `${sec.names[c] || `Cluster ${c}`} of the section (${sec.label || `res ${sec.res}`}${sec.sizes && sec.sizes[c] ? `, ${sec.sizes[c].toLocaleString()} bins` : ""})` });
+    if (sec) for (let c = 0; c < sec.n; c++) if (!(sec.gone && sec.gone.includes(c))) out.section.push({ v: `k:${c}`, t: `${sec.names[c] || `Cluster ${c}`} of the section (${sec.label || `res ${sec.res}`}${sec.sizes && sec.sizes[c] ? `, ${sec.sizes[c].toLocaleString()} bins` : ""})` });
     return out;
   }
   function fillSelect(sel, groups, extra, keep) {
@@ -129,6 +131,7 @@
     const ok = !!(L && L.hvg && !L.prot && L.pos);
     $("volcanoBlock").hidden = !ok;
     if (!ok) { if (!$("volcanoPanel").hidden) $("volcanoPanel").hidden = true; return; }
+    if (window.SodaRoi) window.SodaRoi.normShown("vcNorm", curExpr());          // GeoMx: Q3 or per 10,000
     // rebuild the menus only when what they offer changed (a rebuild closes an open menu)
     const G = groupsNow(), key = JSON.stringify(G);
     if (key !== lastGroups) { lastGroups = key; fillSelect($("vcA"), G, []); fillB(); }
@@ -140,8 +143,12 @@
   // what a result depends on: layer, shapes, run, section clustering
   function sigNow(a, b) {
     const S = api.state(), L = S.lasso, sec = api.sectionClusters();
-    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? L.result.id : "", sec ? sec.res : "", a, b].join("|");
+    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? L.result.id : "", sec ? `${sec.res}${sec.sets || ""}` : "", a, b, q3Scale() ? "q3" : ""].join("|");
   }
+  // GeoMx ROI layer: GeomxTools' Q3 normalisation instead of CP10k when the layer has factors and Q3 is chosen (roi.js)
+  const curExpr = () => { const S = api.state(); return ((S.m && S.m.expr) || []).find((e) => e.key === S.exprKey) || null; };
+  const q3Scale = () => (window.SodaRoi ? window.SodaRoi.scale(curExpr()) : null);
+  const normWord = () => (R && R.norm === "q3" ? "Q3-normalised counts" : "CP10k");
 
   // ---- group codes per row: 1 = A, 2 = B (A wins a bin in both) ----------------------------
   async function groupMap(a, b) {
@@ -172,7 +179,7 @@
     }
     return { g, nA, nB, both };
   }
-  const labelOf = (sel, v) => { const o = [...sel.options].find((x) => x.value === v); return o ? o.textContent.replace(/\s*\([^)]*(?:bins|ROIs)\)$/, "").replace(/\s*\(res [^)]*\)$/, "") : v; };
+  const labelOf = (sel, v) => { const o = [...sel.options].find((x) => x.value === v); return o ? o.textContent.replace(/\s*\([^)]*(?:bins|cells|ROIs)\)$/, "").replace(/\s*\(res [^)]*\)$/, "") : v; };
 
   function cancel() {
     if (worker && running) { worker.terminate(); worker = null; }
@@ -228,8 +235,9 @@
       }
       T.extra = performance.now() - t0 - T.fetch;
       msg("Testing…");
-      if (!worker) worker = new Worker("de_worker.js?v=20261111a");
+      if (!worker) worker = new Worker("de_worker.js?v=20261116q3");
       const cap = api.touch ? DEFAULTS.capTouch : DEFAULTS.cap;
+      const sc = q3Scale(), scale = sc && sc.length === L.pos.length / 2 ? sc : null;
       const res = await new Promise((resolve, reject) => {
         worker.onmessage = (ev) => {
           const d = ev.data;
@@ -237,12 +245,12 @@
           if (d.type === "error") reject(new Error(d.message)); else resolve(d);
         };
         worker.onerror = (e) => reject(new Error(e.message || "worker failed"));
-        worker.postMessage({ chunks: bufs, group: g, nGenes: genes.length, extra, positions: extra.length ? L.pos : null,
+        worker.postMessage({ chunks: bufs, group: g, nGenes: genes.length, extra, positions: extra.length ? L.pos : null, scale,
                              params: { minUmi: DEFAULTS.minUmi, cap, seed: DEFAULTS.seed, minPct: minPct / 100, test } });
       });
       if (!running) return;
       T.worker = performance.now() - t0 - T.fetch - T.extra;
-      R = { ...res, genes: genes.concat(extra.map((e) => e.name)), a, b, nameA, nameB, sig, test, layer: S.exprKey, dataset: S.dsId,
+      R = { ...res, genes: genes.concat(extra.map((e) => e.name)), a, b, nameA, nameB, sig, test, layer: S.exprKey, dataset: S.dsId, norm: scale ? "q3" : "cp10k",
             nHvg: genes.length, both, missingChunks: missing.length, givenGroups: !!((api.sectionClusters() || {}).user), secs: (performance.now() - t0) / 1000, ms: { ...T, ...res.info.ms } };
       window.SodaVolcano.result = R;                // for tests from the console
       pickedJ = -1; hoverJ = -1; tip(null);
@@ -347,10 +355,12 @@
       warns.push("Clusters were found from these same genes, so testing them against the rest is circular: p-values are inflated. Use the ranking, not the p-values.");
     $("vcWarn").innerHTML = warns.map((w) => esc(say(w))).join("<br>"); $("vcWarn").hidden = !warns.length;
     $("vcFoot").textContent = say(
-      `${R.test === "welch" ? "Welch t-test" : "Wilcoxon rank-sum (tie-corrected)"} on log1p CP10k (library = all genes), bins with ≥ ${I.minUmi} UMI; ` +
+      `${R.test === "welch" ? "Welch t-test" : "Wilcoxon rank-sum (tie-corrected)"} on ` +
+      (R.norm === "q3" ? `log1p Q3-normalised counts (count / the bin's Q3 factor, GeomxTools' Q3 normalisation; bins without a factor left out), bins with ≥ ${I.minUmi} UMI; `
+                       : `log1p CP10k (library = all genes), bins with ≥ ${I.minUmi} UMI; `) +
       `A ${I.nA.toLocaleString()} bins, B ${I.nB.toLocaleString()} bins. Tested: genes counted in ≥ ${+(I.minPct * 100).toFixed(2)}% of the bins of A or B, ` +
       `of the section's ${R.nHvg.toLocaleString()} variable genes${I.nExtra ? ` plus ${I.nExtra} named` : ""}; Benjamini-Hochberg over the ${I.nTested.toLocaleString()} tested. ` +
-      `log2FC = log2((mean CP10k A + 1) / (mean CP10k B + 1)). ` +
+      `log2FC = log2((mean ${normWord()} A + 1) / (mean ${normWord()} B + 1)). ` +
       (Math.max(I.nA, I.nB) > 5000 ? "With this many bins nearly every difference is 'significant': bins are neighbours, not independent samples, so read the fold change and % expressing, and confirm on other sections. " : "Bins are neighbours, not independent samples: the p-values describe this section only. ") +
       `Hover a dot for its numbers; click it to show the gene on the tissue.`);
   }
@@ -376,8 +386,8 @@
     el.innerHTML = `<b>${esc(R.genes[j])}</b>${j >= R.nHvg ? " <small>(named gene)</small>" : ""}<br>` + say(
       `log2FC ${R.lfc[j] >= 0 ? "+" : ""}${R.lfc[j].toFixed(2)} <small>(scanpy-style ${Number.isFinite(R.lfcScanpy[j]) ? R.lfcScanpy[j].toFixed(2) : "–"})</small><br>` +
       `padj ${fmtP(R.log10padj[j])} · p ${fmtP(R.log10p[j])}<br>` +
-      `in A ${(R.pctA[j] * 100).toFixed(1)}% of bins, mean ${R.cpA[j].toFixed(1)} CP10k<br>` +
-      `in B ${(R.pctB[j] * 100).toFixed(1)}% of bins, mean ${R.cpB[j].toFixed(1)} CP10k<br><small>click: show on the tissue</small>`);
+      `in A ${(R.pctA[j] * 100).toFixed(1)}% of bins, mean ${R.cpA[j].toFixed(1)} ${normWord()}<br>` +
+      `in B ${(R.pctB[j] * 100).toFixed(1)}% of bins, mean ${R.cpB[j].toFixed(1)} ${normWord()}<br><small>click: show on the tissue</small>`);
     el.hidden = false;
     const x = ev.clientX - r.left, y = ev.clientY - r.top;
     el.style.left = `${Math.min(x + 12, r.width - el.offsetWidth - 4)}px`;
@@ -389,7 +399,8 @@
     if (!R) return;
     const q = (t) => `"${String(t).replace(/"/g, '""')}"`, f = (x, d) => (Number.isFinite(x) ? (+x).toFixed(d) : "");
     const pTxt = (l10) => (l10 > -300 ? Math.pow(10, l10).toExponential(4) : `${Math.pow(10, l10 - Math.floor(l10)).toFixed(4)}e${Math.floor(l10)}`);
-    const I = R.info, lines = ["dataset,layer,group_a,group_b,test,bins_a,bins_b,gene,source,tested,log2fc,log2fc_scanpy,statistic,pval,padj,neg_log10_padj,pct_a,pct_b,mean_cp10k_a,mean_cp10k_b"];
+    const I = R.info, lines = ["dataset,layer,group_a,group_b,test,bins_a,bins_b,gene,source,tested,log2fc,log2fc_scanpy,statistic,pval,padj,neg_log10_padj,pct_a,pct_b," +
+      (R.norm === "q3" ? "mean_q3norm_a,mean_q3norm_b" : "mean_cp10k_a,mean_cp10k_b")];
     const ord = R.genes.map((_, j) => j).sort((p, q2) => R.tested[q2] - R.tested[p] || R.log10padj[p] - R.log10padj[q2] || Math.abs(R.lfc[q2]) - Math.abs(R.lfc[p]));
     for (const j of ord) {
       const t = R.tested[j] === 1;

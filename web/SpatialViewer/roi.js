@@ -6,10 +6,38 @@
 //   - the drawing: each ROI's own outline filled with the colour of the genes on show (a disc
 //     per segment where an ROI has several), with a hover readout; no density grid, as ROIs
 //     do not tile the slide,
-//   - the notes that say why the UMAP view and Circle -> UMAP's own UMAP are not offered.
+//   - the notes that say why the UMAP view and Circle -> UMAP's own UMAP are not offered,
+//   - coloured by a grouping (an annotation column): each ROI's outline filled with its group's colour,
+//   - Q3 normalisation: geomx.py writes GeomxTools' Q3 normFactors per row into the layer's "q3"
+//     entry at export; one choice (Q3, the default, or counts per 10,000) shared by the gene colours,
+//     the plots (plots.js) and the volcano (volcano.js). An older export has no factors: nothing changes.
 // Only unsigned typed arrays here: the de-identification check reads the signed names as IDs.
 /* exported SodaRoi */
 (function () {
+  // ---- Q3 normalisation --------------------------------------------------------------------------
+  // value = count / normFactor (GeomxTools normalize(norm_method = "quant")): the browser multiplies
+  // by 1 / normFactor; a row without a factor (Q3 = 0) gets 0 = left out of the plots and volcano
+  let norm = "q3", rerender = null, scaleMemo = { f: null, s: null };
+  const q3Of = (e) => (e && e.kind === "rois" && e.q3 && Array.isArray(e.q3.normFactors) && e.q3.normFactors.length === e.nBins ? e.q3 : null);
+  function scale(e) {
+    const q = norm === "q3" ? q3Of(e) : null;
+    if (!q) return null;
+    if (scaleMemo.f !== q.normFactors) scaleMemo = { f: q.normFactors, s: Float32Array.from(q.normFactors, (x) => (x > 0 ? 1 / x : 0)) };
+    return scaleMemo.s;
+  }
+  function setNorm(v) {
+    norm = v === "cp10k" ? "cp10k" : "q3";
+    for (const s of document.querySelectorAll("select[data-roinorm]")) s.value = norm;
+    if (rerender) rerender();
+  }
+  // the same menu in the plots panel and the volcano block; hidden until a layer has factors
+  const normRow = (id) =>
+    `<label class="row slim" id="${id}Row" hidden><span title="Q3: each ROI's counts divided by its normalisation factor (its 75th-percentile count over the targets above LOQ in at least 10% of the ROIs, over the geometric mean of all ROIs' Q3), as GeomxTools and the GeoMx software do by default. Counts per 10,000: each ROI's counts over its total. Also sets the colours on the slide (Q3 or raw counts).">Normalise</span>` +
+    `<select id="${id}" data-roinorm="1"><option value="q3">Q3 (GeoMx standard)</option><option value="cp10k">counts per 10,000</option></select></label>`;
+  function bindNorm(id) { const el = document.getElementById(id); if (el) { el.value = norm; el.onchange = () => setNorm(el.value); } }
+  const normShown = (id, e) => { const r = document.getElementById(`${id}Row`); if (r) r.hidden = !q3Of(e); };
+  const normLabel = (s) => (s ? "Q3-normalised counts" : "counts per 10,000");
+
   const WORDS = { bin: "ROI", bins: "ROIs", Bins: "ROIs", gene: "gene", genes: "genes", Gene: "Gene", Genes: "Genes" };
   const toWords = (t) => String(t)
     .replace("Bins are neighbours, not independent samples: the p-values describe this section only.",
@@ -57,6 +85,8 @@
     const N = pos.length / 2, vals = on.map((g) => byRow(g, pos));
     const ramp = a.palette !== "genes" ? (a.palettes[a.palette] || a.palettes.viridis) : null;
     const names = a.rowName || (() => "");
+    // Q3 on: the colours and the readout are Q3-normalised counts (count-like, so the slider windows still read in counts)
+    const s = scale(a.expr) && scale(a.expr).length === N ? scale(a.expr) : null;
     const rows = [];
     for (let r = 0; r < N; r++) {
       const x = pos[2 * r], y = pos[2 * r + 1];
@@ -64,11 +94,12 @@
       let sum = 0, top = 0, cr = 0, cg = 0, cb = 0;
       const lines = [];
       on.forEach((g, i) => {
-        const lo = g.min || 0, t = Math.max(0, Math.min(1, (vals[i][r] - lo) / Math.max(g.max - lo, 1e-6)));
+        const q = s && s[r] > 0, v = q ? vals[i][r] * s[r] : vals[i][r];
+        const lo = g.min || 0, t = Math.max(0, Math.min(1, (v - lo) / Math.max(g.max - lo, 1e-6)));
         sum += t; if (t > top) top = t;
         const c = a.hexToRgb255(g.hex);
         cr += c[0] * t; cg += c[1] * t; cb += c[2] * t;
-        lines.push(`${g.name}: ${fmt(vals[i][r])} ${a.unit}`);
+        lines.push(`${g.name}: ${fmt(v)} ${q ? "Q3-normalised counts" : s ? `${a.unit} (no Q3 factor: Q3 = 0)` : a.unit}`);
       });
       let color;
       if (ramp) {
@@ -83,7 +114,7 @@
       const nm = names(r);
       rows.push({ row: r, position: [x, y], color, lines, properties: { name: (nm ? nm + "\n" : "") + lines.join("\n") } });
     }
-    return { rows, sig: on.map((g) => `${g.name}:${g.hex}:${g.min}:${g.max}`).join("|") + `#${a.palette}` };
+    return { rows, sig: on.map((g) => `${g.name}:${g.hex}:${g.min}:${g.max}`).join("|") + `#${a.palette}#${s ? "q3" : "raw"}` };
   }
 
   // region id -> the outline's rings, for ROIs that hold exactly one segment
@@ -102,6 +133,7 @@
   }
 
   function geneLayers(a) {
+    if (a.render) rerender = a.render;
     const R = rowsOf(a);
     if (!R) return [];
     const map = a.pos ? shapesOf(a) : null, filled = [], discs = [];
@@ -127,6 +159,41 @@
     return out;
   }
 
+  // Coloured by a grouping (an annotation column): an ROI holding one segment is its own outline
+  // filled with its group's colour; segments that share an ROI stay discs. Colours, the lit / faded
+  // state and the hidden groups all come from the viewer's cloud C (rows of positions.bin, as
+  // region.bin). hooks.discs draws a cloud as the viewer does; hooks.register(id, {n, rows}) lets the
+  // viewer's hover and click find a fill's row as they find a disc's (layer ids hold "ucloud").
+  function groupLayers(a, C, hooks) {
+    if (a.render) rerender = a.render;
+    const map = shapesOf(a);
+    if (!map || !map.size || !C.n || !C.rows) return [hooks.discs(C)];
+    const pos = C.data.attributes.getPosition.value, col = C.data.attributes.getFillColor.value;
+    const fill = [], rest = [];
+    for (let j = 0; j < C.n; j++) {
+      const poly = map.get(a.regionIds[C.rows[j]]);
+      if (poly) fill.push({ j, polygon: poly, color: [col[4 * j], col[4 * j + 1], col[4 * j + 2], col[4 * j + 3]] }); else rest.push(j);
+    }
+    const out = [];
+    if (fill.length) {
+      const id = `roi-ucloud-fill-${a.dsId}-${a.exprKey}`;
+      hooks.register(id, { n: fill.length, rows: Uint32Array.from(fill, (f) => C.rows[f.j]) });
+      out.push(new a.PolygonLayer({
+        id, data: fill, getPolygon: (d) => d.polygon, getFillColor: (d) => d.color,
+        // the fill lies over the outline overlay: a thin edge of its own keeps neighbouring ROIs apart
+        stroked: true, getLineColor: [255, 255, 255, 150], lineWidthUnits: "pixels", getLineWidth: 1,
+        filled: true, pickable: true, parameters: a.NORMAL, updateTriggers: { getFillColor: [C.key] },
+      }));
+    }
+    if (rest.length) {
+      const n = rest.length, p = new Float32Array(2 * n), c = new Uint8Array(4 * n);
+      rest.forEach((j, k) => { p[2 * k] = pos[2 * j]; p[2 * k + 1] = pos[2 * j + 1]; for (let t = 0; t < 4; t++) c[4 * k + t] = col[4 * j + t]; });
+      out.push(hooks.discs({ key: `${C.key}|roi-discs`, n, rows: Uint32Array.from(rest, (j) => C.rows[j]),
+        data: { length: n, attributes: { getPosition: { value: p, size: 2 }, getFillColor: { value: c, size: 4, normalized: true } } } }));
+    }
+    return out;
+  }
+
   // hovering an ROI outline (the overlay lies on top of the fills): its name, and the counts of
   // the genes on show for each of its segments
   function tip(a, regionId, name) {
@@ -143,17 +210,19 @@
     const on = a.genes.filter((g) => g.visible !== false);
     if (!on.length) return "";
     const win = (g) => `${fmt(g.min || 0)}–${fmt(g.max)}`;
+    const s = scale(a.expr), unit = s ? "Q3-normalised counts" : a.unit;
+    const how = s
+      ? ` Q3-normalised counts: each ROI's counts divided by its Q3 factor (GeomxTools' Q3 normalisation; "Normalise" in Heatmap and violin or Volcano). The plots and the volcano use the same.`
+      : ` Counts are not normalised here: a larger or deeper-sequenced ROI has more of everything. The plots and the volcano use counts per 10,000.`;
     if (a.palette === "genes") {
       return `<div class="genes">${on.map((g) => `<span class="g"><i style="background:${g.hex}"></i>${esc(g.name)}</span>`).join("")}</div>` +
         `<div class="note">One filled outline per ROI (a disc per segment where an ROI has several). Grey = at or below the left handle of the gene's slider, full colour = at the right handle ` +
-        `(${on.map((g) => `${esc(g.name)} ${win(g)}`).join("; ")} ${a.unit}).` + (on.length > 1 ? " Where genes overlap the colours add." : "") +
-        ` Counts are not normalised here: a larger or deeper-sequenced ROI has more of everything.</div>`;
+        `(${on.map((g) => `${esc(g.name)} ${win(g)}`).join("; ")} ${unit}).` + (on.length > 1 ? " Where genes overlap the colours add." : "") + how + `</div>`;
     }
     return `<div class="ramp"><span>low</span><i style="background:${a.rampCss}"></i><span>high</span></div>` +
       `<div class="note">One filled outline per ROI (a disc per segment where an ROI has several): ` +
-      (on.length > 1 ? `mean of ${on.length} genes, each on its own slider window (${on.map((g) => `${esc(g.name)} ${win(g)}`).join("; ")} ${a.unit})`
-                     : `${esc(on[0].name)}, ${win(on[0])} ${a.unit} (the slider's handles)`) +
-      `. Counts are not normalised here: a larger or deeper-sequenced ROI has more of everything. The plots and the volcano use counts per 10,000.</div>`;
+      (on.length > 1 ? `mean of ${on.length} genes, each on its own slider window (${on.map((g) => `${esc(g.name)} ${win(g)}`).join("; ")} ${unit})`
+                     : `${esc(on[0].name)}, ${win(on[0])} ${unit} (the slider's handles)`) + "." + how + `</div>`;
   }
 
   const umapNote = (e, n) =>
@@ -176,11 +245,13 @@
     if (on && $("lassoNote")) $("lassoNote").textContent =
       `Draw a circle or a loop around ROIs to make a group of them; two groups (drawn, or from the annotation) can be compared in the ` +
       `Volcano plot and Heatmap and violin sections. No UMAP is run on ROIs. The volcano tests ` +
-      `${hvg && hvg.nGenes ? hvg.nGenes.toLocaleString() : "all"} targets (every target with a count), on counts per 10,000` +
+      `${hvg && hvg.nGenes ? hvg.nGenes.toLocaleString() : "all"} targets (every target with a count), on ${q3Of(e) ? "Q3-normalised counts or counts per 10,000 (its Normalise menu)" : "counts per 10,000"}` +
       (hvg && hvg.rounded ? `; the multi-probe targets' geometric means are rounded to whole counts for it` : "") +
       (hvg && hvg.clipped ? `; ${hvg.clipped.toLocaleString()} values above 65,535 are capped there` : "") +
       `. With this few ROIs, and ROIs of one slide or animal not being independent, read the fold changes; the p-values are rough.`;
   }
 
-  window.SodaRoi = { WORDS, toWords, geneLayers, tip, keyHtml, umapNote, syncLasso };
+  window.SodaRoi = { WORDS, toWords, geneLayers, groupLayers, tip, keyHtml, umapNote, syncLasso,
+    // Q3 normalisation, shared by the gene colours, plots.js and volcano.js
+    q3: q3Of, scale, setNorm, normNow: () => norm, normRow, bindNorm, normShown, normLabel };
 })();

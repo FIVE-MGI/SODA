@@ -58,13 +58,17 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   once, fetched one gene at a time. Cell outlines are not drawn yet: each cell is a dot at
   its centre.
 - **GeoMx DSP.** A study of hand-drawn regions (ROIs) rather than cells or bins: the scans
-  (several slides side by side), the ROI outlines, and one disc per ROI segment coloured by a
-  gene. The columns of the annotation sheet are the groups: legend, heatmap / dot plot /
-  violin and the volcano compare groups of ROIs, and the QC panel has the GeoMx values (reads,
-  saturation, nuclei, area, negative-probe background, LOQ). What works for ROI data is the
-  comparing of groups; a UMAP, clusters, cell-type suggestions and density maps are not made
-  for a few dozen regions, and the viewer says so instead of showing them. Counts are shown as
-  counts per 10,000 in the plots (Q3 normalisation is not built in).
+  (several slides side by side), and each ROI's outline filled with the colour of a gene or
+  of its group (a disc per segment where an ROI has several). The columns of the annotation
+  sheet are the groups: legend, heatmap / dot plot / violin and the volcano compare groups of
+  ROIs, and the QC panel has the GeoMx values (reads, saturation, nuclei, area, negative-probe
+  background, LOQ). What works for ROI data is the comparing of groups; a UMAP, clusters,
+  cell-type suggestions and density maps are not made for a few dozen regions, and the viewer
+  says so instead of showing them. Values are **Q3-normalised** by default, as GeomxTools and
+  the GeoMx software do (factors worked out at export; "Normalise" in the plots and volcano
+  switches to counts per 10,000; older exports stay on counts per 10,000). Untested: several
+  segments per ROI on real data; and the statistics treat ROIs as independent samples, which
+  ROIs of one slide or animal are not.
 - **CosMx SMI and MERSCOPE.** The same three parts as Xenium, from the vendors' flat files:
   the per-FOV CosMx images stitched into one mosaic (raw stains or the rendered composite),
   or one z-plane of the MERSCOPE mosaic stains; the cells as an expression layer; and

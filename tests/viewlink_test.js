@@ -41,6 +41,12 @@ const circle = (cx, cy, r, k) => Array.from({ length: k }, (_, i) => [cx + r * M
     eq(d.state.sectionClusters, st.sectionClusters, `${name}: the clustering, its names and hidden clusters survive`);
   }
   eq(VL.clean(VL.clean(st)), VL.clean(st), "clean() is idempotent");
+  // cell sets (clusters merged into named sets) travel with the clustering, as in Save JSON
+  const withSets = typical();
+  withSets.sectionClusters.sets = { "0.6": [{ ids: [1, 4, 7], prev: "Old name" }, { ids: [2, 3], prev: null }] };
+  eq((await VL.decode(await VL.encode(VL.forLink(withSets)))).state.sectionClusters.sets, withSets.sectionClusters.sets, "cell sets survive the link");
+  eq(VL.clean({ dataset: "d", sectionClusters: { layer: "l", resolution: 1, names: {}, hidden: [], sets: JSON.parse('{"__proto__": [{"ids": [1, 2]}], "1": [{"ids": [5]}, {"ids": [3, "x", 9], "prev": "<b>n</b>"}, "junk"]}') } }).sectionClusters.sets,
+     { 1: [{ ids: [3, 9], prev: "bn/b" }] }, "cell sets: unsafe keys, one-member sets and non-numbers are dropped, text is stripped");
   // non-ASCII text (µ, accents, CJK) survives both forms
   const uni = { dataset: "d", sectionClusters: { layer: "l", resolution: 1, names: { 1: { 0: "Müller glia 視細胞 – β" } }, hidden: [] } };
   for (const c of [true, false]) eq((await VL.decode(await VL.encode(uni, { compress: c }))).state.sectionClusters.names["1"]["0"], "Müller glia 視細胞 – β", `non-ASCII names survive (compress ${c})`);

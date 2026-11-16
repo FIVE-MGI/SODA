@@ -51,7 +51,8 @@ annotation workbook / CSV / lab worksheet, two scans with ROI polygons and masks
 twice, with its scans and without (a drawn grid): one row per ROI segment, target values =
 the generator's own probe collapse, negative probes out of the genes and behind the LOQ,
 positions inside the ROI outlines, the annotation columns as groupings with no UMAP, the GeoMx
-QC values, and no slide name or Sample_ID in the export (check_geomx).
+QC values, the Q3 normalisation factors (= the generator's plain-loop GeomxTools Q3), and no slide
+name or Sample_ID in the export (check_geomx).
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
@@ -80,6 +81,7 @@ of these two demo datasets are removed first so nothing stale is checked; pass
 from __future__ import annotations
 
 import argparse
+import gzip
 import importlib.util
 import json
 import math
@@ -107,6 +109,9 @@ USER_COLORS = {"Schwann cells": "#e41a1c", "Perineurial cells": "#377eb8", "Endo
 # cell files / cells (parquet + h5) without transcripts
 XE, XP, XN = "demo_xenium", "demo_xenium_pq", "demo_xenium_nt"
 XEN_DS = (XE, XP, XN)
+# the lab's own names for the Xenium demo's three cell types (user clusters on cells), with colours
+XE_USER_NAMES = ["Left-band cells", "Middle-band cells", "Right-band cells"]
+XE_USER_COLORS = ["#1b9e77", "#d95f02", "#7570b3"]
 # synthetic GeoMx DSP study (examples/make_geomx_demo.py): with its two scans / without images (drawn grid)
 GX, GXG = "demo_geomx", "demo_geomx_grid"
 GEOMX_DS = (GX, GXG)
@@ -168,6 +173,8 @@ def demo_commands(root: Path) -> list[list[str]]:
         ["examples/make_xenium_demo.py", "--out", raw],
         [prep, "xenium", "--id", XE, "--src", f"{raw}/xenium", "--out", cache, "--label", "Synthetic Xenium"],
         [prep, "export", "--id", XE, "--out", cache, "--dest", export, "--markers", "examples/demo_xenium_markers.json"],
+        [prep, "export", "--id", XE, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_xenium_markers.json",
+         "--user-layer", "cells", "--user-obs", f"{r}/user/xenium_cells.csv", "--user-obs", f"{r}/user/xenium_groups.csv"],
         [prep, "xenium", "--id", XP, "--src", f"{raw}/xenium_pq", "--out", cache],
         [prep, "export", "--id", XP, "--out", cache, "--dest", export, "--grid-um", "0"],
         [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", cache],
@@ -245,6 +252,27 @@ def write_user_files(root: Path):
     (out / "merged.csv").write_text("\n".join(merged) + "\n", encoding="utf-8")
 
 
+def write_xenium_user_files(root: Path):
+    """The lab's own clusters for the Xenium demo's cells, as scanpy writes them from a spatialdata-io
+    table (adata.obs.to_csv): the row index ("0", "1", ...) first under an empty header, then the
+    Xenium cell id in a cell_id column, a leiden column, a cell_type column with a colour column.
+    Every ninth cell is missing (dropped in QC). And Xenium Explorer's cell groups CSV for all cells:
+    cell_id,group,color (a bare colour column)."""
+    raw = root / "raw"
+    ids = gzip.open(raw / "xenium" / "cell_feature_matrix" / "barcodes.tsv.gz", "rt").read().split()
+    ctype = np.load(raw / "truth_xenium.npz")["ctype"]
+    out = root / "user"
+    out.mkdir(parents=True, exist_ok=True)
+    lines = [",cell_id,leiden,cell_type,cell_type_color"]
+    for i, (cid, t) in enumerate(zip(ids, ctype)):
+        if i % 9 == 4:
+            continue
+        lines.append(f"{i},{cid},{(int(t) + 1) % 3},{XE_USER_NAMES[t]},{XE_USER_COLORS[t]}")
+    (out / "xenium_cells.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    grp = ["cell_id,group,color"] + [f"{cid},Band {'ABC'[t]},{XE_USER_COLORS[t]}" for cid, t in zip(ids, ctype)]
+    (out / "xenium_groups.csv").write_text("\n".join(grp) + "\n", encoding="utf-8")
+
+
 def run(args: list[str], log_path: Path) -> float:
     print(f"$ python {' '.join(args)}", flush=True)
     t0 = time.time()
@@ -271,7 +299,7 @@ def run(args: list[str], log_path: Path) -> float:
 def clean(root: Path):
     """Remove only what this test itself writes, so nothing stale gets checked."""
     for p in [root / "raw", root / "user", root / "export_sample" / MX, root / "export_user" / VIS,
-              root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS]:
+              root / "export_user" / XE, root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -1365,6 +1393,81 @@ def check_xenium(c: Checker, root: Path, clustering: bool) -> dict:
     return res
 
 
+def check_xenium_user(c: Checker, root: Path, clustering: bool) -> dict:
+    """The lab's own clusters attached to the Xenium demo's cells (write_xenium_user_files): matched
+    by cell id through the cell_id column (and a Xenium Explorer groups CSV), no UMAP given so they sit on SODA's UMAP next to SODA's
+    clusterings, labels / colours / sizes per cell, markers and suggested names per group, and no
+    cell id anywhere in the export's text files."""
+    key = "cells"
+    out = root / "export_user" / XE
+    if not clustering:
+        print("    SKIP Xenium user cluster checks: clustering packages not installed")
+        return {}
+    m = read_json(out / "manifest.json")
+    L = next((x for x in m.get("expr", []) if x["key"] == key), {})
+    ud = out / "expr" / key / "umap"
+    if not c.ok((ud / "index.json").exists(), f"{XE} user: umap/index.json missing"):
+        return {}
+    idx = read_json(ud / "index.json")
+    raw = root / "raw"
+    ids = gzip.open(raw / "xenium" / "cell_feature_matrix" / "barcodes.tsv.gz", "rt").read().split()
+    ctype = np.load(raw / "truth_xenium.npz")["ctype"]
+    n = len(f32(out / "expr" / key / "positions.bin", 2))
+    c.eq(n, len(ids), f"{XE} user: positions.bin rows = cells")
+    in_file = np.arange(n) % 9 != 4                       # write_xenium_user_files left out every ninth cell
+    rep = idx.get("userImport", {}).get("barcodes", [])
+    c.eq(len(rep), 2, f"{XE} user: one barcode report per file")
+    r0, r1 = (rep + [{}, {}])[:2]
+    c.eq((r0.get("inFile"), r0.get("matched"), r0.get("rate"), (r0.get("methods") or {}).get("exact")),
+         (int(in_file.sum()), int(in_file.sum()), 1.0, int(in_file.sum())), f"{XE} user: cell ids matched exactly")
+    c.eq((r1.get("inFile"), r1.get("matched"), r1.get("rate")), (n, n, 1.0), f"{XE} user: Xenium Explorer groups CSV matched")
+    base = read_json(root / "export" / XE / "expr" / key / "umap" / "index.json")
+    cls = idx.get("clusterings", [])
+    c.eq([(x.get("name"), x.get("source")) for x in cls],
+         [("leiden", "user"), ("cell_type", "user"), ("group", "user")]
+         + [(f"Leiden {x['resolution']:g}", "soda") for x in base["clusterings"]],
+         f"{XE} user: clusterings (yours first, the row-index column skipped, SODA's kept)")
+    c.eq(idx.get("embedding", {}).get("source"), "soda", f"{XE} user: no UMAP given -> SODA's embedding")
+    c.ok(np.array_equal(np.fromfile(str(ud / "coords.bin"), dtype="<f4"),
+                        np.fromfile(str(root / "export" / XE / "expr" / key / "umap" / "coords.bin"), dtype="<f4"), equal_nan=True),
+         f"{XE} user: coords.bin = SODA's whole-section UMAP")
+    u = L.get("umap") or {}
+    c.eq([(x.get("id"), x.get("name"), x.get("source")) for x in u.get("clusterings", [])],
+         [(x.get("id"), x.get("name"), x.get("source")) for x in cls], f"{XE} user: manifest umap.clusterings")
+    ct = next((x for x in cls if x.get("name") == "cell_type"), {})
+    c.eq(ct.get("categories"), XE_USER_NAMES, f"{XE} user: cell_type categories")
+    c.eq(ct.get("colors"), XE_USER_COLORS, f"{XE} user: cell_type colours from the colour column")
+    lab = np.fromfile(str(ud / ct.get("file", "missing")), dtype="<u2") if ct else np.zeros(0, np.uint16)
+    c.eq(len(lab), n, f"{XE} user: clusters_user file rows")
+    agree = 0.0
+    if len(lab) == n:
+        c.ok(((lab == NO_CLUSTER) == ~in_file).all(), f"{XE} user: 0xFFFF exactly for the cells not in the file")
+        agree = float((lab[in_file] == ctype[in_file]).mean())
+        c.eq(agree, 1.0, f"{XE} user: cell_type per cell = the file's")
+        c.eq(ct.get("sizes"), [int(((lab == k) & in_file).sum()) for k in range(3)], f"{XE} user: cell_type sizes")
+    ld = next((x for x in cls if x.get("name") == "leiden"), {})
+    c.eq(ld.get("categories"), ["0", "1", "2"], f"{XE} user: leiden categories")
+    gp = next((x for x in cls if x.get("name") == "group"), {})
+    c.eq((gp.get("categories"), gp.get("colors"), gp.get("nAssigned")), (["Band A", "Band B", "Band C"], XE_USER_COLORS, n),
+         f"{XE} user: Xenium Explorer groups, their colours from the bare color column")
+    # markers and suggested names per group: the left band is TypeA (SynA1-4), and so on
+    mk = ct.get("markers") or [[]]
+    c.ok(len(mk) == 3 and all(any(x["gene"].startswith(f"Syn{t}") for x in mk[i][:3]) for i, t in enumerate("ABC")),
+         f"{XE} user: top markers per group {[[x['gene'] for x in g[:3]] for g in mk]}")
+    sg = read_json(ud / "celltypes.json").get("clusterings", {}).get(ct.get("id"), [])
+    c.eq([(s.get("top"), s.get("confidence")) for s in sg], [("TypeA", "high"), ("TypeB", "high"), ("TypeC", "high")],
+         f"{XE} user: suggested names per group")
+    # no cell id in any text file of this export (they are the user's row keys, never published)
+    ids_set = set(ids)
+    tok = re.compile(r"[a-p]{8}-1")
+    leaked = [p.name for p in out.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson", ".txt")
+              and any(t in ids_set for t in tok.findall(p.read_text(encoding="utf-8", errors="ignore")))]
+    c.ok(not leaked, f"{XE} user: cell ids in the export's text files: {leaked[:3]}")
+    print(f"    Xenium user clusters: {r0.get('matched')}/{r0.get('inFile')} cell ids matched, "
+          f"cell_type {ct.get('n')} groups, labels agree {agree:.0%}")
+    return {"matchRate": r0.get("rate"), "groups": ct.get("n"), "agree": agree}
+
+
 def check_geomx(c: Checker, root: Path) -> dict:
     """The synthetic GeoMx study (examples/make_geomx_demo.py): a "rois" layer with one row per AOI,
     target values = the probe collapse worked out by plain loops in the generator, negative probes
@@ -1474,6 +1577,12 @@ def check_geomx(c: Checker, root: Path) -> dict:
     c.ok(np.allclose(qv("area"), [a["area"] for a in aois], rtol=1e-5) and np.allclose(qv("nuclei"), [a["nuclei"] for a in aois]),
          "binqc area and nuclei from the annotation")
     c.ok(np.allclose(qv("q3"), np.percentile(V, 75, axis=0), rtol=1e-5), "binqc q3 = third quartile of the AOI's target values")
+    q3e, q3t = L.get("q3") or {}, (tr.get("q3") or {}).get("scan") or {}
+    c.ok(len(q3e.get("normFactors", [])) == len(aois) == len(q3t.get("normFactors", []))
+         and np.allclose(q3e["normFactors"], q3t["normFactors"], rtol=1e-5),
+         "rois q3 normFactors = GeomxTools Q3 (75th pct over targets above LOQ in >= 10% of AOIs + negative probes) / ngeoMean, as the generator's plain loops")
+    c.eq((q3e.get("genesKept"), q3e.get("negativeTargets"), q3e.get("default")), (len(q3t.get("targets", [])), 2, True),
+         "rois q3 entry: targets kept by the LOQ filter, two negative-probe targets, Q3 the default")
 
     # ---- groupings from the annotation, no embedding, nothing computed for cells / bins ----------
     u = L.get("umap") or {}
@@ -1535,6 +1644,8 @@ def check_geomx(c: Checker, root: Path) -> dict:
     Vg = np.array([a["values"] for a in tr["aois"]], np.float64).T
     c.ok([g["n"] for g in tg] == genes and np.allclose([g["t"] for g in tg], Vg.sum(1), rtol=1e-5, atol=1e-3),
          "grid dataset: the same targets and totals over all 15 AOIs")
+    fg, ft = (Lg.get("q3") or {}).get("normFactors", []), ((tr.get("q3") or {}).get("grid") or {}).get("normFactors", [])
+    c.ok(len(fg) == len(ft) == len(tr["aois"]) and np.allclose(fg, ft, rtol=1e-5), "grid dataset: Q3 normFactors over its 15 AOIs, as the generator's plain loops")
     blob = "\n".join(p.read_text(encoding="utf-8", errors="ignore") for p in og.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson"))
     c.ok(tr["fakeId"][-4:] not in blob and "block" not in blob and "DSP-" not in blob, "grid dataset: no slide name or Sample_ID in the export text")
     return {"aois": len(aois), "targets": len(genes), "geneFiles": files, "groupings": names, "gridAois": int(len(pg))}
@@ -2174,7 +2285,7 @@ def check_marker_lists(c: Checker):
     finally:
         sys.path.pop(0)
     for name, prot in (("protein_generic.json", True), ("rna_generic.json", False), ("akoya_nerve.json", True),
-                       ("nerve.json", False)):
+                       ("nerve.json", False), ("brain.json", False)):
         ms = read_json(APP / "markers" / name)
         ok = (isinstance(ms.get("types"), list) and ms["types"]
               and all(t.get("name") and t.get("genes") for t in ms["types"])
@@ -2258,6 +2369,10 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     for f in ("viewer.js", "diag.js"):
         q = subprocess.run([node, "--check", str(APP / f)], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         c.eq(q.returncode, 0, f"node --check {f}")
+    p = subprocess.run([node, str(REPO / "tests" / "compat_test.js"), "--python", sys.executable], cwd=str(REPO),   # old exports still open (SKIPPED without Playwright)
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions (exit code)")
 
 
 THREAD_PROBE = r"""
@@ -2397,7 +2512,7 @@ def check_layout(c: Checker):
     from html.parser import HTMLParser
 
     html = (APP / "index.html").read_text(encoding="utf-8")
-    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js")}
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js", "cellsets.js")}
     names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
     c.ok("layout.js" in names and "layout.css" in names, "index.html loads layout.js and layout.css")
     c.ok("layout.js" in names and "viewer.js" in names and names.index("layout.js") < names.index("viewer.js"),
@@ -2442,17 +2557,19 @@ def check_layout(c: Checker):
     c.ok("SodaLayout.adopt(block)" in js["volcano.js"], "volcano.js: its block is handed to the layout")
     c.ok('sec.dataset.tab = "save"' in js["snapshot.js"] and "SodaLayout.adopt(sec)" in js["snapshot.js"],
          "snapshot.js: its Save image section names its tab and is handed to the layout")
+    c.ok('sec.dataset.tab = "clusters"' in js["cellsets.js"] and "SodaLayout.adopt(sec)" in js["cellsets.js"],
+         "cellsets.js: its Cell sets section names its tab and is handed to the layout")
     # ids the layout makes must be new; ids it moves must exist (in the page or in the script that builds them)
     new_ids = set(i for i, _ in made) | set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
     clash = sorted(new_ids & set(ids))
     c.ok(not clash, f"layout.js makes ids that index.html already has: {clash}")
-    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"])) | set(ids) | new_ids
+    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"] + js["cellsets.js"])) | set(ids) | new_ids
     block = js["layout.js"][js["layout.js"].index("const SECTIONS = {"):js["layout.js"].index("const ORDER = {")]
     moved = set(re.findall(r'"(\w+)"', " ".join(re.findall(r'(?:more|notes): \[([^\]]*)\]', block))))
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
-    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage"}
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
                             ("SodaLayout.wording", "viewer.js", "hands its wording function to the layout"),
@@ -2555,7 +2672,8 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
     texts = [p for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS for p in (export / ds).rglob("*")
              if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
     texts += [p for p in (root / "export_sample" / MX).rglob("*") if p.is_file() and p.suffix == ".json"]
-    texts += [p for p in (root / "export_user" / VIS).rglob("*") if p.is_file() and p.suffix in (".json", ".geojson")]
+    texts += [p for ds in (VIS, XE) for p in (root / "export_user" / ds).rglob("*")
+              if p.is_file() and p.suffix in (".json", ".geojson")]
     bc = [p for p in texts if BARCODE.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not bc, f"export text files contain barcodes: {bc[:3]}")
     lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
@@ -2564,7 +2682,7 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
             [str(export / ds) for ds in XEN_DS + GEOMX_DS])
     if (root / "export_sample" / MX).exists():
         args.append(str(root / "export_sample" / MX))
-    for extra in (root / "export_user" / VIS, root / "export_partial" / VIS):
+    for extra in (root / "export_user" / VIS, root / "export_user" / XE, root / "export_partial" / VIS):
         if extra.exists():
             args.append(str(extra))
     print(f"$ python {' '.join(args)}", flush=True)
@@ -2606,6 +2724,8 @@ def main(argv=None) -> int:
             timings[label] = run(cmd, log_path)
             if cmd[0] == "examples/make_demo.py":
                 write_user_files(root)
+            if cmd[0] == "examples/make_xenium_demo.py":
+                write_xenium_user_files(root)
         if not args.reuse:
             clean_imaging(root)
         for cmd in imaging_commands(root):               # CosMx / MERSCOPE fixtures
@@ -2623,6 +2743,8 @@ def main(argv=None) -> int:
     summary["userClusters"] = check_user(c, root, clustering, log_path)
     print("checks: demo_xenium (cells layer + molecules), demo_xenium_pq, demo_xenium_nt")
     summary["xenium"] = check_xenium(c, root, clustering)
+    print("checks: the lab's own clusters on the demo_xenium cells (userclusters.py)")
+    summary["xeniumUserClusters"] = check_xenium_user(c, root, clustering)
     print("checks: demo_geomx (GeoMx ROI layer, two scans), demo_geomx_grid (no image)")
     summary["geomx"] = check_geomx(c, root)
     print("checks: demo_cosmx*, demo_merscope* (FOV mosaic / mosaics, cells layer, molecules, density background)")

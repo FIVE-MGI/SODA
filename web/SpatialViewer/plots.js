@@ -12,7 +12,7 @@
   const NONE = 0xffff;
   const D = { minUmi: 10, topN: 3, maxTop: 20, maxGenes: 150, maxGenesTouch: 40, softMB: 150, softMBTouch: 30, hardMB: 600, hardMBTouch: 80,
               cacheMB: 400, cacheMBTouch: 60, fetchers: 4, maxGroups: 200, fewBins: 10, kdeGrid: 64, kdeMin: 5, points: 300, pointsTouch: 120, pointsAll: 6000,
-              maxViolin: 4, chunkMB: 80, chunkMBTouch: 15, zClip: 2.5, seed: 42, worker: "plots_worker.js?v=20261111a" };
+              maxViolin: 4, chunkMB: 80, chunkMBTouch: 15, zClip: 2.5, seed: 42, worker: "plots_worker.js?v=20261116q3" };
   const THEMES = {
     dark: { bg: "#161b24", ink: "#e6e9ef", muted: "#9aa3b2", line: "#3a4352", grid: "#232a37", warn: "#f6d68a", hi: "#ffffff",
             seq: ["#1b2230", "#213a57", "#2c5b88", "#3f83bd", "#73afe6", "#cfe6ff"], div: ["#4ea1ff", "#39404d", "#ff5a5f"] },
@@ -42,6 +42,8 @@
   const words = () => (modeNow() === "rna" ? { bin: "cell", bins: "cells", above: "a value above 0", indep: "Cells of one sample are not independent replicates" }
     : (curExpr(api.state()) || {}).kind === "rois"      // GeoMx ROI segments (roi.js)
     ? { bin: "ROI", bins: "ROIs", above: "a count above 0", indep: "ROIs of one slide or animal are not independent replicates" }
+    : (curExpr(api.state()) || {}).kind === "cells"     // segmented cells (Xenium, CosMx, MERSCOPE)
+    ? { bin: "cell", bins: "cells", above: "a count above 0", indep: "Neighbouring cells are not independent samples" }
     : { bin: "bin", bins: "bins", above: "a count above 0", indep: "Neighbouring bins are not independent samples" });
   const cacheKey = () => { const S = api.state(); return `${S.dsId}|${S.mode === "rna" ? "rna" : S.exprKey}`; };
   // a clustering is known by its "id" when it has one (a lab's own), else by its Leiden resolution
@@ -57,6 +59,7 @@
     sec.innerHTML = `
       <h2>Heatmap and violin</h2>
       <label class="row slim"><span title="Which groups to compare: every group is one column of the heatmap and one violin">Group by</span><select id="plGroup"></select></label>
+      ${window.SodaRoi ? window.SodaRoi.normRow("plNorm") : ""}
       <label class="row slim" id="plTopRow"><span title="The first N marker genes of each group, from the grouping's own marker lists (0 = none)">Markers / group</span>
         <input id="plTop" type="text" inputmode="numeric" value="${D.topN}" /></label>
       <label class="row slim"><span title="More genes by name, comma or space separated">Genes</span>
@@ -81,7 +84,7 @@
         <label class="pl-m" title="Order of the genes (rows)">Genes <select id="plOrderG"><option value="listed">as listed</option><option value="cluster">clustered</option><option value="az">A–Z</option></select></label>
         <label title="Order of the groups">Groups <select id="plOrderK"><option value="listed">as listed</option><option value="size">by size</option><option value="cluster">clustered</option></select></label>
         <label class="pl-v" title="Leave out the bins (or cells) where the gene was not counted: the violin then shows only the expressing ones"><input id="plExpr" type="checkbox" /> expressing only</label>
-        <label class="pl-v" title="A seeded sample of the bins behind each violin"><input id="plPts" type="checkbox" checked /> points</label>
+        <label class="pl-v" id="lblPlPts" title="A seeded sample of the bins behind each violin"><input id="plPts" type="checkbox" checked /> points</label>
         <label title="White background, for print"><input id="plLight" type="checkbox" /> light</label>
       </div>
       <div class="pl-ctl pl-v" id="plVRow"><span id="plVChips" class="pl-chips"></span><select id="plVAdd"></select></div>
@@ -102,6 +105,7 @@
     };
     $("plGroup").addEventListener("pointerdown", refresh);       // clusterings can change without telling this panel
     $("plGroup").onchange = syncTopRow;
+    if (window.SodaRoi && $("plNorm")) { window.SodaRoi.bindNorm("plNorm"); $("plNorm").addEventListener("change", () => { if (R && !$("plotsPanel").hidden) syncWarn(); }); }
     $("plGenes").addEventListener("keydown", (e) => { if (e.key === "Enter") runPlot(); });
     $("plClose").onclick = () => { $("plotsPanel").hidden = true; syncButtons(); };
     $("plTabs").onclick = (e) => { const v = e.target.dataset && e.target.dataset.v; if (v) setView(v); };
@@ -163,6 +167,7 @@
     if (!api || !$("panelPlots")) return;
     const list = groupingsNow(), key = JSON.stringify(list) + "|" + (modeNow() || "");
     $("panelPlots").hidden = !list.length;
+    if (window.SodaRoi) window.SodaRoi.normShown("plNorm", modeNow() === "spatial" ? curExpr(api.state()) : null);   // GeoMx: Q3 or per 10,000
     if (!list.length && !$("plotsPanel").hidden) $("plotsPanel").hidden = true;
     if (key !== lastGroups) {
       lastGroups = key;
@@ -193,11 +198,13 @@
     let part = "";
     if (gv === "shapes") part = L ? L.shapes.map((s) => `${s.id}:${s.bins}`).join(",") : "";
     else if (gv === "run") part = L && L.result ? String(L.result.id) : "";
-    return [cacheKey(), gv, part, modeNow() === "spatial" && qc ? JSON.stringify(qc.state()) : ""].join("|");
+    const q3 = modeNow() === "spatial" && window.SodaRoi && window.SodaRoi.scale(curExpr(S)) ? "q3" : "";
+    return [cacheKey(), gv, part, modeNow() === "spatial" && qc ? JSON.stringify(qc.state()) : "", q3].join("|");
   }
   function staleWarn() {
     const w = [];
     if (R && R.sig !== sigOf(R.grouping.id)) w.push(R.grouping.id === "shapes" || R.grouping.id === "run" ? "The shapes, the run or the QC filter have changed since these plots were computed: draw them again."
+      : window.SodaRoi && R.mode === "spatial" && window.SodaRoi.q3(curExpr(api.state())) ? "The QC filter or the normalisation has changed since these plots were computed: draw them again."
       : "The QC filter has changed since these plots were computed: draw them again.");
     return w;
   }
@@ -229,10 +236,13 @@
     }
     const pos = await positions(), N = pos.length / 2;
     if (gv.startsWith("sec:")) {
-      const idx = await sectionIndex(), c = (idx.clusterings || []).find((x) => String(clKey(x)) === gv.slice(4));
+      // the viewer's own description first: with cell sets (merged clusters) it says which numbers are gone
+      const own0 = (api.clusterings() || []).find((x) => String(clKey(x)) === gv.slice(4));
+      const idx = own0 ? null : await sectionIndex(), c = own0 || (idx.clusterings || []).find((x) => String(clKey(x)) === gv.slice(4));
       if (!c) throw new Error("That clustering is not in this layer.");
       const ck = clKey(c);
-      let cl = S.umap && S.umap.key === S.exprKey && S.umap.clusters ? S.umap.clusters.get(ck) : null;
+      let cl = api.clusterCodes ? await api.clusterCodes(c) : null;
+      if (!cl) cl = S.umap && S.umap.key === S.exprKey && S.umap.clusters ? S.umap.clusters.get(ck) : null;
       if (!cl) cl = cache.clusters.get(ck);
       if (!cl) { cl = new Uint16Array(await S.src.buf(`expr/${S.exprKey}/umap/${c.file || `clusters_r${c.resolution}.bin`}`)); cache.clusters.set(ck, cl); }
       if (cl.length !== N) throw new Error(`The clusters file has ${cl.length} rows, the layer ${N}.`);
@@ -376,7 +386,7 @@
       worker.postMessage(payload);
     });
   }
-  const unitOf = (norm, S) => (norm === "cp10k" ? "log1p(counts per 10k)" : norm === "raw" ? "log1p(UMI count), not depth-normalised" : (S.m.valueLabel || "expression (as provided)"));
+  const unitOf = (norm, S) => (norm === "cp10k" ? "log1p(counts per 10k)" : norm === "q3" ? "log1p(Q3-normalised counts)" : norm === "raw" ? "log1p(UMI count), not depth-normalised" : (S.m.valueLabel || "expression (as provided)"));
 
   async function runPlot() {
     if (running || !api) return;
@@ -400,11 +410,14 @@
       const maxG = api.touch ? D.maxGenesTouch : D.maxGenes;
       if (gl.genes.length > maxG) throw new Error(`${gl.genes.length} genes: at most ${maxG} at a time${api.touch ? " on a phone or tablet" : ""}. Lower the markers per group or shorten the list.`);
       // per-bin totals and the QC filter
-      let totals = null, totalsFrom = "", totNote = "", totBytes = 0, norm = "asis", keep = null, qcState = null, qcTxt = "";
+      let totals = null, totalsFrom = "", totNote = "", totBytes = 0, norm = "asis", keep = null, qcState = null, qcTxt = "", scale = null;
       if (mode === "spatial") {
         const t = await loadTotals(G.group, dead);
         if (dead() || !t) return;
         totals = t.totals; totalsFrom = t.from; totNote = t.note; totBytes = t.bytes; norm = totals ? "cp10k" : "raw";
+        // GeoMx ROI layer with Q3 factors and Q3 chosen (roi.js): count x 1 / normFactor per row
+        const sc = window.SodaRoi && window.SodaRoi.scale(curExpr(S));
+        if (sc && sc.length === G.N) { scale = sc; norm = "q3"; }
         const qc = api.qc && api.qc(), k = qc ? qc.keepMask() : null;
         if (k && k.length === G.N) { keep = k.slice(); qcState = qc.state(); qcTxt = qc.describe(); }
       }
@@ -421,7 +434,7 @@
       T.fetch = performance.now() - t0 - T.groups;
       const genes = gl.genes.filter((n) => got.bufs.has(n));
       if (!genes.length) throw new Error(`None of the genes could be loaded (${got.failed.join(", ")}).`);
-      const input = { layout: mode === "rna" ? "indexed" : "xyv", nRows: G.N, positions: mode === "rna" ? null : await positions(), group: G.group, nGroups: G.K, totals, keep,
+      const input = { layout: mode === "rna" ? "indexed" : "xyv", nRows: G.N, positions: mode === "rna" ? null : await positions(), group: G.group, nGroups: G.K, totals, keep, scale,
                       base: { norm, minUmi: D.minUmi, asisLog: mode === "rna" && /^log1p/i.test(S.m.valueLabel || ""), kdeGrid: D.kdeGrid, kdeMin: D.kdeMin,
                               maxPoints: Math.max(20, Math.min(api.touch ? D.pointsTouch : D.points, Math.floor(D.pointsAll / G.K))), seed: D.seed } };
       const res = await callWorker({ ...input, base: undefined, genes: genes.map((n) => ({ name: n, buf: got.bufs.get(n) })), params: { ...input.base, detail: false } },
@@ -429,7 +442,7 @@
       if (dead()) return;
       T.worker = performance.now() - t0 - T.groups - T.fetch;
       const cols = []; for (let k = 0; k < G.K; k++) if (res.n[k] > 0) cols.push(k);
-      if (!cols.length) throw new Error(`No ${W.bins} are left in any group` + (keep ? " after the QC filter" : "") + (norm === "cp10k" ? ` (${W.bins} under ${D.minUmi} UMI are left out).` : "."));
+      if (!cols.length) throw new Error(`No ${W.bins} are left in any group` + (keep ? " after the QC filter" : "") + (norm === "cp10k" ? ` (${W.bins} under ${D.minUmi} UMI are left out).` : norm === "q3" ? ` (${W.bins} without a Q3 factor are left out).` : "."));
       const sum = (a) => a.reduce((s, x) => s + x, 0);
       R = { ...res, sig, input, dataset: S.dsId, layer: mode === "rna" ? "cells" : S.exprKey, mode, grouping: { id: G.id, kind: G.kind, label: G.label }, K: G.K, names: G.names, colors: G.colors, cols,
             genes, from: gl.from, noCounts: genes.filter((n) => got.bufs.get(n) === null), unit: unitOf(norm, S), norm, totalsFrom, qcState, qcTxt, words: W,
@@ -441,7 +454,7 @@
       msg([`${genes.length} gene${genes.length === 1 ? "" : "s"} × ${cols.length} group${cols.length === 1 ? "" : "s"} in ${R.secs.toFixed(1)} s ` +
              `(${got.fetched.files} file${got.fetched.files === 1 ? "" : "s"}, ${(got.fetched.bytes / 1e6).toFixed(1)} MB fetched${got.cached ? `; ${got.cached} already loaded` : ""}).`,
            totNote,
-           R.nLow ? `Left out ${nf(R.nLow)} ${W.bins} with < ${D.minUmi} UMI.` : "",
+           R.nLow ? `Left out ${nf(R.nLow)} ${W.bins} with < ${D.minUmi} UMI${norm === "q3" ? " or no Q3 factor (Q3 = 0)" : ""}.` : "",
            R.nQc ? `QC filter: left out ${nf(R.nQc)} ${W.bins} (${qcTxt}).` : "",
            R.empty.length ? `No ${W.bins} left in: ${R.empty.join(", ")}.` : "",
            gl.unknown.length ? `Not in this ${mode === "rna" ? "dataset" : "layer"}: ${gl.unknown.join(", ")}.` : "",
@@ -469,7 +482,7 @@
       const got = await fetchGenes(names, new Map(geneIndex().map((x) => [x.n.toUpperCase(), x])), dead, () => {});
       if (dead() || R !== Rr) return;
       const I = Rr.input;
-      const res = await callWorker({ layout: I.layout, nRows: I.nRows, positions: I.positions, group: I.group, nGroups: I.nGroups, totals: I.totals, keep: I.keep,
+      const res = await callWorker({ layout: I.layout, nRows: I.nRows, positions: I.positions, group: I.group, nGroups: I.nGroups, totals: I.totals, keep: I.keep, scale: I.scale,
                                      genes: names.map((n) => ({ name: n, buf: got.bufs.get(n) || null })), params: { ...I.base, detail: true } }, () => {});
       if (dead() || R !== Rr) return;
       need.forEach((j, i) => Rr.detail.set(j, res.detail[i]));
@@ -573,6 +586,8 @@
     tip(null); syncWarn();
     $("plFoot").textContent =
       (R.norm === "cp10k" ? `Value of a ${W.bin} = log1p(count × 10,000 / its total over all genes); ${W.bins} under ${D.minUmi} UMI left out${R.nLow ? ` (${nf(R.nLow)})` : ""}. `
+        : R.norm === "q3" ? `Value of a ${W.bin} = log1p(count / its Q3 normalisation factor), as GeomxTools' Q3 normalisation: factor = the ${W.bin}'s 75th-percentile count ` +
+          `(over the targets above LOQ in ≥ 10% of the ${W.bins}, plus the negative probes) / the geometric mean of all ${W.bins}' Q3${R.nLow ? `; ${nf(R.nLow)} ${W.bins} left out (no factor, or under ${D.minUmi} counts)` : ""}. `
         : R.norm === "raw" ? `Value of a ${W.bin} = log1p(count). ` : `Value of a cell = ${R.unit}, as stored in the dataset. `) +
       (R.nQc ? `QC filter on (${R.qcTxt}): ${nf(R.nQc)} ${W.bins} left out. ` : R.mode === "spatial" ? "No QC filter. " : "") +
       (V.view === "violin"
@@ -759,7 +774,7 @@
   function cellTxt(g, k) {
     const o = g * R.K + k, W = R.words, lines = [`<b>${esc(R.genes[g])}</b> in <b>${esc(R.names[k])}</b>`];
     lines.push(`mean ${R.mean[o].toFixed(3)} <small>${esc(R.unit)}</small>`);
-    if (R.norm !== "asis" || R.input.base.asisLog) lines.push(`<small>mean on the linear scale ${R.meanLin[o].toFixed(2)} ${R.norm === "raw" ? "UMI" : "per 10k"}</small>`);
+    if (R.norm !== "asis" || R.input.base.asisLog) lines.push(`<small>mean on the linear scale ${R.meanLin[o].toFixed(2)} ${R.norm === "raw" ? "UMI" : R.norm === "q3" ? "Q3-normalised counts" : "per 10k"}</small>`);
     lines.push(`${(R.frac[o] * 100).toFixed(1)}% of ${W.bins} expressing (${nf(R.nExpr[o])})`);
     lines.push(`n = ${nf(R.n[k])} ${W.bins}`);
     const det = R.detail.get(g);
@@ -865,7 +880,8 @@
           f(sc ? sc[j][c] : R.mean[o], 6), q(R.from[R.genes[j]] === "typed" ? "" : R.from[R.genes[j]] || "")].join(","));
       });
     }
-    const note = `# ${R.norm === "cp10k" ? `value = log1p(count x 10000 / total); bins under ${D.minUmi} UMI left out` : R.norm === "raw" ? "value = log1p(count); NOT depth-normalised (no per-bin totals in the export)" : `value = ${R.unit}`}` +
+    const note = `# ${R.norm === "cp10k" ? `value = log1p(count x 10000 / total); bins under ${D.minUmi} UMI left out`
+      : R.norm === "q3" ? "value = log1p(count / Q3 normFactor) (GeomxTools Q3 normalisation, factors from the export's q3 entry); rows without a factor left out" : R.norm === "raw" ? "value = log1p(count); NOT depth-normalised (no per-bin totals in the export)" : `value = ${R.unit}`}` +
       `; QC filter: ${R.qcTxt || "none"}; mean over all bins of the group (zeros included); frac_expressing = bins with count > 0 / n_bins`;
     api.download(`${fileBase()}.csv`, note + "\n" + lines.join("\n") + "\n", "text/csv");
   }
