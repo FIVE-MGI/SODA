@@ -181,8 +181,9 @@ what matters.
   is filled** with a colour for its count; the slider sets which counts are the bottom and the
   top of the colour scale, and hovering an ROI shows its name and the counts. Where one ROI
   has several segments, each segment is a disc inside the outline instead (at the centre of
-  the segment's own mask). Groups (below) are shown as one disc per segment, 0.6 × the
-  diameter of a circle with the median segment area, so that it sits inside most outlines.
+  the segment's own mask), 0.6 × the diameter of a circle with the median segment area, so
+  that it sits inside most outlines. Coloured by a group (below), each ROI's outline is filled
+  with its group's colour in the same way (hover or click one for its group).
   Rows are in the scans' left-to-right order: "Slide 1" is the leftmost scan.
 - **Counts**: the DCC probe counts collapsed to targets with the PKC, by the rule of
   GeomxTools' `aggregateCounts`: a target with one probe keeps its count; a target with several
@@ -204,12 +205,26 @@ what matters.
   total counts, targets detected, raw reads, % of raw reads aligned, sequencing saturation
   (100 × (1 − deduplicated ÷ aligned)), area, nuclei (if the annotation has them), background,
   LOQ, targets above LOQ, the third quartile (Q3) of the target counts, and Q3 ÷ background.
-- **Normalisation.** The files hold the collapsed counts, not normalised. On the slide a gene
-  shows its raw counts (a bigger or deeper-sequenced ROI has more of everything: the key under
-  the picture says so). The plots and the volcano use log1p of **counts per 10,000** of the
-  segment's total, as for every other layer, and say so in their labels. GeoMx analyses often
-  use Q3 normalisation instead; both divide each segment by one number, and Q3 is in the QC
-  panel to look at. A Q3 option for the plots does not exist yet.
+- **Normalisation: Q3 by default.** The files hold the collapsed counts, not normalised. The
+  export adds GeomxTools' **Q3 (upper-quartile) normalisation** factors to the layer (its
+  `q3` entry in manifest.json), as `normalize(norm_method = "quant", desiredQuantile = 0.75)`
+  computes them: per segment, Q3 = the 75th percentile of its target counts (R's default
+  quantile, = numpy's); normFactor = Q3 ÷ the geometric mean of all exported segments' Q3s
+  (GeomxTools' `ngeoMean`, with its + 0.5 rule); value = count ÷ normFactor, so values stay
+  count-like. The targets the Q3 is taken over are those the GeoMx workflow vignette keeps
+  before normalising: above the LOQ in at least 10 % of the segments, plus the negative-probe
+  targets (every target if the panel has no negative probes). The vignette calls Q3 "typically
+  the preferred normalization strategy for most DSP-NGS RNA studies", so it is the default:
+  the heatmap / dot plot / violin and the volcano use log1p of the Q3-normalised counts, and a
+  gene on the slide shows its Q3-normalised counts (the key says so; the slider window is in
+  the same count-like units). **Normalise** (in Heatmap and violin, and in the volcano block;
+  one choice for both and for the slide) switches to log1p **counts per 10,000** of the
+  segment's total, as for every other layer, with the raw counts on the slide. A segment with
+  Q3 = 0 has no factor and is left out of the Q3 plots (the log at export says how many). An
+  export made before this, or from a cache prepared before it (run `prepare.py geomx` again),
+  has no factors: the viewer stays on counts per 10,000 and shows no menu. Background (negative
+  probe) normalisation is not offered. The QC panel's "Q3 of the target counts" is the plain
+  Q3 over all targets, a QC value, not the normalisation's Q3.
 
 ### What is not offered for ROIs, and why
 
@@ -224,8 +239,14 @@ what matters.
   animal not being independent, read the fold changes; the p-values are rough.
 - **No grid of the stains** ("protein" layer): three or four morphology stains are not a
   marker panel.
-- Outlier-probe QC, Q3 / background-normalised values, and the per-segment masks as shapes
+- Outlier-probe QC, background-normalised values, and the per-segment masks as shapes
   (segments of one ROI are discs; the ROI outline is drawn once) are not there.
+- **Several segments per ROI** (e.g. PanCK+ / PanCK− of one ROI) are handled, but only tested
+  on the synthetic study (one ROI of two segments), not on a real segmented study.
+- **The statistics treat every segment as an independent sample.** Segments of one ROI, and
+  ROIs of one slide or animal, are not: there is no mixed model (GeomxTools' `mixedModelDE`
+  with a random effect per slide), so the volcano's p-values are optimistic; read the fold
+  changes.
 
 ### No image, or no coordinates
 
