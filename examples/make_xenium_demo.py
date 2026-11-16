@@ -32,10 +32,11 @@ writes
                             transcript table, same molecules
     <out>/xenium_nt/        stains + cells.parquet + cell_feature_matrix.h5 only (no transcripts),
                             and the same outlines as cell_boundaries.parquet / nucleus_boundaries.parquet
-    <out>/xenium_zarr/      cells.zarr.zip alone: the same outlines as polygon_sets/{0 nucleus, 1 cell}
+    <out>/../outline_files/ outlines alone, beside <out> (not datasets, so not among the dataset folders):
+        xenium_zarr/        cells.zarr.zip: the same outlines as polygon_sets/{0 nucleus, 1 cell}
                             /{cell_index, num_vertices, vertices} with cell_id (prefix, suffix)
-    <out>/xenium_zarr_v1/   cells.zarr.zip in the older layout (polygon_vertices, 13 vertices at most)
-    <out>/xenium_own/       "a lab's own" outlines for the same cells: cells.geojson (µm; one cell in two
+        xenium_zarr_v1/     cells.zarr.zip in the older layout (polygon_vertices, 13 vertices at most)
+        xenium_own/         "a lab's own" outlines for the same cells: cells.geojson (µm; one cell in two
                             parts, one with a hole, one with a crumb) and nuclei.csv (a plain vertex table)
     <out>/truth_xenium.json, truth_xenium.npz   what the test checks against
 
@@ -173,7 +174,6 @@ def write_cells_zarr(folder: Path, O, barcodes, old_layout: bool):
     """cells.zarr.zip with the outlines only, in matrix order (cell_index = row)."""
     import zarr
     folder.mkdir(parents=True, exist_ok=True)
-    write_experiment(folder, len(barcodes))
     sp = O["special"]
     n = len(barcodes)
     tr = str.maketrans("abcdefghijklmnop", "0123456789abcdef")
@@ -412,12 +412,13 @@ def main(argv=None):
                              "cell_area": pa.array(area[perm])}), str(ntd / "cells.parquet"))
     write_boundary_tables(ntd, cell_polys, "cell_boundaries", True)
     write_boundary_tables(ntd, nuc_polys, "nucleus_boundaries", True)
-    for d in (out / "xenium_zarr", out / "xenium_zarr_v1", out / "xenium_own"):
+    extra = out.parent / "outline_files"
+    for d in (extra / "xenium_zarr", extra / "xenium_zarr_v1", extra / "xenium_own"):
         if d.exists():
             shutil.rmtree(d)
-    write_cells_zarr(out / "xenium_zarr", O, barcodes, False)
-    write_cells_zarr(out / "xenium_zarr_v1", O, barcodes, True)
-    write_own_outlines(out / "xenium_own", O, barcodes)
+    write_cells_zarr(extra / "xenium_zarr", O, barcodes, False)
+    write_cells_zarr(extra / "xenium_zarr_v1", O, barcodes, True)
+    write_own_outlines(extra / "xenium_own", O, barcodes)
     from scipy import sparse
     csc = sparse.csc_matrix(cnt.T.astype(np.int32))               # features x cells, CSC by cell
     with h5py.File(ntd / "cell_feature_matrix.h5", "w") as f:

@@ -23,8 +23,8 @@ No coding needed: you paste a few commands and fill in two lines.
    `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows). It ends with **SODA is
    installed**. Then activate it and run `pip install jupyter` ([details](#try-it-in-5-minutes)).
 2. **Convert.** Open `notebooks/SODA_pipeline.ipynb` and fill in your work folder (`WORK`) and
-   your cloud folder's link (`CLOUD_URL`). Run Sections 0 and 1, put your instrument files in
-   the `inputs/` folders Section 1 makes (one subfolder per dataset), then **Run All**.
+   your cloud folder's link (`CLOUD_URL`). Run Section 0, put each dataset in its own folder
+   under `inputs/` (any name: SODA works out what each one is), then **Run All**.
 3. **Upload.** Answer Section 7's one question (is this data public?), then upload the
    `export/` folder, as it is, to your own storage: Azure, AWS, Google Cloud or a web server.
    Box, Google Drive and Dropbox do not work.
@@ -230,9 +230,19 @@ It runs the same steps and then checks every output file.
 
 ## Use your own data
 
-1. **[Prepare your data](docs/PREPARING_DATA.md):** one command per input type
-   (Visium HD, Visium, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, OME-TIFF / QPTIFF, per-marker TIFF folders, H&E,
-   `.h5ad` or 10x RNA-seq), then `prepare.py export`.
+1. **[Prepare your data](docs/PREPARING_DATA.md):** point SODA at a dataset's folder and it works
+   out what it is (Visium HD, Visium, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, OME-TIFF / QPTIFF,
+   per-marker TIFF folders, H&E, `.h5ad` or 10x RNA-seq):
+
+   ```bash
+   python web/SpatialViewer/prepare.py detect path/to/folder                                # what is in there? (writes nothing)
+   python web/SpatialViewer/prepare.py auto --src path/to/folder --id my_dataset --out cache   # prepare it
+   python web/SpatialViewer/prepare.py export --id my_dataset --out cache --dest export
+   ```
+
+   When it is not certain it does not guess: it lists what it found and the `--kind ...` to add.
+   Every kind also has its own command with all its options, and
+   `notebooks/SODA_pipeline.ipynb` does the same for a folder of datasets.
 2. **[De-identify and check](docs/DEIDENTIFICATION.md)** before anything leaves your
    computer.
 3. **[Share it](docs/SHARE_YOUR_DATA.md), one of two ways:**
@@ -349,6 +359,7 @@ install.sh / install.ps1  one-command install (macOS, Linux / Windows) into .ven
 web/SpatialViewer/    the page (index.html, viewer.js, ...) and the Python tools (prepare.py, export.py, ...)
 web/SpatialViewer/requirements-lock.txt  every package at one tested version (made from requirements*.txt)
 web/SpatialViewer/markers/  marker-gene lists for suggested cluster names (edit for your tissue)
+web/SpatialViewer/detect.py  says what kind of dataset a folder holds (prepare.py detect / auto, the notebook)
 deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
 examples/make_demo.py synthetic demo data
