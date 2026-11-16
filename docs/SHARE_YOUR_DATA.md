@@ -18,6 +18,13 @@ redoing anything, because both read the same data folder.
 Either way, **your data is never copied onto anyone else's website.** The page only reads
 your files from your storage while someone is looking at them.
 
+**Using the notebook?** `notebooks/SODA_pipeline.ipynb` does most of the first way for you.
+Its Section 4 runs `catalog.py` (Step 1; the title is `TITLE` in its advanced settings),
+Section 5 runs the check (Step 2) when you have a de-identification key file, and Section 7
+asks whether the data is public, prints the upload command (Step 3) and the link (Step 5,
+built from `SODA_PAGE`), then tests the CORS rule (Step 4) and prints the exact fix for
+your storage if it is missing.
+
 ---
 
 ## 1. Share a link
@@ -118,7 +125,8 @@ Everything below is optional. Edit the file in any text editor, save, and upload
  "paper": "https://doi.org/10.1234/example",
  "default": "sciatic_01",
  "datasets": [
-  {"id": "sciatic_01", "label": "Sciatic nerve, injured", "group": "Spatial transcriptomics", "kind": "visium"},
+  {"id": "sciatic_01", "label": "Sciatic nerve, injured", "group": "Spatial transcriptomics", "kind": "visium",
+   "tags": {"tissue": "sciatic nerve", "condition": "injured", "slide": "S12"}},
   {"id": "sciatic_ifx", "label": "Sciatic nerve, 30-plex", "group": "Protein images", "kind": "akoya",
    "hideChannels": ["CD11c test"], "defaultChannels": ["DAPI", "CD3", "CD68"]}
  ]
@@ -134,6 +142,7 @@ Everything below is optional. Edit the file in any text editor, save, and upload
 | `label` | what the dataset list shows for that dataset |
 | `group` | the heading it sits under; headings appear in the order they first occur |
 | order of `datasets` | the order in the list |
+| `tags` | short labels such as `{"tissue": "nerve", "condition": "injured", "slide": "S12"}` (any names you like). The dataset list then gets one drop-down filter per name, and its search also finds the values. Text only: a name up to 40 characters, a value up to 80, at most 20 per dataset (anything else is ignored). A name that has the same value on every dataset gets no filter. |
 | `hideChannels` | stains to leave out of the list, e.g. test stains (exact names) |
 | `defaultChannels` | stains switched on when the dataset opens (part of a name is enough, so `"Axon"` also turns on `"Axon-488"`) |
 | `labelPositions` | hand-placed UMAP cluster labels, from `tools/label_editor.html` |
@@ -149,6 +158,9 @@ italic, and https links are kept; anything else is removed).
 Your own copy of SODA, on your own free web address, that you can change however you
 like. Your data still lives in your storage (Steps 1–4 above); your copy just opens it
 without the `?data=` part, and can have your name, logos and code changes.
+
+Passwords, every label and colour setting, the notebook's settings and a map of the code
+are in one guide: [ADVANCED.md](ADVANCED.md).
 
 ### Step 1. Copy SODA on GitHub
 

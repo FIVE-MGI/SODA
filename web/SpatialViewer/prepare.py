@@ -59,6 +59,37 @@ def log(*a):
     print(*a, flush=True)
 
 
+VISIUM_DEFAULT_BINS = ("008um", "016um")   # Visium HD layers kept without --bins; --bins all keeps every one
+
+
+def select_visium_layers(layers: list[dict], bins: str | None) -> list[dict]:
+    """The Space Ranger layers `prepare.py visium` builds, logging what is kept and left out.
+    bins None/"": Visium HD 8 and 16 µm (all HD layers if neither exists), classic spots always;
+    "all": every layer; otherwise a comma list of layer keys, taken literally."""
+    present = [L["key"] for L in layers]
+    want = (bins or "").strip()
+    if want.lower() == "all":
+        keep, how = set(present), "--bins all"
+    elif want:
+        keep, how = {b.strip() for b in want.split(",") if b.strip()}, "--bins " + want
+        unknown = sorted(keep - set(present))
+        if unknown:
+            log(f"[visium] WARNING --bins: no layer {', '.join(unknown)} under outs (present: "
+                f"{', '.join(present) or 'none'})")
+    else:
+        hd = [L["key"] for L in layers if L["binSizeUm"] is not None]
+        hit = set(VISIUM_DEFAULT_BINS) & set(hd)
+        keep = (hit or set(hd)) | {L["key"] for L in layers if L["binSizeUm"] is None}   # + classic spots
+        how = "default" if hit or not hd else "default, but no 8 or 16 µm layer, so all of them"
+    chosen = [L for L in layers if L["key"] in keep]
+    left = [k for k in present if k not in keep]
+    log(f"[visium] layers kept ({how}): {', '.join(L['key'] for L in chosen) or 'none'}")
+    if left:
+        log(f"[visium] left out: {', '.join(left)}. To build them too: --bins all, or list the ones you want, "
+            f"e.g. --bins {','.join(sorted(set(left) | {L['key'] for L in chosen}))}")
+    return chosen
+
+
 def akoya_files(folder: Path):
     """Marker files in an Akoya export folder, ordered by their leading index.
     `NN_Marker_<Sample>_gray.tif` is a plain grey channel; `_blue` etc. are
@@ -226,7 +257,9 @@ def main(argv=None):
     v = sub.add_parser("visium", help="Space Ranger outs + the full-res image it was run on")
     v.add_argument("--image", required=True, help="the --image TIFF given to spaceranger (RGB or grey)")
     v.add_argument("--outs", required=True)
-    v.add_argument("--bins", help="comma list of layer keys to keep, e.g. 008um,016um (default all)")
+    v.add_argument("--bins", help="Visium HD layers to build: a comma list of layer keys, e.g. 002um,008um,016um, "
+                                  "or 'all'. Default 008um,016um (the 2 µm layer is by far the largest); "
+                                  "classic Visium spots are built by default too")
     v.add_argument("--crop", help="x0,y0,x1,y1 in full-res pixels; bin positions move with it")
     v.add_argument("--flip", help="h, v or hv - mirror the image and the bins together")
     v.add_argument("--image-scale", type=float, default=1.0,
@@ -431,10 +464,7 @@ def main(argv=None):
 
     if args.kind == "visium":
         layers = find_visium_layers(Path(args.outs))
-        keep = set(args.bins.split(",")) if args.bins else None
-        for layer in layers:
-            if keep and layer["key"] not in keep:
-                continue
+        for layer in select_visium_layers(layers, args.bins):
             meta = build_expr(layer, ds_dir, image_scale=args.image_scale, log=log,
                               crop_box=(manifest.get("crop") or {}).get("box"),
                               flip=manifest.get("flip", ""),

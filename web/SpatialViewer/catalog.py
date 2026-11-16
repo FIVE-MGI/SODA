@@ -27,6 +27,11 @@ text editor; this script keeps it):
         "label": "Demo section",                    # what the list shows
         "group": "Spatial transcriptomics",         # the heading it sits under
         "kind": "visium",                           # filled in by this script
+        "tags": {"tissue": "nerve", "condition": "injured", "slide": "S12"},
+                                                    # optional: short labels; the list gets one filter
+                                                    # per name (tissue, condition, slide or any other),
+                                                    # and its search finds the values. Text values only,
+                                                    # names up to 40 characters, values up to 80.
         "hideChannels": ["CD11c test"],             # optional: stains to leave out of the list
         "defaultChannels": ["DAPI", "CD3"],         # optional: stains switched on at first
         "labelPositions": {"T cells": [1.2, -3.4]}  # optional: hand-placed UMAP cluster labels

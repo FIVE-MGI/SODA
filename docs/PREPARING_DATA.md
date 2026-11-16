@@ -52,15 +52,20 @@ python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/v
 For your data:
 
 ```bash
-python web/SpatialViewer/prepare.py visium --id mouse_brain_hd --label "Mouse brain" --image path/to/microscope_image.tif --outs path/to/spaceranger/outs --out cache --bins 008um,016um
+python web/SpatialViewer/prepare.py visium --id mouse_brain_hd --label "Mouse brain" --image path/to/microscope_image.tif --outs path/to/spaceranger/outs --out cache
 ```
 
-- It reads every `outs/binned_outputs/square_<N>um/` that has
-  `filtered_feature_bc_matrix.h5` and `spatial/tissue_positions.parquet`. Each becomes
+- It finds every `outs/binned_outputs/square_<N>um/` that has
+  `filtered_feature_bc_matrix.h5` and `spatial/tissue_positions.parquet`. Each can become
   one expression layer named `002um`, `008um`, `016um` ...
-- `--bins 008um,016um` keeps only those layers. **Recommended:** the 2 µm layer is by far
-  the largest, the viewer does not offer layers below 8 µm by default (`exprMinBinUm` in
-  `config.js`), and at 2 µm nearly every bin holds a single transcript.
+- **By default it builds only the 8 µm and 16 µm layers** (`008um`, `016um`). The 2 µm
+  layer is by far the largest, the viewer does not offer layers below 8 µm by default
+  (`exprMinBinUm` in `config.js`), and at 2 µm nearly every bin holds a single transcript.
+  The log says which layers it kept and which it left out (`[visium] layers kept ...`,
+  `[visium] left out ...`). If an `outs` folder has neither an 8 nor a 16 µm layer, it
+  builds all of them.
+- `--bins all` builds every layer; `--bins 002um,008um,016um` (any comma list of layer
+  keys) builds exactly those.
 - Only features of type "Gene Expression" are kept.
 - An RGB (H&E) image becomes three channels, Red/Green/Blue, shown as a colour photo.
   A multichannel IF image keeps its channels.
@@ -1054,4 +1059,6 @@ from the same export.
 
 **No scale bar.** Give `--pixel-size`.
 
-**Running out of memory** on Visium HD: leave out the 2 µm layer with `--bins 008um,016um`.
+**Running out of memory** on Visium HD: the default already leaves out the 2 µm layer; if
+you added it (`--bins all` or `002um` in the list), leave it out again. With `--bins 008um`
+only the 8 µm layer is built.
