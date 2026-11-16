@@ -176,8 +176,10 @@ when present:
   skipped with a message. Reading the zarr of a full slide (about 200 million transcripts)
   takes a while, see [How big and how long](#how-big-and-how-long).
 - `--no-cells` / `--no-transcripts` skip either part, e.g. to re-prepare the image quickly.
-- **Cell and nucleus outlines** (`cell_boundaries`, `nucleus_boundaries`) are not imported
-  yet; the cells are drawn as dots of the median cell size.
+- **Cell and nucleus outlines** (`cell_boundaries.parquet` / `.csv.gz`,
+  `nucleus_boundaries.parquet` / `.csv.gz`, else `cells.zarr.zip`) are imported when present
+  and drawn when you zoom in, see [Cell outlines](#cell-outlines-segmentation-boundaries);
+  zoomed out, and without those files, the cells are dots of the median cell size.
 - If `<src>/Custom_annotation.geojson` exists and you gave no `--geojson`, it is added as
   an overlay called "Annotations". It must be in image pixels (see
   [Region overlays](#region-overlays)).
@@ -350,7 +352,8 @@ the tables may sit up to two folders below it. What is read, when present:
 | `*_tx_file.csv` | every transcript: `target`, `x_global_px`, `y_global_px` (the other columns are not needed) |
 | `Morphology2D/*_F<fov>.TIF` | raw stain images, one multi-page 16-bit TIFF per FOV (also `RawMorphologyImages/` or `ResegmentationImages/` `*_F<fov>_Z<z>.TIF`, one z-plane, `--z`) |
 | `CellComposite/CellComposite_F<fov>.jpg` | the vendor's rendered colour picture of each FOV |
-| `CellLabels/CellLabels_F<fov>.tif` | only used to check which way up the FOV images are |
+| `CellLabels/CellLabels_F<fov>.tif` | which way up the FOV images are; and the cells' outlines, traced from the labels |
+| `*polygons.csv` | newer exports: the cells' outlines (used instead of tracing the labels) |
 
 - **Image.** The per-FOV images are stitched into one mosaic at the FOV positions. The raw
   morphology TIFFs are used when every FOV has one (channels named after the `Mean.*` columns
@@ -386,7 +389,8 @@ the tables may sit up to two folders below it. What is read, when present:
   smoothed (`--background-um` changes the pixel size; "Cell density" when there are no
   transcripts either). It is a picture of where the data is, not a stain.
 - `--no-cells` / `--no-transcripts` skip either part. Missing files are skipped with a
-  message. Cell outlines (`*-polygons.csv`) are not imported; `--crop` and `--flip` are not
+  message. Cell outlines come from `*polygons.csv` or are traced from `CellLabels`
+  ([Cell outlines](#cell-outlines-segmentation-boundaries)); `--crop` and `--flip` are not
   available. One folder is one slide: prepare each slide of a run as its own dataset.
 
 **Tested on** one public release in the older layout (2021 FFPE lung, 20 FOVs of
@@ -433,7 +437,9 @@ python web/SpatialViewer/prepare.py merscope --src path/to/region_0 --id my_mers
   `--images none`: the dataset opens on the same "Transcript density (no image)" background
   as described for CosMx, 1 µm per pixel, y down.
 - `--no-cells` / `--no-transcripts` skip either part. Cell boundaries
-  (`cell_boundaries.parquet`, `cell_boundaries/*.hdf5`) are not imported; `--crop` and
+  (`cell_boundaries.parquet`, a VPT run's `*_micron_space.parquet`, `cell_boundaries/*.hdf5`)
+  are imported when they sit beside the cell tables
+  ([Cell outlines](#cell-outlines-segmentation-boundaries)); `--crop` and
   `--flip` are not available. To save disk, copy only the z-plane you want.
 
 **Tested on** two public deposits, neither straight from the instrument: a 400 µm crop
@@ -524,8 +530,9 @@ counts are merged (a mouse annotation has about twenty such names).
 
 **Cells.** Each cell of `cellBin/cell` becomes a dot at its centre, sized to the median cell
 area; its counts are `cellBin/cellExp`. Everything that works on bins works on the cells layer
-(see [Xenium](#xenium)). Cell outlines (`cellBin/cellBorder`) are not imported yet, and SAW's
-own `clusterID` per cell is not read.
+(see [Xenium](#xenium)). The cells' outlines (`cellBin/cellBorder`) are imported and drawn when
+you zoom in ([Cell outlines](#cell-outlines-segmentation-boundaries)); SAW's own `clusterID`
+per cell is not read.
 
 **Your own clusters.** The cache keeps a name per row so that
 [your own UMAP and clusters](#your-own-umap-and-clusters-seurat-scanpy) can be attached with
@@ -546,6 +553,74 @@ Reading the same counts from `tissue.gem.gz` took 2.6 min for the text, with a p
 3.9 GB. The export (53 min, 6.5 GB in 111,395 files) is described under
 [How big and how long](#how-big-and-how-long). `--crop` and `--flip` are not available for
 `stereoseq`.
+
+## Cell outlines (segmentation boundaries)
+
+For Xenium, MERSCOPE, CosMx and Stereo-seq cell bins, SODA loads the outline of every cell that
+the instrument or its software wrote (it does not segment anything itself) and the viewer draws
+those outlines, filled with the colour of the gene, cluster or selection on show, once you zoom
+in far enough for a cell to be about 5 screen pixels across (dots when zoomed out; "Cell
+shapes: Outlines / Dots" in the View tab; nucleus outlines under More options). Nothing needs
+to be asked for: `prepare.py xenium | merscope | cosmx | stereoseq` picks the files up when they
+are in the folder, and says so in a line starting `[outlines]`:
+
+| Platform | What is read | Run on real data |
+|---|---|---|
+| Xenium | `cell_boundaries.parquet` or `.csv.gz`, `nucleus_boundaries.parquet` or `.csv.gz`; without them `cells.zarr.zip` | `.csv.gz` (analysis 4.0: 155,754 cells of 24 vertices, 156,299 nuclei) and the same file re-saved as parquet; `cells.zarr.zip` only on the synthetic fixture |
+| MERSCOPE | `cell_boundaries.parquet`, or `*_micron_space.parquet` of a Vizgen Post-processing Tool run, beside the cell tables; older runs: `cell_boundaries/feature_data_<fov>.hdf5` | both parquet kinds (1,179 and 65,029 cells); the HDF5 layout only on the synthetic fixture |
+| CosMx | `*polygons.csv` when the export has one; otherwise the outlines are **traced** from `CellLabels/CellLabels_F<fov>.tif` (the label image is the instrument's segmentation; tracing follows its pixel edges and then removes the staircase, moving the outline by at most 1.5 label pixels) | traced labels (20 FOVs, 91,972 cells: 24 vertices a cell, overlap with the label mask 97 % by intersection over union); the polygons file only on the synthetic fixture |
+| Stereo-seq | `cellBin/cellBorder` of `--cellbin` | 130,588 cells |
+
+- `--no-outlines` skips them. `--outline-tolerance-um` (default 0.1) is how far the outline
+  may move when vertices are removed to save space; 0 keeps every vertex of the file.
+- **Checks made for you.** The log line says how many cells got an outline, how many polygons
+  belonged to no cell of the count matrix, and what share of the cells' own centres lie inside
+  their own outline. That share is the test that the outlines are in the cells' frame (right
+  units, right way up, same run): 99.88 % to 99.99 % on the real datasets tried (the rest are
+  cells whose reported centre lies just outside a concave outline); under 90 % you get a
+  warning, under 50 % the outlines are **not written** and the cells stay dots.
+- A cell with no outline in the file stays a dot. A cell in several parts keeps its parts
+  (crumbs under 2 % of the cell are dropped); holes are left out.
+- Size: about 60 to 100 bytes per cell and set (4 bytes per vertex + 6), in one file per
+  500 µm square of tissue; the viewer downloads the squares under the view, and nothing until
+  you zoom in. Format: [DATA_FORMAT.md](DATA_FORMAT.md#cell-outlines-shapesset-cells-layers).
+
+**Adding outlines to a dataset that is already prepared** (no need to rebuild the image):
+
+```bash
+python web/SpatialViewer/prepare.py outlines --id my_xenium --out cache                  # from the folder it was prepared from
+python web/SpatialViewer/prepare.py outlines --id my_xenium --out cache --src path/to/xenium_output_folder
+python web/SpatialViewer/prepare.py outlines --id my_xenium --out cache --dest export    # ... and copy them into an existing export
+```
+
+`--src` is the Xenium or MERSCOPE folder, or the Stereo-seq cell bin GEF. Without `--dest`,
+the next `prepare.py export` includes them. CosMx outlines are made by `prepare.py cosmx`
+itself (they need the FOV layout it works out), so prepare such a dataset again instead.
+
+**Your own segmentation** (Cellpose, Baysor, QuPath, a vendor's re-segmentation ...) can be
+loaded the same way, as long as its cells are the cells of the count matrix:
+
+```bash
+python web/SpatialViewer/prepare.py outlines --id my_xenium --out cache --dest export \
+    --boundaries my_cells.geojson --nuclei my_nuclei.parquet --boundary-units um
+```
+
+| File type | What it must hold |
+|---|---|
+| `.geojson` / `.json` | Polygon or MultiPolygon features; the cell id in `properties.cell_id` (or `cell`, `EntityID`, `id`, `label`, `name`, or the feature's own `id`; `--boundary-id` names another property) |
+| `.csv`, `.csv.gz`, `.parquet` vertex table | one row per vertex, the rows of a polygon one after another: `cell_id`, `vertex_x`, `vertex_y` (also read: `cell` / `EntityID` / `id`; `x` / `y`), and optionally `label_id` to tell several polygons of one cell apart |
+| `.parquet` with a WKB column | `Geometry` (or `geometry`) as WKB Polygon / MultiPolygon and an id column (`EntityID`, `cell_id` ...); with a `ZIndex` column the middle plane is used |
+
+The ids must be the cell ids of the dataset (the Xenium `cell_id`, the MERSCOPE `EntityID`,
+`<cell_ID>_<fov>` or the `cell` column for CosMx, the cell `id` for Stereo-seq). Coordinates:
+`--boundary-units px` (full-resolution image pixels, the default), `um` (µm from the image's
+top-left corner, as Xenium writes them) or `frame` (the platform's own coordinates: CosMx
+global pixels, MERSCOPE global µm). The same checks apply: outlines in the wrong units or from
+another run are refused with a message, and nothing is changed.
+
+Not offered: outlines on the live tile server (`server.py`; static exports only), outlines for
+bins, marker squares and GeoMx ROIs (those are drawn as they are), and computing a
+segmentation.
 
 ## Multiplexed immunofluorescence
 
@@ -996,6 +1071,11 @@ timing figures here. What can be said from the formats:
   section with a 480-gene panel (209 million transcripts, 167 million of them quality ≥ 20)
   gave 667 MB in 480 files, the largest gene 37 MB; the viewer downloads only the genes
   someone picks. Reading its `transcripts.zarr.zip` took about 6 minutes.
+- **Cell outlines**: 4 bytes per vertex + 6 per polygon, one file per 500 µm square. The mouse
+  brain section above (155,754 cells of 24 vertices, as many nuclei) gave 15.0 MB + 13.8 MB in
+  296 + 294 files and took 45 s to import from the two `.csv.gz` files; a zoomed-in view
+  (9 squares, 8,000 cells) downloads 0.8 MB. Tracing the label images of a 20-FOV CosMx slide
+  (91,972 cells) took 74 s and gave 9.2 MB; a 130,588-cell Stereo-seq chip 7.2 MB in 10 s.
 - **CosMx and MERSCOPE**: the same 4 bytes per transcript; measured sizes and times are at the
   end of the [CosMx](#cosmx-smi) and [MERSCOPE](#merscope) sections.
 - **UMAP time** grows with the number of bins with ≥ 10 UMI and runs on one core.
