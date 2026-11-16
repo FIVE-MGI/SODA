@@ -433,8 +433,9 @@
       `<div id="cmpMsg" class="meta cmp-msg" role="status"></div>`;
     (document.getElementById("sidebar") || document.body).appendChild(sec);
     if (window.SodaLayout) window.SodaLayout.adopt(sec);
-    const after = $("panelSave");                  // under Save and load (the layout puts a section it does not know last)
-    if (after && after.parentElement === sec.parentElement) after.after(sec);
+    // under Save and load and Save image (the layout puts a section it does not know last)
+    const after = [$("panelImage"), $("panelSave")].find((x) => x && x.parentElement === sec.parentElement);
+    if (after) after.after(sec);
 
     $("cmpLink").onchange = (e) => setLinked(e.target.checked);
     $("cmpAlign").onclick = linkFromHere;

@@ -57,6 +57,8 @@
     panelPlots: { more: ["plTop"], moreAt: { before: "plRun" },
       help: "Draws genes across groups (clusters, drawn shapes, regions or annotations) as a heatmap, a dot plot or violins. Pick the grouping, type gene names or let it take each group's top marker genes (how many: More options), then Draw plots. + shown genes adds the genes now on the picture." },
     panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link copies this page's address: it opens this dataset, with the quality filter if one is set (not the genes, stains or zoom)." },
+    panelImage: { more: ["snapBar", "snapName"], moreAt: "end",
+      help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
     panelHelp: {},
     panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
@@ -65,7 +67,7 @@
     view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
     clusters: ["panelUmap", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelVolcano", "panelPlots"],
-    save: ["panelSave", "panelDataset", "panelHelp"],
+    save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
   };
   // a section that lives inside another one keeps its own heading and does not fold by itself
   const NESTED = { panelGate: "panelCount" };
