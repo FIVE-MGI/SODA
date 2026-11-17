@@ -70,7 +70,7 @@
 .more-box { margin: 2px 0 6px; padding: 2px 0 2px 10px; border-left: 2px solid var(--line); }
 
 /* a stain that is off: one line (tick, colour, name); its range slider comes with the tick */
-.app.tabbed #chanList .chan.off .range, .app.tabbed #chanList .chan.off .reset { display: none; }
+.app.tabbed #chanList .chan.off .range, .app.tabbed #chanList .chan.off .reset, .app.tabbed #chanList .chan.off .adj, .app.tabbed #chanList .chan.off .ch-adj { display: none; }
 .app.tabbed .stain-btns { margin: 0 0 6px; }
 .app.tabbed #panelChannels.no-stains .search { display: none; }      /* an H&E image has no stain list to filter */
 /* a long legend scrolls in its own box, sized so the tab still fits the window */

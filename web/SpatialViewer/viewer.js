@@ -21,41 +21,82 @@
   }
   const { Deck, OrthographicView, TileLayer, BitmapLayer, ScatterplotLayer, GeoJsonLayer, TextLayer, ColumnLayer, PolygonLayer } = deck;
 
-  // ---- channel tile layer: grey texture -> window -> color, on the GPU ------
+  // ---- channel tile layer: grey texture -> window -> gamma -> color, on the GPU ------
+  // Colour maps for one stain on its own: "solid" is the stain's own colour (black to that colour, as
+  // always), "grey" black to white, viridis and magma the matplotlib maps. viridis and magma are
+  // 6th-order polynomial fits (Matt Zucker's, CC0; within ~0.02 of matplotlib's tables): the same
+  // numbers make the shader below and the legend's ramp (chanCmapRgb), so the two cannot disagree.
+  const CHAN_CMAPS = ["solid", "grey", "viridis", "magma"];
+  const CMAP_POLY = {
+    viridis: [[0.2777273272234177, 0.005407344544966578, 0.3340998053353061], [0.1050930431085774, 1.404613529898575, 1.384590162594685],
+      [-0.3308618287255563, 0.214847559468213, 0.09509516302823659], [-4.634230498983486, -5.799100973351585, -19.33244095627987],
+      [6.228269936347081, 14.17993336680509, 56.69055260068105], [4.776384997670288, -13.74514537774601, -65.35303263337234],
+      [-5.435455855934631, 4.645852612178535, 26.3124352495832]],
+    magma: [[-0.002136485053939582, -0.000749655052795221, -0.005386127855323933], [0.2516605407371642, 0.6775232436837668, 2.494026599312351],
+      [8.353717279216625, -3.577719514958484, 0.3144679030132573], [-27.66873308576866, 14.26473078096533, -13.64921318813922],
+      [52.17613981234068, -27.94360607168351, 12.94416944238394], [-50.76852536473588, 29.04658282127291, 4.23415299384598],
+      [18.65570506591883, -11.48977351997711, -5.601961508734096]],
+  };
+  // 0..255 colour of a map at t (0..1); "solid" needs the stain's colour (hex)
+  const chanCmapRgb = (name, t, hex) => {
+    t = Math.min(1, Math.max(0, t));
+    if (name === "grey") return [0, 1, 2].map(() => Math.round(t * 255));
+    const C = CMAP_POLY[name];
+    if (!C) return hexToRgb255(hex || "#ffffff").map((v) => Math.round(v * t));
+    return [0, 1, 2].map((c) => { let v = 0; for (let i = C.length - 1; i >= 0; i--) v = v * t + C[i][c]; return Math.round(Math.min(1, Math.max(0, v)) * 255); });
+  };
+  const glslPoly = (fn, C) => {
+    const v = (c) => `vec3(${c.map((x) => x.toFixed(10)).join(", ")})`;
+    let body = v(C[C.length - 1]);
+    for (let i = C.length - 2; i >= 0; i--) body = `${v(C[i])} + t * (${body})`;
+    return `vec3 ${fn}(float t) { return clamp(${body}, 0.0, 1.0); }`;
+  };
+  const CHAN_UNIFORMS = "uniform chanUniforms { float lo; float hi; vec3 color; float gamma; float cmap; } chan;";
   const chanModule = {
     name: "chan",
-    vs: "uniform chanUniforms { float lo; float hi; vec3 color; } chan;",
-    fs: "uniform chanUniforms { float lo; float hi; vec3 color; } chan;",
-    uniformTypes: { lo: "f32", hi: "f32", color: "vec3<f32>" },
+    vs: CHAN_UNIFORMS,
+    fs: `${CHAN_UNIFORMS}\n${glslPoly("chan_viridis", CMAP_POLY.viridis)}\n${glslPoly("chan_magma", CMAP_POLY.magma)}`,
+    uniformTypes: { lo: "f32", hi: "f32", color: "vec3<f32>", gamma: "f32", cmap: "f32" },
   };
-  class ChannelBitmapLayer extends BitmapLayer {
-    getShaders() {
-      const s = super.getShaders();
-      return {
-        ...s,
-        modules: [...(s.modules || []), chanModule],
-        inject: {
-          ...(s.inject || {}),
-          "fs:DECKGL_FILTER_COLOR": `
+  const CHAN_UNIFORMS_PLAIN = "uniform chanUniforms { float lo; float hi; vec3 color; } chan;";
+  const chanModulePlain = { name: "chan", vs: CHAN_UNIFORMS_PLAIN, fs: CHAN_UNIFORMS_PLAIN, uniformTypes: { lo: "f32", hi: "f32", color: "vec3<f32>" } };
+  // Two variants of the tile layer. The plain one is the shader as it always was (window, then the
+  // stain's colour); a stain with a gamma or a colour map draws with the second. A software renderer
+  // (no GPU) paid ~15% more per frame for the extra steps even at gamma 1, so the common case keeps
+  // the plain shader and only an adjusted stain pays for its adjustment.
+  const chanFilter = (adj) => `
             float g = color.r;
-            float v = clamp((g - chan.lo) / max(chan.hi - chan.lo, 1e-4), 0.0, 1.0);
-            color = vec4(chan.color * v * layer.opacity, v * layer.opacity);`,
-        },
-      };
+            float v = clamp((g - chan.lo) / max(chan.hi - chan.lo, 1e-4), 0.0, 1.0);` + (adj ? `
+            v = pow(v, chan.gamma);
+            if (chan.cmap < 0.5) color = vec4(chan.color * v * layer.opacity, v * layer.opacity);
+            else if (chan.cmap < 1.5) color = vec4(vec3(v) * layer.opacity, v * layer.opacity);
+            else color = vec4((chan.cmap < 2.5 ? chan_viridis(v) : chan_magma(v)) * layer.opacity, layer.opacity);` : `
+            color = vec4(chan.color * v * layer.opacity, v * layer.opacity);`);
+  const chanLayerClass = (adj) => {
+    class C extends BitmapLayer {
+      getShaders() {
+        const s = super.getShaders();
+        return { ...s, modules: [...(s.modules || []), adj ? chanModule : chanModulePlain],
+                 inject: { ...(s.inject || {}), "fs:DECKGL_FILTER_COLOR": chanFilter(adj) } };
+      }
+      draw(opts) {
+        const { lo, hi, color, gamma, cmap } = this.props;
+        this.setShaderModuleProps({ chan: adj ? { lo, hi, color, gamma, cmap } : { lo, hi, color } });
+        super.draw(opts);
+      }
     }
-    draw(opts) {
-      const { lo, hi, color } = this.props;
-      this.setShaderModuleProps({ chan: { lo, hi, color } });
-      super.draw(opts);
-    }
-  }
-  ChannelBitmapLayer.layerName = "ChannelBitmapLayer";
-  ChannelBitmapLayer.defaultProps = {
-    ...BitmapLayer.defaultProps,
-    lo: { type: "number", value: 0 },
-    hi: { type: "number", value: 1 },
-    color: { type: "array", value: [1, 1, 1] },
+    C.layerName = adj ? "ChannelAdjBitmapLayer" : "ChannelBitmapLayer";
+    C.defaultProps = {
+      ...BitmapLayer.defaultProps,
+      lo: { type: "number", value: 0 },
+      hi: { type: "number", value: 1 },
+      color: { type: "array", value: [1, 1, 1] },
+      gamma: { type: "number", value: 1 },
+      cmap: { type: "number", value: 0 },
+    };
+    return C;
   };
+  const ChannelBitmapLayer = chanLayerClass(false), ChannelAdjBitmapLayer = chanLayerClass(true);
   // Additive sums whatever overlaps. That is why a coarse tile drawn under its own
   // children flashes bright mid-zoom, and it is also why two markers on the same spot
   // blow out. MAX takes the brighter of the two instead: overlapping copies of the same
@@ -573,7 +614,7 @@
       // moving a window slider changed nothing on screen until you panned.
       updateTriggers: {
         getTileData: [S.dsId, tileEpoch],
-        renderSubLayers: [ch.lo, ch.hi, ch.hex, op],
+        renderSubLayers: [ch.lo, ch.hi, ch.hex, op, ch.gamma, ch.cmap],
       },
       getTileData: ({ index, signal }) => {
         const z = maxLevel + index.z;
@@ -597,11 +638,14 @@
       renderSubLayers: (props) => {
         if (!props.data) return null;
         const bb = props.tile.boundingBox;
-        return new ChannelBitmapLayer(props, {
+        const adj = (ch.gamma || 1) !== 1 || (ch.cmap && ch.cmap !== "solid");
+        return new (adj ? ChannelAdjBitmapLayer : ChannelBitmapLayer)(props, {
+          id: adj ? `${props.id}-adj` : props.id,
           data: null,
           image: props.data,
           bounds: [bb[0][0], bb[1][1], bb[1][0], bb[0][1]],
           lo: ch.lo / 255, hi: ch.hi / 255, color: ch.color,
+          gamma: ch.gamma || 1, cmap: Math.max(0, CHAN_CMAPS.indexOf(ch.cmap)),
           opacity: op,
           parameters: MAXBLEND,
           // Always interpolated. This was a checkbox, but BitmapLayer declares
@@ -1512,20 +1556,49 @@
         <input class="cb" type="checkbox" ${ch.visible ? "checked" : ""} />
         <input class="col" type="color" value="${ch.hex}" />
         <span class="name" title="${ch.name}">${ch.name}</span>
-        <button class="x reset" title="reset to the default display range">reset</button>
-        <div class="range"></div>`;
+        <span class="ch-btns"><button class="x adj" type="button" aria-expanded="false" title="Gamma and colour map">γ</button><button class="x reset" title="reset the display range, gamma and colour map">reset</button></span>
+        <div class="range"></div>
+        <div class="ch-adj" hidden>
+          <label class="ch-gamma"><span>Gamma</span><input type="range" min="-1" max="1" step="0.01" aria-label="Gamma of ${escHtml(ch.name)}" /><output></output></label>
+          <label class="ch-cmap"><span>Colours</span><select aria-label="Colour map of ${escHtml(ch.name)}">
+            <option value="solid">Its colour</option><option value="grey">Grey</option><option value="viridis">Viridis</option><option value="magma">Magma</option></select></label>
+        </div>`;
       row.dataset.name = ch.name.toLowerCase();
       const cb = row.querySelector(".cb"), col = row.querySelector(".col");
+      // the histogram band and its bars in the colours the stain is drawn in
+      const bandCss = () => (ch.cmap && ch.cmap !== "solid" ? `rgb(${chanCmapRgb(ch.cmap, 0.75, ch.hex).join(",")})` : ch.hex);
       const slider = rangeSlider(row.querySelector(".range"), {
         min: 0, max: 255, step: 1, lo: ch.lo, hi: ch.hi,
-        color: () => ch.hex, fmt: (v) => rawLabel(ch, v),
+        color: bandCss, fmt: (v) => rawLabel(ch, v),
         onChange: (a, b) => { ch.lo = a; ch.hi = b; requestRender(); },
       });
       drawHistogram(slider.hist, ch, slider);
       cb.onchange = () => { ch.visible = cb.checked; row.classList.toggle("off", !ch.visible); render(); };
       col.oninput = () => { ch.hex = col.value; ch.color = hexToRgb01(col.value); slider.repaint(); requestRender(); };
+      // gamma on a log slider: -1..1 is 0.2..5, 1 in the middle
+      const adj = row.querySelector(".ch-adj"), adjBtn = row.querySelector(".adj");
+      const gIn = row.querySelector(".ch-gamma input"), gOut = row.querySelector(".ch-gamma output"), cmSel = row.querySelector(".ch-cmap select");
+      const syncAdj = () => {
+        const gm = ch.gamma || 1;
+        gIn.value = String(Math.log(gm) / Math.log(5)); gOut.textContent = gm.toFixed(2);
+        cmSel.value = CHAN_CMAPS.includes(ch.cmap) ? ch.cmap : "solid";
+        col.disabled = cmSel.value !== "solid";
+        col.title = col.disabled ? "Colour map in use: its colour is not drawn" : "";
+        adjBtn.classList.toggle("on", gm !== 1 || cmSel.value !== "solid");
+      };
+      gIn.oninput = () => {
+        const p = +gIn.value;
+        ch.gamma = Math.abs(p) < 0.015 ? 1 : Math.round(Math.pow(5, p) * 100) / 100;     // a snap at 1
+        syncAdj(); requestRender();
+      };
+      gIn.ondblclick = () => { ch.gamma = 1; syncAdj(); requestRender(); };
+      cmSel.onchange = () => { ch.cmap = cmSel.value; syncAdj(); slider.repaint(); render(); };
+      adjBtn.onclick = () => { adj.hidden = !adj.hidden; adjBtn.setAttribute("aria-expanded", String(!adj.hidden)); if (!adj.hidden) gIn.focus(); };
+      if ((ch.gamma || 1) !== 1 || (ch.cmap && ch.cmap !== "solid")) { adj.hidden = false; adjBtn.setAttribute("aria-expanded", "true"); }
+      syncAdj();
       row.querySelector(".reset").onclick = () => {
         const w = S.m.image.channels[ch.index].window; ch.lo = Math.round(w[0]); ch.hi = Math.round(w[1]);
+        ch.gamma = 1; ch.cmap = "solid"; syncAdj();
         slider.set(ch.lo, ch.hi); render();
       };
       row.querySelector(".name").onclick = () => { cb.checked = !cb.checked; cb.onchange(); };
@@ -6059,7 +6132,7 @@
     S.channels = named.map((c, i) => {
       const on = wanted.length ? wanted.some((w) => c.name.toLowerCase().includes(w)) : i < 3;
       return { index: c.index, name: c.name, hex: c.color, color: hexToRgb01(c.color),
-               lo: Math.round(c.window[0]), hi: Math.round(c.window[1]), visible: on };
+               lo: Math.round(c.window[0]), hi: Math.round(c.window[1]), visible: on, gamma: 1, cmap: "solid" };
     });
     if (!S.channels.some((c) => c.visible)) S.channels.slice(0, 3).forEach((c) => (c.visible = true));
     buildChannelUI();
@@ -6163,7 +6236,14 @@
     const chanList = $("chanList");
     if (!umap && S.imgOn && chanList && !chanList.hidden) {
       const on = S.channels.filter((ch) => ch.visible);
-      if (on.length) out.push({ title: "Stains", items: on.map((ch) => ({ label: ch.name, rgb: hexToRgb255(ch.hex) })) });
+      // a stain with a colour map or a gamma: its ramp (dark to bright, through that gamma), named so
+      const chanItem = (ch) => {
+        const gm = ch.gamma || 1, cm = CHAN_CMAPS.includes(ch.cmap) ? ch.cmap : "solid";
+        if (gm === 1 && cm === "solid") return { label: ch.name, rgb: hexToRgb255(ch.hex) };
+        const stops = []; for (let i = 0; i <= 8; i++) stops.push(chanCmapRgb(cm, Math.pow(i / 8, gm), ch.hex));
+        return { label: `${ch.name}${cm !== "solid" ? ` (${cm})` : ""}${gm !== 1 ? `, gamma ${gm.toFixed(2)}` : ""}`, stops };
+      };
+      if (on.length) out.push({ title: "Stains", items: on.map(chanItem) });
     }
     if (gatePreviewOn() && !umapByCat()) {
       const G = S.gate, c = G.cut.get(G.cur);
@@ -6193,6 +6273,7 @@
     return out;
   }
   function snapshotInit() {
+    if (window.__spatialViewer) window.__spatialViewer.snapLegend = snapLegend;   // for testing from the console
     if (!window.SodaSnapshot) return;
     window.SodaSnapshot.init({
       deck: () => deckgl, state: () => S, touch: TOUCH, download: lassoDownload, legend: snapLegend,

@@ -150,6 +150,8 @@
       const e = { n, on: bool(c.on) === true };
       put(e, "c", hex(c.c));
       if (Array.isArray(c.w) && c.w.length >= 2) { const a = num(c.w[0], 0, 255), b = num(c.w[1], 0, 255); if (a !== null && b !== null && b >= a) e.w = [Math.round(a), Math.round(b)]; }
+      // gamma and colour map (absent: 1 and the stain's own colour, as before they existed)
+      put(e, "g", num(c.g, 0.2, 5)); put(e, "m", oneOf(c.m, ["solid", "grey", "viridis", "magma"]));
       return e;
     }));
     put(o, "genes", list(v.genes, 24, gene));
@@ -336,8 +338,9 @@
       for (const ch of S.channels) {
         const d = S.m.image.channels[ch.index] || {}, w = d.window || [0, 255];
         const col = String(ch.hex).toLowerCase() !== String(d.color || "").toLowerCase(), win = ch.lo !== Math.round(w[0]) || ch.hi !== Math.round(w[1]);
-        if (!ch.visible && !col && !win) continue;
-        v.ch.push({ n: ch.name, on: !!ch.visible, ...(col ? { c: ch.hex } : {}), ...(win ? { w: [ch.lo, ch.hi] } : {}) });
+        const gm = ch.gamma && ch.gamma !== 1 ? r3(ch.gamma) : null, cm = ch.cmap && ch.cmap !== "solid" ? ch.cmap : null;
+        if (!ch.visible && !col && !win && !gm && !cm) continue;
+        v.ch.push({ n: ch.name, on: !!ch.visible, ...(col ? { c: ch.hex } : {}), ...(win ? { w: [ch.lo, ch.hi] } : {}), ...(gm ? { g: gm } : {}), ...(cm ? { m: cm } : {}) });
       }
     }
     if (S.exprKey) {
@@ -400,6 +403,7 @@
         ch.visible = !!(c && c.on);
         ch.hex = (c && c.c) || d.color || ch.hex; ch.color = H.hexToRgb01(ch.hex);
         ch.lo = c && c.w ? c.w[0] : Math.round(w[0]); ch.hi = c && c.w ? c.w[1] : Math.round(w[1]);
+        ch.gamma = (c && c.g) || 1; ch.cmap = (c && c.m) || "solid";
       }
       H.buildChannelUI();
     }
