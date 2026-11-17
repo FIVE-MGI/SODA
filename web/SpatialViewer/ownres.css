@@ -1,0 +1,21 @@
+/* Your own results (ownres.js): the Clusters tab's section and the page-wide drop target. */
+.own-msg { word-break: normal; overflow-wrap: anywhere; line-height: 1.45; }
+.own-msg.err { color: #ff8f8f; }
+.own-msg.warn { color: #e0b070; }
+.own-hint { word-break: normal; }
+.own-box { margin-top: 6px; }
+.own-roles { margin: 6px 0; max-height: 46vh; overflow-y: auto; overflow-x: hidden; }
+.own-role { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 2px 8px; align-items: center;
+  padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.own-role.own-head { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; border-bottom: 0; }
+.own-col { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.own-col small { display: block; color: var(--muted); font-size: 10px; white-space: normal; }
+.own-role select { width: 100%; min-width: 0; }
+.own-role .own-pal { grid-column: 1 / -1; width: 100%; min-width: 0; font-size: 11px; }
+.own-keep { margin: 6px 0; }
+.own-keep input { width: 100%; min-width: 0; }
+.own-drop { position: fixed; inset: 0; z-index: 9000; display: flex; align-items: center; justify-content: center;
+  background: rgba(8, 11, 18, .72); border: 3px dashed var(--accent); pointer-events: none; }
+.own-drop[hidden] { display: none; }
+.own-drop div { color: var(--text); font-size: 18px; text-align: center; padding: 0 16px; }
+.own-drop small { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; }
