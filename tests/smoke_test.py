@@ -3060,7 +3060,8 @@ def clean_detect(root: Path):
 
 def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = False):
     """Two cache folders of one dataset hold the same thing: manifests equal (creation time and the spelling of
-    source paths aside), the same files, and the same values in every array."""
+    source paths aside), the same files, and the same values in every array. Caches of two ids (a.name, b.name)
+    may differ by the id alone."""
     if not c.ok((a / "manifest.json").exists() and (b / "manifest.json").exists(), f"{what}: both caches have a manifest"):
         return
 
@@ -3075,6 +3076,8 @@ def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = 
                 return os.path.normcase(str(q.resolve()))
         return v
     ma, mb = read_json(a / "manifest.json"), read_json(b / "manifest.json")
+    if a.name != b.name and mb.get("id") == b.name:
+        mb["id"] = a.name
     for m in (ma, mb):
         m.pop("created", None)
         if source_differs:
@@ -3088,7 +3091,8 @@ def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = 
     # values; everything else (array metadata, attributes, molecule files, overlays) byte for byte
     arrays = sorted(q.parent.relative_to(a).as_posix() for q in a.rglob(".zarray"))
     chunks = {n for n in fa for d in arrays if n.startswith(d + "/") and not n.rsplit("/", 1)[1].startswith(".z")}
-    diff = [n for n in fa if n not in chunks and (a / n).read_bytes() != (b / n).read_bytes()]
+    diff = [n for n in fa if n not in chunks
+            and (a / n).read_bytes() != (b / n).read_bytes().replace(f'"{b.name}"'.encode(), f'"{a.name}"'.encode())]
     c.ok(not diff, f"{what}: array metadata, attributes and the other files are byte-identical to the explicit subcommand's (differ: {diff[:5]})")
     try:
         import zarr
@@ -3265,7 +3269,8 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
                                    ("empty", 5, ["empty"], []),
                                    ("two_platforms", 3, ["--kind xenium", "--kind merscope"], []),
                                    ("two_platforms", 4, ["Visium", "outs"], ["--kind", "visium"]),
-                                   ("zipped", 4, ["unzip"], [])):
+                                   ("zipped_merscope", 4, ["unzip", "region0.zip"], []),
+                                   ("zipped_slip/slip.zip", 4, ["'..'", "refused"], [])):
         rc, txt = cli("auto", "--src", str(neg / name), "--id", "never_written", "--out", str(root / "detect" / "never"), *extra)
         c.ok(rc == code and all(w in txt for w in say),
              f"prepare.py auto {name} {' '.join(extra)}: stops with exit {code} and says {say} (exit {rc}: {txt[-300:]!r})")

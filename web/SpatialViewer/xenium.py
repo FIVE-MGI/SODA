@@ -531,6 +531,7 @@ def plan(args, log=print) -> Plan:
         import re as _re
         import tifffile as _tf
         if not isinstance(folder, Path):               # random access into big compressed TIFFs: copy them out
+            P.manifest_source["files"] = [m.rel for m in stains]       # in the zip's dataset folder (copies go)
             stains = folder.extract([m.rel for m in stains], why="the stain images, read tile by tile")
         with _tf.TiffFile(str(stains[0])) as tf0:           # the OME block lists every channel
             ome = tf0.ome_metadata or ""
@@ -554,7 +555,7 @@ def plan(args, log=print) -> Plan:
         ann = _first(folder, "Custom_annotation.geojson")
         if ann is not None and not args.geojson:
             args.geojson = [f"Annotations={ann if isinstance(ann, Path) else ann.local()}"]
-        P.manifest_source["files"] = [str(p) for _, p in pairs]
+        P.manifest_source.setdefault("files", [str(p) for _, p in pairs])
         return P
 
     # ---- no stain images: a neutral density background in Xenium's own frame

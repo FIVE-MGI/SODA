@@ -531,7 +531,8 @@ def find_xenium(cx: Ctx) -> list[dict]:
         variant = "+".join(parts) or "stains"
         # no stain images: cells and / or transcripts on a density background (xenium.plan), when the folder is
         # surely Xenium's and holds something to draw; a Xenium 1.x image file still asks for the 2.0 layout
-        no_image = not stains and bool(strong) and not old and bool(has_cells or tx)
+        image_file = old or ("morphology.ome.tif" if "morphology.ome.tif" in f else None)   # an image, not in focus/
+        no_image = not stains and bool(strong) and not image_file and bool(has_cells or tx)
         c = _cand("xenium", variant, "Xenium (" + ", ".join(["stains"] * bool(stains) + parts
                                                            + ["no stain images"] * no_image) + ")", rel)
         if stains:
@@ -542,9 +543,9 @@ def find_xenium(cx: Ctx) -> list[dict]:
             c["notes"].append("no stain images (morphology_focus/*.ome.tif): drawn on a "
                               + ("transcript" if tx else "cell") + " density background instead")
         else:
-            why = (f" ({old} is the single-file layout of Xenium Onboard Analysis 1.x: the xenium reader needs the "
-                   f"morphology_focus/ folder of 2.0 and later; the file can be prepared on its own with --kind tiff)"
-                   if old else "")
+            why = (f" ({image_file} without morphology_focus/ is the single-file layout of Xenium Onboard Analysis 1.x: "
+                   f"the xenium reader needs the morphology_focus/ folder of 2.0 and later; the file can be prepared on "
+                   f"its own with --kind tiff)" if image_file else "")
             _miss(c, "the stain images morphology_focus/*.ome.tif" + why, None,
                   "copy the morphology_focus folder of the Xenium output into this folder")
         if "experiment.xenium" in f:
