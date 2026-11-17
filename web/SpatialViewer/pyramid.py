@@ -367,11 +367,37 @@ def _downsample2(a: np.ndarray, how: str = "mean") -> np.ndarray:
     return ((s + 2) >> 2).astype(a.dtype)
 
 
-def _to_storage_dtype(band: np.ndarray, dtype: np.dtype) -> np.ndarray:
+FLOAT_SAMPLE_SIDE = 4096   # float channels: their scale is taken from at most ~this many px per side
+
+
+def _float_scale(src: Source, c: int, tile: int) -> tuple[float, float]:
+    """(factor, top) that maps float channel `c` onto uint16: 0 .. the channel's 99.99th percentile of its
+    finite values above 0 -> 0 .. 65535, the rule ngff.OmeZarrSource uses for OME-Zarr that is not 8 / 16 bit
+    (and the same percentile the 16-bit `bits` window below starts from). Without it, float32 IF data (a
+    PhenoChart / inForm component export holds ~0..70) was cast as-is and kept only ~70 grey levels.
+    The percentile comes from level 0 read a band at a time, every k-th pixel, k = side / FLOAT_SAMPLE_SIDE.
+    No finite value above 0 (an empty channel): factor 1, everything becomes 0."""
+    k = max(1, -(-max(src.height, src.width) // FLOAT_SAMPLE_SIDE))
+    parts = []
+    for y0 in range(0, src.height, tile):
+        b = np.asarray(src.read_band(c, y0, min(y0 + tile, src.height)))[::k, ::k]
+        b = b[np.isfinite(b) & (b > 0)]
+        if b.size:
+            parts.append(b.astype(np.float64))
+    if not parts:
+        return 1.0, 0.0
+    top = float(np.percentile(np.concatenate(parts), 99.99))
+    return 65535.0 / top, top
+
+
+def _to_storage_dtype(band: np.ndarray, dtype: np.dtype, scale: Optional[float] = None) -> np.ndarray:
     if band.dtype == dtype:
         return band
     if dtype == np.uint16 and band.dtype.kind == "f":
-        return np.clip(band, 0, 65535).astype(np.uint16)
+        # scale from _float_scale. NaN / +-inf = no data -> 0; negatives -> 0; above the percentile -> 65535;
+        # monotone, so the order of the values is kept
+        b = np.where(np.isfinite(band), band, 0).astype(np.float64) * (1.0 if scale is None else scale)
+        return np.rint(np.clip(b, 0, 65535)).astype(np.uint16)
     return band.astype(dtype)
 
 
@@ -413,9 +439,14 @@ def build_image(src: Source, out_dir: Path, tile: int = TILE, colors: Optional[l
         t0 = time.time()
         # level 0: band by band (tile-aligned rows => each chunk written once)
         a0 = arrays[0]
+        scale = None
         for y0 in range(0, H, tile):
             y1 = min(y0 + tile, H)
-            a0[c, y0:y1, :] = _to_storage_dtype(src.read_band(c, y0, y1), dtype)
+            band = src.read_band(c, y0, y1)
+            if scale is None and dtype == np.uint16 and band.dtype.kind == "f":
+                scale, top = _float_scale(src, c, tile)
+                log(f"[image]   ch {c:2d} {band.dtype.name} 0 .. {top:.6g} (99.99th percentile) -> 0 .. 65535")
+            a0[c, y0:y1, :] = _to_storage_dtype(band, dtype, scale)
         if hasattr(src, "release"):
             src.release(c)
         # coarser levels from the level just written, 2*tile rows at a time
