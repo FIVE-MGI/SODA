@@ -1224,8 +1224,9 @@ regions drawn in QuPath. Rules:
 
 ## How big and how long
 
-We have not benchmarked preparation or export on a reference machine, so there are no
-timing figures here. What can be said from the formats:
+Measured preparing, export and opening times for one dataset of each kind, with the exact
+machine and conditions, are in [PERFORMANCE.md](PERFORMANCE.md). What can be said from the
+formats:
 
 - **Prepare** time is dominated by reading the source image once. Large uncompressed
   multi-gigabyte TIFFs read fastest from a local SSD.

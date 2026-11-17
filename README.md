@@ -331,8 +331,9 @@ email wbuchser@wustl.edu with any questions about hosting.
   (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)). The notebook
   compares your free memory with these numbers before the Prepare step and warns.
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
-  the export a tiled copy. Time has not been benchmarked on a reference machine; measured
-  examples are in [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
+  the export a tiled copy. Measured times for one dataset of each kind, with the machine and
+  conditions, are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md); sizes are in
+  [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
 - Viewing needs no installation, only a browser. The page loads its drawing library (deck.gl),
   and Draw a region its UMAP library (umap-js), from `cdn.jsdelivr.net`, or from your own copy
   after `python web/SpatialViewer/prepare.py vendor`. Served over https or from localhost, the
