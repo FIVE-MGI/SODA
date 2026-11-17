@@ -182,6 +182,9 @@ async function fromKept(req, k) {
 }
 
 // ---- answers --------------------------------------------------------------------------------------------
+// this worker is the version in charge (each version is its own sw.js?app=<hash>): not when a newer one has
+// taken over while this one still answers the page's last requests
+const current = () => !self.registration.active || self.registration.active.scriptURL === self.location.href;
 async function fromApp(e) {
   const req = e.request;
   try {
@@ -192,9 +195,13 @@ async function fromApp(e) {
       const fixed = /[?&]v=/.test(u) && !/\/config\.js\?/.test(u);
       e.waitUntil((async () => {
         // a newer version took over (and deleted this cache) while this worker still answered: keep nothing
-        if (!(await caches.has(APP_CACHE))) return;
+        if (!current() || !(await caches.has(APP_CACHE))) return;
         const cache = await caches.open(APP_CACHE);
         if (!fixed || !(await cache.match(u))) await cache.put(u, new Response(await copy.arrayBuffer(), { headers: { "Content-Type": copy.headers.get("Content-Type") || "application/octet-stream" } }));
+        // the newer version's activate can delete this cache between has() and open() above, and open() then
+        // makes it again (with the newer page's files in it): seen in Chromium on a busy machine. When this
+        // worker is no longer the one in charge, its cache goes, as activate meant it to.
+        if (!current()) await caches.delete(APP_CACHE);
       })().catch(() => {}));
     }
     return r;
