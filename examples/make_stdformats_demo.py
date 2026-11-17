@@ -32,12 +32,17 @@ writes into --out (every one is a dataset detect.py must call certain):
     sdata_visiumhd.zarr     a SpatialData store shaped like a Visium HD 16 µm layer: images/hires (RGB uint8,
                             a scale of 4 to global), shapes/square_016um (equal squares, a range index),
                             tables/square_016um
+    image_v3.ome.zarr       image.ome.zarr's pixels again as OME-NGFF 0.5 in zarr v3, each level in another layout:
+                            sharded (blosc inside, crc32c index), transposed + big-endian + gzip with v2 chunk
+                            keys, zstd with "." keys (written to the spec here, without zarr-python 3)
+    anndata_cells_v3.zarr   anndata_cells.zarr again in zarr v3 (strings vlen-utf8, floats gzip, the rest zstd)
     truth_stdformats.npz / .json   what the smoke test checks against
 
 and with --cases, folders / files SODA must refuse or ask about (never in --out, which detect.py
 must list as certain datasets only):
 
-    v3.ome.zarr             a zarr v3 store (zarr.json, OME-NGFF 0.5)
+    v3_badcodec.ome.zarr    a zarr v3 OME-NGFF 0.5 image whose level 0 uses a codec SODA does not read ("zfp")
+    labels_3d.zarr          a SpatialData store in zarr v3 whose table annotates a (3-D) labels element
     plate.ome.zarr          an HCS plate
     two_libraries.h5ad      uns spatial holds two libraries (two sections in one object)
     labels_region.zarr      a SpatialData table annotating a labels element
@@ -171,6 +176,8 @@ def anndata(path: Path, kind: str, X, obs_names, var_names, obs: dict, var: dict
     if kind == "h5":
         import h5py
         f = h5py.File(str(path), "w")
+    elif kind == "v3":
+        f = v3_group(path)
     else:
         import zarr
         f = zarr.open_group(str(path), mode="w")
@@ -508,16 +515,258 @@ def write_omezarr(out: Path, rng, truth: dict):
 
 
 # ---------------------------------------------------------------------------------------
+# zarr v3 (OME-NGFF 0.5, AnnData / SpatialData written with zarr-python 3), written to the spec by hand:
+# zarr-python 3 is not installed (SODA holds zarr at 2.x), and these files must not be written with the code
+# that reads them (web/SpatialViewer/zarrv3.py). https://zarr-specs.readthedocs.io/en/latest/v3/core/index.html
+# ---------------------------------------------------------------------------------------
+EMPTY_V3 = 2 ** 64 - 1
+
+
+def _crc32c_bitwise(buf: bytes) -> int:
+    """CRC-32C (Castagnoli), bit by bit (the reader uses a table: two independent implementations)."""
+    c = 0xFFFFFFFF
+    for b in buf:
+        c ^= b
+        for _ in range(8):
+            c = (c >> 1) ^ (0x82F63B78 & -(c & 1))
+    return c ^ 0xFFFFFFFF
+
+
+def _v3_dtype(a: np.ndarray) -> str:
+    if a.dtype.kind == "O":
+        return "string"
+    return {"b": "bool"}.get(a.dtype.kind) or a.dtype.newbyteorder("=").name
+
+
+def _v3_encode(a: np.ndarray, codecs: list) -> bytes:
+    """One chunk through a codec chain (array -> array, array -> bytes, bytes -> bytes)."""
+    import gzip
+    import numcodecs
+    buf = None
+    for c in codecs:
+        name, conf = c["name"], c.get("configuration") or {}
+        if name == "transpose":
+            a = np.ascontiguousarray(a.transpose(conf["order"]))
+        elif name == "bytes":
+            end = "<" if conf.get("endian", "little") == "little" else ">"
+            buf = np.ascontiguousarray(a).astype(a.dtype.newbyteorder(end) if a.dtype.itemsize > 1 else a.dtype).tobytes()
+        elif name == "vlen-utf8":
+            buf = bytes(numcodecs.VLenUTF8().encode(np.asarray(a, object).ravel()))
+        elif name == "blosc":
+            buf = bytes(numcodecs.Blosc(cname=conf.get("cname", "zstd"), clevel=conf.get("clevel", 3),
+                                        shuffle={"noshuffle": 0, "shuffle": 1, "bitshuffle": 2}[conf.get("shuffle", "shuffle")]).encode(buf))
+        elif name == "gzip":
+            buf = gzip.compress(buf, compresslevel=conf.get("level", 5))
+        elif name == "zstd":
+            buf = bytes(numcodecs.Zstd(level=conf.get("level", 0)).encode(buf))
+        elif name == "crc32c":
+            buf = buf + struct.pack("<I", _crc32c_bitwise(buf))
+        else:
+            raise ValueError(name)
+    return buf
+
+
+class V3Node:
+    """A zarr v3 group or array folder whose attributes are written back to zarr.json on every change; the
+    create_group / create_dataset API of zarr 2 that Writer above uses."""
+
+    class _Attrs(dict):
+        def __init__(self, node):
+            super().__init__()
+            self.node = node
+
+        def __setitem__(self, k, v):
+            super().__setitem__(k, v)
+            self.node.flush()
+
+        def update(self, *a, **kw):
+            super().update(*a, **kw)
+            self.node.flush()
+
+    def __init__(self, path: Path, meta: dict):
+        self.path, self.meta = Path(path), meta
+        self.path.mkdir(parents=True, exist_ok=True)
+        self.attrs = V3Node._Attrs(self)
+        self.attrs.update(meta.pop("attributes", {}))
+
+    def flush(self):
+        (self.path / "zarr.json").write_text(json.dumps({**self.meta, "attributes": dict(self.attrs)}), encoding="utf-8")
+
+    def create_group(self, name, attrs=None):
+        return v3_group(self.path / name, attrs)
+
+    def create_dataset(self, name, data=None, shape=None, dtype=None, object_codec=None, **kw):
+        a = np.asarray(data, dtype=object if dtype is object else None)
+        if a.dtype.kind in "OU":
+            codecs = [{"name": "vlen-utf8", "configuration": {}}, {"name": "zstd", "configuration": {"level": 0, "checksum": False}}]
+            a = a.astype(object)
+        elif a.dtype.kind == "f":
+            codecs = [{"name": "bytes", "configuration": {"endian": "little"}}, {"name": "gzip", "configuration": {"level": 5}}]
+        else:
+            codecs = [{"name": "bytes", "configuration": {"endian": "little"}}, {"name": "zstd", "configuration": {"level": 0, "checksum": False}}]
+        return v3_array(self.path / name, a, chunks=kw.get("chunks") or a.shape, codecs=codecs)
+
+
+def v3_group(path: Path, attrs=None) -> V3Node:
+    g = V3Node(path, {"zarr_format": 3, "node_type": "group", "attributes": dict(attrs or {})})
+    g.flush()
+    return g
+
+
+def v3_array(path: Path, a: np.ndarray, chunks, codecs: list, fill=None, key="default", sep="/", shard=None,
+             attrs=None, dims=None) -> V3Node:
+    """An array: whole chunks (edge chunks padded with the fill value); a chunk equal to the fill value everywhere
+    is not written. shard = (inner chunk shape, inner codecs, "end" | "start"): chunks are shards of inner chunks."""
+    a = np.asarray(a)
+    kind = a.dtype.kind
+    if fill is None:
+        fill = "" if kind == "O" else (False if kind == "b" else 0)
+    chunks = tuple(int(c) for c in (chunks if len(chunks) else ()))
+    if shard:
+        inner, icodecs, loc = shard
+        meta_codecs = [{"name": "sharding_indexed", "configuration": {
+            "chunk_shape": list(inner), "codecs": icodecs, "index_location": loc,
+            "index_codecs": [{"name": "bytes", "configuration": {"endian": "little"}}, {"name": "crc32c"}]}}]
+    else:
+        meta_codecs = codecs
+    meta = {"zarr_format": 3, "node_type": "array", "shape": list(a.shape), "data_type": _v3_dtype(a),
+            "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": list(chunks)}},
+            "chunk_key_encoding": {"name": key, "configuration": {"separator": sep}},
+            "fill_value": fill, "codecs": meta_codecs, "attributes": dict(attrs or {})}
+    if dims:
+        meta["dimension_names"] = list(dims)
+    node = V3Node(path, meta)
+    node.flush()
+    grid = [range(-(-n // c)) if c else range(1) for n, c in zip(a.shape, chunks)] if a.ndim else [range(1)]
+    import itertools
+
+    def padded(block, shape):
+        if block.shape == tuple(shape):
+            return block
+        out = np.empty(shape, a.dtype)
+        out[...] = fill
+        out[tuple(slice(0, s) for s in block.shape)] = block
+        return out
+    for coords in itertools.product(*grid):
+        if a.ndim:
+            sl = tuple(slice(k * c, (k + 1) * c) for k, c in zip(coords, chunks))
+            block = padded(a[sl], chunks)
+        else:
+            block = a
+            coords = ()
+        if kind != "O" and np.all(block == fill):
+            continue
+        if shard:
+            per = [c // s for c, s in zip(chunks, inner)]
+            parts, index = [], np.full((int(np.prod(per)), 2), EMPTY_V3, np.uint64)
+            isize = 16 * len(index) + 4
+            off = isize if loc == "start" else 0
+            for j, ic in enumerate(itertools.product(*[range(p) for p in per])):
+                sub = block[tuple(slice(k * s, (k + 1) * s) for k, s in zip(ic, inner))]
+                if np.all(sub == fill):
+                    continue
+                b = _v3_encode(sub, icodecs)
+                index[j] = (off, len(b))
+                parts.append(b)
+                off += len(b)
+            ib = index.astype("<u8").tobytes()
+            ib += struct.pack("<I", _crc32c_bitwise(ib))
+            data = (ib + b"".join(parts)) if loc == "start" else (b"".join(parts) + ib)
+        else:
+            data = _v3_encode(block, codecs)
+        rel = (sep.join(["c"] + [str(k) for k in coords]) if key == "default" else (sep.join(str(k) for k in coords) or "0"))
+        f = path.joinpath(*rel.split("/"))
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(data)
+    return node
+
+
+def ngff_image_v3(path: Path, data: np.ndarray, names, colors, px_um=None, cs=None, sdata=False, label=False):
+    """A multiscale image (c, y, x; or y, x for labels) in OME-NGFF 0.5 / zarr v3, its three levels each in another
+    layout: level 0 sharded (blosc inside, the index at the end), level 1 transposed + big-endian + gzip with
+    "v2" chunk keys, level 2 zstd with "." separated default keys."""
+    axes = "yx" if label else "cyx"
+    levels = [data]
+    for _ in range(2):
+        levels.append(levels[-1][..., ::2, ::2].copy())
+    v3_group(path)
+    lay = [dict(chunks=(1, 128, 128) if not label else (128, 128), shard=(((1, 32, 32) if not label else (32, 32)), [
+               {"name": "bytes", "configuration": {"endian": "little"}},
+               {"name": "blosc", "configuration": {"cname": "zstd", "clevel": 3, "shuffle": "shuffle", "typesize": data.dtype.itemsize, "blocksize": 0}}],
+               "end"), codecs=None),
+           dict(chunks=(1, 48, 40) if not label else (48, 40), key="v2", sep=".", codecs=[
+               {"name": "transpose", "configuration": {"order": [0, 2, 1] if not label else [1, 0]}},
+               {"name": "bytes", "configuration": {"endian": "big"}}, {"name": "gzip", "configuration": {"level": 5}}]),
+           dict(chunks=(1, 50, 50) if not label else (50, 50), sep=".", codecs=[
+               {"name": "bytes", "configuration": {"endian": "little"}}, {"name": "zstd", "configuration": {"level": 0, "checksum": False}}])]
+    datasets = []
+    for i, (a, L) in enumerate(zip(levels, lay)):
+        v3_array(path / str(i), a, L["chunks"], L["codecs"], key=L.get("key", "default"), sep=L.get("sep", "/"),
+                 shard=L.get("shard"), dims=list(axes))
+        s = (px_um or 1.0) * 2 ** i
+        datasets.append({"path": str(i), "coordinateTransformations": [{"type": "scale", "scale": ([1.0] if not label else []) + [s, s]}]})
+    ms = {"name": path.stem, "axes": _axes(axes, "micrometer" if px_um else None), "datasets": datasets}
+    if cs:
+        ms["coordinateTransformations"] = [{**t, "input": {"name": axes, "axes": _axes(axes)},
+                                            "output": {"name": name, "axes": _axes(axes)}} for name, t in cs.items()]
+    ome = {"version": "0.5", "multiscales": [ms]}
+    if label:
+        ome["image-label"] = {"version": "0.5"}
+    else:
+        ome["omero"] = {"channels": [{"label": n, "color": c, "active": True, "window": {"start": 0, "end": 4000, "min": 0, "max": 65535}}
+                                     for n, c in zip(names, colors)]}
+    attrs = {"ome": ome}
+    if sdata:
+        attrs["spatialdata_attrs"] = {"version": "0.3"}
+    v3_group(path, attrs)
+
+
+def write_omezarr_v3(out: Path, truth: dict):
+    """The OME-Zarr image of write_omezarr again, as OME-NGFF 0.5 in zarr v3 (the same pixels)."""
+    ngff_image_v3(out / "image_v3.ome.zarr", truth["oz_image"], ["DAPI", "CD45", "PanCK", "CD3"],
+                  ["0000FF", "FF0000", "00FF00", "FFFF00"], px_um=0.5)
+
+
+def write_anndata_cells_v3(out: Path, truth: dict):
+    """write_anndata_cells's cells again as an AnnData-Zarr in zarr v3 (strings vlen-utf8, floats gzip, the rest zstd)."""
+    X, xy, types = truth["ac_counts"], truth["ac_xy"], truth["ac_types"]
+    ids = [f"cell{i:04d}" for i in range(len(xy))]
+    anndata(out / "anndata_cells_v3.zarr", "v3", X, ids, GENES, {"leiden": ("cat", [str(t) for t in types])},
+            {"highly_variable": np.ones(len(GENES), bool)}, {"spatial": xy}, {}, dense=True)
+
+
+# ---------------------------------------------------------------------------------------
 # cases SODA must refuse or ask about
 # ---------------------------------------------------------------------------------------
 def write_cases(cases: Path, rng):
     import zarr
     cases.mkdir(parents=True, exist_ok=True)
-    v3 = cases / "v3.ome.zarr"
-    v3.mkdir(exist_ok=True)
-    (v3 / "zarr.json").write_text(json.dumps({"zarr_format": 3, "node_type": "group", "attributes": {"ome": {
-        "version": "0.5", "multiscales": [{"axes": _axes("cyx"), "datasets": [{"path": "0", "coordinateTransformations": [
-            {"type": "scale", "scale": [1, 1, 1]}]}]}]}}}), encoding="utf-8")
+    v3 = cases / "v3_badcodec.ome.zarr"
+    v3_group(v3, {"ome": {"version": "0.5", "multiscales": [{"axes": _axes("cyx"), "datasets": [{"path": "0", "coordinateTransformations": [
+        {"type": "scale", "scale": [1, 1, 1]}]}]}]}})
+    v3_group(v3 / "0")
+    (v3 / "0" / "zarr.json").write_text(json.dumps({
+        "zarr_format": 3, "node_type": "array", "shape": [1, 64, 64], "data_type": "uint16",
+        "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [1, 64, 64]}},
+        "chunk_key_encoding": {"name": "default"}, "fill_value": 0,
+        "codecs": [{"name": "bytes", "configuration": {"endian": "little"}}, {"name": "zfp", "configuration": {"mode": "fixed-rate"}}],
+        "attributes": {}}), encoding="utf-8")
+    # zarr v3 SpatialData: a table on a (3-D) labels element (labels are not read: refused, as in zarr v2)
+    root = cases / "labels_3d.zarr"
+    v3_group(root, {"spatialdata_attrs": {"version": "0.2"}})
+    v3_group(root / "labels")
+    lab3 = np.zeros((2, 32, 32), np.uint16)
+    lab3[:, 5:15, 5:15] = 1
+    v3_group(root / "labels" / "cells3d", {"ome": {"version": "0.5", "image-label": {"version": "0.5"}, "multiscales": [{
+        "axes": _axes("zyx"), "datasets": [{"path": "0", "coordinateTransformations": [{"type": "scale", "scale": [1.0, 1.0, 1.0]}]}],
+        "coordinateTransformations": [{"type": "identity", "input": {"name": "zyx", "axes": _axes("zyx")},
+                                       "output": {"name": "global", "axes": _axes("zyx")}}]}]},
+        "spatialdata_attrs": {"version": "0.3"}})
+    v3_array(root / "labels" / "cells3d" / "0", lab3, (2, 32, 32), [{"name": "bytes", "configuration": {"endian": "little"}}])
+    v3_group(root / "tables")
+    anndata(root / "tables" / "table", "v3", np.ones((1, 3), np.float32), ["0"], GENES[:3],
+            {"instance_id": np.array([1], np.int64), "region": ("cat", ["cells3d"])}, {}, {},
+            {"spatialdata_attrs": {"region": "cells3d", "region_key": "region", "instance_key": "instance_id"}})
     p = zarr.open_group(str(cases / "plate.ome.zarr"), mode="w")
     p.attrs["plate"] = {"version": "0.4", "rows": [{"name": "A"}], "columns": [{"name": "1"}], "wells": [{"path": "A/1", "rowIndex": 0, "columnIndex": 0}]}
     write_anndata_visium(cases, rng, {}, two_libraries=True)
@@ -562,6 +811,8 @@ def main(argv=None):
     write_omezarr(out, rng, truth)
     write_sdata_xenium(out, rng, truth)
     write_sdata_visiumhd(out, rng, truth)
+    write_omezarr_v3(out, truth)                          # zarr v3 (after the others: their random draws stay the same)
+    write_anndata_cells_v3(out, truth)
     np.savez_compressed(out / "truth_stdformats.npz", **truth)
     (out / "truth_stdformats.json").write_text(json.dumps({
         "genes": GENES, "spotPx": SPOT_PX, "hires": HIRES, "xeniumPx": XE_PX, "hdImageScale": HD_IMG_SCALE,

@@ -34,8 +34,8 @@ stereoseq.py, geomx.py, rnaseq.py, expr.find_visium_layers):
                .h5ad without it is single-cell data: rnaseq)
     omezarr    an OME-Zarr image folder (.zattrs with multiscales, or a bioformats2raw layout)
     spatialdata  a SpatialData .zarr folder (images/, shapes/, points/, tables/)
-               (the three standard formats are read by stdformats.py; zarr v3 stores are recognised
-               and reported as not readable yet)
+               (the three standard formats are read by stdformats.py, zarr v2 or v3; a v3 store using a
+               codec SODA does not read is reported, naming the codec)
 
 Verdicts (the rule: when it is not sure it does not guess, it shows what it found):
 
@@ -86,9 +86,9 @@ NEEDS = {
     "akoya": "a folder of TIFF files, one per marker, all the same size",
     "tiff": "one image file (.qptiff, .ome.tif, .tif, .tiff, .btf)",
     "rnaseq": "an .h5ad with a UMAP in obsm, or a 10x matrix folder (matrix.mtx, features.tsv, barcodes.tsv) with a UMAP CSV",
-    "anndata": "an .h5ad file or an AnnData .zarr folder (zarr v2) with the positions in obsm['spatial']",
-    "omezarr": "an OME-Zarr image folder (OME-NGFF 0.4 or older, zarr v2: .zattrs with multiscales)",
-    "spatialdata": "a SpatialData .zarr folder (zarr v2) with a table in tables/ annotating a shapes element",
+    "anndata": "an .h5ad file or an AnnData .zarr folder (zarr v2 or v3) with the positions in obsm['spatial']",
+    "omezarr": "an OME-Zarr image folder (OME-NGFF 0.4 / zarr v2: .zattrs with multiscales; 0.5 / zarr v3: zarr.json)",
+    "spatialdata": "a SpatialData .zarr folder (zarr v2 or v3) with a table in tables/ annotating a shapes element",
 }
 # the options of each kind that detection fills in (in the order prepare.py gets them)
 KIND_ARGS = {"visium": ("image", "outs"), "xenium": ("src",), "cosmx": ("src",), "merscope": ("src", "cells_dir"),
@@ -702,10 +702,14 @@ def find_visium(cx: Ctx) -> list[dict]:
             else:
                 layers.append(f"{int(_SQUARE.match(s).group(1)):03d}um")
         pos = _first(sp, *_POSITIONS)
-        if "filtered_feature_bc_matrix.h5" in f and pos:
+        h5 = "filtered_feature_bc_matrix.h5" in f
+        if not h5:                                   # 10x's sample downloads: <sample>_filtered_feature_bc_matrix.h5
+            pre = [n for n in f if n.endswith("_filtered_feature_bc_matrix.h5")]
+            h5 = len(pre) == 1
+        if h5 and pos:
             layers.append("spots")
         elif not squares:
-            if "filtered_feature_bc_matrix.h5" not in f:
+            if not h5:
                 bad.append("no filtered_feature_bc_matrix.h5"
                            + (" (only the matrix folder filtered_feature_bc_matrix/ is here: the Visium reader reads the .h5 file)"
                               if "filtered_feature_bc_matrix" in d else "")
@@ -1521,6 +1525,52 @@ def zarr_kind(path) -> tuple:
     return None, ver, a
 
 
+def _v3_unreadable(path: Path, kind: str) -> str | None:
+    """Why zarrv3.py cannot read this zarr v3 store (the first array whose codec or data type is outside its
+    subset), or None. Reads zarr.json files only."""
+    try:
+        import zarrv3
+    except ImportError:                                  # detect.py run on its own, without the page's folder
+        return None
+    if kind != "spatialdata":
+        return zarrv3.check_store(path)
+    subs = {d.lower(): d for d in _subdirs(path)}
+    for k in ("tables", "table", "labels", "images"):
+        if k in subs:
+            why = zarrv3.check_store(path / subs[k])
+            if why:
+                return why
+    return None
+
+
+def _sd_labels_tables(path: Path, cx: Ctx) -> tuple[int, int]:
+    """SpatialData: (tables prepare would refuse because their region is a labels element, tables read) under
+    the --table / --region given, as stdformats.plan_spatialdata decides it; (0, 0) when they cannot be read."""
+    try:
+        import stdformats
+        import annstore
+    except ImportError:                                  # detect.py run on its own, without the page's folder
+        return 0, 0
+    try:
+        el = stdformats.sd_elements(path)
+        if not el["labels"]:
+            return 0, 0
+        names = [cx.ov["table"]] if cx.ov.get("table") in el["tables"] else list(el["tables"])
+        bad = 0
+        for tn in names:
+            ad = annstore.AnnFile(el["tables"][tn], what="detect")
+            try:
+                regs = stdformats.table_attrs(ad)["region"]
+            finally:
+                ad.close()
+            reg = cx.ov.get("region") if len(regs) > 1 else (regs[0] if regs else None)
+            if (reg in el["labels"]) if reg else (regs and all(r in el["labels"] for r in regs)):
+                bad += 1
+        return bad, len(names)
+    except (SystemExit, Exception):                      # unreadable here: prepare says why
+        return 0, 0
+
+
 def find_stdformats(cx: Ctx, skip_dir, want: str | None = None) -> list[dict]:
     """OME-Zarr images, AnnData .zarr folders and SpatialData stores: every .zarr folder (and every folder
     holding .zgroup / zarr.json) not inside a platform dataset. The store's insides are not listed."""
@@ -1551,11 +1601,15 @@ def find_stdformats(cx: Ctx, skip_dir, want: str | None = None) -> list[dict]:
         c["args"]["src"] = str(path)
         _ev(c, f"zarr v{ver} store", rel or ".", ", ".join(k for k in list(a)[:6]) or "no attributes")
         if ver == 3:
-            _miss(c, "the store is zarr v3 (zarr.json): SODA reads zarr v2 stores only", None,
-                  "write it again as zarr v2 (anndata.settings.zarr_write_format = 2; OME-NGFF 0.4 for images), "
-                  "or give the data as .h5ad / OME-TIFF")
-            out.append(c)
-            continue
+            # zarr v3 is read by zarrv3.py for a subset of the codecs: name the first array outside it (its
+            # zarr.json files only; for SpatialData the zarr elements, points are parquet)
+            why = _v3_unreadable(path, kind)
+            if why:
+                _miss(c, why.replace("[zarr v3] ", "zarr v3: ").split(". SODA reads")[0], None,
+                      "write it again without that codec (or as zarr v2: anndata.settings.zarr_write_format = 2; "
+                      "OME-NGFF 0.4 for images), or give the data as .h5ad / OME-TIFF")
+                out.append(c)
+                continue
         if kind == "omezarr":
             if "plate" in a or "well" in a:
                 _miss(c, "an HCS plate / well: SODA reads one image", None, "point at one field's image folder (<well>/<field>)")
@@ -1566,7 +1620,7 @@ def find_stdformats(cx: Ctx, skip_dir, want: str | None = None) -> list[dict]:
                 _ev(c, "multiscales", rel or ".", f"NGFF {ms.get('version') or a.get('version') or '?'}, "
                                                   f"{len(ms.get('datasets') or [])} level(s)")
             else:
-                series = (_zattrs(path / "OME").get("series") or sorted((d for d in _subdirs(path) if d.isdigit()), key=int))
+                series = (_zattrs(path / "OME").get("series") or _zarr3_attrs(path / "OME").get("series") or sorted((d for d in _subdirs(path) if d.isdigit()), key=int))
                 _ev(c, "bioformats2raw layout", rel or ".", f"{len(series)} series")
                 if len(series) > 1 and "series" not in cx.ov:
                     c["notes"].append(f"{len(series)} series: series 0 is read (--series picks another)")
@@ -1582,8 +1636,16 @@ def find_stdformats(cx: Ctx, skip_dir, want: str | None = None) -> list[dict]:
                 imgs = el.get("images") or []
                 _miss(c, "a table (tables/): SODA needs a table of counts annotating shapes", None,
                       (f"an image on its own: --kind omezarr --src {_quote(str(path / subs['images'] / imgs[0]))}" if imgs else ""))
-            elif len(el["tables"]) > 1 and "table" not in cx.ov:
-                c["notes"].append(f"{len(el['tables'])} tables: each one that annotates shapes becomes a layer (--table picks one)")
+            else:
+                bad, n_tab = _sd_labels_tables(path, cx)
+                if bad:
+                    # as prepare.py refuses it (stdformats.plan_spatialdata): positions are read from shapes only
+                    _miss(c, f"{bad} of {n_tab} table(s) annotate a labels element (a segmentation mask): SODA reads "
+                             f"positions from shapes (circles or polygons) only; a labels region is not read yet", None,
+                          "save the cells as shapes (spatialdata.to_polygons)"
+                          + (", or give --table for a table that annotates shapes" if bad < n_tab else ""))
+                elif len(el["tables"]) > 1 and "table" not in cx.ov:
+                    c["notes"].append(f"{len(el['tables'])} tables: each one that annotates shapes becomes a layer (--table picks one)")
         out.append(c)
     return out
 
