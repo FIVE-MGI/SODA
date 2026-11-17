@@ -3008,7 +3008,7 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
              and STD_FAKE not in text, f"detect two libraries in one AnnData: a choice by number, no library name ({r['verdict']}: {r['message'][:120]})")
         r = detect.detect(std / "two_libraries.h5ad", overrides={"library": "2"})
         c.eq(r["verdict"], "certain", "detect two libraries with library 2 given: certain")
-        c.ok(any("--library" in ln for ln in detect.option_lines(detect.detect(std / "two_libraries.h5ad"), "two_libraries")),
+        c.ok(any('"library": r"2"' in ln for ln in detect.option_lines(detect.detect(std / "two_libraries.h5ad"), "two_libraries")),
              "detect two libraries: the notebook's option line names library")
         r = detect.detect(std / "two_libraries.h5ad", kind="rnaseq")
         c.eq((r["kind"], r["verdict"]), ("rnaseq", "certain"), "detect a spatial .h5ad with --kind rnaseq: the single-cell reading")
