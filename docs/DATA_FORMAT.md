@@ -202,8 +202,9 @@ check stops the export (below) instead of leaving one list out. gzip of UTF-8 te
 (Visium spots, Visium HD and Stereo-seq bins, AnnData / SpatialData spot or bin tables) or `cell_id` (cells
 layers: Xenium `cell_id`, CosMx `<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id, the obs names of
 an AnnData / SpatialData cell table). GeoMx ROI layers and protein grid layers get none.
-The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes; without it that button says how
-to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
+The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes, and to match a reader's file to
+the bins in "Your own results" (Clusters tab; [ADVANCED.md](ADVANCED.md#load-your-own-results-in-the-viewer-no-new-export));
+without it both say how to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
 
 Before anything is written, every layer's ids pass two gates (layerids.py). By default a layer that fails
 gets no list (a `***` line in the export log says why) and the other layers keep theirs; with `--ids` or

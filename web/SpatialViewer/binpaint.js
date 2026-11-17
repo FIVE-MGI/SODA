@@ -5,7 +5,8 @@
 //                     layer's binQc block (total counts, genes detected, % mitochondrial; on a GeoMx
 //                     layer also raw reads, saturation, area, nuclei, negative-probe background, LOQ,
 //                     Q3 ...) and, on a GeoMx layer, each AOI's Q3 normalisation factor (manifest q3).
-//                     On the viridis ramp the gene density uses, from a From to a to value.
+//                     Also the number columns of a file loaded under Your own results (ownres.js, viewer.js
+//                     extraCols). On the viridis ramp the gene density uses, from a From to a to value.
 //   Two genes         where gene A, gene B or both are expressed: a bin counts as expressing a gene when
 //                     its value is above that gene's threshold (default: above 0, i.e. detected; on
 //                     marker squares, above the marker's median square). Shown as three classes (A only,
@@ -170,6 +171,7 @@
     const nf = e.q3 && Array.isArray(e.q3.normFactors) ? e.q3.normFactors : null;
     if (nf && nf.length === e.nBins) cols.push({ id: "q3:normFactor", label: "Q3 normalisation factor", unit: "", scale: "lin",
       load: async () => Float32Array.from(nf, (x) => (typeof x === "number" ? x : NaN)) });
+    if (api && api.extraCols) for (const c of api.extraCols(key) || []) cols.push(c);     // your own results' numbers (ownres.js)
     return cols;
   }
   const hasGenes = () => !!(api && api.geneIndex().length && P.key);

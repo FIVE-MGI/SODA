@@ -50,6 +50,8 @@
       help: "Each dot is a cell, placed by the UMAP that came with the data and coloured by its cluster. Add a gene to get one small UMAP per gene, coloured by how much of it each cell has. View: Normal draws the cells, Density a smoothed map. More options: bin size (Density) and point size." },
     panelUmap: { notes: ["umapNote"],
       help: "Colour the bins by the genes picked in View, by cluster, or by suggested cell type. Click a cluster in the list to light it in every view; the pencil renames it and the tick box hides it. Box and Freehand select bins by drawing around them, on the tissue or on the UMAP." },
+    panelOwn: {
+      help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering above (colours on the tissue and the UMAP, names, cell sets, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
     panelSets: {
       help: "Merge clusters of the clustering on show into one named set: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour of its first cluster and counts as one group everywhere: the maps, the legend, the volcano and plot groups, Count clusters and the saved image. Rename a set in its box or with the pencil in the legend; Un-merge splits it again and Undo takes back the last change made here. Save JSON keeps the sets with the cluster names. Export CSV writes one row per bin: its row number in the export, its position in image pixels, its cluster and the set it is in (bins left out of the clustering have empty cells)." },
     panelBinQc: { more: ["bqGrey"], moreAt: "end", notes: ["bqNote"],
@@ -76,7 +78,7 @@
   };
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelMeasure", "panelRna"],
-    clusters: ["panelUmap", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
+    clusters: ["panelUmap", "panelOwn", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelRunSets", "panelShapes", "panelVolcano", "panelPlots"],
     save: ["panelSave", "panelImage", "panelDataset", "panelOffline", "panelHelp"],
   };

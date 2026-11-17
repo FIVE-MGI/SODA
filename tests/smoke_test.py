@@ -91,6 +91,11 @@ roles, and every .js of the page parses when node is installed. The tabbed layou
 tab rail, its four tabs and tab panels with their roles and ids, every section.panel named into one of
 the four tabs (those in index.html and those the scripts build), no id twice, the controls layout.js
 moves by id all there, and the hooks the other scripts need.
+Your own results (web/SpatialViewer/ownres.js): a reader's CSV / TSV (also .gz) with a UMAP, groupings and
+numbers, matched to the bins by barcode in the browser; wired into the page (check_ownres), and in Chromium
+and WebKit by tests/ownres_browser_test.js on export_user/demo_visiumhd: Seurat and scanpy files, partial
+matches, roles put right, colours by pixel, the volcano on a loaded grouping, Save JSON, the view link, junk
+files and a 375 px phone.
 Automatic detection (web/SpatialViewer/detect.py): every synthetic folder above must be named with the right
 kind and variant and verdict "certain"; `prepare.py auto` on five of them (and once through --kind / --image)
 must write the same cache as the explicit subcommand, manifest and files; and folders built here from stub
@@ -4281,7 +4286,7 @@ def check_layout(c: Checker):
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
     known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelRunSets", "panelPaint", "panelShapes", "panelMeasure",
-                                                               "panelOffline"}
+                                                               "panelOffline", "panelOwn"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
                             ("SodaLayout.wording", "viewer.js", "hands its wording function to the layout"),
@@ -4299,6 +4304,47 @@ def check_layout(c: Checker):
     css = (APP / "layout.css").read_text(encoding="utf-8")
     c.ok("@media (max-width: 700px)" in css and ".app.tabbed" in css and ":focus-visible" in css,
          "layout.css: the phone layout, the .tabbed scope and a visible focus ring")
+
+
+def check_ownres(c: Checker, root: Path, log_path: Path):
+    """Your own results (ownres.js, ownres.css): a reader's CSV / TSV (also .gz) of results they already have,
+    matched to the bins in the browser with no new export. Wired into the page (its section in the Clusters tab,
+    the hooks in viewer.js and binpaint.js, the link extension), no signed typed arrays, and, when node is
+    installed, tests/ownres_browser_test.js in Chromium and WebKit on export_user/demo_visiumhd (barcode lists from
+    `prepare.py ids`, check_ids): Seurat and scanpy files, .gz, partial matches, roles put right, colours by
+    pixel, the volcano and cell sets on a loaded grouping, Save JSON and the view link, junk files, 375 px."""
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("ownres.js", "viewer.js", "binpaint.js", "layout.js")}
+    c.ok("ownres.js" in names and "ownres.css" in names and "binpaint.js" in names
+         and names.index("layout.js") < names.index("ownres.js") < names.index("viewer.js"),
+         "index.html loads ownres.css and ownres.js (after layout.js, before viewer.js, which starts it)")
+    o = js["ownres.js"]
+    c.ok('sec.dataset.tab = "clusters"' in o and "SodaLayout.adopt(sec)" in o,
+         "ownres.js: its Your own results section names its tab and is handed to the layout")
+    c.ok(not re.search(r"Int(8|16|32)Array", o), "ownres.js uses only unsigned typed arrays (deid.py check reads the signed names as sample IDs)")
+    c.ok('key: "own"' in o and "SodaViewLink.extend" in o, "ownres.js: a link to the view carries the file's fingerprint")
+    c.ok('DecompressionStream("gzip")' in o, "ownres.js: reads gzipped files")
+    for needle, f, what in (("ownInit()", "viewer.js", "starts Your own results"),
+                            ("ownWith(base)", "viewer.js", "lists the file's groupings with the clusterings"),
+                            ("c.own ? c.codes", "viewer.js", "reads a loaded grouping's codes from memory"),
+                            ("own.saveBlock()", "viewer.js", "Save JSON can keep the matched table"),
+                            ("own.restore(j.ownResults)", "viewer.js", "Load JSON brings it back"),
+                            ("extraCols:", "viewer.js", "hands the file's numbers to Colour by a value"),
+                            ("api.extraCols", "binpaint.js", "offers the file's numbers"),
+                            ("panelOwn", "layout.js", "has the section's help and its place in the Clusters tab")):
+        c.ok(needle in js[f], f"{f}: {what} ({needle!r} not found)")
+    node = shutil.which("node")
+    if not node:
+        print("    node not found: tests/ownres_browser_test.js skipped")
+        return
+    p = subprocess.run([node, str(REPO / "tests" / "ownres_browser_test.js"), "--root", str(root),
+                        "--shots", str(root / "ownres_shots"), "--browsers", "chromium,webkit"], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/ownres_browser_test.js: your own results loaded in the page, in Chromium and WebKit (exit code)")
 
 
 def check_sharing(c: Checker, log_path: Path):
@@ -4910,6 +4956,8 @@ def main(argv=None) -> int:
     check_layout(c)
     print("checks: sharing (the link that restores a view, linked windows)")
     check_sharing(c, log_path)
+    print("checks: your own results (ownres.js: a reader's CSV / TSV matched in the browser)")
+    check_ownres(c, root, log_path)
     print("checks: offline use (libs.js, vendor.py, sw.js, offline.js)")
     check_offline(c, root, log_path)
     print("checks: publishable")
