@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // One control for each job, in the browser, on the synthetic demo_xenium_nt, in each browser of --browsers (chromium,
-// webkit, firefox): Show on slide and Clear selection once each (the chip above the picture), no "Image off" button
+// webkit, firefox): Show on slide and Clear selection once each (the chip above the picture, which also names a shape
+// picked in Draw a region, with or without a section UMAP), no "Image off" button
 // (Image opacity at 0 is off: the image is not drawn), one run button each for the volcano and the plots that shows the
 // last result again while nothing has changed (and runs anew once something has), and old links and Save JSON files
 // made while the image was off opening with it off.
@@ -100,9 +101,8 @@ async function run(B, browser, DATA, URL0) {
 
   // ---- one control for each job
   const ctl = await page.evaluate(() => {
-    // (the Draw a region panel's own row, #lpSel, names what is picked in its UMAP beside it: not counted)
-    const btn = [...document.querySelectorAll("button")].filter((b) => !b.closest("#lpSel")), n = (t) => btn.filter((b) => b.textContent.trim() === t).length;
-    return { gone: ["btnImage", "selShow", "selClear", "vcShow", "plShow"].filter((id) => document.getElementById(id)),
+    const btn = [...document.querySelectorAll("button")], n = (t) => btn.filter((b) => b.textContent.trim() === t).length;
+    return { gone: ["btnImage", "selShow", "selClear", "vcShow", "plShow", "lpSel", "lpSelShow", "lpSelClear"].filter((id) => document.getElementById(id)),
              showOnSlide: n("Show on slide"), clear: n("Clear selection"), imageBtn: n("Image off") + n("Image on"), show: n("Show"),
              chip: [document.getElementById("selChipShow"), document.getElementById("selChipClear")].every((b) => b && b.closest("#selChip")),
              opacity: !!document.getElementById("imgOpacity"), runs: !!document.getElementById("vcRun") && !!document.getElementById("plRun") };
@@ -133,6 +133,36 @@ async function run(B, browser, DATA, URL0) {
   await page.evaluate(() => { if (window.__spatialViewer.state.lasso.tool) document.getElementById("lassoCircle").click(); });
   await page.mouse.move(vbox.x + 3, vbox.y + 3);
   await page.waitForFunction(() => { const L = window.__spatialViewer.state.lasso; return L.shapes.length === 1 && L.bin && L.bin.n > 0; }, null, { timeout: 30000 });
+
+  // ---- a drawn shape picked: named in the chip above the picture, with its one Show on slide and Clear selection
+  // (Draw a region's panel had its own copy of the two; now the chip is the one place, also without a section UMAP)
+  const chip = () => page.evaluate(() => {
+    const c = document.getElementById("selChip"), up = (el) => !!el && !el.closest("[hidden]") && el.offsetParent !== null;
+    const vis = [...document.querySelectorAll("button")].filter(up), n = (t) => vis.filter((b) => b.textContent.trim() === t).length;
+    return { shown: up(c), txt: document.getElementById("selChipTxt").textContent, show: n("Show on slide"), clear: n("Clear selection"),
+             seg: up(document.querySelector("#viewSwitch .seg")), pick: window.__spatialViewer.state.lasso.selShape };
+  });
+  for (const noUmap of [false, true]) {
+    const what = noUmap ? " (a layer without a section UMAP)" : "";
+    if (noUmap) await page.evaluate(() => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey); window.__umapWas = e.umap; e.umap = null; });
+    await page.evaluate(() => document.querySelector("#lassoShapes .lshape").click());
+    await page.waitForTimeout(400);
+    let ch = await chip();
+    check(ch.shown && ch.pick === 0 && /Shape 1|Drawn region/.test(ch.txt) && ch.show === 1 && ch.clear === 1 && (!noUmap || !ch.seg),
+      `${B}: a drawn shape picked: the chip above the picture names it, with one Show on slide and one Clear selection${what}`, ch);
+    // away from the shape first, so framing it has somewhere to move to
+    await page.evaluate(() => { const sv = window.__spatialViewer, v = sv.state.viewState, i = sv.state.m.image; sv.deck.props.onViewStateChange({ viewState: { ...v, target: [i.width * 0.1, i.height * 0.1, 0] }, viewId: "ortho" }); });
+    await page.waitForTimeout(300);
+    const vs0 = await page.evaluate(() => JSON.stringify(window.__spatialViewer.state.viewState.target));
+    await page.evaluate(() => document.getElementById("selChipShow").click());
+    await page.waitForFunction((v) => JSON.stringify(window.__spatialViewer.state.viewState.target) !== v, vs0, { timeout: 10000 }).catch(() => {});
+    const moved = await page.evaluate((v) => JSON.stringify(window.__spatialViewer.state.viewState.target) !== v, vs0);
+    await page.evaluate(() => document.getElementById("selChipClear").click());
+    await page.waitForTimeout(400);
+    ch = await chip();
+    check(moved && ch.pick === null && !ch.shown, `${B}: the chip's Show on slide frames the shape, its Clear selection unpicks it and the chip goes${what}`, { moved, ch });
+    if (noUmap) await page.evaluate(() => { const S = window.__spatialViewer.state; S.m.expr.find((x) => x.key === S.exprKey).umap = window.__umapWas; });
+  }
 
   // ---- the volcano's and the plots' one button
   const one = async (run, panel, close, label, wait) => {

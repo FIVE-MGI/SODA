@@ -2439,11 +2439,10 @@
     requestRender();
     renderLassoPanel();
   }
-  // the panel's own line under the plot: what is picked, Show on slide, Clear
+  // the hint under the plot, until something is picked (what is picked is named in the chip above the picture, with
+  // Show on slide and Clear selection: syncUmapUI)
   function lassoSyncSel() {
     const t = lassoPickTxt();
-    $("lpSel").hidden = !t;
-    $("lpSelTxt").textContent = t.replace(/^Drawn region: /, "");
     $("lpHint").hidden = !!t || !(S.lasso && S.lasso.result) || !!S.lasso.hinted;
   }
 
@@ -3141,7 +3140,7 @@
       `${R.cluster ? ` · Leiden resolution ${R.resolution}${I.autoResolution ? " (auto)" : ""}, ${I.nClusters} clusters` +
         `${I.stability != null ? `, stability ${I.stability.toFixed(2)}` : ""}` : ""}. ` +
       `Drag ${L.lpTool === "free" ? "a loop" : "a box"} to select (Shift or + adds) · click a point to pick its ${byCl ? "cluster" : "shape"} · ` +
-      `Show on slide frames the picked squares · scroll to zoom.`;
+      `Show on slide (above the picture) frames the picked squares · scroll to zoom.`;
     if (window.SodaSets && window.SodaSets.region) window.SodaSets.region.refresh();   // a name given in the legend
   }
 
@@ -3400,8 +3399,6 @@
       S.lasso.lpColor = c; S.lasso.selCluster = null; lassoRefresh();
     };
     $("lpClose").onclick = () => { $("lassoPanel").hidden = true; lassoClearPick(); };
-    $("lpSelShow").onclick = () => { const L = S.lasso, g = lassoLitRows(); if (g) showRowsOnSlide((r) => L.assign[r] !== LASSO_NONE && g(r, L.assign[r]), L.pos); };
-    $("lpSelClear").onclick = () => lassoClearPick();
     $("lpTool").onclick = (e) => {
       const t = e.target.dataset && e.target.dataset.t; if (!t) return;
       S.lasso.lpTool = t; $("lpTool").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
@@ -4734,7 +4731,9 @@
 
   function syncUmapUI() {
     const U = S.umap, ok = !!U && umapAvail();
-    $("viewSwitch").hidden = !ok; $("panelUmap").hidden = !ok;
+    // no section UMAP: the bar above the picture still carries the chip for a pick in Draw a region's UMAP
+    const lpOnly = !ok && S.mode !== "rna" ? lassoPickTxt() : "";
+    $("viewSwitch").hidden = !ok && !lpOnly; $("panelUmap").hidden = !ok;
     const um = inUmap();
     const why = "Shapes are drawn on the tissue: switch the view to Tissue or Side by side to draw one.";
     $("lassoCircle").disabled = um; $("lassoFree").disabled = um;
@@ -4743,8 +4742,8 @@
     $("sbsCaps").hidden = !ok || !umapSbs();
     // groupings without an embedding (GeoMx ROIs): the Tissue / UMAP switch has nothing to switch to
     const noEmb = ok && umapNoEmb();
-    for (const el of $("viewSwitch").querySelectorAll(".seg, .fly-play, .fly-speed")) el.hidden = noEmb;
-    if (!ok) { syncGateColourOpt(); gateCountsRefresh(); if (window.SodaSets) window.SodaSets.refresh(); return; }
+    for (const el of $("viewSwitch").querySelectorAll(".seg, .fly-play, .fly-speed")) el.hidden = noEmb || !ok;
+    if (!ok) { $("selChip").hidden = !lpOnly; $("selChipTxt").textContent = lpOnly; syncGateColourOpt(); gateCountsRefresh(); if (window.SodaSets) window.SodaSets.refresh(); return; }
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === U.view));
     $("flyPlay").disabled = !!U.anim;
     const list = umapClusterings();

@@ -106,7 +106,7 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
 - **Draw a region (circle → UMAP).** Draw circles or freehand shapes on the tissue and get a UMAP, with
   optional Leiden clusters, of just the bins inside, computed in the browser. Drag a box or
   a loop over dots in its UMAP (Shift or **+** adds more) to light those bins on the slide,
-  and **Show on slide** to frame them. Save the shapes and every parameter to redo it later.
+  and **Show on slide** (above the picture) to frame them. Save the shapes and every parameter to redo it later.
   **Merge clusters of the run** (under it) merges the run's clusters into named sets, as Cell sets does
   for the whole section; the panel, the slide, the volcano and plot groups and Save CSV follow.
 - **Quality filter (per-bin QC).** Histograms of total counts, genes detected and % mitochondrial per bin,

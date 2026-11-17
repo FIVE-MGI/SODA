@@ -4578,13 +4578,11 @@ def check_layout(c: Checker):
          f"layout.js: a localStorage access outside try / catch: {[ln.strip()[:60] for ln in lines]}")
     # one control for each job (the duplicates are gone; old links that name them still open, viewlink.js)
     built_all = html + js["volcano.js"] + js["plots.js"]
-    # (the Draw a region panel's own row, #lpSel, names what is picked in its UMAP beside it: not counted here)
-    no_lp = re.sub(r'<div id="lpSel".*?</div>', "", built_all)
-    for gone in ("btnImage", "selShow", "selClear", "vcShow", "plShow"):
+    for gone in ("btnImage", "selShow", "selClear", "vcShow", "plShow", "lpSel", "lpSelShow", "lpSelClear"):
         c.ok(f'id="{gone}"' not in built_all and f'$("{gone}")' not in "".join(js.values()),
              f"#{gone} is back: Show on slide, Clear selection, the image's opacity and the run buttons are each one control")
     for label, where in (("Show on slide", "selChipShow"), ("Clear selection", "selChipClear")):
-        c.eq(len(re.findall(rf">{label}</button>", no_lp)), 1, f"index.html: one {label} button (besides the Draw a region panel's own)")
+        c.eq(len(re.findall(rf">{label}</button>", built_all)), 1, f"index.html: one {label} button")
         c.ok(re.search(rf'id="{where}"[^>]*>{label}</button>', html) is not None, f"index.html: {label} is #{where}, in the chip above the picture")
     c.ok(not re.search(r">Show</button>", built_all), "index.html / volcano.js / plots.js: no separate Show button (the run button shows the last result)")
     c.ok("Show volcano" in js["volcano.js"] and "Show plots" in js["plots.js"], "volcano.js / plots.js: the run button reads Show … while nothing has changed")

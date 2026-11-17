@@ -9,7 +9,7 @@
        Data, images and tiles may come from any host (connect-src / img-src *).
        worker-src 'self' also covers the service worker (sw.js, offline use). -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src * data: blob:; connect-src * data: blob:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'" />
-  <link href="styles.css?v=20261116vx7" rel="stylesheet" />
+  <link href="styles.css?v=20261117dt2" rel="stylesheet" />
   <link href="volcano.css?v=20261111a" rel="stylesheet" />
   <link href="plots.css?v=20261111a" rel="stylesheet" />
   <link href="dspicker.css?v=20261116pf" rel="stylesheet" />
@@ -325,7 +325,6 @@
         </div>
         <div id="lpWarn" class="lp-warn" hidden></div>
         <div id="lpHost" class="lp-host"><div id="lpBox" class="lp-box" hidden></div><svg id="lpSvg" class="lp-svg"></svg><div id="lpHint" class="lp-hint" hidden>Drag around dots to light the same squares on the slide</div></div>
-        <div id="lpSel" class="lp-sel" hidden><span id="lpSelTxt"></span><button id="lpSelShow" title="Frame these squares on the slide">Show on slide</button><button id="lpSelClear" title="Remove the highlight (Esc)">Clear</button></div>
         <div id="lpMkVs" class="lp-mkvs" hidden>Markers against <span class="seg"><button data-v="slide" title="What each cluster has more of than the rest of the slide">the slide</button><button data-v="shapes" title="What tells the clusters apart inside the shapes">the other drawn squares</button></span></div>
         <div id="lpLegend" class="legend lp-legend"></div>
         <div id="lpFoot" class="lp-foot"></div>
@@ -383,6 +382,6 @@
   <script src="compare.js?v=20261116t2"></script>
   <!-- offline use: the service worker (sw.js) and the Save tab's Offline use section -->
   <script src="offline.js?v=20261117of5"></script>
-  <script src="viewer.js?v=20261117dt1"></script>
+  <script src="viewer.js?v=20261117dt2"></script>
 </body>
 </html>
