@@ -1256,6 +1256,7 @@
     const ql = qcLayer(); if (ql) layers.push(ql);
     layers.push(...lassoLayers());
     const bq = binQcLayer(); if (bq) layers.push(bq);
+    if (measure) { measure.show(true); layers.push(...measure.layers()); }      // the ruler and areas (measure.js), on top
     layers.push(...umapSideLayers());
     deckgl.setProps({ layers });
   }
@@ -2226,6 +2227,7 @@
     const L = S.lasso;
     if (t && inUmap()) t = null;                 // shapes are drawn on the tissue, not on the UMAP
     if (t) umapSetTool(null);                    // one drawing tool at a time
+    if (t && measure) measure.setTool(null);
     L.tool = t && L.tool !== t ? t : null;
     $("lassoCircle").classList.toggle("on", L.tool === "circle");
     $("lassoFree").classList.toggle("on", L.tool === "free");
@@ -3658,6 +3660,7 @@
     if (from === "umap") U.umapVs = S.viewState; else U.tissueVs = S.viewState;
     umapSetTool(null);
     if (v === "umap") lassoSetTool(null);
+    if (v === "umap" && measure) measure.setTool(null);
     U.view = v;
     umapApplyViews();
     syncUmapUI();
@@ -4157,6 +4160,7 @@
     const U = S.umap; if (!U) return;
     U.tool = t && U.tool !== t ? t : null;
     if (U.tool && S.lasso && S.lasso.tool) lassoSetTool(null);
+    if (U.tool && measure) measure.setTool(null);
     $("selBox").classList.toggle("on", U.tool === "box");
     $("selFree").classList.toggle("on", U.tool === "free");
     $("selPad").hidden = !U.tool; $("selSvg").innerHTML = "";
@@ -6196,6 +6200,7 @@
     if (binQc) binQc.reset();
     if (outlines) outlines.reset();
     if (paint) paint.onLayer(null, null, null, null);
+    if (measure) measure.reset();
     umapReset();
     S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
     leaveRna();
@@ -6389,6 +6394,7 @@
     if (!umap) {
       const ov = S.overlays.filter((o) => o.on && o.data);
       if (ov.length) out.push({ title: "Outlines", items: ov.map((o) => ({ label: o.label, outline: [255, 220, 80] })) });
+      if (measure) out.push(...measure.legend());
     }
     return out;
   }
@@ -6436,6 +6442,22 @@
     if (window.__spatialViewer) window.__spatialViewer.paint = paint;   // for testing from the console
   }
 
+  // ---- Measure (measure.js): a ruler and areas on the tissue ------------------------------------------
+  let measure = null;
+  function measureInit() {
+    if (!window.SodaMeasure) return;
+    window.SodaMeasure.init({
+      ok: () => !!S.m && S.mode !== "rna" && !inUmap(),
+      um: () => (S.m && S.m.pixelSizeUm) || 0,
+      viewport: () => { const v = deckgl.getViewports(); return v.find((x) => x.id === "ortho") || v[0]; },
+      viewState: () => S.viewState, camera: (vs) => setCamera(vs, "ortho"),
+      render: requestRender, pinch: padPinch, NORMAL,
+      othersOff: () => { if (S.lasso && S.lasso.tool) lassoSetTool(null); if (S.umap && S.umap.tool) umapSetTool(null); },
+    });
+    measure = window.SodaMeasure;
+    if (window.__spatialViewer) window.__spatialViewer.measure = measure;   // for testing from the console
+  }
+
   // ---- Cell sets (cellsets.js): what it needs from here -------------------------------------------------
   function cellSetsInit() {
     if (!window.SodaSets) return;
@@ -6474,6 +6496,7 @@
     lassoInit();
     umapInit();
     gateInit();
+    measureInit();
     touchInit();
     snapshotInit();
     cellSetsInit();
@@ -6802,7 +6825,7 @@
   // styles.css). A pad going up with the controls sheet at full height also drops the sheet
   // to its strip, as the map is then too small to draw on.
   function touchInit() {
-    const done = $("drawDone"), pads = [$("drawPad"), $("selPad")], handle = $("sheetHandle");
+    const done = $("drawDone"), pads = [$("drawPad"), $("selPad"), $("measurePad")].filter(Boolean), handle = $("sheetHandle");
     const sync = () => {
       const was = done.hidden;
       done.hidden = pads.every((p) => p.hidden);
@@ -6811,7 +6834,7 @@
     };
     const mo = new MutationObserver(sync);
     for (const p of pads) mo.observe(p, { attributes: true, attributeFilter: ["hidden"] });
-    done.onclick = () => { lassoSetTool(null); umapSetTool(null); };
+    done.onclick = () => { lassoSetTool(null); umapSetTool(null); if (measure) measure.done(); };
     // A phone freezes a page it hides (another app, the screen locked anyway): the screen lock is
     // dropped and a running UMAP waits. Coming back, take the lock again and say why it took longer.
     let hiddenRun = false;

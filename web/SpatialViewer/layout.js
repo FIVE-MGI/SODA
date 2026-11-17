@@ -44,6 +44,8 @@
     panelMolecules: { more: ["molSize", "molOpacity"],
       help: "Every decoded molecule of the genes picked here, one dot each, one colour per gene. Zoomed out only a share of the dots is drawn; zoom in to see them all. More options: dot size and opacity." },
     panelOverlays: { help: "Outlines that came with the dataset (regions, cells, ROIs), drawn over the picture. Tick one to show it; hover an outline to read its name." },
+    panelMeasure: {
+      help: "Ruler: click two points on the tissue, or press and drag, to read the distance between them in µm. Area: click the corners of a shape and close it with a double-click, Enter, Finish or a click on its first corner, or press and drag round it; you get its area in µm² and its perimeter in µm. The numbers come from the export's microns per pixel (an export without one gives image pixels and says so). On a touch screen one finger draws (drag, or tap the points) and two fingers move the picture; Done drawing puts the tool away. By keyboard: turning a tool on with Enter moves the focus to the map, where the arrow keys move the picture, + and - zoom, Enter or Space puts a point at the centre cross, Enter again without moving closes an area, Backspace takes the last point back and Escape stops. Each measurement is listed here (✕ removes it), drawn on the map, kept in Save image with its numbers in the legend, and saved in Save JSON and the view link." },
     panelRna: { more: ["rnaBin", "rnaPointSize"], moreAt: "end",
       help: "Each dot is a cell, placed by the UMAP that came with the data and coloured by its cluster. Add a gene to get one small UMAP per gene, coloured by how much of it each cell has. View: Normal draws the cells, Density a smoothed map. More options: bin size (Density) and point size." },
     panelUmap: { notes: ["umapNote"],
@@ -70,7 +72,7 @@
     panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
   };
   const ORDER = {
-    view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelRna"],
+    view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelMeasure", "panelRna"],
     clusters: ["panelUmap", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
     save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
@@ -510,6 +512,7 @@
     },
     panelGenes: () => names("geneList", "none picked"),
     panelPaint: () => (window.SodaPaint ? window.SodaPaint.summary() : ""),
+    panelMeasure: () => (window.SodaMeasure ? window.SodaMeasure.summary() : ""),
     panelMolecules: () => names("molList", "none picked"),
     panelOverlays() { const n = $("overlayList") ? $("overlayList").querySelectorAll("input[type=checkbox]:checked").length : 0; return n ? `${n} on` : "off"; },
     panelRna: () => names("rnaGeneList", "clusters, no gene picked"),

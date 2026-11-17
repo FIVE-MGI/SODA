@@ -198,6 +198,7 @@
   .app.tabbed #chanList .chan { min-height: 40px; }
   /* Colour by a value: number and name boxes a finger can hit, at a size iOS does not zoom into */
   .app.tabbed #panelPaint input[type=number], .app.tabbed #panelPaint input[type=text], .app.tabbed #panelPaint textarea { min-height: 40px; font-size: 16px; }
+  .app.tabbed #panelMeasure .meas-list .x { min-width: 40px; min-height: 36px; }
 }
 /* a phone on its side: the rail stays at the left, a little narrower */
 @media (min-width: 701px) and (max-height: 500px) {

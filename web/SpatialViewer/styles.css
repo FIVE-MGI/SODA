@@ -169,6 +169,19 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 3
 .paint-gene input[type=number] { width: 72px; }
 .paint-set textarea { display: block; box-sizing: border-box; width: 100%; min-height: 54px; margin: 4px 0; resize: vertical; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; font-size: 12px; line-height: 1.4; }
 .paint-set select { max-width: 100%; }
+/* Measure (measure.js): the list of measurements, and the centre cross the keyboard puts points at */
+.meas-hint { margin-top: 6px; }
+.meas-list { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; }
+.meas-list li { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; border-top: 1px solid var(--line); }
+.meas-list .nm { flex: 0 0 auto; color: var(--muted); }
+.meas-list .v { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.meas-list .v small { color: var(--muted); font-size: 11px; }
+.meas-list .x { flex: 0 0 auto; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 2px 6px; font: inherit; }
+.meas-list .x:hover, .meas-list .x:focus-visible { color: var(--text); }
+.meas-pad:focus { outline: none; }
+.meas-pad:focus-visible { box-shadow: inset 0 0 0 2px rgba(255, 214, 10, .7); }
+.meas-pad:focus-visible::after { content: "+"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -54%); color: #ffd60a;
+  font: 700 28px/1 system-ui, sans-serif; text-shadow: 0 0 3px #000, 0 0 2px #000; pointer-events: none; }
 .rs { position: relative; height: 48px; margin: 2px 0 0; }
 .rs .rs-hist { position: absolute; left: 0; right: 0; top: 0; width: 100%; height: 34px; opacity: .95; pointer-events: none; }
 .rs .rs-track { position: absolute; left: 0; right: 0; top: 34px; height: 4px; background: #3a4356; border-radius: 2px; }
@@ -301,7 +314,7 @@ button:disabled:hover { border-color: var(--line); }
 /* the circle panel fills the UMAP pane's lower half: its caption moves to the middle line */
 .main.sbs.lp-open .sbs-caps .cap-r { bottom: calc(50% + 10px); }
 .main.sbs .scalebar { right: calc(50% + 14px); }
-.main.sbs #drawPad { right: 50%; }
+.main.sbs #drawPad, .main.sbs #measurePad { right: 50%; }
 .main.sbs .lasso-panel { top: calc(50% + 4px); left: calc(50% + 6px); right: 6px; bottom: 8px; width: auto; height: auto; }
 /* side by side on a tall screen (a phone held upright): tissue on top, UMAP below, and the
    circle -> UMAP panel covers the whole UMAP pane while it is open */
@@ -309,7 +322,7 @@ button:disabled:hover { border-color: var(--line); }
 .main.sbs.stack .sbs-caps .cap-l { right: 10px; bottom: calc(50% + 40px); }
 .main.sbs.stack .sbs-caps .cap-r, .main.sbs.stack.lp-open .sbs-caps .cap-r { right: 10px; bottom: 12px; }
 .main.sbs.stack .scalebar { right: 14px; bottom: calc(50% + 12px); }
-.main.sbs.stack #drawPad { right: 0; bottom: 50%; }
+.main.sbs.stack #drawPad, .main.sbs.stack #measurePad { right: 0; bottom: 50%; }
 .main.sbs.stack .lasso-panel { top: calc(50% + 4px); left: 6px; right: 6px; bottom: 8px; }
 .lasso-panel .lp-head { flex-wrap: wrap; gap: 4px; }
 .lasso-panel .lp-head b { flex: 1 1 160px; min-width: 0; }
