@@ -52,7 +52,14 @@ A letter suffix is kept: an ID ending in `b` becomes `3b`.
   written.
 - **`prepare.py export`** refuses to write the highly variable gene list or the UMAP
   index if they contain an ID or a Space Ranger barcode, and drops the local file paths
-  from the manifest.
+  from the manifest. Barcodes and cell ids are written only when asked for (`--ids`, or
+  `prepare.py ids` later: `expr/<key>/ids.txt.gz`; the notebook never asks). Before any
+  list is written, every id must fully match its platform's instrument id format (an
+  allow-list: Visium / Visium HD barcodes, Xenium, CosMx, MERSCOPE and Stereo-seq cell and
+  bin ids, see `ids.txt.gz` in [DATA_FORMAT.md](DATA_FORMAT.md)) and none may match the
+  sample-ID patterns. One failing id stops it: no list is written for any layer, and the
+  message gives the layer and the count but never the ids, so a log of a refused run holds
+  none. Ids are never stripped or rewritten to make them pass.
 
 It does **not** rewrite the labels, channel names or overlay names of image datasets.
 For those, `deid.py check` is the gate.
@@ -114,12 +121,26 @@ It looks at:
 
 - the **names** of every file and folder given, recursively;
 - the **contents** of text files (`.js .json .html .txt .md .css .geojson .csv .py .ps1
-  .yml .yaml`) under 50 MB, line by line.
+  .yml .yaml`) under 50 MB, line by line;
+- the **contents** of gzip files under 50 MB that unpack to text (the `ids.txt.gz` barcode
+  lists), line by line as a stream. A hit there is printed as
+  `content <path>:<line> -> looks like a sample ID (not shown)`, never the ID (10 lines per
+  file, then a count).
 
 It skips `.venv`, `__pycache__`, `.git`, `tiles` and `gene` folders (image tiles and
 per-gene files: binary, named by numbers and gene symbols), and `*.link.txt` files
 (encrypted, random-looking text). A line containing the marker `deid:ok` is skipped: it is
 meant for documented, made-up examples in source code. Do not use it to silence a real hit.
+
+Gene packs (`genepack/*.pack`, the per-gene data of an export, see
+[DATA_FORMAT.md](DATA_FORMAT.md#gene-packs-genepackhash-ipack)) are binary and are not read as
+text. Instead, for every `manifest.json` it finds, the check reads each packed group's listing
+(`genes.json`, `molecules/index.json`): every listed name is checked like any other text
+(`gene <path> -> <id>`), a listing entry may carry only the gene fields (name, totals, shard,
+offset, length), and every byte of every shard the manifest names must belong to a listed gene,
+with no gap and no overlap (`pack <path> -> <problem>`). So a pack cannot carry anything a gene
+listing does not account for. (Shards an earlier export left in the same folder are not named by
+the manifest and never read; the export log lists them for deleting before the upload.)
 
 It prints every hit as `name <path> -> <id>` or `content <path>:<line> -> <id>`, then
 `[deid] N sample ID(s) found` and exits with status 1, or prints `[deid] clean` and

@@ -87,6 +87,12 @@ window.SpatialViewerConfig = {
   rnaseqMaxGenes: 12,   // UMAP panels, one per gene
   maxGenes: 8,          // spatial transcript layers
 
+  // Gene packs (exports since 16 Nov 2026) are read one gene at a time with HTTP Range
+  // requests. A host that ignores Range sends the whole pack instead: up to this many MB the
+  // page keeps it and cuts the genes out of it (slower), above it the gene is refused with a
+  // message. Export with --gene-files loose for such a host.
+  // packWholeMaxMB: 160,
+
   // Smallest bin layer offered. Below roughly 8 um a bin holds a single transcript
   // nearly everywhere, which makes a density map of it a presence map.
   exprMinBinUm: 8,

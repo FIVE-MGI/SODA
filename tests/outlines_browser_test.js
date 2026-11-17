@@ -16,6 +16,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { sendFile, preflight } = require("./static_files");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
@@ -47,9 +48,9 @@ function serve(root, port, log) {
       // ~16 px across with the whole section in view), so the hand-over is moved up to 24 - 30 px for the test.
       if (rel === "/config.js") { res.writeHead(200, { "Content-Type": "text/javascript" }); res.end(`window.SpatialViewerConfig = { tokenEndpoint: "", outlineFromPx: ${FROM_PX}, outlineFullPx: ${FULL_PX} };`); return; }
       const file = path.join(root, rel === "/" ? "index.html" : rel);
+      if (req.method === "OPTIONS") { preflight(req, res); return; }
       if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
-      res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
-      fs.createReadStream(file).pipe(res);
+      sendFile(req, res, file, TYPES[path.extname(file)]);            // with Range: genes are read out of the gene packs by range
     });
     srv.listen(port || 0, "127.0.0.1", () => resolve(srv));
   });
