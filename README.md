@@ -100,13 +100,30 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
   slide and left out of Draw a region, and the thresholds are saved with the shapes and in
   the page link.
-- **Save and share.** **Copy link** (Save tab) copies the page's address. It opens the same
-  dataset (`ds=`) with the quality filter, if one is set (`qc=`), and keeps a `data=` or
-  `static=` already in the address. Zoom, genes, stains, the Tissue / UMAP view, clusters
-  and drawn shapes are not in it. To pass on a Draw a region result, use **Save JSON**: the
-  file holds the shapes, every setting, the clusters and their names and the quality filter,
-  and the other person loads it with **Load JSON** on the same dataset. Zoom, genes and
-  stains are in neither.
+- **Save and share.** **Copy link to this view** (Save tab) copies an address that opens the
+  dataset as it looks now: position and zoom, the Tissue / Side by side / UMAP view, the
+  layer, the genes on show with their colours and ranges, stains on or off with their colours
+  and display ranges, molecule genes, outlines, the colour-by, the clustering with your
+  cluster names, cell sets and hidden clusters, the quality filter and the open tab. Drawn shapes are in
+  it when they fit: a link is kept to about 2,000 characters, so long outlines are simplified
+  or left out, and the message under the button says so. The view travels in the part of the
+  address after `#`, which the browser never sends to a server; `ds=`, `qc=` and a `data=` or
+  `static=` already in the address stay as they are. Not in a link: a box or freehand
+  selection, marker cut-offs and cell-type rules, volcano and plot settings, and the result
+  of a Draw a region run (the shapes come back; press Run UMAP). **Save JSON** writes the same
+  view to a file together with the shapes in full, every setting and the run's result, and
+  **Load JSON** on the same dataset puts it back and runs it again.
+- **Compare side by side.** **Compare** (top bar, or the Save tab) opens another dataset in a
+  second window beside the first. While **Link views** is on, moving or zooming one window
+  moves the other to the same place at the same scale in micrometres, whatever the two
+  datasets' pixel sizes and image sizes; **Link from here** keeps what each window shows now
+  as the same place (to line up two sections that sit differently on their slides), **Line
+  up centres** goes back to the middle of each picture. Genes picked, the colour-by and the
+  Tissue / UMAP view follow where the other dataset has them, and the window says so where it
+  has not. Up to four windows can be linked. Views are not rotated or mirrored, and the
+  windows are separate: there is no split view inside one page. On a private site the second
+  window does not ask for the password again. On a phone or tablet the other dataset opens
+  in a new tab, not linked.
 - **Heatmap, dot plot and violin plots.** Compare genes across groups: the section's clusters
   at any resolution, the shapes you drew, the clusters of a Draw a region run, the regions of an overlay,
   or (single-cell datasets) any annotation column. Genes are each group's top markers plus any
@@ -316,6 +333,11 @@ support WebGL2. On an iPhone every browser runs on Safari's engine (WebKit); wha
 there is below. Password-encrypted dataset links need the page to be served over
 `https://` or from `localhost`.
 
+**Copy link to this view** and **Compare** were checked with automated tests in Chromium
+and in Playwright's WebKit build (the engine behind Safari), at desktop size and at
+390 × 844; they have not been tried in Safari itself, in Firefox, or on a real phone.
+A link made in one browser opens in the other.
+
 **Phones and tablets** open the same page and link; the layout follows the screen.
 
 - On a phone held upright the map fills the screen and the four tabs are a bar along the
@@ -372,6 +394,7 @@ examples/make_stereoseq_demo.py  synthetic Stereo-seq output (bin GEF, cell bin 
 tests/smoke_test.py   end-to-end test
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)
+tests/viewlink_test.js  the link that restores a view: round trips, the length budget, damaged and hostile links (node only; the smoke test runs it)
 tools/label_editor.html  place UMAP cluster labels by hand (writes labelPositions for config.js)
 tools/check_install.py   checks that the Python packages import, with the right versions
 ```

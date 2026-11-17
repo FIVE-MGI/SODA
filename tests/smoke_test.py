@@ -87,6 +87,13 @@ good ones must export (two at a time) and be in datasets.json, the broken one mu
 logged without stopping the others, the other two must be skipped with what to add, the exit code must be 1, the
 log (.md / .json / .csv) must hold time, peak memory and size per dataset and pass `deid.py check`, a second run
 must skip what is done, and a dry run must write nothing.
+Sharing (viewlink.js: the link that
+restores a view; compare.js: linked windows): both load before viewer.js with ?v= strings, the ids they
+build are there and clash with none of the page's, viewer.js hands them its functions and has one
+serialiser for Save JSON and the link, nothing in them needs an inline handler or eval (the page's
+Content-Security-Policy), the access token is kept out of storage and addresses, and, when node is
+installed, tests/viewlink_test.js passes (encode / decode round trips, the length budget, oversize,
+truncated, malformed and hostile links).
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -3505,6 +3512,84 @@ def check_layout(c: Checker):
          "layout.css: the phone layout, the .tabbed scope and a visible focus ring")
 
 
+def check_sharing(c: Checker, log_path: Path):
+    """The link that restores a view (viewlink.js) and linked windows (compare.js, compare.css): wired into
+    the page, their ids, the hooks in viewer.js and layout.js, the page's Content-Security-Policy, and the
+    node unit test of the link's encoding."""
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
+    for f in ("viewlink.js", "compare.js", "compare.css"):
+        c.ok(f in names and (APP / f).exists(), f"index.html loads {f}")
+    for f in ("viewlink.js", "compare.js"):
+        c.ok(f in names and names.index("layout.js") < names.index(f) < names.index("viewer.js")
+             and names.index("dspicker.js") < names.index(f),
+             f"{f} loads after layout.js and dspicker.js and before viewer.js (which hands it its functions)")
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("viewlink.js", "compare.js", "viewer.js", "layout.js")}
+    page_ids = set(re.findall(r'\bid="(\w+)"', html))
+    made = set(re.findall(r'\bid="(\w+)"', js["compare.js"])) | set(re.findall(r'\.id = "(\w+)"', js["compare.js"] + js["viewlink.js"]))
+    want = {"panelCompare", "cmpOpenLabel", "cmpPicker", "cmpBlocked", "cmpBlockedLink", "cmpPeers", "cmpLink", "cmpAlign",
+            "cmpCentre", "cmpState", "cmpGenes", "cmpColorBy", "cmpMode", "cmpMsg", "btnCompare", "saveLinkBox"}
+    c.ok(want <= made, f"compare.js / viewlink.js build their controls: missing {sorted(want - made)}")
+    c.ok(not (made & page_ids), f"ids built by compare.js / viewlink.js that index.html already has: {sorted(made & page_ids)}")
+    lay_ids = set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
+    c.ok({"btnCopyLink", "saveMsg"} <= lay_ids and not (made & lay_ids),
+         "layout.js still builds the Copy link button and its message line (viewlink.js takes the button over)")
+    c.ok('$("btnCopyLink")' in js["viewlink.js"] and "Copy link to this view" in js["viewlink.js"],
+         "viewlink.js re-labels and re-wires the Copy link button")
+    c.ok('sec.dataset.tab = "save"' in js["compare.js"] and "SodaLayout.adopt(sec)" in js["compare.js"],
+         "compare.js: its section names its tab and is handed to the layout")
+    c.ok("panelCompare: { help:" in js["layout.js"] and "panelCompare: () =>" in js["layout.js"],
+         "layout.js: the Compare section's ? note and its summary")
+    for needle, what in (("function sessionState(full)", "one serialiser for Save JSON and the link"),
+                         ("JSON.stringify(sessionState(true), null, 1)", "Save JSON writes sessionState(true)"),
+                         ("async function sessionApply(j, run)", "Load JSON and a link go back in through one function"),
+                         ("window.SodaViewLink.capture()", "the view block is captured into the saved state"),
+                         ("window.SodaViewLink.apply(j.view, j)", "the view block is applied from a file and from a link"),
+                         ("function setCamera(viewState, viewId)", "one function moves the camera (mouse, link, linked window)"),
+                         ("window.SodaViewLink.init(share)", "viewlink.js is handed viewer.js's functions"),
+                         ("window.SodaCompare.init(share)", "compare.js is handed viewer.js's functions"),
+                         ('new CustomEvent("soda:opened"', "the scripts are told when a dataset has opened"),
+                         ("window.SodaCompare.askToken(", "a private site's new window asks its group for the token before the password box")):
+        c.ok(needle in js["viewer.js"], f"viewer.js: {what} ({needle!r} not found)")
+    # the page's Content-Security-Policy (no inline script, no handler attributes, no eval): nothing in the new files needs more
+    for f in ("viewlink.js", "compare.js"):
+        t = js[f]
+        c.ok(not re.search(r"""<[a-z][^>`]*\son[a-z]+\s*=""", t) and "javascript:" not in t
+             and not re.search(r"""\beval\(|new Function\(|setTimeout\(\s*["'`]""", t),
+             f"{f}: no inline handler attribute, no eval, no javascript: address")
+        c.ok(not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),
+             f"{f}: only unsigned typed arrays (the de-identification check reads the signed names as sample IDs)")
+        lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
+        c.ok(all("try" in ln for ln in lines), f"{f}: a storage access outside try / catch: {[ln.strip()[:60] for ln in lines if 'try' not in ln]}")
+    # the access token: memory only. What compare.js remembers for a tab is exactly this, and no address is built from a token
+    saved = re.search(r"sessionStorage\.setItem\(KEY, JSON\.stringify\(\{([^}]*)\}\)\)", js["compare.js"])
+    c.ok(bool(saved) and [k.strip() for k in saved.group(1).split(",")] == ["group", "claim", "linked", "off", "follow"],
+         "compare.js remembers the group, the link state and the offset for a tab: no token, no password")
+    c.ok(js["compare.js"].count("sessionStorage.setItem") == 1 and "localStorage" not in js["compare.js"],
+         "compare.js writes to storage in one place only")
+    c.ok("m.url !== H.tokenUrl || m.path !== location.pathname" in js["compare.js"] and "peers.has(m.from)" in js["compare.js"],
+         "compare.js gives the token only to a member of its group on the same page and token address")
+    c.ok("window.name" in js["compare.js"] and re.findall(r"""searchParams\.set\(\s*["'](\w+)""", js["compare.js"]) == ["ds"],
+         "compare.js passes the group in window.name; the only thing it sets in an address is ?ds=")
+    c.ok('KEEP_PARAMS = ["data", "static", "api", "fmt", "qc"]' in js["viewlink.js"] and "location.hash" in js["viewlink.js"]
+         and "fetch(" not in js["viewlink.js"] and "fetch(" not in js["compare.js"],
+         "viewlink.js: the view travels after #, the link keeps ?data= / ?static= / ?qc=, and neither file fetches anything itself")
+    css = (APP / "compare.css").read_text(encoding="utf-8")
+    c.ok("#btnCompare" in css and "@media (pointer: coarse)" in css, "compare.css: the top-bar button, hidden on touch screens")
+    node = shutil.which("node")
+    if not node:
+        print("    node not found: tests/viewlink_test.js skipped")
+        return
+    p = subprocess.run([node, str(REPO / "tests" / "viewlink_test.js")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    for ln in p.stdout.strip().splitlines()[-3:]:
+        print("    " + ln.strip())
+    c.eq(p.returncode, 0, "node tests/viewlink_test.js (exit code)")
+    c.ok(bool(re.search(r"viewlink_test: \d+ checks passed", p.stdout)), "tests/viewlink_test.js: every check passed")
+
+
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
     texts = [p for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS for p in (export / ds).rglob("*")
@@ -3618,6 +3703,8 @@ def main(argv=None) -> int:
     check_picker(c)
     print("checks: tabbed layout (tabs, sections, ids)")
     check_layout(c)
+    print("checks: sharing (the link that restores a view, linked windows)")
+    check_sharing(c, log_path)
     print("checks: publishable")
     check_publishable(c, root, log_path)
     timings["checks"] = time.time() - t0
