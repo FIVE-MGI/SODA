@@ -10,9 +10,18 @@
 // mat/ chunks' raw means -> x with the whole slide's background and p99.5 (asinh; older
 // exports: x' with the 1st..99.5th percentile window) -> z-score within the selection ->
 // PCA -> the same UMAP, Leiden, markers and suggested names.
-/* global UMAP, leiden, SODA_LIBS */
+// Speed (the same results as before, bit for bit on one browser): umapfit.js runs umap-js's fit over typed
+// arrays; the Leiden runs of the stability sweep go to helper workers (leiden_worker.js) when the browser
+// has cores to spare; the last run's layout is kept, so the same shapes again with other clustering
+// settings only re-cluster. Fast mode (params.sampling, above params.fastAbove bins): the UMAP and Leiden
+// of a seeded, shape-stratified sample of params.fastSample bins, every other bin placed by its 15 nearest
+// sample bins in PCA space (layout, below); markers and the result cover every bin.
+/* global UMAP, leiden, SODA_LIBS, SodaUmapFit */
 importScripts("libs.js?v=20261116of1");
 importScripts("leiden.js?v=20261102a");
+importScripts("umapfit.js?v=20261117a");
+const LEIDEN_WORKER = "leiden_worker.js?v=20261117a";
+const now = () => performance.now();
 // umap-js (pinned in libs.js): the copy in vendor/ when it is there and matches its SHA-384, else the CDN's,
 // as before. importScripts has no integrity check of its own, so fetch() checks the hash first; the script
 // then comes from the browser's cache (or, offline, from the copy sw.js kept). Loaded before the first job.
@@ -118,32 +127,34 @@ function stratifiedSample(shapeOf, nShapes, cap, rand) {
 }
 
 // ---- clustering ----------------------------------------------------------------
-// umap-js keeps the fuzzy simplicial set (scanpy's "connectivities") as umap.graph, a
-// SparseMatrix over a Map of {value, row, col}. Symmetrise to CSR: w_ij = (a_ij + a_ji) / 2
-// (the fuzzy union is already symmetric, so this only guards), zeros and self loops dropped.
-function fuzzyGraphCSR(umap, N) {
-  const deg = new Uint32Array(N + 1);
-  umap.graph.forEach((v, r, c) => { if (v > 0 && r !== c) { deg[r + 1]++; deg[c + 1]++; } });
+// The fuzzy simplicial set (scanpy's "connectivities"), as umap-js keeps it (umapfit.js graph: entries in
+// umap-js's Map order). Symmetrise to CSR: w_ij = (a_ij + a_ji) / 2 (the fuzzy union is already
+// symmetric, so this only guards), zeros and self loops dropped.
+function fuzzyGraphCSR(G, N) {
+  const R = G.rows, C = G.cols, V = G.vals, m = G.nnz, deg = new Uint32Array(N + 1);
+  for (let e = 0; e < m; e++) if (V[e] > 0 && R[e] !== C[e]) { deg[R[e] + 1]++; deg[C[e] + 1]++; }
   for (let i = 0; i < N; i++) deg[i + 1] += deg[i];
   const fill = deg.slice(0, N), col = new Uint32Array(deg[N]), val = new Float64Array(deg[N]);
-  umap.graph.forEach((v, r, c) => {
-    if (!(v > 0) || r === c) return;
+  for (let e = 0; e < m; e++) {
+    const v = V[e], r = R[e], c = C[e];
+    if (!(v > 0) || r === c) continue;
     col[fill[r]] = c; val[fill[r]++] = v / 2;
     col[fill[c]] = r; val[fill[c]++] = v / 2;
-  });
+  }
   // merge the duplicate (r, c) pairs inside each row
   const indptr = new Uint32Array(N + 1), at = new Float64Array(N).fill(-1);
-  const indices = [], weights = [];
+  const indices = new Uint32Array(deg[N]), weights = new Float64Array(deg[N]);
+  let n = 0;
   for (let i = 0; i < N; i++) {
-    const start = indices.length;
+    const start = n;
     for (let p = deg[i]; p < deg[i + 1]; p++) {
       const j = col[p];
       if (at[j] >= start) weights[at[j]] += val[p];
-      else { at[j] = indices.length; indices.push(j); weights.push(val[p]); }
+      else { at[j] = n; indices[n] = j; weights[n++] = val[p]; }
     }
-    indptr[i + 1] = indices.length;
+    indptr[i + 1] = n;
   }
-  return { indptr, indices: Uint32Array.from(indices), weights: Float64Array.from(weights) };
+  return { indptr, indices: indices.slice(0, n), weights: weights.slice(0, n) };
 }
 
 // PCs and neighbours by the number of bins: a few hundred bins carry only a few real axes,
@@ -156,20 +167,27 @@ function sizeRule(N) {
 // init="pca" in sectionumap.py does: each axis min-max scaled to [0, 10] plus a 1e-4 jitter so
 // identical bins do not sit on one point. The optimiser holds umap.embedding by reference, so
 // the start is written into it in place after initializeFit (a new array would be ignored).
-function fitUmap(scores, N, k, minDist, rand) {
-  const umap = new UMAP.UMAP({ nComponents: 2, nNeighbors: Math.max(2, Math.min(k, N - 1)), minDist, random: rand });
-  const nEpochs = umap.initializeFit(scores), E = umap.embedding;
+// umap-js's fit itself runs as umapfit.js (the same numbers over typed arrays); the returned fit holds
+// the embedding flat (point i at embedding[2i], [2i + 1]) and the fuzzy graph. T: stage times (ms).
+function fitUmap(scores, N, k, minDist, rand, T) {
+  const D = scores[0].length, X = new Float64Array(N * D);
+  for (let i = 0; i < N; i++) { const r = scores[i]; for (let d = 0; d < D; d++) X[i * D + d] = r[d]; }
+  const [a, b] = SodaUmapFit.abParams(UMAP, minDist);
+  const fit = SodaUmapFit.init(X, N, D, { nNeighbors: Math.max(2, Math.min(k, N - 1)), random: rand, a, b, timing: T });
+  const nEpochs = fit.nEpochs, E = fit.embedding;
   for (let a = 0; a < 2; a++) {
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < N; i++) { const v = scores[i][a] || 0; if (v < lo) lo = v; if (v > hi) hi = v; }
     const s = hi > lo ? 10 / (hi - lo) : 0;
-    for (let i = 0; i < N; i++) E[i][a] = ((scores[i][a] || 0) - lo) * s + 1e-4 * gauss(rand);
+    for (let i = 0; i < N; i++) E[2 * i + a] = ((scores[i][a] || 0) - lo) * s + 1e-4 * gauss(rand);
   }
+  const t = now();
   for (let e = 0; e < nEpochs; e++) {
-    umap.step();
+    fit.step(e);
     if (e % 10 === 0) progress("UMAP", 0.2 + 0.8 * e / nEpochs);
   }
-  return umap;
+  if (T) T.layout = now() - t;
+  return fit;
 }
 
 // "auto" = choose the resolution by stability; a number = that resolution (its stability is
@@ -229,35 +247,96 @@ function bestJaccard(ref, lab, nCl, into) {
   }
 }
 
-// the graph restricted to the bins in keep (ascending), renumbered 0..keep.length-1
+// the graph restricted to the bins in keep (ascending), renumbered 0..keep.length-1 (= leiden_worker.js)
 function inducedGraph(g, keep, N) {
   const NONE = 0xFFFFFFFF, at = new Uint32Array(N).fill(NONE); keep.forEach((v, j) => (at[v] = j));
-  const indptr = new Uint32Array(keep.length + 1), indices = [], weights = [];
-  keep.forEach((v, j) => {
-    for (let p = g.indptr[v]; p < g.indptr[v + 1]; p++) { const u = at[g.indices[p]]; if (u !== NONE) { indices.push(u); weights.push(g.weights[p]); } }
-    indptr[j + 1] = indices.length;
-  });
-  return { indptr, indices: Uint32Array.from(indices), weights: Float64Array.from(weights) };
+  const indptr = new Uint32Array(keep.length + 1), indices = new Uint32Array(g.indices.length), weights = new Float64Array(g.indices.length);
+  let n = 0;
+  for (let j = 0; j < keep.length; j++) {
+    const v = keep[j];
+    for (let p = g.indptr[v]; p < g.indptr[v + 1]; p++) { const u = at[g.indices[p]]; if (u !== NONE) { indices[n] = u; weights[n++] = g.weights[p]; } }
+    indptr[j + 1] = n;
+  }
+  return { indptr, indices: indices.slice(0, n), weights: weights.slice(0, n) };
 }
 
 const median = (xs) => { if (!xs.length) return null; const s = xs.slice().sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
+// The runs of one resolution are independent: with cores to spare they go to helper workers
+// (leiden_worker.js, the same leiden.js), each holding the graph and the subsamples. Which worker runs
+// which job does not matter: every run is the same function of (graph, resolution, seed). Up to 8
+// helpers, one core left for the page; none when the browser reports fewer than 3 cores or cannot start
+// a worker from a worker, and any failure falls back to running them here.
+function leidenPool(g, N, keeps) {
+  const cores = (self.navigator && navigator.hardwareConcurrency) || 1, n = Math.min(8, cores - 1);
+  if (n < 2 || typeof Worker === "undefined") return null;
+  try {
+    const ws = [];
+    for (let i = 0; i < n; i++) {
+      const w = new Worker(LEIDEN_WORKER);
+      w.postMessage({ type: "graph", n: N, indptr: g.indptr, indices: g.indices, weights: g.weights, keeps });
+      ws.push(w);
+    }
+    return ws;
+  } catch (e) { return null; }
+}
+function onPool(ws, jobs) {
+  return new Promise((resolve, reject) => {
+    const out = new Array(jobs.length);
+    let next = 0, done = 0;
+    const give = (w) => {
+      if (next >= jobs.length) return;
+      const id = next++;
+      w.onmessage = (ev) => {
+        if (ev.data.error) { reject(new Error(ev.data.error)); return; }
+        out[id] = ev.data.lab;
+        if (++done === jobs.length) resolve(out); else give(w);
+      };
+      w.onerror = (e) => { e.preventDefault && e.preventDefault(); reject(new Error(e.message || "Leiden helper failed")); };
+      w.postMessage({ type: "run", ...jobs[id] });
+    };
+    ws.forEach(give);
+  });
+}
+
 // clusters at the wanted resolution ("auto" or a number) with their stability; fills info
-function clusterGraph(g, N, resolution, seed, info) {
+// fullSweep (fast mode): every resolution, no early stop. A sample's coarse resolutions can be unstable (its
+// small populations are thinner) while finer ones are not: on a 50,000-bin region the 10,000-bin sample's
+// rows at 0.1 and 0.2 scored 0.35 and 0.50 (the stop) and 0.3-0.4 scored 0.90; the sweep of a sample is cheap.
+async function clusterGraph(g, N, resolution, seed, info, fullSweep) {
   const list = resolution === "auto" ? SWEEP.res : [resolution], R = sweepRuns(N), r3 = (x) => Math.round(x * 1000) / 1000;
   const rows = [];
+  // the subsampled runs' bins: pick restarts from the same seed at every resolution, so they are the
+  // same bins (and induced graphs) each time
+  const pick = mulberry32((seed ^ 0x9e3779b9) >>> 0), keeps = [];
+  for (let s = 0; s < R.subs; s++) {
+    const keep = []; for (let i = 0; i < N; i++) if (pick() < SWEEP.frac) keep.push(i);
+    keeps.push(Uint32Array.from(keep));
+  }
+  const subG = [];
+  const runHere = (j) => {
+    if (j.sub < 0) return leiden(N, g.indptr, g.indices, g.weights, { resolution: j.res, seed: j.seed, maxIter: SWEEP.iters });
+    const sub = subG[j.sub] || (subG[j.sub] = inducedGraph(g, keeps[j.sub], N));
+    return leiden(keeps[j.sub].length, sub.indptr, sub.indices, sub.weights, { resolution: j.res, seed: j.seed, maxIter: SWEEP.iters });
+  };
+  let pool = leidenPool(g, N, keeps);
+  info.leidenWorkers = pool ? pool.length : 0;
+  try {
   for (const [li, res] of list.entries()) {
     const last2 = rows.slice(-2);
-    if (last2.length === 2 && last2.every((r) => r.stability < SWEEP.stopBelow)) break;
+    if (!fullSweep && last2.length === 2 && last2.every((r) => r.stability < SWEEP.stopBelow)) break;
     progress(`Clustering, resolution ${res}`, li / list.length);
-    const full = [], subs = [];
-    for (let s = 0; s < R.seeds; s++) full.push(leiden(N, g.indptr, g.indices, g.weights, { resolution: res, seed: seed + s, maxIter: SWEEP.iters }));
-    const pick = mulberry32((seed ^ 0x9e3779b9) >>> 0);
-    for (let s = 0; s < R.subs; s++) {
-      const keep = []; for (let i = 0; i < N; i++) if (pick() < SWEEP.frac) keep.push(i);
-      const sub = inducedGraph(g, keep, N);
-      subs.push({ keep, lab: leiden(keep.length, sub.indptr, sub.indices, sub.weights, { resolution: res, seed: seed + s, maxIter: SWEEP.iters }) });
+    const jobs = [];
+    for (let s = 0; s < R.seeds; s++) jobs.push({ res, seed: seed + s, sub: -1, iters: SWEEP.iters });
+    for (let s = 0; s < R.subs; s++) jobs.push({ res, seed: seed + s, sub: s, iters: SWEEP.iters });
+    let labs = null;
+    if (pool) {
+      try { labs = await onPool(pool, jobs); }
+      catch (e) { pool.forEach((w) => w.terminate()); pool = null; info.leidenWorkers = 0; }
     }
+    if (!labs) labs = jobs.map(runHere);
+    const full = labs.slice(0, R.seeds), subs = [];
+    for (let s = 0; s < R.subs; s++) subs.push({ keep: keeps[s], lab: labs[R.seeds + s] });
     // every whole-graph run against every other run; sc[a] = run a's scores
     const sc = full.map(() => []), scores = [];
     for (let a = 0; a < full.length; a++) {
@@ -273,6 +352,7 @@ function clusterGraph(g, N, resolution, seed, info) {
     subs.forEach((s) => bestJaccard(Uint16Array.from(s.keep, (i) => ref[i]), s.lab, nCl, match));
     rows.push({ res, nCl, ref, stability: median(scores), perCluster: match.map(median) });
   }
+  } finally { if (pool) pool.forEach((w) => w.terminate()); }
   const multi = rows.filter((r) => r.nCl > 1), ok = multi.filter((r) => r.stability >= SWEEP.minStable);
   const maxStable = ok.reduce((m, r) => Math.max(m, r.stability), -1);
   const top = ok.filter((r) => r.stability >= maxStable - SWEEP.tieStable).pop();   // rows run coarse -> fine
@@ -287,7 +367,7 @@ function clusterGraph(g, N, resolution, seed, info) {
   info.clusterStability = best.perCluster.map((x) => (x === null ? null : r3(x)));
   info.sweep = rows.map((r) => ({ resolution: r.res, nClusters: r.nCl, stability: r3(r.stability) }));
   info.stabilityRuns = { seeds: R.seeds, subsamples: R.subs, fraction: SWEEP.frac, minStable: SWEEP.minStable, tieStable: SWEEP.tieStable,
-                         stopBelow: SWEEP.stopBelow, leidenIterations: SWEEP.iters, shown: "medoid run" };
+                         stopBelow: fullSweep ? null : SWEEP.stopBelow, leidenIterations: SWEEP.iters, shown: "medoid run" };
   return best.ref;
 }
 
@@ -528,7 +608,7 @@ function proteinMarkersVsSlide(XP, N, K, med, sec, cl, nCl, names) {
   return out;
 }
 
-function runProtein(msg) {
+async function runProtein(msg) {
   const P = msg.params, rand = mulberry32(P.seed), pr = msg.protein, K = pr.channels.length;
   progress("Reading squares", 0);
   // gather: row, shape and where the raw means of every selected square sit
@@ -588,7 +668,7 @@ function runProtein(msg) {
     let m = 0; for (let j = 0; j < K; j++) { const l = Math.log(UL[i * K + j] + CLR_EPS); UL[i * K + j] = l; m += l; }
     m /= K; for (let j = 0; j < K; j++) UL[i * K + j] -= m;
   }
-  const info = { found, dropped, kept, sampledFrom, nIn: N, modality: "protein", features: useClr ? "clr" : "x", clrEps: CLR_EPS, lowSignalX: LOW_SIGNAL_X };
+  const info = { timings: {}, found, dropped, kept, sampledFrom, nIn: N, modality: "protein", features: useClr ? "clr" : "x", clrEps: CLR_EPS, lowSignalX: LOW_SIGNAL_X };
   if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} squares; the shapes hold ${N}.`);
   if (P.mode === "shapes" && N < 3) throw new Error(`"One dot per shape" needs at least 3 non-empty shapes; there are ${N}.`);
 
@@ -623,9 +703,9 @@ function runProtein(msg) {
     method = "pca";
     for (let i = 0; i < N; i++) { emb[2 * i] = pca.scores[i][0]; emb[2 * i + 1] = pca.scores[i][1] || 0; }
   } else {
-    umap = fitUmap(pca.scores, N, P.nNeighbors, P.minDist, rand);
-    const Y = umap.getEmbedding();
-    for (let i = 0; i < N; i++) { emb[2 * i] = Y[i][0]; emb[2 * i + 1] = Y[i][1]; }
+    umap = fitUmap(pca.scores, N, P.nNeighbors, P.minDist, rand, info.timings);
+    const Y = umap.embedding;
+    for (let i = 0; i < 2 * N; i++) emb[i] = Y[i];
   }
   info.nGenesUsed = K; info.nPcs = nPcs; info.varFrac = pca.varFrac.slice(0, 2); info.method = method;
   info.nNeighbors = umap ? Math.max(2, Math.min(P.nNeighbors, N - 1)) : null; info.init = umap ? "pca" : null;
@@ -633,7 +713,7 @@ function runProtein(msg) {
 
   const resolution = wantedResolution(msg, P);
   if (P.mode === "bins" && umap && resolution) {
-    const cluster = clusterGraph(fuzzyGraphCSR(umap, N), N, resolution, P.seed, info);
+    const cluster = await clusterGraph(fuzzyGraphCSR(umap.graph, N), N, resolution, P.seed, info);
     const nCl = info.nClusters;
     // one cluster has no "rest of the selection" to compare with (vs the slide still works)
     info.markers = nCl > 1 ? proteinMarkers(Z, XP, N, K, pr.median, cluster, nCl, pr.channels) : [[]];
@@ -700,7 +780,7 @@ function jacobiEigen(A, l) {
 }
 
 // Z = W - 1 c^T, W sparse CSR (ptr, col, val) N x K. Returns top-k PC scores (N x k).
-function randomizedPCA(N, K, ptr, col, val, c, k, rand) {
+function randomizedPCA(N, K, ptr, col, val, c, k, rand, wantLoadings) {
   const l = Math.min(k + 10, N, K);
   const omega = Array.from({ length: l }, () => { const v = new Float64Array(K); for (let g = 0; g < K; g++) v[g] = gauss(rand); return v; });
   const ZM = (M) => M.map((m) => {                       // Z m, m in R^K
@@ -723,6 +803,9 @@ function randomizedPCA(N, K, ptr, col, val, c, k, rand) {
   const { vals, vecs } = jacobiEigen(G, l);
   const kk = Math.min(k, l);
   const scores = Array.from({ length: N }, () => new Array(kk));
+  // wantLoadings (fast mode): v_j = sgn B^T u_j / s_j, so that a row's score_j = (its row of Z) . v_j,
+  // for placing bins that were not in the PCA
+  const loadings = wantLoadings ? [] : null;
   for (let j = 0; j < kk; j++) {
     const u = vecs[j];
     // B B^T u = s^2 u, and Z v = Q B v = Q u s  ->  score_j = Q u_j * s_j
@@ -732,57 +815,169 @@ function randomizedPCA(N, K, ptr, col, val, c, k, rand) {
     let big = 0; for (let i = 0; i < N; i++) if (Math.abs(sc[i]) > Math.abs(big)) big = sc[i];
     const sgn = big < 0 ? -1 : 1, sv = Math.sqrt(Math.max(vals[j], 0));
     for (let i = 0; i < N; i++) scores[i][j] = sgn * sc[i] * sv;
+    if (loadings) {
+      const v = new Float64Array(K);
+      if (sv > 0) { for (let a = 0; a < l; a++) { const bt = Bt[a], w = u[a]; for (let g = 0; g < K; g++) v[g] += bt[g] * w; } for (let g = 0; g < K; g++) v[g] *= sgn / sv; }
+      loadings.push(v);
+    }
   }
   const total = vals.reduce((a, b) => a + Math.max(0, b), 0);
-  return { scores, varFrac: vals.slice(0, kk).map((v) => Math.max(0, v) / (total || 1)) };
+  return { scores, loadings, varFrac: vals.slice(0, kk).map((v) => Math.max(0, v) / (total || 1)) };
 }
 
-function run(msg) {
-  const P = msg.params, rand = mulberry32(P.seed);
-  progress("Reading bins", 0);
-  let d = gather(msg.chunks, msg.rowShape);
-  // Chunks arrive in whatever order the network finishes them. Put the bins in row order
-  // before anything seeded touches them, or the same shapes and seed give a new layout.
-  d = subset(d, d.rows.map((_, i) => i).sort((a, b) => d.rows[a] - d.rows[b]));
-  const nShapes = msg.nShapes;
-  const found = new Array(nShapes).fill(0), dropped = new Array(nShapes).fill(0);
-  // the page's QC filter (qc.js): one byte per row, 0 = removed; absent when nothing is removed
-  const qk = msg.qcKeep && msg.qcKeep.length ? msg.qcKeep : null, qcOut = new Array(nShapes).fill(0);
-  const ok = [];
-  for (let i = 0; i < d.rows.length; i++) {
-    found[d.shape[i]]++;
-    if (qk && !qk[d.rows[i]]) { qcOut[d.shape[i]]++; continue; }
-    if (d.lib[i] >= P.minUmi) ok.push(i); else dropped[d.shape[i]]++;
-  }
-  let sampledFrom = 0;
-  let keep = ok;
-  if (P.mode === "bins" && ok.length > P.cap) {
-    sampledFrom = ok.length;
-    const s = stratifiedSample(ok.map((i) => d.shape[i]), nShapes, P.cap, rand);
-    keep = s.map((j) => ok[j]);
-  }
-  d = subset(d, keep);
-  const kept = new Array(nShapes).fill(0);
-  d.shape.forEach((s) => kept[s]++);
-  const info = { found, dropped, kept, sampledFrom, nIn: d.rows.length };
-  if (qk) info.qcRemoved = qcOut;
-
-  // one summed profile per shape
-  if (P.mode === "shapes") {
-    const live = kept.map((n, s) => (n ? s : -1)).filter((s) => s >= 0);
-    const acc = live.map(() => new Map()), libs = live.map(() => 0), pos = new Map(live.map((s, i) => [s, i]));
-    for (let i = 0; i < d.rows.length; i++) {
-      const j = pos.get(d.shape[i]); libs[j] += d.lib[i];
-      for (let k = d.ptr[i]; k < d.ptr[i + 1]; k++) acc[j].set(d.gi[k], (acc[j].get(d.gi[k]) || 0) + d.ct[k]);
+// ---- fast mode: place the bins outside the sample ----------------------------------------
+// A small random-projection forest over the sample (the same kind of split as umap-js's trees), then for
+// each other bin a best-first walk of the sample's own neighbour graph from the leaves it lands in
+// (pynndescent's query, epsilon 0.1): its k nearest sample bins in PCA space. Seeded on its own stream.
+function rpTree(Y, n, D, leafSize, rand) {
+  const hyper = [], offs = [], kids = [], leaves = [];
+  const build = (idx) => {
+    if (idx.length <= leafSize) { leaves.push(idx); return -leaves.length; }      // leaf l -> -(l + 1)
+    const m = idx.length;
+    let li = Math.floor(rand() * m), ri = Math.floor(rand() * m);
+    if (li === ri) ri = (ri + 1) % m;
+    const lo = idx[li] * D, ro = idx[ri] * D, hv = new Float64Array(D);
+    let off = 0;
+    for (let i = 0; i < D; i++) { hv[i] = Y[lo + i] - Y[ro + i]; off -= (hv[i] * (Y[lo + i] + Y[ro + i])) / 2; }
+    const L = [], R = [];
+    for (let i = 0; i < m; i++) {
+      let mg = off; const o = idx[i] * D;
+      for (let d = 0; d < D; d++) mg += hv[d] * Y[o + d];
+      if (mg > 0 || (mg === 0 && rand() < 0.5)) L.push(idx[i]); else R.push(idx[i]);
     }
-    const agg = { rows: live.slice(), shape: live.slice(), lib: libs, ptr: [0], gi: [], ct: [] };
-    acc.forEach((m) => { [...m.keys()].sort((a, b) => a - b).forEach((g) => { agg.gi.push(g); agg.ct.push(m.get(g)); }); agg.ptr.push(agg.gi.length); });
-    d = agg;
-  }
-  const N = d.rows.length;
-  if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} bins with ≥ ${P.minUmi} UMI${qk ? " that pass the QC filter" : ""}; the shapes hold ${N}.`);
-  if (P.mode === "shapes" && N < 3) throw new Error(`"One dot per shape" needs at least 3 non-empty shapes; there are ${N}.`);
+    if (!L.length || !R.length) { leaves.push(idx); return -leaves.length; }      // no split: one leaf
+    const me = hyper.length;
+    hyper.push(hv); offs.push(off); kids.push([0, 0]);
+    kids[me][0] = build(Uint32Array.from(L)); kids[me][1] = build(Uint32Array.from(R));
+    return me;
+  };
+  const all = new Uint32Array(n); for (let i = 0; i < n; i++) all[i] = i;
+  const root = build(all);
+  return (Q, qo) => {
+    let node = root;
+    while (node >= 0) {
+      let mg = offs[node]; const hv = hyper[node];
+      for (let d = 0; d < D; d++) mg += hv[d] * Q[qo + d];
+      node = kids[node][mg >= 0 ? 0 : 1];
+    }
+    return leaves[-node - 1];
+  };
+}
 
+// k nearest of each query row of Q (nQ x D) among the rows of Y (nS x D); graph: Y's own neighbour
+// lists (gk per row). Returns squared distances, ascending per row.
+function nearestInSample(Y, nS, Q, nQ, D, graph, gk, k, rand) {
+  const trees = []; for (let t = 0; t < 4; t++) trees.push(rpTree(Y, nS, D, 30, rand));
+  const outI = new Float64Array(nQ * k), outD = new Float64Array(nQ * k);   // -1: fewer than k found (never in practice)
+  const stamp = new Uint32Array(nS);
+  const bi = new Float64Array(k), bd = new Float64Array(k);     // the best k: a max-heap
+  let ci = new Uint32Array(1024), cd = new Float64Array(1024), nc = 0;  // candidates to expand: a min-heap
+  const d2 = (qo, p) => { const o = p * D; let r = 0; for (let i = 0; i < D; i++) { const x = Q[qo + i] - Y[o + i]; r += x * x; } return r; };
+  const bestPush = (d, p) => {                                  // replace the root, sift down
+    if (d >= bd[0]) return false;
+    let i = 0;
+    for (;;) {
+      const l = 2 * i + 1, r = l + 1;
+      let s = i, sd = d;
+      if (l < k && bd[l] > sd) { s = l; sd = bd[l]; }
+      if (r < k && bd[r] > sd) { s = r; }
+      if (s === i) break;
+      bd[i] = bd[s]; bi[i] = bi[s]; i = s;
+    }
+    bd[i] = d; bi[i] = p;
+    return true;
+  };
+  const candPush = (d, p) => {
+    if (nc === ci.length) { const a = new Uint32Array(2 * nc), b = new Float64Array(2 * nc); a.set(ci); b.set(cd); ci = a; cd = b; }
+    let i = nc++;
+    while (i > 0) { const up = (i - 1) >> 1; if (cd[up] <= d) break; cd[i] = cd[up]; ci[i] = ci[up]; i = up; }
+    cd[i] = d; ci[i] = p;
+  };
+  const candPop = () => {
+    const top = ci[0], last = --nc, ld = cd[last], lp = ci[last];
+    let i = 0;
+    for (;;) {
+      const l = 2 * i + 1, r = l + 1;
+      if (l >= nc) break;
+      const c = r < nc && cd[r] < cd[l] ? r : l;
+      if (cd[c] >= ld) break;
+      cd[i] = cd[c]; ci[i] = ci[c]; i = c;
+    }
+    cd[i] = ld; ci[i] = lp;
+    return top;
+  };
+  const eps2 = 1.1 * 1.1;
+  for (let q = 0, s = 1; q < nQ; q++, s++) {
+    const qo = q * D;
+    bd.fill(Infinity); bi.fill(-1); nc = 0;
+    for (const tree of trees) {
+      for (const p of tree(Q, qo)) {
+        if (stamp[p] === s) continue;
+        stamp[p] = s;
+        const d = d2(qo, p);
+        bestPush(d, p); candPush(d, p);
+      }
+    }
+    while (nc) {
+      const dTop = cd[0];
+      if (dTop > bd[0] * eps2) break;
+      const p = candPop(), o = p * gk;
+      for (let j = 0; j < gk; j++) {
+        const u = graph[o + j];
+        if (u < 0 || stamp[u] === s) continue;
+        stamp[u] = s;
+        const d = d2(qo, u);
+        if (bestPush(d, u)) candPush(d, u);
+      }
+    }
+    // ascending
+    const ord = Array.from({ length: k }, (_, j) => j).sort((a, b) => bd[a] - bd[b] || bi[a] - bi[b]);
+    for (let j = 0; j < k; j++) { outI[q * k + j] = bi[ord[j]]; outD[q * k + j] = bd[ord[j]]; }
+  }
+  return { idx: outI, d2: outD };
+}
+
+// weights of a placed bin's k sample neighbours, as umap-js's transform starts them: exp(-d / sigma)
+// with sigma found as for the fuzzy graph (rho 0: transform's local connectivity), normalised to sum 1
+function placeWeights(nb, nQ, k) {
+  const w = new Float64Array(nQ * k), target = Math.log(k) / Math.log(2);
+  for (let q = 0; q < nQ; q++) {
+    const o = q * k, dist = (j) => Math.sqrt(nb.d2[o + j]);
+    let lo = 0, hi = Infinity, mid = 1;
+    for (let it = 0; it < 64; it++) {
+      let ps = 0; for (let j = 1; j < k; j++) { const d = dist(j); ps += d > 0 ? Math.exp(-(d / mid)) : 1; }
+      if (Math.abs(ps - target) < 1e-5) break;
+      if (ps > target) { hi = mid; mid = (lo + hi) / 2; } else { lo = mid; if (hi === Infinity) mid *= 2; else mid = (lo + hi) / 2; }
+    }
+    let tot = 0;
+    for (let j = 0; j < k; j++) { const d = dist(j), v = d <= 0 ? 1 : Math.exp(-(d / mid)); w[o + j] = v; tot += v; }
+    for (let j = 0; j < k; j++) w[o + j] = tot > 0 ? w[o + j] / tot : 1 / k;
+  }
+  return w;
+}
+
+// ---- the last run's layout, so the same shapes again with other clustering settings only re-cluster ----
+let lastLayout = null;
+function hashWords(h, buf, off, len) {
+  const n4 = len >> 2, u32 = (off & 3) === 0 ? new Uint32Array(buf, off, n4) : new Uint32Array(buf.slice(off, off + 4 * n4));
+  for (let i = 0; i < n4; i++) h = Math.imul(h ^ u32[i], 0x01000193) >>> 0;
+  const u8 = new Uint8Array(buf, off + 4 * n4, len - 4 * n4);
+  for (let i = 0; i < u8.length; i++) h = Math.imul(h ^ u8[i], 0x01000193) >>> 0;
+  return h;
+}
+function layoutKey(msg) {
+  const P = { ...msg.params }; delete P.resolution;
+  const view = (a) => (a && a.buffer ? hashWords(0x811c9dc5, a.buffer, a.byteOffset, a.byteLength) : 0);
+  let sum = 0, xor = 0;                       // the chunks in any order
+  for (const b of msg.chunks) { const h = hashWords(0x811c9dc5, b, 0, b.byteLength); sum = (sum + h) >>> 0; xor = (xor ^ h) >>> 0; }
+  return [msg.dataKey || "", JSON.stringify(P), msg.nGenes, msg.nShapes, view(msg.rowShape), view(msg.qcKeep), msg.chunks.length, sum, xor].join("|");
+}
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+// log1p CP10k, gene choice, scaling, PCA and UMAP of the bins in d: the exact path (and fast mode's sample)
+function exactCore(d, msg, rand, T, wantLoadings) {
+  const P = msg.params, N = d.rows.length;
+  let t = now();
   // log1p CP10k, then gene stats over the selection (zeros included) and in how many bins
   // each gene is counted at all
   progress("Normalising", 0.05);
@@ -818,54 +1013,208 @@ function run(msg) {
   const ddof = Math.max(1, N - 1);
   const sd = genes.map((g) => Math.sqrt(vr[g] * N / ddof) || 1);
   const c = new Float64Array(K); genes.forEach((g, j) => (c[j] = mu[g] / sd[j]));
-  const wptr = new Uint32Array(N + 1), wcol = [], wval = [];
+  let nnzW = 0;
+  for (let k = 0; k < d.gi.length; k++) if (colOf[d.gi[k]] >= 0) nnzW++;
+  const wptr = new Uint32Array(N + 1), wcol = new Uint32Array(nnzW), wval = new Float64Array(nnzW);
+  let nw = 0;
   for (let i = 0; i < N; i++) {
     for (let k = d.ptr[i]; k < d.ptr[i + 1]; k++) {
       const j = colOf[d.gi[k]]; if (j < 0) continue;
-      wcol.push(j); wval.push(Math.min(10, (val[k] - mu[d.gi[k]]) / sd[j]) + c[j]);
+      wcol[nw] = j; wval[nw++] = Math.min(10, (val[k] - mu[d.gi[k]]) / sd[j]) + c[j];
     }
-    wptr[i + 1] = wcol.length;
+    wptr[i + 1] = nw;
   }
+  T.normalise = now() - t; t = now();
   progress("PCA", 0.15);
   const size = sizeRule(N);
   const nPcs = Math.max(2, Math.min(size.pcs, P.nPcs, N - 1, K - 1));
-  const pca = randomizedPCA(N, K, wptr, Uint32Array.from(wcol), Float64Array.from(wval), c, nPcs, rand);
+  const pca = randomizedPCA(N, K, wptr, wcol, wval, c, nPcs, rand, wantLoadings);
+  T.pca = now() - t;
 
   let emb = new Float32Array(N * 2), method = "umap", umap = null;
   if (P.mode === "shapes" && N < P.minShapesForUmap) {
     method = "pca";
     for (let i = 0; i < N; i++) { emb[2 * i] = pca.scores[i][0]; emb[2 * i + 1] = pca.scores[i][1] || 0; }
   } else {
-    umap = fitUmap(pca.scores, N, size.k, P.minDist, rand);
-    const Y = umap.getEmbedding();
-    for (let i = 0; i < N; i++) { emb[2 * i] = Y[i][0]; emb[2 * i + 1] = Y[i][1]; }
+    umap = fitUmap(pca.scores, N, size.k, P.minDist, rand, T);
+    const Y = umap.embedding;
+    for (let i = 0; i < 2 * N; i++) emb[i] = Y[i];
   }
-  info.nGenesUsed = K; info.minDetect = minDet; info.nPcs = nPcs;
-  info.nNeighbors = umap ? Math.max(2, Math.min(size.k, N - 1)) : null; info.init = umap ? "pca" : null;
-  info.varFrac = pca.varFrac.slice(0, 2); info.method = method;
-  const out = { emb, rows: Uint32Array.from(d.rows), shape: Uint16Array.from(d.shape), info };
+  return { N, val, mu, sd, c, genes, colOf, K, minDet, nPcs, size, pca, umap, emb, method };
+}
 
-  // Leiden on the UMAP's own neighbour graph (bins mode only), seeded with the run's seed
-  const resolution = wantedResolution(msg, P);
-  if (P.mode === "bins" && umap && resolution) {
-    const cluster = clusterGraph(fuzzyGraphCSR(umap, N), N, resolution, P.seed, info);
-    const nCl = info.nClusters;
-    info.markers = nCl > 1 ? clusterMarkers(d, val, genes, colOf, cluster, nCl, msg.geneNames || null) : [[]];
-    // a suggested name per cluster, when the page found a marker set and the gene names
-    const ms = msg.markerSet;
-    if (ms && Array.isArray(ms.types) && ms.types.length && msg.geneNames) {
-      progress("Suggesting cell types", 1);
-      info.celltypes = cellTypes(d, val, cluster, nCl, ms, msg.geneNames);
-    }
-    out.cluster = cluster;
+// gather, the QC filter, the UMI floor, the cap; then the exact path, or in fast mode the sample's
+// exact path and every other bin placed by its nearest sample bins
+function layout(msg) {
+  const P = msg.params, rand = mulberry32(P.seed), T = {};
+  let t = now();
+  progress("Reading bins", 0);
+  let d = gather(msg.chunks, msg.rowShape);
+  // Chunks arrive in whatever order the network finishes them. Put the bins in row order
+  // before anything seeded touches them, or the same shapes and seed give a new layout.
+  d = subset(d, d.rows.map((_, i) => i).sort((a, b) => d.rows[a] - d.rows[b]));
+  const nShapes = msg.nShapes;
+  const found = new Array(nShapes).fill(0), dropped = new Array(nShapes).fill(0);
+  // the page's QC filter (qc.js): one byte per row, 0 = removed; absent when nothing is removed
+  const qk = msg.qcKeep && msg.qcKeep.length ? msg.qcKeep : null, qcOut = new Array(nShapes).fill(0);
+  const ok = [];
+  for (let i = 0; i < d.rows.length; i++) {
+    found[d.shape[i]]++;
+    if (qk && !qk[d.rows[i]]) { qcOut[d.shape[i]]++; continue; }
+    if (d.lib[i] >= P.minUmi) ok.push(i); else dropped[d.shape[i]]++;
   }
+  let sampledFrom = 0;
+  let keep = ok;
+  if (P.mode === "bins" && ok.length > P.cap) {
+    sampledFrom = ok.length;
+    const s = stratifiedSample(ok.map((i) => d.shape[i]), nShapes, P.cap, rand);
+    keep = s.map((j) => ok[j]);
+  }
+  d = subset(d, keep);
+  const kept = new Array(nShapes).fill(0);
+  d.shape.forEach((s) => kept[s]++);
+  const info = { timings: T, found, dropped, kept, sampledFrom, nIn: d.rows.length };
+  if (qk) info.qcRemoved = qcOut;
+
+  // one summed profile per shape
+  if (P.mode === "shapes") {
+    const live = kept.map((n, s) => (n ? s : -1)).filter((s) => s >= 0);
+    const acc = live.map(() => new Map()), libs = live.map(() => 0), pos = new Map(live.map((s, i) => [s, i]));
+    for (let i = 0; i < d.rows.length; i++) {
+      const j = pos.get(d.shape[i]); libs[j] += d.lib[i];
+      for (let k = d.ptr[i]; k < d.ptr[i + 1]; k++) acc[j].set(d.gi[k], (acc[j].get(d.gi[k]) || 0) + d.ct[k]);
+    }
+    const agg = { rows: live.slice(), shape: live.slice(), lib: libs, ptr: [0], gi: [], ct: [] };
+    acc.forEach((m) => { [...m.keys()].sort((a, b) => a - b).forEach((g) => { agg.gi.push(g); agg.ct.push(m.get(g)); }); agg.ptr.push(agg.gi.length); });
+    d = agg;
+  }
+  const N = d.rows.length;
+  if (P.mode === "bins" && N < P.minPoints) throw new Error(`UMAP needs at least ${P.minPoints} bins with ≥ ${P.minUmi} UMI${qk ? " that pass the QC filter" : ""}; the shapes hold ${N}.`);
+  if (P.mode === "shapes" && N < 3) throw new Error(`"One dot per shape" needs at least 3 non-empty shapes; there are ${N}.`);
+  T.read = now() - t;
+
+  // fast mode: "fast", or "auto" above fastAbove bins; never when the sample would be all of them
+  const nSample = P.fastSample || 10000;
+  const fast = P.mode === "bins" && N > nSample && (P.sampling === "fast" || (P.sampling !== "exact" && P.fastAbove > 0 && N > P.fastAbove));
+  if (!fast) {
+    const core = exactCore(d, msg, rand, T, false);
+    info.nGenesUsed = core.K; info.minDetect = core.minDet; info.nPcs = core.nPcs;
+    info.nNeighbors = core.umap ? Math.max(2, Math.min(core.size.k, N - 1)) : null; info.init = core.umap ? "pca" : null;
+    info.varFrac = core.pca.varFrac.slice(0, 2); info.method = core.method;
+    return { d, val: core.val, genes: core.genes, colOf: core.colOf, emb: core.emb, info, umap: !!core.umap,
+             csr: core.umap ? fuzzyGraphCSR(core.umap.graph, N) : null, nG: N, fast: null };
+  }
+
+  // ---- fast mode ----
+  const sIdx = stratifiedSample(d.shape, nShapes, nSample, rand), nS = sIdx.length;
+  const ds = subset(d, sIdx);
+  const core = exactCore(ds, msg, rand, T, true);
+  t = now();
+  progress("Placing the other bins", 0.97);
+  // every bin: log1p CP10k (for the markers), and its row of Z (the sample's scaling) on the sample's PCs
+  const D = core.nPcs, Lg = core.pca.loadings, val = new Float64Array(d.ct.length), proj = new Float64Array(N * D);
+  const cL = new Float64Array(D);
+  for (let j = 0; j < D; j++) { let s = 0; for (let g = 0; g < core.K; g++) s += core.c[g] * Lg[j][g]; cL[j] = s; }
+  for (let i = 0; i < N; i++) {
+    const f = 1e4 / d.lib[i], o = i * D;
+    for (let j = 0; j < D; j++) proj[o + j] = -cL[j];
+    for (let k = d.ptr[i]; k < d.ptr[i + 1]; k++) {
+      const v = Math.log1p(d.ct[k] * f); val[k] = v;
+      const g = core.colOf[d.gi[k]]; if (g < 0) continue;
+      const w = Math.min(10, (v - core.mu[d.gi[k]]) / core.sd[g]) + core.c[g];
+      for (let j = 0; j < D; j++) proj[o + j] += w * Lg[j][g];
+    }
+  }
+  const isSample = new Uint8Array(N);
+  sIdx.forEach((i) => (isSample[i] = 1));
+  const Y = new Float64Array(nS * D);
+  for (let j = 0; j < nS; j++) Y.set(proj.subarray(sIdx[j] * D, sIdx[j] * D + D), j * D);
+  const others = []; for (let i = 0; i < N; i++) if (!isSample[i]) others.push(i);
+  const nQ = others.length, Q = new Float64Array(nQ * D);
+  others.forEach((i, q) => Q.set(proj.subarray(i * D, i * D + D), q * D));
+  const k = FAST.k, knn = core.umap.knn;
+  const nb = nearestInSample(Y, nS, Q, nQ, D, knn.idx, knn.k, k, mulberry32((P.seed ^ 0x2545f491) >>> 0));
+  const w = placeWeights(nb, nQ, k);
+  const emb = new Float32Array(2 * N), E = core.emb;
+  for (let j = 0; j < nS; j++) { emb[2 * sIdx[j]] = E[2 * j]; emb[2 * sIdx[j] + 1] = E[2 * j + 1]; }
+  others.forEach((i, q) => {
+    let x = 0, y = 0;
+    for (let j = 0; j < k; j++) { const s = nb.idx[q * k + j], ww = w[q * k + j]; if (s >= 0) { x += ww * E[2 * s]; y += ww * E[2 * s + 1]; } }
+    emb[2 * i] = x; emb[2 * i + 1] = y;
+  });
+  T.place = now() - t;
+  info.nGenesUsed = core.K; info.minDetect = core.minDet; info.nPcs = core.nPcs;
+  info.nNeighbors = Math.max(2, Math.min(core.size.k, nS - 1)); info.init = "pca";
+  info.varFrac = core.pca.varFrac.slice(0, 2); info.method = "umap";
+  info.fast = { sample: nS, of: N, k, isSample, placedBy: `the ${k} nearest sample bins in PCA space (weighted mean of their UMAP positions; their clusters by weighted vote)`,
+                above: P.fastAbove || null, chosen: P.sampling === "fast" ? "asked" : "auto" };
+  return { d, val, genes: core.genes, colOf: core.colOf, emb, info, umap: true, csr: fuzzyGraphCSR(core.umap.graph, nS), nG: nS,
+           fast: { sIdx, others, nb, w, k } };
+}
+const FAST = { k: 15 };
+
+// Leiden (bins mode only, seeded with the run's seed), markers and suggested names; in fast mode the
+// sample's clusters, every other bin taking the weighted vote of its nearest sample bins
+async function clusterStage(Lay, msg, info) {
+  const P = msg.params, resolution = wantedResolution(msg, P);
+  if (!(P.mode === "bins" && Lay.umap && resolution)) return null;
+  let t = now();
+  let cluster = await clusterGraph(Lay.csr, Lay.nG, resolution, P.seed, info, !!Lay.fast);
+  const nCl = info.nClusters;
+  if (Lay.fast) {
+    const F = Lay.fast, N = Lay.d.rows.length, all = new Uint16Array(N), votes = new Float64Array(nCl);
+    F.sIdx.forEach((i, j) => (all[i] = cluster[j]));
+    F.others.forEach((i, q) => {
+      votes.fill(0);
+      for (let j = 0; j < F.k; j++) { const s = F.nb.idx[q * F.k + j]; if (s >= 0) votes[cluster[s]] += F.w[q * F.k + j]; }
+      let b = 0; for (let c = 1; c < nCl; c++) if (votes[c] > votes[b]) b = c;
+      all[i] = b;
+    });
+    info.fast.sampleClusterSizes = info.clusterSizes;
+    const sizes = new Array(nCl).fill(0); all.forEach((c) => sizes[c]++);
+    info.clusterSizes = sizes;
+    cluster = all;
+  }
+  info.timings.leiden = now() - t; t = now();
+  info.markers = nCl > 1 ? clusterMarkers(Lay.d, Lay.val, Lay.genes, Lay.colOf, cluster, nCl, msg.geneNames || null) : [[]];
+  // a suggested name per cluster, when the page found a marker set and the gene names
+  const ms = msg.markerSet;
+  if (ms && Array.isArray(ms.types) && ms.types.length && msg.geneNames) {
+    progress("Suggesting cell types", 1);
+    info.celltypes = cellTypes(Lay.d, Lay.val, cluster, nCl, ms, msg.geneNames);
+  }
+  info.timings.markers = now() - t;
+  return cluster;
+}
+
+async function run(msg) {
+  const key = layoutKey(msg);
+  let Lay, info;
+  if (lastLayout && lastLayout.key === key) {
+    Lay = lastLayout.lay;
+    info = clone({ ...lastLayout.info, fast: null });
+    if (lastLayout.info.fast) info.fast = { ...clone({ ...lastLayout.info.fast, isSample: null }), isSample: lastLayout.info.fast.isSample.slice() };
+    info.timings = { reusedLayout: 1 };
+    progress("Same shapes and settings: re-clustering the last layout", 0.9);
+  } else {
+    lastLayout = null;                          // a new layout: drop the old one first (memory)
+    Lay = layout(msg);
+    info = Lay.info;
+    const keepInfo = { ...info, fast: null, timings: null };
+    lastLayout = { key, lay: Lay, info: { ...clone(keepInfo), fast: info.fast ? { ...clone({ ...info.fast, isSample: null }), isSample: info.fast.isSample.slice() } : null } };
+  }
+  const out = { emb: Lay.emb.slice(), rows: Uint32Array.from(Lay.d.rows), shape: Uint16Array.from(Lay.d.shape), info };
+  const cluster = await clusterStage(Lay, msg, info);
+  if (cluster) out.cluster = cluster;
   return out;
 }
 
 onmessage = async (ev) => {
   try {
     await umapReady;
-    const r = ev.data.protein ? runProtein(ev.data) : run(ev.data);
+    const t0 = now();
+    const r = ev.data.protein ? await runProtein(ev.data) : await run(ev.data);
+    if (r.info && r.info.timings) r.info.timings.total = now() - t0;
     const tr = [r.emb.buffer, r.rows.buffer, r.shape.buffer];
     if (r.cluster) tr.push(r.cluster.buffer);
     postMessage({ type: "done", ...r }, tr);

@@ -84,6 +84,11 @@ loads before viewer.js, viewer.js still has its three tile decoders in order and
 tile and graphics failures, and, when node is installed, tests/diag_test.js passes (the
 panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright); tests/browsers_test.js
 runs the page on this export in Chromium, WebKit (Safari's engine), Edge and an iPhone-sized WebKit (Playwright).
+tests/drawregion_test.js (Playwright, Chromium): Draw a region's worker on a seeded synthetic region gives the
+layout and clusters stored in tests/fixtures/drawregion_exact.json (written by the worker before its speed work),
+re-clusters a kept layout, and its fast mode (a sample laid out, the other bins placed by their nearest sample
+bins) is seeded and agrees with the exact path; on this export, fast mode is labelled (panel, message, Save image
+legend), recorded by Save JSON and Save CSV, undone by Run on every bin, and kept by a link to the view.
 Also: prepare.py caps the BLAS / OpenMP threads before numpy loads (threadcap.py: default,
 SODA_THREADS, --threads, a variable already set), the PCA runs on one thread and gives the same
 numbers as on the cap's threads; and the dataset picker (dspicker.js) is wired into the page with its
@@ -3990,7 +3995,7 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
         lg.write(p.stdout)
     print("    " + (p.stdout.strip().splitlines()[-1] if p.stdout.strip() else "(no output)"))
     c.eq(p.returncode, 0, "node tests/diag_test.js (exit code)")
-    for f in ("viewer.js", "diag.js"):
+    for f in ("viewer.js", "diag.js", "lasso_worker.js", "umapfit.js", "leiden_worker.js"):
         q = subprocess.run([node, "--check", str(APP / f)], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         c.eq(q.returncode, 0, f"node --check {f}")
     # old exports still open (SKIPPED without Playwright); and the current, packed ones (--packed): a gene by
@@ -4014,6 +4019,15 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
         lg.write(p.stdout)
     print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
     c.eq(p.returncode, 0, "node tests/browsers_test.js: the page works in Chromium, WebKit and Edge (exit code)")
+    # Draw a region: the exact path against its fixture, fast mode in the worker and on this export (SKIPPED
+    # without Playwright, or without umap-js from the CDN)
+    p = subprocess.run([node, str(REPO / "tests" / "drawregion_test.js"), "--export", str(root / "export"),
+                        "--shots", str(root / "browsers_shots")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/drawregion_test.js: Draw a region's exact path = its fixture; fast mode labelled, saved and undone (exit code)")
 
 
 THREAD_PROBE = r"""
@@ -4364,6 +4378,14 @@ def check_offline(c: Checker, root: Path, log_path: Path):
     v_worker = re.search(r'importScripts\("libs\.js\?v=([\w.-]+)"\)', w)
     c.ok(bool(v_index and v_worker and v_index.group(1) == v_worker.group(1)),
          "lasso_worker.js imports the same libs.js ?v= as index.html loads")
+    # its helpers: umapfit.js (umap-js's fit over typed arrays) and leiden_worker.js (the stability sweep's runs)
+    c.ok(re.search(r'importScripts\("umapfit\.js\?v=[\w.-]+"\)', w) is not None and re.search(r'"leiden_worker\.js\?v=[\w.-]+"', w) is not None
+         and (APP / "umapfit.js").exists() and (APP / "leiden_worker.js").exists(),
+         "lasso_worker.js names umapfit.js and leiden_worker.js with ?v= strings, and both are in the page folder")
+    lw = (APP / "leiden_worker.js").read_text(encoding="utf-8")
+    v_l1 = re.search(r'importScripts\("leiden\.js\?v=([\w.-]+)"\)', w)
+    v_l2 = re.search(r'importScripts\("leiden\.js\?v=([\w.-]+)"\)', lw)
+    c.ok(bool(v_l1 and v_l2 and v_l1.group(1) == v_l2.group(1)), "lasso_worker.js and leiden_worker.js import the same leiden.js ?v=")
     # the service worker keeps what a script names as "<name>.js?v=...": every worker and import must be named that way
     allj = "".join((APP / f).read_text(encoding="utf-8") for f in sorted(os.listdir(APP))
                    if f.endswith(".js") and f not in ("config.js", "sw.js"))

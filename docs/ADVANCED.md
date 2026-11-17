@@ -182,8 +182,9 @@ The page, in `web/SpatialViewer/`:
 | `roi.js` | what differs for GeoMx ROI layers: words, drawing, notes |
 | `plots.js`, `plots_worker.js` | heatmap, dot plot and violin plots; the worker does the numbers |
 | `volcano.js`, `de_worker.js` | the volcano plot; the worker runs the differential expression test |
-| `lasso_worker.js` | Draw a region (circle → UMAP): PCA, UMAP, Leiden and markers in the browser |
-| `leiden.js` | Leiden clustering, used by `lasso_worker.js` |
+| `lasso_worker.js` | Draw a region (circle → UMAP): PCA, UMAP, Leiden and markers in the browser; fast mode above 20,000 bins |
+| `umapfit.js` | umap-js's fit (nearest neighbours, fuzzy graph, layout) over typed arrays, the same numbers as umap-js; used by `lasso_worker.js` |
+| `leiden.js`, `leiden_worker.js` | Leiden clustering, used by `lasso_worker.js`; the worker runs the stability sweep's Leiden runs on spare cores |
 | `diag.js` | the `&diag=1` diagnostic panel |
 | `styles.css`, `layout.css`, `dspicker.css`, `plots.css`, `volcano.css` | how the page looks; each `.css` belongs to the `.js` of the same name, `styles.css` to the rest |
 

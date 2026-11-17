@@ -75,6 +75,10 @@ const REGIONS = arg("--regions");
 const TARGETS = (arg("--targets", "") || "").split(",").filter(Boolean).map(Number);
 const LEIDEN = arg("--leiden", "off").split(",");
 const TIMEOUT = +arg("--timeout-s", 180) * 1000;
+// region mode: --sampling exact|fast puts that choice in the job (Save JSON's "sampling"; absent = the page's
+// default for the region's size); --dump <dir> writes each run's rows, embedding and clusters there as JSON
+const SAMPLING = arg("--sampling", "");
+const DUMP = arg("--dump") && path.resolve(arg("--dump"));
 if (!DATA_ROOT || !DS) { console.error("need --data-root and --ds"); process.exit(2); }
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -308,11 +312,12 @@ async function regionRuns(ctx, url, profile, rec) {
   for (const leiden of LEIDEN) {
     for (const region of regions) {
       const job = { tool: "SODA circle -> UMAP", version: 1, dataset: DS, layer: LAYER, seed: 42, mode: "bins",
-        resolution: leiden === "on" ? "auto" : 0, shapes: [{ name: `circle ${region.target}`, color: "#e6194b", kind: "circle", points: region.points }], qcFilter: null };
+        resolution: leiden === "on" ? "auto" : 0, shapes: [{ name: `circle ${region.target}`, color: "#e6194b", kind: "circle", points: region.points }], qcFilter: null,
+        ...(SAMPLING ? { sampling: SAMPLING } : {}) };
       const peak = { private_mb: 0 };
       let sampling = true;
       const sampler = (async () => { while (sampling) { const m = browserMem(profile); if (m && m.private_mb) peak.private_mb = Math.max(peak.private_mb, m.private_mb); await sleep(1000); } })();
-      const r = await page.evaluate(async ([job, ms]) => {
+      const r = await page.evaluate(async ([job, ms, dump]) => {
         const V = window.__spatialViewer, S = V.state, msgEl = document.getElementById("lassoMsg"), panel = document.getElementById("lassoPanel");
         const msgs = [];
         const mo = new MutationObserver(() => msgs.push([performance.now(), msgEl.textContent.slice(0, 160)]));
@@ -336,8 +341,17 @@ async function regionRuns(ctx, url, profile, rec) {
         const R = S.lasso.result, click = msgs.find((m) => /^Fetching/.test(m[1]));
         return { err, t_click: click ? click[0] : null, t_load, t_shown, secs: R ? R.secs : null,
                  nIn: R ? R.info.nIn : null, nClusters: R ? R.info.nClusters || null : null, bins: S.lasso.shapes.map((s) => s.bins)[0],
-                 heap_mb: performance.memory ? performance.memory.usedJSHeapSize / 1e6 : null };
-      }, [job, TIMEOUT]);
+                 fast: R && R.info.fast ? { sample: R.info.fast.sample, of: R.info.fast.of } : null,
+                 timings: R && R.info.timings ? R.info.timings : null,
+                 heap_mb: performance.memory ? performance.memory.usedJSHeapSize / 1e6 : null,
+                 dump: dump && R ? { rows: Array.from(R.rows), emb: Array.from(R.emb), cluster: R.cluster ? Array.from(R.cluster) : null,
+                                     resolution: R.resolution, nClusters: R.info.nClusters || null, sampled: R.info.fast ? Array.from(R.info.fast.isSample || []) : null } : null };
+      }, [job, TIMEOUT, !!DUMP]);
+      if (r.dump) {
+        fs.mkdirSync(DUMP, { recursive: true });
+        fs.writeFileSync(path.join(DUMP, `${LABEL}_n${region.target}_leiden${leiden}${SAMPLING ? "_" + SAMPLING : ""}_r${rec.rep || 0}.json`), JSON.stringify(r.dump));
+        delete r.dump;
+      }
       sampling = false; await sampler;
       const row = { target: region.target, leiden, ...r, region_ms: r.t_click == null ? null : Math.round(r.t_shown - r.t_click),
                     load_to_shown_ms: Math.round(r.t_shown - r.t_load), browser_private_peak_mb: peak.private_mb };
@@ -371,11 +385,14 @@ async function regionRuns(ctx, url, profile, rec) {
     res.browser = ctx.browser() ? ctx.browser().version() : null;
     try {
       if (MODE === "region") {
+        rec.rep = rep;
         const runs = await regionRuns(ctx, url, profile, rec);
         res.runs.push({ rep, runs });
         for (const r of runs) {
           const st = `region ${r.target} bins, Leiden ${r.leiden}`;
-          add(st, "", "region_ms", r.region_ms, "ms", rep, `nIn ${r.nIn}; bins in shape ${r.bins}; app-reported ${r.secs} s` + (r.err ? `; ERROR ${r.err}` : ""));
+          add(st, "", "region_ms", r.region_ms, "ms", rep, `nIn ${r.nIn}; bins in shape ${r.bins}; app-reported ${r.secs} s` +
+            (r.fast ? `; fast mode: UMAP of a ${r.fast.sample}-bin sample of ${r.fast.of}` : SAMPLING ? `; sampling ${SAMPLING}` : "") +
+            (r.timings ? `; worker ms ${Object.entries(r.timings).map(([k, v]) => `${k} ${Math.round(v)}`).join(" ")}` : "") + (r.err ? `; ERROR ${r.err}` : ""));
           add(st, "", "browser_private_peak_mb", r.browser_private_peak_mb, "MB", rep);
         }
       } else {

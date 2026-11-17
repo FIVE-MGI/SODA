@@ -3,7 +3,7 @@
 SODA has two halves:
 
 - **the page**: the files in `web/SpatialViewer/` that a browser runs (`index.html`,
-  `viewer.js`, `styles.css`, `lasso_worker.js`, `leiden.js`, and your `config.js`);
+  `viewer.js`, `styles.css`, `lasso_worker.js`, `umapfit.js`, `leiden.js`, `leiden_worker.js`, and your `config.js`);
 - **the data**: one folder per dataset, written by `prepare.py export`
   (layout in [DATA_FORMAT.md](DATA_FORMAT.md)). It is plain files: images cut into
   tiles, JSON and small binary arrays. Nothing has to run on the server.
@@ -102,7 +102,7 @@ window.SpatialViewerConfig = {
 next to the page:
 
 ```
-index.html  viewer.js  styles.css  lasso_worker.js  leiden.js  config.js  logos/
+index.html  viewer.js  styles.css  lasso_worker.js  umapfit.js  leiden.js  leiden_worker.js  config.js  logos/
 data/demo_visiumhd/manifest.json
 data/demo_visiumhd/tiles/...
 ```

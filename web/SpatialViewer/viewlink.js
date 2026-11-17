@@ -241,6 +241,7 @@
     put(o, "dataset", str(j.dataset, 200)); put(o, "layer", str(j.layer, 120));
     put(o, "seed", int(j.seed, 0, 2147483647)); put(o, "mode", oneOf(j.mode, ["bins", "shapes"]));
     if (j.resolution === "auto") o.resolution = "auto"; else put(o, "resolution", num(j.resolution, 0, 100));
+    put(o, "sampling", oneOf(j.sampling, ["auto", "exact", "fast"]));     // Draw a region: every bin, or a sample above the threshold
     put(o, "shapes", list(j.shapes, 64, cleanShape));
     if (isObj(j.sectionClusters)) {
       const c = j.sectionClusters, s = {};
@@ -293,6 +294,7 @@
     if (Number.isInteger(st.seed) && st.seed !== 42) o.seed = st.seed;
     if (st.mode === "shapes") o.mode = st.mode;
     if (st.resolution !== "auto" && Number.isFinite(st.resolution)) o.resolution = st.resolution;
+    if (st.sampling === "exact" || st.sampling === "fast") o.sampling = st.sampling;
     if (Array.isArray(st.shapes) && st.shapes.length) o.shapes = st.shapes;
     const sc = st.sectionClusters;
     if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [], ...(sc.sets ? { sets: sc.sets } : {}) };
