@@ -3054,7 +3054,8 @@ def detect_commands(root: Path) -> list[list[str]]:
 
 
 def clean_detect(root: Path):
-    for p in (root / "detect" / "cache", root / "detect" / "cache_kind"):
+    # never/: what an earlier run's `prepare.py auto` must not have written (left over, it would fail this run too)
+    for p in (root / "detect" / "cache", root / "detect" / "cache_kind", root / "detect" / "never"):
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
