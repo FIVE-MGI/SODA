@@ -80,6 +80,13 @@ files (empty, two platforms mixed, Space Ranger output with no / two / one right
 folder with and without spatial/, a zip, missing stains, a missing path ...) must get the planned verdict and
 wording, with `auto` stopping (exit 3 / 4 / 5) and writing nothing. The notebook must be valid, without
 outputs, compile, and find its datasets through detect.py.
+Batch export (web/SpatialViewer/batch.py, `prepare.py batch`) over a folder of dataset folders built from the
+synthetic ones (batch/inputs): three that detection is sure of, one that only the options file settles ("kind"),
+one that is certain but cannot be read, one with an open choice and one whose name looks like a sample ID. The
+good ones must export (two at a time) and be in datasets.json, the broken one must fail with its last lines
+logged without stopping the others, the other two must be skipped with what to add, the exit code must be 1, the
+log (.md / .json / .csv) must hold time, peak memory and size per dataset and pass `deid.py check`, a second run
+must skip what is done, and a dry run must write nothing.
 Sharing (viewlink.js: the link that
 restores a view; compare.js: linked windows): both load before viewer.js with ?v= strings, the ids they
 build are there and clash with none of the page's, viewer.js hands them its functions and has one
@@ -2681,6 +2688,175 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
     return out
 
 
+# ------------------------------------------------------------------ batch export (batch.py, prepare.py batch)
+# a folder of dataset folders: three demo folders copied as they are, one that only the options file settles,
+# one that detection calls certain but prepare cannot read, one with an open choice, one whose name looks like
+# a sample ID, and a stray file that is not a dataset
+BATCH_GOOD = {"bx_xenium": "xenium_pq", "bx_geomx": "geomx", "bx_cosmx": "cosmx_tx"}
+BATCH_MIXED = "bx_mixed"            # xenium_pq + MERSCOPE tables: two kinds; the options file says "kind": "xenium"
+BATCH_BROKEN = "bx_broken"          # a Xenium folder whose stain file is not a TIFF: certain, then prepare fails
+BATCH_AMBIG = "bx_two_runs"         # MERSCOPE with two segmentation runs: skipped, with the --cells-dir to add
+BATCH_IDLIKE = "INT" + "9961_scan"  # a folder name that looks like a sample ID (made up; deid:ok): skipped, never written
+BATCH_OK = sorted(list(BATCH_GOOD) + [BATCH_MIXED])
+
+
+def make_batch_inputs(root: Path) -> tuple[Path, Path]:
+    """root/batch/inputs (the dataset folders) and root/batch/options.json, from the synthetic raw/ folders."""
+    b = root / "batch"
+    if b.exists():
+        shutil.rmtree(b)
+    inp = b / "inputs"
+    for name, raw in BATCH_GOOD.items():
+        shutil.copytree(root / "raw" / raw, inp / name)
+    shutil.copytree(root / "raw" / "xenium_pq", inp / BATCH_MIXED)
+    for n in ("detected_transcripts.csv", "cell_by_gene.csv", "cell_metadata.csv"):
+        _touch(inp / BATCH_MIXED / n, b"a,b\n")
+    for d in (BATCH_BROKEN, BATCH_IDLIKE):
+        _touch(inp / d / "experiment.xenium", b"{}")
+        _touch(inp / d / "morphology_focus" / "ch0000_dapi.ome.tif", b"not a TIFF")
+        _touch(inp / d / "transcripts.parquet", b"not parquet")
+    _touch(inp / BATCH_AMBIG / "detected_transcripts.csv", b"a,b\n")
+    for run_ in ("vpt-run-a", "vpt-run-b"):
+        for n in ("cell_by_gene.csv", "cell_metadata.csv"):
+            _touch(inp / BATCH_AMBIG / run_ / n, b"a,b\n")
+    _touch(inp / "notes.txt", b"not a dataset\n")
+    opts = b / "options.json"
+    opts.write_text(json.dumps({"_comment": "the notebook's OPTIONS as JSON",
+                                "bx_cosmx": {"pixel_size": 0.5, "label": "Batch CosMx"},
+                                BATCH_MIXED: {"kind": "xenium"}}, indent=1), encoding="utf-8")
+    return inp, opts
+
+
+def batch_args(root: Path, *extra: str) -> list[str]:
+    b = root / "batch"
+    return ["web/SpatialViewer/prepare.py", "batch", "--src", str(b / "inputs"), "--out", str(b / "cache"),
+            "--dest", str(b / "export"), "--options", str(b / "options.json"), *extra]
+
+
+def run_batch(root: Path, log_path: Path) -> dict:
+    """The batch three times: the first run (two at a time), the same again (resume), a dry run of one dataset
+    with --rebuild. A failing dataset makes the exit code 1, so these do not go through run()."""
+    make_batch_inputs(root)
+    runs = {}
+    for name, extra in (("first", ["--jobs", "2", "--markers-genes", "examples/demo_xenium_markers.json",
+                                   "--title", "Batch test"]),
+                        ("again", []),
+                        ("dry", ["--only", "bx_cosmx", "--rebuild", "--dry-run"])):
+        args = batch_args(root, *extra)
+        before = {p.name for p in (root / "batch" / "logs").glob("batch_*.json")} if (root / "batch" / "logs").exists() else set()
+        print(f"$ python {' '.join(args)}", flush=True)
+        t0 = time.time()
+        p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        dt = time.time() - t0
+        with open(log_path, "a", encoding="utf-8") as lg:
+            lg.write(f"\n$ python {' '.join(args)}\n{p.stdout}")
+        print("    " + "\n    ".join(p.stdout.rstrip().splitlines()[-8:]), flush=True)
+        print(f"    (exit {p.returncode}, {dt:.1f}s)", flush=True)
+        new = sorted({q.name for q in (root / "batch" / "logs").glob("batch_*.json")} - before) if (root / "batch" / "logs").exists() else []
+        runs[name] = {"exit": p.returncode, "seconds": round(dt, 1), "stdout": p.stdout,
+                      "report": str(root / "batch" / "logs" / new[-1]) if new else None, "newReports": len(new)}
+    (root / "batch" / "runs.json").write_text(json.dumps(runs, indent=1), encoding="utf-8")
+    return runs
+
+
+def check_batch(c: Checker, root: Path, log_path: Path) -> dict:
+    """prepare.py batch: the good datasets export, the broken one fails and is logged without stopping the others,
+    the unsure one and the ID-like one are skipped with what to do, the exit code says so, datasets.json lists the
+    good ones, the log is a table (md, json, csv) with no sample ID, and a second run skips what is done."""
+    b = root / "batch"
+    if not c.ok((b / "runs.json").exists(), "batch: the batch runs happened (batch/runs.json)"):
+        return {}
+    runs = read_json(b / "runs.json")
+    first, again, dry = runs["first"], runs["again"], runs["dry"]
+    c.eq(first["exit"], 1, "batch first run: exit code 1 (one dataset failed)")
+    if not c.ok(first["report"] and Path(first["report"]).exists(), "batch first run: a JSON report in batch/logs"):
+        return {}
+    rep = read_json(Path(first["report"]))
+    rows = {r["id"]: r for r in rep["datasets"]}
+    idlike_shown = [k for k in rows if "[sample ID]" in k]
+    c.eq(sorted(k for k in rows if k not in idlike_shown), sorted(BATCH_OK + [BATCH_BROKEN, BATCH_AMBIG]),
+         "batch: one row per dataset folder, none for the stray notes.txt")
+    c.ok(len(idlike_shown) == 1 and rows[idlike_shown[0]]["status"] == "skipped"
+         and "sample ID" in " ".join(rows[idlike_shown[0]]["problems"]),
+         f"batch: the folder whose name looks like a sample ID is skipped and shown as [sample ID] ({idlike_shown})")
+    for ds in BATCH_OK:
+        r = rows.get(ds, {})
+        c.ok(r.get("status") == "ok" and (b / "export" / ds / "manifest.json").exists(),
+             f"batch: {ds} ok and exported (got {r.get('status')}: {r.get('reason')})")
+        c.ok((r.get("exportFiles") or 0) > 3 and (r.get("exportBytes") or 0) > 1000 and (r.get("seconds") or 0) > 0,
+             f"batch: {ds} has its time and export size in the log ({r.get('seconds')} s, {r.get('exportFiles')} files)")
+        if sys.platform == "win32" or sys.platform.startswith("linux"):
+            c.ok((r.get("peakMemoryBytes") or 0) > 20 * 2**20,
+                 f"batch: {ds} peak memory measured ({r.get('peakMemoryBytes')} bytes)")
+    br = rows.get(BATCH_BROKEN, {})
+    c.ok(br.get("status") == "failed" and "prepare failed" in br.get("reason", "") and len(br.get("errorTail") or []) >= 2,
+         f"batch: {BATCH_BROKEN} failed in prepare, with the last lines of its error ({br.get('reason')})")
+    c.ok(not (b / "export" / BATCH_BROKEN).exists() and not (b / "cache" / BATCH_BROKEN / "manifest.json").exists(),
+         f"batch: nothing finished was written for {BATCH_BROKEN}")
+    c.ok((b / "logs" / f"{BATCH_BROKEN}_prepare.log").exists(), f"batch: {BATCH_BROKEN}_prepare.log kept")
+    am = rows.get(BATCH_AMBIG, {})
+    hint = "\n".join(am.get("hint") or [])
+    c.ok(am.get("status") == "skipped" and "not sure" in am.get("reason", "") and f'"{BATCH_AMBIG}": {{"kind": "merscope", "cells_dir": ' in hint
+         and "--kind merscope --cells-dir" in hint and "vpt-run-a" in hint and "vpt-run-b" in hint,
+         f"batch: {BATCH_AMBIG} skipped, with the options-file entry and the flag that settle it ({am.get('reason')}; {hint[:300]!r})")
+    c.ok(not (b / "export" / BATCH_AMBIG).exists() and not (b / "cache" / BATCH_AMBIG).exists(),
+         f"batch: nothing written for {BATCH_AMBIG}")
+    mixed = read_json(b / "export" / BATCH_MIXED / "manifest.json") if (b / "export" / BATCH_MIXED / "manifest.json").exists() else {}
+    c.eq(mixed.get("kind"), "xenium", f"batch: {BATCH_MIXED} (two kinds) prepared as the options file's kind")
+    cx = read_json(b / "export" / "bx_cosmx" / "manifest.json") if (b / "export" / "bx_cosmx" / "manifest.json").exists() else {}
+    cxlog = (b / "logs" / "bx_cosmx_prepare.log").read_text(encoding="utf-8") if (b / "logs" / "bx_cosmx_prepare.log").exists() else ""
+    c.ok(cx.get("label") == "Batch CosMx" and re.search(r"\[auto\] running: python prepare\.py cosmx .*--pixel-size 0\.5", cxlog),
+         f"batch: the options file's label and pixel_size reach bx_cosmx's prepare ({cx.get('label')!r})")
+    cat = read_json(b / "export" / "datasets.json") if (b / "export" / "datasets.json").exists() else {}
+    c.eq(sorted(e["id"] for e in cat.get("datasets", [])), BATCH_OK, "batch: datasets.json lists the datasets that exported")
+    c.eq(cat.get("title"), "Batch test", "batch: --title reaches datasets.json")
+    c.ok(rep.get("deid", {}).get("clean") is True and rep.get("catalog", {}).get("exit") == 0,
+         f"batch: the report has catalog.py's result and a clean sample ID check ({rep.get('deid', {}).get('text')})")
+    stem = Path(first["report"]).with_suffix("")
+    md = stem.with_suffix(".md").read_text(encoding="utf-8") if stem.with_suffix(".md").exists() else ""
+    c.ok("| id | kind | status | time | peak memory | export size | note |" in md and f"| {BATCH_BROKEN} | xenium" in md
+         and "## Failed" in md and "## Skipped" in md and "```" in md, "batch: the .md log has the table, the failure's last lines and the skipped ones")
+    try:
+        import csv as _csv
+        with open(stem.with_suffix(".csv"), newline="", encoding="utf-8") as f:
+            crow = {r["id"]: r for r in _csv.DictReader(f)}
+        c.ok({k: v["status"] for k, v in crow.items()} == {k: v["status"] for k, v in rows.items()}
+             and crow[BATCH_BROKEN]["error_tail"] and crow[BATCH_OK[0]]["peak_memory_mb"] != "",
+             "batch: the .csv log has the same rows and statuses, the error tail and the peak memory")
+    except (OSError, KeyError) as e:
+        c.ok(False, f"batch: the .csv log could not be read ({e})")
+    out = first["stdout"]
+    c.ok("1 failed" in out and "[batch] log:" in out and str(b / "export") in out and "exit code 1" in out,
+         "batch: the closing summary gives the counts, the paths and the exit code")
+    # nothing in the export or the logs looks like a sample ID; the ID-like folder name is nowhere in them
+    args = ["web/SpatialViewer/deid.py", "check", str(b / "export"), str(b / "logs")]
+    print(f"$ python {' '.join(args)}", flush=True)
+    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "deid.py check on the batch export and its logs (exit code)")
+    leak = [q for q in (b / "logs").rglob("*") if q.is_file() and BATCH_IDLIKE in q.read_text(encoding="utf-8", errors="ignore")]
+    c.ok(not leak and BATCH_IDLIKE not in first["stdout"], f"batch: the ID-like folder name is in no log file and not printed ({leak[:2]})")
+    # the second run: the finished ones are skipped, the broken one fails again on its own
+    c.eq(again["exit"], 1, "batch second run: exit code 1 again (the broken dataset still fails)")
+    rep2 = read_json(Path(again["report"])) if again.get("report") else {"datasets": []}
+    rows2 = {r["id"]: r for r in rep2["datasets"]}
+    c.ok(all(rows2.get(ds, {}).get("status") == "skipped" and rows2[ds]["reason"].startswith("already exported")
+             for ds in BATCH_OK), "batch second run: every exported dataset skipped as already exported")
+    c.eq(rows2.get(BATCH_BROKEN, {}).get("status"), "failed", f"batch second run: {BATCH_BROKEN} tried again and failed again")
+    c.ok(not any("prepare" in s or "export" in s for ds in BATCH_OK for s in [rows2.get(ds, {}).get("steps", {})]),
+         "batch second run: no prepare or export ran for the finished datasets")
+    c.ok(again["seconds"] < first["seconds"], f"batch second run: faster ({again['seconds']}s vs {first['seconds']}s)")
+    # the dry run
+    c.ok(dry["exit"] == 0 and "would run" in dry["stdout"] and "prepare.py auto --src" in dry["stdout"]
+         and dry["newReports"] == 0, f"batch --dry-run --only --rebuild: says what would run, writes no report (exit {dry['exit']})")
+    print(f"    batch: {len(BATCH_OK)} exported, 1 failed, 2 skipped; first run {first['seconds']}s, again {again['seconds']}s")
+    return {"exported": len(BATCH_OK), "firstSec": first["seconds"], "againSec": again["seconds"]}
+
+
 def check_notebook(c: Checker):
     """notebooks/SODA_pipeline.ipynb: valid, no saved outputs, code that compiles, and its dataset finding is detect.py's."""
     p = REPO / "notebooks" / "SODA_pipeline.ipynb"
@@ -3596,6 +3772,26 @@ def check_packs(c: Checker, root: Path, log_path: Path, rna_demo: dict) -> dict:
     res["current"] = {"datasets": len(ids), "groups": n_groups, "shards": n_shards, "genes": n_genes, "layersWithShapes": n_shapes}
     print(f"    {len(ids)} exports: {n_groups} packed groups, {n_genes:,} genes in {n_shards} shards; {n_shapes} layer(s) with outlines")
 
+    # ---- prepare.py batch: its exports are packed and consistent too; --gene-files / --shard-mb pass through
+    bx = root / "batch" / "export"
+    bids = sorted(p.parent.name for p in bx.glob("*/manifest.json")) if bx.exists() else []
+    nb_groups = 0
+    for ds in bids:
+        m = read_json(bx / ds / "manifest.json")
+        for g in gp.groups(m):
+            nb_groups += 1
+            c.ok(bool(g["pack"]) and not gp.check_group(bx / ds, g, verify_hash=True), f"batch export {ds} {g['what']}: packed and consistent")
+    bm = app_module("batch")
+    ba = bm.build_parser().parse_args(["--src", "s", "--out", "o", "--dest", "d", "--gene-files", "loose", "--shard-mb", "32"])
+    d0 = {"id": "x", "kind": "xenium", "variant": "", "opts": {}, "user": None, "src": "s", "forceKind": False}
+    ex, rn = bm.export_argv(d0, ba), bm.prepare_argv({**d0, "kind": "rnaseq"}, ba)
+    c.ok(ex[ex.index("--gene-files") + 1] == "loose" and ex[ex.index("--shard-mb") + 1] == "32.0"
+         and "--gene-files" in rn and "--gene-files" not in bm.prepare_argv(d0, ba)
+         and "--gene-files" not in bm.export_argv(d0, bm.build_parser().parse_args(["--src", "s", "--out", "o", "--dest", "d"])),
+         f"batch --gene-files / --shard-mb: on every export and the RNA-seq step, nowhere else, absent by default ({ex})")
+    res["batch"] = {"datasets": bids, "groups": nb_groups}
+    print(f"    batch: {len(bids)} exports, {nb_groups} packed groups; --gene-files passes through")
+
     # ---- --gene-files loose: the old layout, equal to the packs byte for byte ------------------
     lo, pk = root / "export_loose" / VIS, export / VIS
     ml, mp = read_json(lo / "manifest.json"), read_json(pk / "manifest.json")
@@ -3835,6 +4031,9 @@ def main(argv=None) -> int:
         make_detect_cases(root)
         for i, cmd in enumerate(detect_commands(root)):
             timings[f"auto {cmd[3]}" + (" (--kind)" if "--kind" in cmd else "")] = run(cmd, log_path)
+        t_b = time.time()                                # prepare.py batch: always fresh, never skipped by --reuse
+        run_batch(root, log_path)
+        timings["batch (3 runs)"] = time.time() - t_b
         t1 = time.time()
         rna_demo = write_rnaseq_demo(root, log_path)
         timings["rnaseq demo"] = time.time() - t1
@@ -3863,6 +4062,8 @@ def main(argv=None) -> int:
     summary["stereoseq"] = check_stereoseq(c, root, clustering, log_path)
     print("checks: automatic detection (detect.py, prepare.py detect / auto)")
     summary["detect"] = check_detect(c, root, log_path)
+    print("checks: batch export (batch.py, prepare.py batch)")
+    summary["batch"] = check_batch(c, root, log_path)
     print("checks: the notebook")
     check_notebook(c)
     print("checks: cell outlines (every platform's boundaries, traced label masks, a lab's own file)")

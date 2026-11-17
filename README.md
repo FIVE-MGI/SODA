@@ -32,7 +32,9 @@ No coding needed: you paste a few commands and fill in two lines.
 4. **Share** the link the notebook prints: `<the SODA page>/index.html?data=<your folder>`.
 
 Every step in detail, with the one storage setting (CORS) the link needs:
-[docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). Everything beyond that: [docs/ADVANCED.md](docs/ADVANCED.md).
+[docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). Everything beyond that: [docs/ADVANCED.md](docs/ADVANCED.md),
+including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-datasets-at-once-without-the-notebook)
+(`prepare.py batch`, with a log of any that fail).
 
 ## Features
 
@@ -287,7 +289,7 @@ email wbuchser@wustl.edu with any questions about hosting.
 |---|---|
 | [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | commands and options per input type, export, clustering, the circle tool, common problems |
 | [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways: a link to your data folder, or your own copy of SODA |
-| [docs/ADVANCED.md](docs/ADVANCED.md) | the advanced way in one place: your own site, passwords, labels and colours, every notebook setting, your own clusters, marker lists, which code file does what |
+| [docs/ADVANCED.md](docs/ADVANCED.md) | the advanced way in one place: your own site, passwords, labels and colours, every notebook setting, your own clusters, marker lists, which code file does what, a batch run over a folder of datasets with a log of any that fail |
 | [docs/HOSTING.md](docs/HOSTING.md) | hosting options from a laptop to a password-protected cloud site; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure Static Web App + private blob container + password, step by step |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the upload gate, and its limits |

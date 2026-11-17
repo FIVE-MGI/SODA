@@ -70,7 +70,8 @@ How each kind is recognised (from what its reader needs, see the sections below)
 | `rnaseq` | an `.h5ad` with the embedding in `obsm`, or a 10x matrix folder with `analysis/umap/.../projection.csv` or `umap.csv`. A matrix folder with `spatial/` beside it is Visium, not single-cell. |
 
 A folder that holds several datasets is reported dataset by dataset and never merged; run
-`auto` once per dataset. Zipped instrument output is recognised from the zip's file list
+`auto` once per dataset, or `prepare.py batch` for all of them with one log
+([ADVANCED.md, section 8](ADVANCED.md#8-many-datasets-at-once-without-the-notebook)). Zipped instrument output is recognised from the zip's file list
 (nothing is unpacked) and must be unzipped first. `python web/SpatialViewer/prepare.py detect path --json`
 prints the full report for scripts. The notebook (`notebooks/SODA_pipeline.ipynb`) uses the
 same check: put each dataset in its own folder under `inputs/`, with any name.
