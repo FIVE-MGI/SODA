@@ -611,6 +611,11 @@ Written by `prepare.py cosmx` / `prepare.py merscope` (`cosmx.py`, `merscope.py`
     `instrumentPixelUm` is the µm per instrument pixel used.
   - MERSCOPE: from `global_x, global_y` (µm): the first two rows of
     `micron_to_mosaic_pixel_transform.csv`. `zPlane` is the mosaic z-plane imported.
+  - Xenium without stain images (`kind: "xenium"`, written by `prepare.py xenium`): from
+    Xenium's `x, y` (µm), `a = e = 1 / pixelSizeUm`, no shift (Xenium's origin is kept).
+    `xeniumPixelSizeUm` is the morphology pixel size, and `pixelSizeUm` a whole multiple of it
+    (5 × 0.2125 = 1.0625 µm by default). A Xenium dataset with its stain images has no `frame`:
+    its positions are µm ÷ the image's pixel size.
 - `image.background` is present only when the dataset had no images: `"transcript density"`
   or `"cell density"`. The single channel ("Transcript density (no image)") is then the
   number of transcripts (cells) per pixel of `pixelSizeUm` (1 µm unless `--background-um`),

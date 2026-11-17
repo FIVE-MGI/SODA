@@ -61,6 +61,13 @@ with a scale). Checked (check_stdformats): positions through scale factors and N
 image pixels, outlines, molecules, the file's own clusterings, no made-up sample ID in any message or export file, the
 cases that are refused (zarr v3, a plate, two libraries, a labels region, mapAxis), and the pages in Chromium
 (tests/stdformats_browser_test.js).
+Xenium inputs (web/SpatialViewer/xenium.py, zipinput.py): the Xenium demo without its morphology_focus/ (cells and
+molecules on a transcript-density background whose pixels are two 0.5 µm morphology pixels, origin at Xenium's 0, 0),
+zipped as a whole output folder (deflated, two folders down) and as Xenium's own bundle (stored, files at the top),
+and its cells-only variant zipped and read with every compressed member copied out (SODA_ZIP_MEMORY_MB=0). The zips
+must give the folder's cache, leave no copies behind and not change the zip; zips with a '..' or an absolute member
+name, a member that holds more than it declares, more than SODA_ZIP_MAX_GB declared, or too little free space must be
+refused with the reason (check_xenium_inputs).
 Cell outlines (web/SpatialViewer/cellshapes.py): the Xenium fixture carries cell and nucleus boundaries as
 csv.gz, parquet, cells.zarr.zip (both layouts) and "a lab's own" GeoJSON + vertex table, CosMx CellLabels
 images and a polygons file, MERSCOPE an older cell_boundaries HDF5 and a WKB parquet with z-planes, Stereo-seq
@@ -150,6 +157,10 @@ USER_COLORS = {"Schwann cells": "#e41a1c", "Perineurial cells": "#377eb8", "Endo
 # cell files / cells (parquet + h5) without transcripts
 XE, XP, XN = "demo_xenium", "demo_xenium_pq", "demo_xenium_nt"
 XEN_DS = (XE, XP, XN)
+# Xenium inputs (xenium.py without stain images, zipinput.py): the demo folder without morphology_focus/, the demo
+# zipped as a whole output folder (deflated, two folders down) and as Xenium's own bundle (stored, files at the top)
+XNI, XZ, XZS = "demo_xenium_noimg", "demo_xenium_zip", "demo_xenium_bundle"
+XIN_DS = (XNI, XZ, XZS)
 # the lab's own names for the Xenium demo's three cell types (user clusters on cells), with colours
 XE_USER_NAMES = ["Left-band cells", "Middle-band cells", "Right-band cells"]
 XE_USER_COLORS = ["#1b9e77", "#d95f02", "#7570b3"]
@@ -230,6 +241,12 @@ def demo_commands(root: Path) -> list[list[str]]:
         [prep, "export", "--id", XP, "--out", cache, "--dest", export, "--grid-um", "0"],
         [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", cache],
         [prep, "export", "--id", XN, "--out", cache, "--dest", export, "--no-umap"],
+        # no stain images: a transcript-density background; zips read as they are (write_xenium_inputs made them)
+        [prep, "xenium", "--id", XNI, "--src", f"{raw}/xenium_noimg", "--out", cache],
+        [prep, "export", "--id", XNI, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "xenium", "--id", XZ, "--src", f"{raw}/xenium_output.zip", "--out", cache, "--label", "Synthetic Xenium"],
+        [prep, "export", "--id", XZ, "--out", cache, "--dest", export, "--no-umap", "--no-hvg"],
+        [prep, "xenium", "--id", XZS, "--src", f"{raw}/xenium_bundle.zip", "--out", cache, "--label", "Synthetic Xenium"],
         ["examples/make_geomx_demo.py", "--out", raw],
         [prep, "geomx", "--id", GX, "--dcc", f"{raw}/geomx/dcc", "--pkc", f"{raw}/geomx/pkc",
          "--annotation", f"{raw}/geomx/annotations.xlsx", "--annotation", f"{raw}/geomx/segment_properties.xlsx",
@@ -352,7 +369,8 @@ def clean(root: Path):
     for p in [root / "raw", root / "user", root / "export_sample" / MX, root / "export_user" / VIS,
               root / "export_user" / XE, root / "export_partial" / VIS, root / "export_loose" / VIS,
               root / "export_both" / XE, root / "export" / RNA, root / "export_rnaseq_loose", root / "export_repack",
-              root / "export_tamper"] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS]:
+              root / "export_tamper", root / "xenin", root / "cache" / "_unzipped"] + [root / sub / ds for sub in ("cache", "export")
+                                                                                     for ds in (VIS, MX, TL) + XEN_DS + XIN_DS + GEOMX_DS]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -1625,6 +1643,168 @@ def check_xenium(c: Checker, root: Path, clustering: bool) -> dict:
     return res
 
 
+def _zip_folder(src: Path, dst: Path, top: str, method: int) -> None:
+    with zipfile.ZipFile(dst, "w", method) as z:
+        for q in sorted(src.rglob("*")):
+            if q.is_file():
+                z.write(q, (top + "/" if top else "") + q.relative_to(src).as_posix())
+
+
+def _sha(p: Path) -> str:
+    import hashlib
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def write_xenium_inputs(root: Path):
+    """The Xenium input fixtures (run right after make_xenium_demo.py): raw/xenium_noimg (the demo without
+    morphology_focus/), raw/xenium_output.zip (the demo folder as xenium_output/outs/ in a deflated zip),
+    raw/xenium_bundle.zip (the demo's files at the top of a stored zip); and under xenin/: the cells-only variant
+    zipped, and zips that must be refused: a '..' member, an absolute member, a member holding more than it declares."""
+    raw, d = root / "raw", root / "xenin"
+    noimg = raw / "xenium_noimg"
+    if noimg.exists():
+        shutil.rmtree(noimg)
+    shutil.copytree(raw / "xenium", noimg, ignore=shutil.ignore_patterns("morphology_focus"))
+    _zip_folder(raw / "xenium", raw / "xenium_output.zip", "xenium_output/outs", zipfile.ZIP_DEFLATED)
+    _zip_folder(raw / "xenium", raw / "xenium_bundle.zip", "", zipfile.ZIP_STORED)
+    if d.exists():
+        shutil.rmtree(d)
+    d.mkdir(parents=True)
+    _zip_folder(raw / "xenium_nt", d / "cells_only.zip", "run", zipfile.ZIP_DEFLATED)
+    for name, extra in (("bad_slip.zip", "run/../../outside.txt"), ("bad_absolute.zip", "/outside/evil.txt")):
+        _zip_folder(raw / "xenium", d / name, "run", zipfile.ZIP_DEFLATED)
+        with zipfile.ZipFile(d / name, "a") as z:
+            z.writestr(extra, "x")
+    # cells.csv.gz declared at half its size, in the file list and in its local header
+    bad = d / "bad_size.zip"
+    _zip_folder(raw / "xenium", bad, "run", zipfile.ZIP_DEFLATED)
+    b = bytearray(bad.read_bytes())
+    with zipfile.ZipFile(bad) as z:
+        info = next(i for i in z.infolist() if i.filename.endswith("cells.csv.gz"))
+    cd = b.rfind(info.filename.encode()) - 46
+    assert b[cd:cd + 4] == b"PK\x01\x02" and b[info.header_offset:info.header_offset + 4] == b"PK\x03\x04"
+    struct.pack_into("<I", b, cd + 24, info.file_size // 2)
+    struct.pack_into("<I", b, info.header_offset + 22, info.file_size // 2)
+    bad.write_bytes(bytes(b))
+    (d / "zip_sha.json").write_text(json.dumps({n: _sha(raw / n) for n in ("xenium_output.zip", "xenium_bundle.zip")}),
+                                    encoding="utf-8")
+
+
+# (name, zip under xenin/ or raw/, extra environment): prepare.py xenium runs into xenin/cache
+XIN_RUNS = {"cells_only": ("xenin/cells_only.zip", {"SODA_ZIP_MEMORY_MB": "0"}), "cells_only_folder": ("raw/xenium_nt", {}),
+            "slip": ("xenin/bad_slip.zip", {}), "absolute": ("xenin/bad_absolute.zip", {}), "size": ("xenin/bad_size.zip", {}),
+            "oversize": ("raw/xenium_output.zip", {"SODA_ZIP_MAX_GB": "0.001"}),
+            "disk": ("raw/xenium_output.zip", {"SODA_UNZIP_RESERVE_GB": "1e9"})}
+
+
+def run_xenium_inputs(root: Path, log_path: Path) -> dict:
+    """prepare.py xenium on the cells-only zip with every compressed member copied out, and on the zips that must be
+    refused; each one's exit code and output is kept in xenin/runs.json for check_xenium_inputs."""
+    d = root / "xenin"
+    for sub in ("cache", "cache_folder"):
+        if (d / sub).exists():
+            shutil.rmtree(d / sub)
+    res = {}
+    for name, (src, env) in XIN_RUNS.items():
+        ds = XN if name.startswith("cells_only") else f"x_{name}"
+        args = ["web/SpatialViewer/prepare.py", "xenium", "--id", ds, "--src", str(root / src),
+                "--out", str(d / ("cache_folder" if name == "cells_only_folder" else "cache"))]
+        print(f"$ {' '.join(f'{k}={v}' for k, v in env.items())} python {' '.join(args)}", flush=True)
+        p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                           encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8", **env})
+        with open(log_path, "a", encoding="utf-8") as lg:
+            lg.write(f"\n$ {' '.join(f'{k}={v}' for k, v in env.items())} python {' '.join(args)}\n{p.stdout}")
+        print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1] + f"  (exit {p.returncode})", flush=True)
+        res[name] = {"rc": p.returncode, "out": p.stdout[-4000:]}
+    (d / "runs.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
+    return res
+
+
+def check_xenium_inputs(c: Checker, root: Path) -> dict:
+    """No stain images: cells and molecules on a transcript-density background in Xenium's own frame; zips read as
+    they are give the folder's cache; unsafe or oversized zips are refused, and nothing is left behind."""
+    raw, d = root / "raw", root / "xenin"
+    tr = read_json(raw / "truth_xenium.json")
+    tz = np.load(raw / "truth_xenium.npz")
+    px, genes = tr["pixelSizeUm"], tr["genes"]
+    res = {}
+
+    # ---------------- no stain images
+    out = root / "export" / XNI
+    m = read_json(out / "manifest.json")
+    check_manifest_common(c, m, XNI, "png")
+    bg = 2 * px                                                    # about 1 µm: two 0.5 µm morphology pixels
+    c.ok(abs((m.get("pixelSizeUm") or 0) - bg) < 1e-9, f"{XNI}: background pixel = 2 morphology pixels ({m.get('pixelSizeUm')})")
+    # extent: the transcripts' 250 µm chunks (an upper bound) + 10 µm, from Xenium's 0, 0
+    mxy = tz["mol_xy_um"].astype(np.float64)
+    want_wh = tuple(int(math.ceil(((math.floor(mxy[:, k].max() / 250.0) + 1) * 250.0 + 10.0) / bg)) for k in (0, 1))
+    c.eq((m["image"]["width"], m["image"]["height"]), want_wh, f"{XNI}: background size = transcript chunks + 10 um, origin 0, 0")
+    cm = read_json(root / "cache" / XNI / "manifest.json")
+    c.eq((cm.get("frame") or {}).get("xeniumPixelSizeUm"), px, f"{XNI}: the cache's frame keeps experiment.xenium's pixel size")
+    layers = {L["key"]: L for L in m.get("expr", [])}
+    c.eq(sorted(layers), ["cells"], f"{XNI}: a cells layer and no protein grid on the background")
+    pos = f32(out / "expr" / "cells" / "positions.bin", 2)
+    c.ok(pos.shape == tz["xy_um"].shape and np.allclose(pos, tz["xy_um"] / bg, atol=1e-3),
+         f"{XNI}: cells positions.bin = centroid um / background pixel size, matrix order")
+    c.ok(abs((layers.get("cells", {}).get("micronsPerPixel") or 0) - bg) < 1e-9, f"{XNI}: cells layer micronsPerPixel")
+    ok_genes = [g for g in genes if (gene_f32(out / "expr" / "cells", g) is None) == (gene_f32(root / "export" / XE / "expr" / "cells", g) is None)]
+    c.eq(len(ok_genes), len(genes), f"{XNI}: the same genes with cells as {XE}")
+    c.ok(bool((out / "expr" / "cells" / "shapes").exists()) == bool((root / "export" / XE / "expr" / "cells" / "shapes").exists()),
+         f"{XNI}: cell outlines as for {XE}")
+    _img_background(c, root, XNI, m, mxy / bg)
+    idx, packed = _mol_files(c, out, XNI)
+    if idx:
+        c.eq({g["n"]: g["c"] for g in idx["genes"]}, tr["moleculesPerGene"], f"{XNI}: molecules per gene (quality >= 20, controls out)")
+        c.eq(idx.get("excluded", {}).get("outsideImage"), tr["outsideImage"], f"{XNI}: the two molecules at x < 0 left out")
+        W, H = m["image"]["width"], m["image"]["height"]
+        sx, sy = idx["scale"]
+        c.ok(abs(sx - W / 65535) < 1e-9 and abs(sy - H / 65535) < 1e-9, f"{XNI}: molecules scale = background size / 65535")
+        mg, bad = tz["mol_gene"], []
+        for j, g in enumerate(genes):
+            q = mxy[mg == j] / bg
+            want = np.minimum(np.rint(q[:, 0] / sx), 65535).astype(np.uint32) | (np.minimum(np.rint(q[:, 1] / sy), 65535).astype(np.uint32) << 16)
+            if not np.array_equal(np.sort(packed.get(g, np.zeros(0, np.uint32))), np.sort(want)):
+                bad.append(g)
+        c.ok(not bad, f"{XNI}: molecule positions = um / background pixel, quantised (differ: {bad[:4]})")
+    res["noImage"] = {"size": [m["image"]["width"], m["image"]["height"]], "pixelSizeUm": m.get("pixelSizeUm")}
+
+    # ---------------- zips: the folder's cache, nothing left behind, the zip unchanged
+    for ds, what in ((XZ, "deflated zip of the output folder, two folders down"), (XZS, "stored bundle zip, files at the top")):
+        _same_cache(c, root / "cache" / ds, root / "cache" / XE, f"{ds} ({what}) = the folder's cache", source_differs=True)
+    c.ok((root / "export" / XZ / "manifest.json").exists(), f"{XZ}: exported")
+    c.ok(not (root / "cache" / "_unzipped").exists(), "zips: the files copied out are removed after a prepare (cache/_unzipped gone)")
+    sha = read_json(d / "zip_sha.json")
+    c.ok(all(_sha(raw / n) == h for n, h in sha.items()), "zips: the zips themselves are unchanged")
+    c.ok(not (raw / "xenium_output").exists() and not (raw / "xenium_bundle").exists(), "zips: nothing written next to the zips")
+    log_txt = (root / "smoke_test.log").read_text(encoding="utf-8", errors="replace") if (root / "smoke_test.log").exists() else ""
+    c.ok("transcripts.zarr.zip: read in place (stored in the zip" in log_txt,
+         "zips: a stored transcripts.zarr.zip is read in place (no copy)")
+    c.ok("which is in outs/" in log_txt and "which is at the top of the zip" in log_txt, "zips: the dataset folder found at any depth")
+
+    runs = read_json(d / "runs.json") if (d / "runs.json").exists() else {}
+    r = runs.get("cells_only", {})
+    c.ok(r.get("rc") == 0 and "cell_feature_matrix.h5" in r.get("out", "") and "cells.parquet" in r.get("out", "")
+         and "copying" in r.get("out", ""), "zip, SODA_ZIP_MEMORY_MB=0: the .h5 and the parquet copied out, not read in memory")
+    _same_cache(c, d / "cache" / XN, d / "cache_folder" / XN, "cells-only zip (every compressed member copied out) = the folder's cache",
+                source_differs=True)
+    for name, say in (("slip", ["refused", "'..'"]), ("absolute", ["refused", "absolute path"]),
+                      ("size", ["does not match the file list", "refused"]), ("oversize", ["SODA_ZIP_MAX_GB", "zip bomb"]),
+                      ("disk", ["not enough free space", "SODA_UNZIP_RESERVE_GB"])):
+        r = runs.get(name, {})
+        last = (r.get("out", "").strip().splitlines() or [""])[-1]
+        c.ok(r.get("rc") == 1 and all(w in last for w in say), f"zip {name}: refused with the reason (exit {r.get('rc')}: {last[:200]})")
+        c.ok(not (d / "cache" / f"x_{name}" / "manifest.json").exists(), f"zip {name}: no dataset written")
+        if name != "size":                                     # the size lie is only seen while reading: the image is built by then
+            c.ok(not (d / "cache" / f"x_{name}").exists() and not (d / "cache" / "_unzipped" / f"x_{name}").exists(),
+                 f"zip {name}: refused before anything was written")
+    c.ok(not (root / "outside.txt").exists() and not (d / "outside.txt").exists() and not (root.parent / "outside.txt").exists(),
+         "zip slip: nothing written outside")
+    res["refusals"] = {k: v.get("rc") for k, v in runs.items()}
+    print(f"    {XNI}: background {res['noImage']['size']} px of {res['noImage']['pixelSizeUm']} um; zips = folder; refusals "
+          + ", ".join(f"{k} exit {v}" for k, v in res["refusals"].items()))
+    return res
+
+
 def check_xenium_user(c: Checker, root: Path, clustering: bool) -> dict:
     """The lab's own clusters attached to the Xenium demo's cells (write_xenium_user_files): matched
     by cell id through the cell_id column (and a Xenium Explorer groups CSV), no UMAP given so they sit on SODA's UMAP next to SODA's
@@ -2735,6 +2915,8 @@ def check_stdformats(c: Checker, root: Path, clustering: bool, log_path: Path) -
 DETECT_WANT = {
     "visiumhd": ("visium", "visium-hd"), "multiplex.ome.tif": ("tiff", "ome-tiff"), "multiplex_tiled.ome.tif": ("tiff", "ome-tiff"),
     "xenium": ("xenium", "cells+molecules"), "xenium_pq": ("xenium", "molecules"), "xenium_nt": ("xenium", "cells"),
+    "xenium_noimg": ("xenium", "cells+molecules"), "xenium_output.zip": ("xenium", "cells+molecules"),
+    "xenium_bundle.zip": ("xenium", "cells+molecules"),
     "geomx": ("geomx", "scans"), "cosmx": ("cosmx", "images+cells+molecules"), "cosmx_new": ("cosmx", "images+cells+molecules"),
     "cosmx_tx": ("cosmx", "molecules"), "merscope": ("merscope", "images+cells+molecules"),
     "merscope_noimg": ("merscope", "cells+molecules"), "merscope_pq": ("merscope", "images+molecules"),
@@ -2744,6 +2926,7 @@ DETECT_WANT = {
 }
 # `prepare.py auto` runs whose cache must equal the explicit subcommand's: (id, source under raw/, options passed through)
 AUTO_SAME = ((VIS, "visiumhd", []), (XE, "xenium", ["--label", "Synthetic Xenium"]), (MX, "multiplex.ome.tif", []),
+             (XZ, "xenium_output.zip", ["--label", "Synthetic Xenium"]),
              (CXT, "cosmx_tx", ["--pixel-size", "0.5"]), (MSN, "merscope_noimg", []),
              (SA_AV, "anndata_visium.h5ad", ["--label", "Synthetic spatial AnnData"]), (SA_OZ, "image.ome.zarr", []),
              (SA_SX, "sdata_xenium.zarr", ["--pixel-size", "0.5"]))
@@ -2797,6 +2980,22 @@ def make_detect_cases(root: Path) -> Path:
                   "run1/cell_feature_matrix.h5", "run1/transcripts.parquet"):
             z.writestr(n, "x")
     _touch(neg / "xenium_no_stains" / "transcripts.zarr.zip")
+    _touch(neg / "xenium_old_layout" / "morphology.ome.tif")          # Xenium 1.x: one image file, no morphology_focus/
+    _touch(neg / "xenium_old_layout" / "transcripts.zarr.zip")
+    (neg / "zipped_merscope").mkdir()
+    with zipfile.ZipFile(neg / "zipped_merscope" / "region0.zip", "w") as z:
+        for n in ("region_0/detected_transcripts.csv", "region_0/cell_by_gene.csv", "region_0/cell_metadata.csv"):
+            z.writestr(n, "a,b\n")
+    (neg / "zip_and_folder").mkdir()                                 # run1.zip with its unzipped copy run1/ beside it
+    shutil.copyfile(neg / "zipped" / "run1.zip", neg / "zip_and_folder" / "run1.zip")
+    xenium(neg / "zip_and_folder" / "run1")
+    (neg / "zipped_slip").mkdir()                                     # a Xenium zip with a name that climbs out (zip slip)
+    shutil.copyfile(neg / "zipped" / "run1.zip", neg / "zipped_slip" / "slip.zip")
+    with zipfile.ZipFile(neg / "zipped_slip" / "slip.zip", "a") as z:
+        z.writestr("../outside.txt", "x")
+    (neg / "two_zips").mkdir()
+    for n in ("a.zip", "b.zip"):
+        shutil.copyfile(neg / "zipped" / "run1.zip", neg / "two_zips" / n)
     xenium(neg / "xenium_extra_tiffs")
     for n in ("GeneA.tif", "GeneB.tif"):
         _touch(neg / "xenium_extra_tiffs" / n)
@@ -2855,7 +3054,8 @@ def detect_commands(root: Path) -> list[list[str]]:
 
 
 def clean_detect(root: Path):
-    for p in (root / "detect" / "cache", root / "detect" / "cache_kind"):
+    # never/: what an earlier run's `prepare.py auto` must not have written (left over, it would fail this run too)
+    for p in (root / "detect" / "cache", root / "detect" / "cache_kind", root / "detect" / "never"):
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -2863,7 +3063,8 @@ def clean_detect(root: Path):
 
 def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = False):
     """Two cache folders of one dataset hold the same thing: manifests equal (creation time and the spelling of
-    source paths aside), the same files, and the same values in every array."""
+    source paths aside), the same files, and the same values in every array. Caches of two ids (a.name, b.name)
+    may differ by the id alone."""
     if not c.ok((a / "manifest.json").exists() and (b / "manifest.json").exists(), f"{what}: both caches have a manifest"):
         return
 
@@ -2878,6 +3079,8 @@ def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = 
                 return os.path.normcase(str(q.resolve()))
         return v
     ma, mb = read_json(a / "manifest.json"), read_json(b / "manifest.json")
+    if a.name != b.name and mb.get("id") == b.name:
+        mb["id"] = a.name
     for m in (ma, mb):
         m.pop("created", None)
         if source_differs:
@@ -2891,7 +3094,8 @@ def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = 
     # values; everything else (array metadata, attributes, molecule files, overlays) byte for byte
     arrays = sorted(q.parent.relative_to(a).as_posix() for q in a.rglob(".zarray"))
     chunks = {n for n in fa for d in arrays if n.startswith(d + "/") and not n.rsplit("/", 1)[1].startswith(".z")}
-    diff = [n for n in fa if n not in chunks and (a / n).read_bytes() != (b / n).read_bytes()]
+    diff = [n for n in fa if n not in chunks
+            and (a / n).read_bytes() != (b / n).read_bytes().replace(f'"{b.name}"'.encode(), f'"{a.name}"'.encode())]
     c.ok(not diff, f"{what}: array metadata, attributes and the other files are byte-identical to the explicit subcommand's (differ: {diff[:5]})")
     try:
         import zarr
@@ -2977,9 +3181,29 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
          and [Path(o).name for o in a.get("obs", [])] == ["clusters.csv"],
          f"detect tenx_cells: --mtx, --umap and the barcode CSV as --obs (not the CSV without a barcode column): {a}")
     case("tenx_spatial", "incomplete", "missing-files", "visium", say=["filtered_feature_bc_matrix.h5", "full-resolution image"])
-    case("zipped", "incomplete", "zipped", "xenium", say=["unzip", "run1.zip"])
-    case("zipped/run1.zip", "incomplete", "zipped", "xenium", say=["unzip"])
-    case("xenium_no_stains", "incomplete", "missing-files", "xenium", say=["morphology_focus"])
+    r = case("zipped", "certain", "one-kind", "xenium", say=["read from the zip as it is", "run1.zip"])
+    c.ok(r["candidates"] and r["candidates"][0]["argv"][:2] == ["xenium", "--src"]
+         and Path(r["candidates"][0]["args"].get("src", "")).name == "run1.zip", "detect zipped: a Xenium zip is --src itself")
+    case("zipped/run1.zip", "certain", "one-kind", "xenium", say=["zipped", "never next to the zip"])
+    case("zipped_merscope", "incomplete", "zipped", "merscope", say=["unzip", "region0.zip"])
+    r = case("zip_and_folder", "certain", "one-kind", "xenium", say=["run1.zip", "not prepared on its own"])
+    c.ok(r["candidates"] and Path(r["candidates"][0]["args"].get("src", "")).name == "run1",
+         "detect zip_and_folder: the unzipped folder is prepared, the zip beside it noted")
+    sys.path.insert(0, str(APP))
+    try:
+        import batch
+    finally:
+        sys.path.pop(0)
+    rows, warn = batch.find_datasets(neg / "zip_and_folder", {}, None)
+    c.ok([r["id"] for r in rows] == ["run1"] and any("run1.zip is not prepared" in w for w in warn),
+         f"batch zip_and_folder: run1/ is the dataset, run1.zip beside it is left out with a warning: {[r['id'] for r in rows]} {warn}")
+    case("zipped_slip/slip.zip", "incomplete", "zipped", "xenium", say=["not read as it is", "'..'", "refused"])
+    r = case("two_zips", "ambiguous", "several-datasets", say=["a.zip", "b.zip"])
+    c.ok(len(r["datasets"]) == 2 and all(x["verdict"] == "certain" for x in r["datasets"]),
+         "detect two_zips: two zipped Xenium outputs are two datasets, each certain")
+    r = case("xenium_no_stains", "certain", "one-kind", "xenium", say=["no stain images", "density background", "0.2125"])
+    c.eq(r["variant"], "molecules", "detect xenium_no_stains: variant")
+    case("xenium_old_layout", "incomplete", "missing-files", "xenium", say=["morphology_focus", "--kind tiff"])
     r = case("xenium_extra_tiffs", "certain", "one-kind", "xenium", say=["2 other tiff", "not used"])
     c.ok(r["variant"] == "molecules" and any("cells layer" in n for n in (r["candidates"][0]["notes"] if r["candidates"] else [])),
          "detect xenium_extra_tiffs: stains + transcripts without cells is certain, and says there is no cells layer")
@@ -3048,7 +3272,8 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
                                    ("empty", 5, ["empty"], []),
                                    ("two_platforms", 3, ["--kind xenium", "--kind merscope"], []),
                                    ("two_platforms", 4, ["Visium", "outs"], ["--kind", "visium"]),
-                                   ("zipped", 4, ["unzip"], [])):
+                                   ("zipped_merscope", 4, ["unzip", "region0.zip"], []),
+                                   ("zipped_slip/slip.zip", 4, ["'..'", "refused"], [])):
         rc, txt = cli("auto", "--src", str(neg / name), "--id", "never_written", "--out", str(root / "detect" / "never"), *extra)
         c.ok(rc == code and all(w in txt for w in say),
              f"prepare.py auto {name} {' '.join(extra)}: stops with exit {code} and says {say} (exit {rc}: {txt[-300:]!r})")
@@ -4195,7 +4420,7 @@ def check_offline(c: Checker, root: Path, log_path: Path):
 
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
-    texts = [p for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS + STD_DS for p in (export / ds).rglob("*")
+    texts = [p for ds in (VIS, MX, TL) + XEN_DS + XIN_DS + GEOMX_DS + STD_DS for p in (export / ds).rglob("*")
              if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
     texts += [p for p in (root / "export_sample" / MX).rglob("*") if p.is_file() and p.suffix == ".json"]
     texts += [p for ds in (VIS, XE) for p in (root / "export_user" / ds).rglob("*")
@@ -4205,7 +4430,7 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
     lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not lp, f"export text files contain local paths: {lp[:3]}")
     args = (["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX), str(export / TL)] +
-            [str(export / ds) for ds in XEN_DS + GEOMX_DS] + [str(export / ds) for ds in STD_DS if (export / ds).exists()])
+            [str(export / ds) for ds in XEN_DS + GEOMX_DS] + [str(export / ds) for ds in STD_DS + XIN_DS if (export / ds).exists()])
     if (root / "export_sample" / MX).exists():
         args.append(str(root / "export_sample" / MX))
     for extra in (root / "export_user" / VIS, root / "export_user" / XE, root / "export_partial" / VIS, root / "export" / RNA,
@@ -4276,7 +4501,8 @@ def check_packs(c: Checker, root: Path, log_path: Path, rna_demo: dict) -> dict:
     res = {"rnaseqDemo": rna_demo}
     # ---- every current export: packed, consistent ----------------------------------------------
     # (the cell-outline exports too: their shapes/ tiles sit beside the packs, unpacked and untouched)
-    ids = [(export, ds) for ds in (VIS, MX, TL, RNA) + XEN_DS + GEOMX_DS + ST_DS + IMG_DS + STD_DS if (export / ds / "manifest.json").exists()]
+    ids = [(export, ds) for ds in (VIS, MX, TL, RNA) + XEN_DS + XIN_DS + GEOMX_DS + ST_DS + IMG_DS + STD_DS
+           if (export / ds / "manifest.json").exists()]
     ids += [(root / r, ds) for r in (OL_ZARR, OL_OWN, OL_NONE) for ds in XEN_DS if (root / r / ds / "manifest.json").exists()]
     n_groups = n_shards = n_genes = n_shapes = 0
     for base, ds in ids:
@@ -4546,6 +4772,7 @@ def main(argv=None) -> int:
                 write_user_files(root)
             if cmd[0] == "examples/make_xenium_demo.py":
                 write_xenium_user_files(root)
+                write_xenium_inputs(root)
         if not args.reuse:
             clean_imaging(root)
         for cmd in imaging_commands(root):               # CosMx / MERSCOPE fixtures
@@ -4562,6 +4789,9 @@ def main(argv=None) -> int:
         make_detect_cases(root)
         for i, cmd in enumerate(detect_commands(root)):
             timings[f"auto {cmd[3]}" + (" (--kind)" if "--kind" in cmd else "")] = run(cmd, log_path)
+        t_x = time.time()                                # zips read with every member copied out, and refused zips
+        run_xenium_inputs(root, log_path)
+        timings["xenium inputs (zip runs)"] = time.time() - t_x
         t_b = time.time()                                # prepare.py batch: always fresh, never skipped by --reuse
         run_batch(root, log_path)
         timings["batch (3 runs)"] = time.time() - t_b
@@ -4583,6 +4813,8 @@ def main(argv=None) -> int:
     summary["userClusters"] = check_user(c, root, clustering, log_path)
     print("checks: demo_xenium (cells layer + molecules), demo_xenium_pq, demo_xenium_nt")
     summary["xenium"] = check_xenium(c, root, clustering)
+    print("checks: Xenium inputs (no stain images, zips, refused zips)")
+    summary["xeniumInputs"] = check_xenium_inputs(c, root)
     print("checks: the lab's own clusters on the demo_xenium cells (userclusters.py)")
     summary["xeniumUserClusters"] = check_xenium_user(c, root, clustering)
     print("checks: the optional barcode / cell id lists (layerids.py)")
