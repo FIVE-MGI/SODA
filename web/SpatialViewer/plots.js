@@ -317,7 +317,7 @@
       while (next < need.length && !dead()) {
         const n = need[next++];
         try {
-          const buf = rna ? await S.src.buf(`gene/${encodeURIComponent(n)}.bin`) : (await S.src.gene(key, n)).buffer;
+          const buf = rna ? await S.src.rnaGene(n) : (await S.src.gene(key, n)).buffer;
           if (dead()) return;
           cache.genes.set(n, { buf, bytes: buf.byteLength, at: Date.now() }); cache.bytes += buf.byteLength;
           bufs.set(n, buf); files++; bytes += buf.byteLength;

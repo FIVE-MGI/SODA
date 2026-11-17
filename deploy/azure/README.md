@@ -79,9 +79,12 @@ Add one row:
 | Exposed headers | `*` |
 | Max age | `3600` |
 
-The viewer sends no custom request headers to storage and only reads the response
-body and status, so `*` for headers is more than it needs; it is the simplest value
-that works. Do not use `*` for *origins* on a private container.
+The viewer sends one request header to storage, `Range`, to read a single gene out of a
+gene pack (see docs/HOSTING.md), and reads the response body, the status and
+`Content-Range`. `*` for allowed and exposed headers covers both and is the simplest value
+that works; if you list headers instead, allow `range` and expose `content-range,
+content-length`. Blob storage answers Range requests by itself, also with a SAS token on
+the URL. Do not use `*` for *origins* on a private container.
 
 You only know `<site>` after step 4. Come back and fill it in then.
 

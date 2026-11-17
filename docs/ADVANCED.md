@@ -3,7 +3,8 @@
 The [4 steps in the README](../README.md#show-your-own-data-in-4-steps) and
 [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) are enough to share your data. This page is for
 everything past that: your own website, a password, your own names and colours, the
-notebook's settings, your own clusters, marker lists and the code. Each section is short
+notebook's settings, your own clusters, marker lists, the code, and a batch run over many datasets.
+Each section is short
 and links to the full reference.
 
 1. [Your own copy and website](#1-your-own-copy-and-website)
@@ -13,6 +14,7 @@ and links to the full reference.
 5. [Your own clusters and UMAP](#5-your-own-clusters-and-umap)
 6. [Marker lists for suggested names](#6-marker-lists-for-suggested-names)
 7. [Changing the code](#7-changing-the-code)
+8. [Many datasets at once, without the notebook](#8-many-datasets-at-once-without-the-notebook)
 
 ---
 
@@ -114,7 +116,8 @@ Two more, outside Section 0:
 - **`IS_THIS_DATA_PUBLIC`** (Section 7): `"yes"` or `"no"`. The cell stops until you answer.
 
 The same steps without the notebook, one command each:
-[PREPARING_DATA.md](PREPARING_DATA.md).
+[PREPARING_DATA.md](PREPARING_DATA.md). All of them for a whole folder in one command:
+[section 8](#8-many-datasets-at-once-without-the-notebook).
 
 ## 5. Your own clusters and UMAP
 
@@ -179,7 +182,8 @@ The page, in `web/SpatialViewer/`:
 | `styles.css`, `layout.css`, `dspicker.css`, `plots.css`, `volcano.css` | how the page looks; each `.css` belongs to the `.js` of the same name, `styles.css` to the rest |
 
 The Python tools that write the data are in the same folder. `prepare.py` is the entry
-point (one subcommand per input type, plus `export`, `userclusters` and `inspect`); each
+point (one subcommand per input type, plus `export`, `userclusters`, `inspect`, `detect`, `auto` and
+`batch`, which is `batch.py`); each
 other `.py` file starts with a note on what it does. What they write, file by file:
 [DATA_FORMAT.md](DATA_FORMAT.md). The password function is
 `deploy/azure/api/token/index.js`.
@@ -194,3 +198,64 @@ When you change the page:
   Content-Security-Policy line). A library from anywhere else needs that line changed.
 - Test before you share: `python tests/smoke_test.py` runs the whole demo and checks every
   output file (and `tests/diag_test.js` when Node is installed). Then open your own data.
+
+## 8. Many datasets at once, without the notebook
+
+`prepare.py batch` does what the notebook's Sections 2 to 5 do, for a whole folder, in one
+command. Use it on a server, in a scheduled job, or for a folder of many datasets.
+
+```bash
+python web/SpatialViewer/prepare.py batch --src D:/SODA_work/inputs --out D:/SODA_work/cache --dest D:/SODA_work/export
+```
+
+- `--src` holds one folder per dataset, as the notebook's `inputs/`, and the folder's name
+  becomes the dataset id. Each folder is checked as `prepare.py detect` does. Only a
+  **certain** one is run. Any other is skipped, and the log says why and what to add.
+- `--options options.json` is the notebook's `OPTIONS` as JSON, with the same keys (and
+  `markers`, a marker list for that dataset only). Relative paths are read from the options
+  file's folder.
+
+  ```json
+  {"nerve_section1": {"label": "Normal nerve"},
+   "two_runs": {"kind": "merscope", "cells_dir": "D:/SODA_work/inputs/two_runs/vpt-run-a"}}
+  ```
+
+- Each dataset is prepared (`prepare.py auto`) and exported (`prepare.py export`) in its own
+  process, so one that fails or runs out of memory does not stop the others.
+- Run the same command again after a fix. A dataset already in the export folder is skipped,
+  and one already in the cache is not prepared again. `--rebuild` does them again (delete
+  `export/<id>/` first, or old tiles stay). `--only id1,id2` runs just those. `--dry-run`
+  shows what would run and writes nothing.
+- At the end it writes `datasets.json` (`catalog.py`; `--title` names the collection) and runs
+  the sample ID check on the export and on its own logs. With a key file (`--key`,
+  `SPATIALVIZ_KEY`, or the notebook's default place) the check is a gate, as in the notebook.
+  Without one it only warns.
+- The notebook's export settings: `--fmt` (default `jpg`), `--bins`, `--workers`,
+  `--markers-genes`, `--markers-proteins`.
+- `--gene-files loose` (or `both`) and `--shard-mb`, passed to every export: the per-gene data
+  as one file per gene, for a host that ignores HTTP Range requests (default: packs, see
+  [PREPARING_DATA.md](PREPARING_DATA.md)).
+
+**The log** goes to `logs/` next to the export folder (`--logs` to change it; never inside
+the export, as it holds local paths): `batch_<date>_<time>.md`, a table to read, and the same
+as `.json` and `.csv`. One row per dataset, then the last lines of each failure's error and
+what to add for each skipped one. Each step's full output is in `<id>_prepare.log` and
+`<id>_export.log`. Anything that looks like a sample ID is written as `[sample ID]`, and a
+folder whose name looks like one is skipped (rename it).
+
+| id | kind | status | time | peak memory | export size | note |
+|---|---|---|---|---|---|---|
+| bx_broken | xenium (molecules) | failed | 12 s | 0.08 GB |  | prepare failed (exit 1) |
+| bx_cosmx | cosmx (molecules) | ok | 31 s | 0.12 GB | 17 files, 0.2 MB |  |
+| bx_two_runs | merscope (cells+molecules) | skipped |  |  |  | not sure: ... a choice is open: 2 folders hold cell_by_gene + cell_metadata (segmentation runs); which one? |
+
+**Exit code:** 0 when nothing failed (skipped datasets are listed, not errors), 1 when a
+dataset or `catalog.py` failed, 2 when there was nothing to do or an option was wrong, 3 when
+the sample ID check is a gate and found something.
+
+**Memory.** `--jobs` (default 1) runs that many datasets at once, and each needs its own
+memory: the demo datasets well under 1 GB, whole-section data such as a big Visium HD section
+or a whole Stereo-seq chip about 8.5 GB (the largest measured, see the
+[README](../README.md#requirements)). Keep `--jobs 1` for whole sections unless the computer
+has the number of jobs times 8.5 GB free. The batch prints the free memory at the start and
+warns. With more than one job the BLAS threads are split between them (`--threads` sets them).

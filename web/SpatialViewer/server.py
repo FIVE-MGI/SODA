@@ -43,7 +43,10 @@ from pyramid import PyramidReader
 CACHE_ROOT = Path(os.environ.get("SPATIALVIZ_CACHE", "cache"))
 PASSWORD: Optional[str] = os.environ.get("SPATIALVIZ_PASSWORD") or None
 app = FastAPI(title="SpatialViz tiles")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
+# Range (gene packs read under web/, see genepack.py) is answered by StaticFiles / FileResponse
+# with 206; Content-Range is exposed so a page on another origin can check the answer.
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "HEAD"], allow_headers=["*"],
+                   expose_headers=["Content-Range", "Content-Length", "Accept-Ranges"])
 
 
 # Files in this folder that must never be served (the page's own html/js/css are fine).

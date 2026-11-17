@@ -3,10 +3,11 @@
 SODA shows very large spatial biology datasets in a web browser:
 multiplexed immunofluorescence, H&E, Visium and Visium HD spatial transcriptomics,
 Xenium (stains, cells and single transcripts), and single-cell RNA-seq UMAPs. Each slide
-is converted once into a pyramid of small image tiles plus compact per-gene files. For the
+is converted once into a pyramid of small image tiles plus compact per-gene data. For the
 image, the browser fetches only the tiles on screen, so a 30-channel whole slide opens in
 seconds and pans without downloading the rest. Genes are different: picking a gene downloads
-its whole file (its value in every bin or cell of the section, or every molecule of it).
+all of that gene (its value in every bin or cell of the section, or every molecule of it), as
+one HTTP Range request into a pack that holds a layer's genes in a few large files.
 The output is plain static files: you can look at it on
 your own computer, put it on any web host for public data, or keep it in a private cloud
 container behind a password. No database and no always-on server are needed, but the page
@@ -31,7 +32,9 @@ No coding needed: you paste a few commands and fill in two lines.
 4. **Share** the link the notebook prints: `<the SODA page>/index.html?data=<your folder>`.
 
 Every step in detail, with the one storage setting (CORS) the link needs:
-[docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). Everything beyond that: [docs/ADVANCED.md](docs/ADVANCED.md).
+[docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). Everything beyond that: [docs/ADVANCED.md](docs/ADVANCED.md),
+including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-datasets-at-once-without-the-notebook)
+(`prepare.py batch`, with a log of any that fail).
 
 ## Features
 
@@ -130,7 +133,7 @@ Every step in detail, with the one storage setting (CORS) the link needs:
   violins show the spread with median and quartiles, with an "expressing only" switch because
   most bins hold zero. Every group shows its number of bins and the QC filter applies. Click a
   gene or a group to **show it on the slide**; save PNG, SVG, or the plotted numbers as CSV.
-  Computed in your browser from the per-gene files (a typical cluster heatmap of a Visium HD
+  Computed in your browser from the per-gene data (a typical cluster heatmap of a Visium HD
   section reads roughly 10–30 MB).
 - **Multiplexed protein images (Akoya / PhenoCycler and other multi-channel TIFFs).** The
   slide is cut into 16 µm squares holding each marker's mean intensity (from full-resolution
@@ -286,7 +289,7 @@ email wbuchser@wustl.edu with any questions about hosting.
 |---|---|
 | [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | commands and options per input type, export, clustering, the circle tool, common problems |
 | [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways: a link to your data folder, or your own copy of SODA |
-| [docs/ADVANCED.md](docs/ADVANCED.md) | the advanced way in one place: your own site, passwords, labels and colours, every notebook setting, your own clusters, marker lists, which code file does what |
+| [docs/ADVANCED.md](docs/ADVANCED.md) | the advanced way in one place: your own site, passwords, labels and colours, every notebook setting, your own clusters, marker lists, which code file does what, a batch run over a folder of datasets with a log of any that fail |
 | [docs/HOSTING.md](docs/HOSTING.md) | hosting options from a laptop to a password-protected cloud site; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure Static Web App + private blob container + password, step by step |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the upload gate, and its limits |

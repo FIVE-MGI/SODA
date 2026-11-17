@@ -4,6 +4,10 @@ r"""Build the viewer cache for one dataset.
     python prepare.py auto   --src <folder or file> --id sample1 --out <cache folder> [--kind <kind>]
            (looks at the files, and when it is certain what they are runs the matching command below;
             when it is not, it stops, lists what it found and prints the --kind ... to add. detect.py)
+    python prepare.py batch  --src <folder of dataset folders> --out <cache folder> --dest <static folder>
+           [--options options.json] [--jobs 1] [--rebuild] [--only id1,id2] [--dry-run]
+           (auto + export for every dataset folder, each in its own process; skips what is not certain or
+            already exported, then catalog.py and the sample ID check; writes a log table. batch.py)
 
     python prepare.py akoya  --src <folder of NN_Marker_Sample_gray.tif> --id sample1 --out <cache folder>
     python prepare.py tiff   --src <stack.tif|qptiff|ome.tif>            --id x        --out <cache folder>
@@ -27,6 +31,7 @@ the server just scans <out> for manifest.json files.
     python prepare.py export --id sample1 --out <cache folder> --dest <static folder> [--fmt jpg]
            [--user-layer 008um --user-umap umap.csv --user-obs clusters.csv | --user-h5ad analysis.h5ad]
     python prepare.py userclusters --id sample1 --out <cache folder> --dest <static folder> --user-layer 008um ...
+    python prepare.py ids --id sample1 --out <cache folder> --dest <static folder>
     python prepare.py outlines --id x1 --out <cache folder> [--dest <static folder>] [--boundaries cells.geojson --nuclei nuclei.geojson]
            (cell outlines for a dataset that is already prepared: from the platform's own files, or your own; cellshapes.py)
 
@@ -38,6 +43,14 @@ markers/rna_generic.json for Visium genes; tissue-specific lists such as markers
 markers/brain.json and markers/akoya_nerve.json are passed with --markers). The --user-* options attach the lab's own
 UMAP and clusterings (Seurat / scanpy, matched by barcode) to one spatial layer (userclusters.py);
 `userclusters` does the same on an existing export without re-running it.
+
+Gene files: by default each expression layer's (and the molecules', and an RNA-seq set's) per-gene
+arrays are written as a few packs of about 64 MB that the viewer reads with HTTP Range requests
+(genepack.py): a Visium HD layer is a handful of files instead of ~16,000. --gene-files loose
+writes one file per gene as before (for a host that ignores Range requests); --gene-files both
+writes the two side by side (a viewer older than the packs reads that too).
+--ids also writes each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, for the viewer's "Save barcodes";
+off by default: an export holds no barcode otherwise); `ids` adds them to an existing export (layerids.py).
 """
 from __future__ import annotations
 
@@ -138,6 +151,17 @@ def parse_geojson_args(items, ds_dir: Path):
     return out
 
 
+def gene_file_args(p):
+    import genepack
+    p.add_argument("--gene-files", choices=genepack.MODES, default=genepack.DEFAULT_MODE,
+                   help="pack (default): each layer's per-gene arrays in a few ~64 MB packs, read with HTTP Range "
+                        "requests (a handful of files per layer instead of ~16,000); loose: one file per gene, "
+                        "for a host that ignores Range requests; both: the two side by side")
+    p.add_argument("--shard-mb", type=float, default=genepack.SHARD_MB,
+                   help=f"pack shard size in MB (default {genepack.SHARD_MB}; a gene is never split, so one "
+                        f"bigger than this gets a shard of its own)")
+
+
 # exit codes of `prepare.py auto` when it does not run a command
 AUTO_EXIT = {"ambiguous": 3, "incomplete": 4, "unknown": 5}
 
@@ -214,8 +238,15 @@ def run_auto(args, extra):
 
 
 def main(argv=None):
+    raw = sys.argv[1:] if argv is None else list(argv)
+    if raw[:1] == ["batch"]:                       # a whole folder of datasets: batch.py, its own options
+        import batch
+        raise SystemExit(batch.main(raw[1:]))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="kind", required=True)
+    sub.add_parser("batch", add_help=False,
+                   help="prepare and export every dataset folder under --src, each in its own process, with a log "
+                        "of any that fail (batch.py; `prepare.py batch -h` lists its options)")
     dt = sub.add_parser("detect", allow_abbrev=False,
                         help="say what kind of dataset a folder (or file) holds, how sure that is, what was "
                              "found and what is missing; nothing is written (detect.py)")
@@ -286,6 +317,12 @@ def main(argv=None):
     e.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
+    gene_file_args(e)
+    e.add_argument("--ids", action="store_true",
+                   help="also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz) so the viewer can save the "
+                        "bins or cells inside drawn shapes with them. Off by default: without it no barcode is written. "
+                        "Every id must fully match its platform's id format and none may look like a sample ID, "
+                        "else nothing is written and the export stops (layerids.py)")
     userclusters.add_args(e)
     uc = sub.add_parser("userclusters", help="add your own UMAP / clusters (Seurat, scanpy) to a layer of an existing export")
     uc.add_argument("--id", required=True)
@@ -294,6 +331,10 @@ def main(argv=None):
     uc.add_argument("--markers", help="marker list for the suggested names (default: the one the export used)")
     uc.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     userclusters.add_args(uc)
+    ids = sub.add_parser("ids", help="add each layer's barcodes / cell ids to an existing export (as export --ids)")
+    ids.add_argument("--id", required=True)
+    ids.add_argument("--out", required=True, help="cache root that prepare wrote into")
+    ids.add_argument("--dest", required=True, help="export root holding <dest>/<id>/")
     ol = sub.add_parser("outlines", help="add cell outlines (segmentation boundaries) to a dataset that is already prepared, "
                                          "and to its export: from the platform's own files or from your own (cellshapes.py)")
     cellshapes.add_args(ol)
@@ -307,6 +348,7 @@ def main(argv=None):
     r.add_argument("--umap", help="CSV: barcode, UMAP1, UMAP2 (with --mtx)")
     r.add_argument("--obs", action="append", default=[], help="CSV: barcode, column... (repeatable, with --mtx)")
     r.add_argument("--tmp", help="local folder for the temporary gene-major arrays of big files (needs ~8 bytes per non-zero)")
+    gene_file_args(r)
     i = sub.add_parser("inspect", help="print channels / levels / dtype of a TIFF or qptiff without building")
     i.add_argument("--src", required=True)
     x = sub.add_parser("xenium", help="Xenium output folder: morphology_focus stains, cells (cells.csv.gz + "
@@ -388,7 +430,8 @@ def main(argv=None):
         import rnaseq
         if args.h5ad and Path(args.h5ad).stat().st_size > 2e9:          # large files: stream, never load
             rnaseq.export_h5ad_streaming(Path(args.h5ad), Path(args.dest), args.id, args.label or args.id,
-                                         embedding=args.embedding, tmpdir=args.tmp, log=log)
+                                         embedding=args.embedding, tmpdir=args.tmp, log=log,
+                                         gene_files=args.gene_files, shard_mb=args.shard_mb)
             return
         if args.h5ad:
             X, genes, emb, obs = rnaseq.read_h5ad(Path(args.h5ad), args.embedding)
@@ -396,7 +439,8 @@ def main(argv=None):
             X, genes, emb, obs = rnaseq.read_10x(Path(args.mtx), Path(args.umap), [Path(p) for p in args.obs])
         else:
             sys.exit("rnaseq needs --h5ad, or --mtx together with --umap")
-        rnaseq.export_rnaseq(X, genes, emb, obs, Path(args.dest), args.id, args.label or args.id, log=log)
+        rnaseq.export_rnaseq(X, genes, emb, obs, Path(args.dest), args.id, args.label or args.id, log=log,
+                             gene_files=args.gene_files, shard_mb=args.shard_mb)
         return
 
     if args.kind == "export":
@@ -406,7 +450,14 @@ def main(argv=None):
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
                       grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample,
-                      seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args))
+                      seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args),
+                      gene_files=args.gene_files, shard_mb=args.shard_mb, write_ids=args.ids)
+
+        return
+
+    if args.kind == "ids":
+        import layerids
+        layerids.add_to_export(Path(args.out) / args.id, Path(args.dest), log=log)
         return
 
     if args.kind == "userclusters":

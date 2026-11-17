@@ -173,6 +173,35 @@ const circle = (cx, cy, r, k) => Array.from({ length: k }, (_, i) => [cx + r * M
   eq(VL.forLink({ dataset: "d", seed: 7, mode: "shapes", resolution: 0.8, qcFilter: { layer: "l", thresholds: { total: { min: 5, max: null } }, nRows: 9, kept: 8, removed: 1, rule: "..." } }),
      { dataset: "d", seed: 7, mode: "shapes", resolution: 0.8, qcFilter: { layer: "l", thresholds: { total: { min: 5, max: null } } } }, "forLink() keeps what differs, and only the thresholds of the QC filter");
 
+  // ---- combined shapes (selections.js): a link carries the recipe (def), not the bins ----------------------------
+  const ring = (cx, cy, rr) => circle(cx, cy, rr, 32).map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]);
+  const def = { op: "sub", parts: [{ op: "union", parts: [{ points: ring(4000, 3000, 400) }, { points: ring(4500, 3000, 400) }] },
+    { geo: [[ring(4200, 3000, 150), ring(4200, 3000, 50)]] }] };
+  const comb = { ...typical(), shapes: [{ name: "A + B − C", color: "#911eb4", kind: "rows", points: [], def }] };
+  r = await VL.fit(comb, base, VL.BUDGET);
+  back = (await VL.decode(r.payload)).state;
+  ok(r.tier === 0 && back.shapes.length === 1, `a combined shape fits a link as its recipe (tier ${r.tier}, payload ${r.payload.length})`);
+  eq(back.shapes[0].def, def, "the recipe survives the round trip (operations, outlines, polygon with a hole)");
+  ok(back.shapes[0].rows === undefined && back.shapes[0].kind === undefined, "no bins in the link; the kind \"rows\" is not a link kind (selections.js sets it again)");
+  const longDef = { ...typical(), shapes: [{ name: "Big", color: "#911eb4", points: [], def: { op: "inter", parts: [{ points: wobble(900) }, { points: wobble(900) }] } }] };
+  r = await VL.fit(longDef, base, VL.BUDGET);
+  back = (await VL.decode(r.payload)).state;
+  ok(r.tier === 1 && !r.over && r.left.some((t) => /fine detail/.test(t)) && back.shapes[0].def.parts.every((p) => p.points.length === 40),
+     `a combined shape of long outlines is thinned like a drawn one (tier ${r.tier}, left: ${r.left})`);
+  let deep = { points: ring(0, 0, 10) };
+  for (let i = 0; i < 9; i++) deep = { op: "union", parts: [deep, { points: ring(0, 0, 5) }] };
+  const badDefs = VL.clean({ dataset: "d", shapes: [
+    { name: "deep", def: deep },
+    { name: "xor", def: { op: "xor", parts: [{ points: ring(0, 0, 9) }, { points: ring(0, 0, 8) }] } },
+    { name: "one part", def: { op: "union", parts: [{ points: ring(0, 0, 9) }] } },
+    { name: "huge", def: { op: "union", parts: Array.from({ length: 6 }, () => ({ points: wobble(4000) })) } },
+    { name: "rows leaf", def: { op: "union", parts: [{ rows: [1, 2, 3] }, { points: ring(0, 0, 9) }] } },
+    { name: "proto", def: JSON.parse(`{"op":"union","parts":[{"points":${JSON.stringify(ring(0, 0, 9))}},{"__proto__":{"points":${JSON.stringify(ring(0, 0, 9))}}}]}`) },
+    { name: "ok", def: { op: "inter", parts: [{ points: ring(0, 0, 9) }, { points: [[0, 0], [1, "x"], [5, 0], [5, 5], [0, 5]] }] } },
+  ] });
+  eq(badDefs.shapes.map((s) => s.name), ["ok"], "a recipe too deep, with an unknown operation, one part, too many points, bins or a borrowed key is dropped (with its shape)");
+  ok(badDefs.shapes[0].def.parts[1].points.length === 4 && ({}).points === undefined, "a recipe's bad points are dropped like an outline's; Object.prototype is untouched");
+
   console.log(fail ? `viewlink_test: ${fail} of ${n} checks FAILED` : `viewlink_test: ${n} checks passed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.log(`viewlink_test: crashed: ${e && e.stack || e}`); process.exit(1); });

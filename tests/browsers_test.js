@@ -6,8 +6,8 @@
 //             that still encodes a PNG); written to <shots>/<browser>/probe.json, a few must hold.
 //   datasets  one demo dataset of each kind (Visium HD, multiplex, tiled, Xenium, GeoMx, Stereo-seq,
 //             CosMx, MERSCOPE; --all for every one) opened with ?static=: tiles fetched, decoded and
-//             drawn, one gene added from the search, no console error, no page error, no failed
-//             request. The first view (fit, before the gene) is compared with Chromium's pixel by pixel
+//             drawn, one gene added from the search (from a gene pack: read with a Range request, 206), no
+//             console error, no page error, no failed request. The first view (fit, before the gene) is compared with Chromium's pixel by pixel
 //             on a 64 x 40 grid of the map (same JPEG / PNG tiles, same view: only rounding may differ).
 //   walk      demo_visiumhd: Tissue / UMAP / Side by side; Draw a region with the mouse (two circles)
 //             and Run UMAP (a worker that loads umap-js); Save JSON and Save CSV (file downloads);
@@ -87,12 +87,14 @@ fs.writeFileSync(path.join(catDir, "datasets.json"), JSON.stringify({ soda: 1, t
   datasets: CAT_IDS.map((id) => ({ id, label: `Demo ${id.replace(/^demo_/, "")}`, group: "Demo", tags: { ...tagOf(id), slide: `S${id.length}` } })) }));
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream", ".geojson": "application/json" };
 const inside = (root, rel) => { const f = path.join(root, rel); return f.startsWith(root + path.sep) || f === root ? f : null; };
+// served as blob storage serves them (tests/static_files.js): CORS, no caching, HTTP Range (206) for gene packs
+const { sendFile, preflight } = require("./static_files");
 function handler(route) {
   return (req, res) => {
+    if (req.method === "OPTIONS") { preflight(req, res); return; }
     const file = route(decodeURIComponent(req.url.split("?")[0]));
     if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
-    res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
-    fs.createReadStream(file).pipe(res);
+    sendFile(req, res, file, TYPES[path.extname(file)]);
   };
 }
 const dataRoute = (u) => {
@@ -177,11 +179,15 @@ const pickFromSearch = (page, box, results, name) => page.evaluate(([box, result
 }, [box, results, name]);
 const diffThumb = (a, b) => { if (!a || !b || a.length !== b.length) return null; let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
 const pngSize = (buf) => (buf && buf.length > 24 && buf.readUInt32BE(12) === 0x49484452 ? { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) } : null);
+// the layer's gene with the most counts that has data, and its points: from its own file, or from its slice of a
+// gene pack (genepack.py: genes.json gives each gene's byte count `b`), as tests/compat_test.js reads them
 const geneOf = (id, key) => {
+  const L = (readJson(EXPORT, id, "manifest.json").expr || []).find((e) => e.key === key) || {};
   const genes = readJson(EXPORT, id, "expr", key, "genes.json");
   const file = (g) => path.join(EXPORT, id, "expr", key, "gene", `${encodeURIComponent(g.n)}.bin`);
-  const withFile = genes.filter((g) => fs.existsSync(file(g)) && fs.statSync(file(g)).size > 0).sort((a, b) => b.t - a.t);
-  return withFile[0] ? { name: withFile[0].n, pts: fs.statSync(file(withFile[0])).size / 12 } : null;
+  const bytes = (g) => (L.genePack ? (g.b > 0 ? g.b : -1) : fs.existsSync(file(g)) ? fs.statSync(file(g)).size : -1);
+  const withFile = genes.filter((g) => bytes(g) > 0).sort((a, b) => b.t - a.t);
+  return withFile[0] ? { name: withFile[0].n, pts: bytes(withFile[0]) / 12, packed: !!L.genePack } : null;
 };
 
 // A form control as the browser drew it: its background (the most common luminance) must be dark, as on the
@@ -222,7 +228,7 @@ async function openPage(browser, eng, url, label, feature) {
   page.on("console", (m) => { if (m.type() === "error") log.console.push({ text: m.text(), url: (m.location() || {}).url || "" }); });
   page.on("pageerror", (e) => log.pageErrors.push(String(e.message || e).split("\n")[0]));
   page.on("requestfailed", (r) => { const f = r.failure() ? r.failure().errorText : "failed"; if (!/ERR_ABORTED|cancelled|NS_BINDING_ABORTED/i.test(f)) log.bad.push({ url: r.url(), status: f }); });
-  page.on("response", (r) => (r.status() >= 400 ? log.bad : log.ok).push({ url: r.url(), status: r.status() }));
+  page.on("response", (r) => (r.status() >= 400 ? log.bad : log.ok).push({ url: r.url(), status: r.status(), range: (r.request().headers() || {}).range || "" }));
   page.on("dialog", (d) => d.accept().catch(() => {}));         // a confirm() (e.g. a large volcano on touch) is answered yes
   await page.route("**/config.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript", body: "window.SpatialViewerConfig = {};" }));
   await page.addInitScript(() => {          // how many WebGL contexts the page makes (a browser keeps about 16; the oldest is lost)
@@ -384,6 +390,11 @@ async function checkDataset(browser, eng, urls, kind, id) {
         r = await look(t.page);
         const got = r.genes[0];
         t.ok(shown === g.name && got && got.name === g.name && got.n === g.pts, `gene ${g.name} added from the search: ${got ? got.n : "none"} points (file ${g.pts})`, "add a gene");
+        if (g.packed) {
+          const ranged = t.log.ok.filter((q) => /\/genepack\/[^/]+\.pack$/.test(q.url.split("?")[0]));
+          t.ok(ranged.length >= 1 && ranged.every((q) => q.status === 206 && /^bytes=\d+-\d+$/.test(q.range)),
+            `packed gene read with HTTP Range: ${ranged.map((q) => `${q.status} ${q.range}`).join(", ") || "no request into a pack"}`, "packed gene (HTTP Range, 206)");
+        }
         await t.shot(`${id}_2_gene`);
       }
     }
