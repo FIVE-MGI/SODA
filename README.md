@@ -5,7 +5,7 @@ in a web browser. You run it once on your own computer, from a Python notebook; 
 plain files that you upload to your own storage, and anyone with the link can look, with
 nothing to install.
 
-**Licence:** Washington University non-commercial research licence. See [Licence](#licence).
+**Licence: to be decided before public release.** See [Licence](#licence).
 
 <!-- SCREENSHOT PLACEHOLDER: docs/img/overview.png
      Whole-slide multiplex IF view with the channel panel open. Lead adds the image. -->
@@ -519,6 +519,8 @@ Manuscript in preparation. Until it is published, please cite this repository: G
 
 ## Licence
 
-SODA is released under the Washington University licence in [LICENSE](LICENSE)
-(©2026 Washington University; non-commercial, non-clinical research use). Read it before
-you use, copy or host SODA. For a commercial licence, contact Washington University's Office of Technology Management at otm@wustl.edu.
+**Licence: to be decided before public release.** The [LICENSE](LICENSE) file holds the
+current Washington University terms (©2026 Washington University; non-commercial,
+non-clinical research use). They may change before the repository is made public. For a
+commercial licence under the current terms, contact Washington University's Office of
+Technology Management at otm@wustl.edu.

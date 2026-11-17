@@ -8,7 +8,6 @@ authors:
     given-names: Jessica
     affiliation: "FIVE@MGI, Washington University in St. Louis"
 repository-code: "https://github.com/FIVE-MGI/SODA"
-license-url: "https://github.com/FIVE-MGI/SODA/blob/main/LICENSE"
 abstract: "SODA is a static browser viewer and a Python pipeline that turn the output of spatial biology instruments (multiplexed immunofluorescence, H&E, Visium and Visium HD, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, single-cell RNA-seq, spatial AnnData, OME-Zarr and SpatialData) into folders of static files that can be hosted anywhere and opened with a link."
 keywords:
   - spatial transcriptomics
