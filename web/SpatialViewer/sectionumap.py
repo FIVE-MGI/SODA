@@ -499,8 +499,9 @@ def write_feature_umap(d, xp: np.ndarray, names: list[str], embed_cols, marker_c
         if old:
             return old
     n, ne = len(xp), len(keep)
-    if ne < 50 or len(embed_cols) < 2:
-        log(f"[umap] {key}: {ne} rows x {len(embed_cols)} channels - too few to embed, skipped")
+    if ne < 50 or len(embed_cols) < 3:
+        # two channels give one principal component, and umap's PCA start needs two (it stopped the export)
+        log(f"[umap] {key}: {ne} rows x {len(embed_cols)} channels - too few to embed (3 channels or more), skipped")
         return None
     libs = _clustering_libs(key, log)
     if libs is None:
