@@ -651,8 +651,11 @@ async function walk(browser, eng, urls) {
       // the map's context is lost (seen about one run in two). 4x is checked on the browsers with a real GPU.
       const soft = await ev(() => { const gl = window.__spatialViewer.deck.device.gl, d = gl.getExtension("WEBGL_debug_renderer_info"); return /SwiftShader|llvmpipe|softpipe|Software/i.test(d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)); });
       if (soft) console.log(`        ${eng.name}: software renderer (SwiftShader): Save image 4x not run here`);
+      // the map's size at rest, read once before any save: after a 2x save deck puts the canvas back to its own size
+      // on its next frame, which can come late under load (WebKit), so reading it again later can see the 2x canvas
+      const base = await ev(() => { const c = document.getElementById("viewport").querySelector("canvas"); return { w: c.width, h: c.height, cw: c.clientWidth }; });
       for (const s of soft ? [1, 2] : [1, 2, 4]) {
-        const want = await ev((s) => { const c = document.getElementById("viewport").querySelector("canvas"); const sel = document.getElementById("snapScale"); const o = sel && [...sel.options].find((o) => o.value === String(s)); return { w: Math.round(c.width * s), h: Math.round(c.height * s), k: (c.width * s) / c.clientWidth, off: !o || o.disabled, txt: o ? o.textContent : "" }; }, s);
+        const want = await ev(({ s, base }) => { const sel = document.getElementById("snapScale"); const o = sel && [...sel.options].find((o) => o.value === String(s)); return { w: Math.round(base.w * s), h: Math.round(base.h * s), k: (base.w * s) / base.cw, off: !o || o.disabled, txt: o ? o.textContent : "" }; }, { s, base });
         if (want.off) { t.ok(true, `Save image ${s}x not offered here: ${want.txt}`); continue; }
         let said = "";
         const png = await download(t, async () => { said = await ev((s) => window.SodaSnapshot._save({ scale: s, bg: "black" }), s); }, 120000);
