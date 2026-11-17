@@ -173,6 +173,68 @@ async function selectionChecks(B, browser, DATA, URL0) {
 
   // ---- Colour by a value (binpaint.js): the outlines take its colours, at its dots' one alpha
   const N = await page.evaluate(() => window.__spatialViewer.state.umap.pos.length / 2);
+  // Two genes' colours: magenta (A only) / green (B only) / white (both) by default, red / green / yellow when picked.
+  // The pixels inside cells of each class (over black, the image off), the map's key, Save image's legend, and a link
+  // with the choice (it comes back) and one from before the choice (no `pc`: the default).
+  const CLS = {
+    mg: { 1: (p) => p[0] > p[1] + 60 && p[2] > p[1] + 60, 2: (p) => p[1] > p[0] + 60 && p[1] > p[2] + 40,
+          3: (p) => Math.min(p[0], p[1], p[2]) >= 110 && Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) < 50 },
+    rg: { 1: (p) => p[0] > p[1] + 80 && p[0] > p[2] + 60, 2: (p) => p[1] > p[0] + 60 && p[1] > p[2] + 40,
+          3: (p) => p[0] >= 110 && p[1] >= 110 && p[2] < p[1] - 60 },
+  };
+  const WANT = { mg: { 1: [240, 70, 240], 2: [40, 200, 90], 3: [235, 235, 235] }, rg: { 1: [255, 51, 85], 2: [51, 221, 102], 3: [255, 221, 51] } };
+  const pairPixels = async (pg, pal, what) => {
+    await settled(pg);
+    const rows = await pg.evaluate(() => { const D = window.SodaPaint._state().pd, o = { 1: [], 2: [], 3: [] }; for (let r = 0; r < D.cls.length; r++) if (o[D.cls[r]] && o[D.cls[r]].length < 5000) o[D.cls[r]].push(r); return o; });
+    const got = {}, shares = {};
+    let n = 0;
+    for (const k of [1, 2, 3]) {
+      const sm = rows[k].length ? await pg.evaluate(pageCellSamples, [rows[k], 12]) : [];
+      got[k] = sm.length ? await pg.evaluate(pagePixels, sm.map((q) => q.s)) : [];
+      shares[k] = got[k].length ? +share(got[k], CLS[pal][k]).toFixed(2) : null;
+      n += got[k].length;
+    }
+    const ok = n >= 6 && got[1].length > 0 && got[2].length > 0 && [1, 2, 3].every((k) => shares[k] === null || shares[k] >= 0.8);
+    check(ok, `${B}: Two genes, ${pal === "mg" ? "magenta / green / white" : "red / green / yellow"} ${what}: the cells of each class are drawn in its colour`,
+      { shares, sample: { 1: got[1].slice(0, 2), 2: got[2].slice(0, 2), 3: got[3].slice(0, 2) } });
+    const cols = await pg.evaluate(() => { const P = window.SodaPaint._state(), D = P.pd, o = {}; for (let r = 0; r < D.cls.length; r++) if (D.cls[r] && !o[D.cls[r]]) o[D.cls[r]] = Array.from(P.colors.slice(4 * r, 4 * r + 3)); return o; });
+    check(Object.keys(cols).every((k) => JSON.stringify(cols[k]) === JSON.stringify(WANT[pal][k])), `${B}: Two genes ${what}: the class colours are ${pal}'s`, cols);
+  };
+  const pairColourChecks = async (pg, gs) => {
+    const st0 = await pg.evaluate(() => ({ pal: window.SodaPaint._pal().id, sel: document.getElementById("paintPairPal").value, opts: [...document.getElementById("paintPairPal").options].map((o) => o.value) }));
+    check(st0.pal === "mg" && st0.sel === "mg" && st0.opts.join() === "mg,rg", `${B}: Two genes: Colours offers magenta/green and red/green, magenta/green to begin with`, st0);
+    await pairPixels(pg, "mg", "(default)");
+    const keyOf = () => pg.evaluate(() => ({ key: document.getElementById("densityKey").innerHTML.replace(/\s/g, ""), leg: window.SodaPaint.legend()[0].items.map((i) => i.rgb) }));
+    let k = await keyOf();
+    check(k.key.includes("rgb(240,70,240)") && k.key.includes("rgb(40,200,90)") && k.key.includes("rgb(235,235,235)")
+      && JSON.stringify(k.leg) === JSON.stringify([WANT.mg[3], WANT.mg[1], WANT.mg[2]]), `${B}: Two genes: the map's key and Save image's legend show magenta / green / white`, k.leg);
+    await setVal(pg, "paintPairPal", "rg");
+    await pg.waitForFunction(() => { const P = window.SodaPaint._state(); return P.pd && P.pd.pal === "rg" && P.colors; }, null, { timeout: 60000 });
+    await pairPixels(pg, "rg", "(picked)");
+    await shotB(pg, "select_paint_pair_rg.png");
+    k = await keyOf();
+    check(k.key.includes("rgb(255,51,85)") && k.key.includes("rgb(255,221,51)") && JSON.stringify(k.leg) === JSON.stringify([WANT.rg[3], WANT.rg[1], WANT.rg[2]]),
+      `${B}: Two genes: the key and the legend follow red / green`, k.leg);
+    // a link: the choice is in it and comes back; the same link without it (made before the choice) opens on the default
+    const lk = await pg.evaluate(async () => {
+      const url = (await window.SodaViewLink.make()).url, payload = url.split("#v=")[1], d = await window.SodaViewLink.decode(payload);
+      const pc = []; const strip = (o) => { if (o && typeof o === "object") for (const [key, v] of Object.entries(o)) { if (key === "pc" && o.m === "pair") { pc.push(v); delete o.pc; } else strip(v); } };
+      strip(d.state);
+      return { url, pc, old: url.split("#v=")[0] + "#v=" + (await window.SodaViewLink.encode(d.state)) };
+    });
+    check(lk.pc.join() === "rg", `${B}: Two genes: the link holds the colour choice`, lk.pc);
+    for (const [u, want, what] of [[lk.url, "rg", "a link with red/green opens on red/green"], [lk.old, "mg", "a link from before the choice (no colours in it) opens on magenta/green"]]) {
+      const p3 = await ctx.newPage(); watch(p3);
+      await p3.goto(u); await ready(p3);
+      await p3.waitForFunction(() => { const P = window.SodaPaint._state(); return P.mode === "pair" && P.pd && P.colors; }, null, { timeout: 60000 });
+      const got = await p3.evaluate(() => ({ pal: window.SodaPaint._pal().id, sel: document.getElementById("paintPairPal").value, d: window.SodaPaint._state().pd.pal, a: window.SodaPaint._state().pd.a, b: window.SodaPaint._state().pd.b }));
+      check(got.pal === want && got.sel === want && got.d === want && got.a === gs[0] && got.b === gs[1], `${B}: Two genes: ${what}`, got);
+      if (want === "mg") await pairPixels(p3, "mg", "(old link)");
+      await p3.close();
+    }
+    await setVal(pg, "paintPairPal", "mg");
+    await pg.waitForFunction(() => { const P = window.SodaPaint._state(); return P.pd && P.pd.pal === "mg"; }, null, { timeout: 60000 });
+  };
   const paintSame = async (what) => {
     await page.waitForFunction(() => { const P = window.SodaPaint._state(); return P.colors && window.SodaPaint.active(); }, null, { timeout: 60000 });
     await settled(page);
@@ -211,6 +273,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
     await page.waitForFunction(() => { const P = window.SodaPaint._state(); return P.pd && P.colors; }, null, { timeout: 60000 });
     await paintSame("Two genes (co-expression)");
     await shotB(page, "select_paint_pair.png");
+    await pairColourChecks(page, genes);
     await setVal(page, "paintMode", "set");
     await setVal(page, "paintSetGenes", genes.join(", "), "input"); await page.evaluate(() => document.getElementById("paintSetRun").click());
     await page.waitForFunction(() => { const P = window.SodaPaint._state(); return P.mode === "set" && P.cur && P.colors; }, null, { timeout: 60000 });

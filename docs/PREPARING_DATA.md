@@ -911,10 +911,13 @@ zarr-array shapes layout (shapes format 0.1: save the store again with a current
 
 ### Privacy
 
-Barcodes, cell ids, `obs` names, file, library and element names stay in the cache, as for every
-other kind: none of them is exported unless you ask for the per-row id lists (`export --ids`),
-and those are written only for ids in an allow-listed format (`layerids.py`): Visium barcodes
-from a classic Visium AnnData; never the ids of a SpatialData table or an AnnData of cells.
+File, library and element names stay in the cache, as for every other kind. Barcodes, cell ids
+and `obs` names go into the export's per-row id lists (`expr/<key>/ids.txt.gz`), which `export`
+writes by default and `--no-ids` leaves out: a list is written only when none of its ids looks
+like a sample ID (`deid.py` patterns), and Visium barcodes from a classic Visium AnnData must also
+match the Visium barcode format (`layerids.py`). The ids of a SpatialData table or an AnnData of
+cells have no such format, so only the sample-ID check guards them: read them before you publish,
+or use `--no-ids`.
 Messages print a name only when it does not look like a sample ID (`[sample ID]` otherwise),
 and refusals print none. `obs` column names and values become clusterings only through the same
 de-identification as your own clusters.
@@ -1173,6 +1176,15 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   is laid out; the layout and the clusters are the same as one after the other.
 - A bin inside two shapes belongs to the one drawn last.
 - Leiden clusters of the result at a resolution you choose (0 = none).
+- **Merge clusters of the run** (Analyze tab, under Draw a region): tick two or more of the run's
+  clusters and press Merge, as Cell sets does for the whole section. A set takes the colour and
+  number of its lowest cluster; the run's panel and legend, the slide, the volcano and plot
+  groups and Save CSV (which then adds `set` and `set_name` columns) follow, and a volcano or plot
+  made before a merge says it is out of date. Un-merge and Undo take merges back. Save JSON and
+  Copy link keep them (`runSets`, with the run's cluster sizes): they come back when the same run
+  is made again (same shapes, seed and resolution), and are left out with a note when the new
+  run's clusters differ. Merges made in fast mode come back only on a fast-mode run of the same
+  sample, and merges made on every bin only on a run on every bin. A new run starts without merges.
 - **Marker squares (Akoya and other multi-channel images)** use the `mat/` files instead, and
   add a comparison with the rest of the slide, because a UMAP of only the shapes cannot show
   what the shapes have in common (a marker high in every square drawn, such as CD45 over an
@@ -1216,8 +1228,9 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   same full-resolution image the export was made from (no `--crop` or `--flip` in between, same
   scale); the viewer warns when points fall outside the image or the file's pixel size differs.
   *Save barcodes (CSV)* writes one row per bin and shape: the barcode or cell id, bin row, x, y and
-  the shape name. It needs an export made with `prepare.py export --ids` (or `prepare.py ids` run
-  on it); see `ids.txt.gz` in [DATA_FORMAT.md](DATA_FORMAT.md).
+  the shape name. It needs the export's barcode lists, which `prepare.py export` writes by default
+  (not with `--no-ids`; `prepare.py ids` adds them to an export made without); see `ids.txt.gz` in
+  [DATA_FORMAT.md](DATA_FORMAT.md).
 - It works with exported data only, not with the live tile server.
 
 ## Region overlays

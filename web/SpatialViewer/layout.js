@@ -60,8 +60,10 @@
     panelCount: { help: "% positive for a marker: pick a marker, put the line where real staining starts, and read the share of squares above it in each region. Count clusters: how many squares each cluster has in each region. Both give a CSV. Cut-offs can be saved and loaded (More, inside the tool)." },
     panelLasso: { more: ["lassoMode", "lassoSeed", "lassoRes"], notes: ["lassoNote"],
       help: "Pick Circle or Freehand and draw one or more shapes on the slide (Esc stops drawing). Run UMAP makes a new UMAP and clusters from only the bins inside the shapes. More options: Dots (one per bin, or one per shape with its bins added up), Seed (the same seed gives the same picture), Resolution (auto, or a number: higher gives more, smaller clusters; 0 = no clusters)." },
+    panelRunSets: {
+      help: "Merge clusters of the last Draw a region run into one named set, as Cell sets does for the whole section: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour and number of its lowest cluster and counts as one group in the run's panel, on the slide, in the volcano and plot groups and in Save CSV (which then adds the set and its name). A volcano or plot made before a merge says it is out of date. Un-merge splits a set again and Undo takes back the last change made here. Save JSON and Copy link keep the merges: they come back when the same run is made again (the same shapes, seed and resolution). A new run starts without merges." },
     panelShapes: {
-      help: "Tick two or more shapes of Draw a region and press Combine (the bins inside any of them), Overlap (the bins inside all of them) or Subtract (the bins of the first ticked shape, the highest in the list, that are in none of the others). The result is a new shape that Run UMAP, the volcano and the plots use like a drawn one; it counts the bins of every ticked shape, even where a later shape covers them. Remove the shapes used takes the ticked shapes away afterwards. Save GeoJSON writes the shapes (the ticked ones, or all) in the image's full-resolution pixels, with the pixel size in µm: an outline as a polygon, a combined shape or a selection as the centres of its bins. Load GeoJSON adds polygons from such a file; one from QuPath lines up only if QuPath opened the same full-resolution image (same crop, flip and scale). Save barcodes writes one row per bin inside the shapes with its barcode or cell id, its position and its shape; it needs an export made with prepare.py export --ids." },
+      help: "Tick two or more shapes of Draw a region and press Combine (the bins inside any of them), Overlap (the bins inside all of them) or Subtract (the bins of the first ticked shape, the highest in the list, that are in none of the others). The result is a new shape that Run UMAP, the volcano and the plots use like a drawn one; it counts the bins of every ticked shape, even where a later shape covers them. Remove the shapes used takes the ticked shapes away afterwards. Save GeoJSON writes the shapes (the ticked ones, or all) in the image's full-resolution pixels, with the pixel size in µm: an outline as a polygon, a combined shape or a selection as the centres of its bins. Load GeoJSON adds polygons from such a file; one from QuPath lines up only if QuPath opened the same full-resolution image (same crop, flip and scale). Save barcodes writes one row per bin inside the shapes with its barcode or cell id, its position and its shape; it needs the export's barcode lists, which prepare.py export writes by default (not with --no-ids)." },
     panelVolcano: { more: ["vcTest", "vcMinPct", "vcExtra"],
       help: "Compares two groups of bins gene by gene: a drawn shape, a cluster, or the rest of the section. Genes to the right are higher in A, to the left higher in B; click a dot to draw that gene on the slide. More options: the test (Wilcoxon rank-sum or Welch's t), the smallest share of bins a gene must be counted in to be tested, and extra genes to test by name." },
     panelPlots: { more: ["plTop"], moreAt: { before: "plRun" },
@@ -77,7 +79,7 @@
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelMeasure", "panelRna"],
     clusters: ["panelUmap", "panelOwn", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
-    analyze: ["panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
+    analyze: ["panelLasso", "panelRunSets", "panelShapes", "panelVolcano", "panelPlots"],
     save: ["panelSave", "panelImage", "panelDataset", "panelOffline", "panelHelp"],
   };
   // a section that lives inside another one keeps its own heading and does not fold by itself
@@ -538,6 +540,7 @@
       const n = $("lassoShapes") ? $("lassoShapes").querySelectorAll(".lshape").length : 0;
       return (n ? plural(n, "shape") : "no shapes") + (up("lassoCancel") ? " · running…" : toolOn("analyze") ? " · drawing…" : "");
     },
+    panelRunSets() { const n = $("rsSets") ? $("rsSets").querySelectorAll(".cs-set").length : 0; return n ? plural(n, "set") : up("rsPick") ? "no sets" : ""; },
     panelShapes() { const n = $("shPick") ? $("shPick").querySelectorAll("input:checked").length : 0; return n ? `${n} ticked` : ""; },
     panelVolcano() {
       if (up("vcCancel")) return "running…";

@@ -275,9 +275,31 @@ async function pageChecks(browser, pageUrl, dataUrl) {
   // the saved fast-mode JSON, loaded back: the same result
   await ev((j) => window.__spatialViewer.lassoLoad(j), J);
   check(await runDone(B.id), "the fast-mode Save JSON, loaded back, runs");
-  const C = await ev(() => { const R = window.__spatialViewer.state.lasso.result; return { fast: R.info.fast ? R.info.fast.sample : null, emb: Array.from(R.emb), cluster: R.cluster ? Array.from(R.cluster) : null }; });
+  const C = await ev(() => { const R = window.__spatialViewer.state.lasso.result; return { id: R.id, fast: R.info.fast ? R.info.fast.sample : null, emb: Array.from(R.emb), cluster: R.cluster ? Array.from(R.cluster) : null }; });
   check(C.fast === sample && C.emb.length === A.emb.length && C.emb.every((v, i) => v === A.emb[i]) && (!A.cluster || C.cluster.every((v, i) => v === A.cluster[i])),
     "and gives the same fast-mode result, bit for bit");
+  // merged clusters (Merge clusters of the run) saved with a fast-mode run: applied only to a fast-mode run of the
+  // same sample (viewer.js runLayoutOf: the sample's size, of how many bins, an FNV-1a hash of its bin rows)
+  if (A.nCl > 1 && A.cluster) {
+    const z = new Array(A.nCl).fill(0); A.cluster.forEach((c) => { if (c < A.nCl) z[c]++; });
+    let h = 0x811c9dc5; for (const r of jf.sampleRows) h = Math.imul(h ^ r, 0x01000193) >>> 0;
+    const sets = [{ ids: [0, 1], prev: null, name: "merged by the test" }];
+    const tryRun = async (runSets, prevId) => {
+      await ev((j) => window.__spatialViewer.lassoLoad(j), { ...J, runSets });
+      const ok = await runDone(prevId);
+      return { ok, ...(await ev(() => { const R = window.__spatialViewer.state.lasso.result; return { id: R.id, sets: R.sets ? R.sets.length : 0, msg: document.getElementById("lassoMsg").textContent }; })) };
+    };
+    const M1 = await tryRun({ sizes: z, sampling: "fast", sample: { n: jf.sample, of: jf.of, hash: h }, sets }, C.id);
+    check(M1.ok && M1.sets === 1 && /Merged clusters from the saved view: 1 set/.test(M1.msg), "merged clusters saved with a fast-mode run come back on the same fast-mode run", M1.msg.slice(-220));
+    const M2 = await tryRun({ sizes: z, sets }, M1.id);
+    check(M2.ok && M2.sets === 0 && /made on a run on every bin, and this run is in fast mode/.test(M2.msg),
+      "merged clusters made on every bin are not applied to a fast-mode run (the same cluster sizes)", M2.msg.slice(-220));
+    const M3 = await tryRun({ sizes: z, sampling: "fast", sample: { n: jf.sample, of: jf.of, hash: (h ^ 1) >>> 0 }, sets }, M2.id);
+    check(M3.ok && M3.sets === 0 && /this run has another sample/.test(M3.msg), "nor merged clusters of a fast-mode run with another sample", M3.msg.slice(-220));
+    // a link keeps what they were made on
+    const kept = await ev((rs) => window.SodaViewLink.clean ? window.SodaViewLink.clean({ runSets: rs }).runSets : "no clean", { sizes: z, sampling: "fast", sample: { n: jf.sample, of: jf.of, hash: h }, sets });
+    if (kept !== "no clean") check(kept && kept.sampling === "fast" && kept.sample && kept.sample.hash === h && kept.sample.n === jf.sample, "a link's merged clusters keep fast mode's sample", kept);
+  }
   check(!errs.length, "no page errors (page test)", errs);
   await ctx.close();
 }
