@@ -2073,6 +2073,8 @@
     const L = S.lasso;
     if (!L.pos) return;
     const pos = L.pos, n = pos.length / 2, a = new Uint16Array(n).fill(LASSO_NONE);
+    // a list of bins belongs to one layer: selections.js finds a combined shape's bins again on this one
+    if (window.SodaShapes) window.SodaShapes.remap(L.shapes, pos, S.exprKey);
     L.shapes.forEach((s) => { s.bins = 0; s.shared = 0; s.lost = 0; });
     L.shapes.forEach((s, si) => {
       const take = (i) => {
@@ -2368,6 +2370,7 @@
     buildRoiTable();
     if (window.SodaVolcano) window.SodaVolcano.refresh();
     if (window.SodaPlots) window.SodaPlots.refresh();
+    if (window.SodaShapes) window.SodaShapes.refresh();
   }
 
   function lassoCancel() {
@@ -2943,9 +2946,13 @@
         : { minUmi: LASSO.minUmi, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
             minDetect: LASSO.minDetect, minDetectFrac: LASSO.minDetectFrac, minDetectCap: LASSO.minDetectCap,
             cap: R ? R.params.cap : LASSO_CAP, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
-      shapes: L.shapes.map((s) => ({ name: s.name, color: s.hex, kind: s.kind,
-                                      points: s.pts.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]),
-                                      ...(s.rows ? { rows: Array.from(s.rows) } : {}) })),
+      // a shape combined from outlines (selections.js) also keeps its recipe, `def`; a link carries that instead of its bins
+      shapes: L.shapes.map((s) => {
+        const def = window.SodaShapes ? window.SodaShapes.saveDef(s) : null;
+        return { name: s.name, color: s.hex, kind: s.kind,
+                 points: s.pts.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]),
+                 ...(s.rows && (full || !def) ? { rows: Array.from(s.rows) } : {}), ...(def ? { def } : {}) };
+      }),
       resolution: /^\s*(auto)?\s*$/i.test($("lassoRes").value) ? "auto" : Number($("lassoRes").value) || 0,
       result: R ? { method: R.info.method, points: R.info.nIn, genesUsed: R.info.nGenesUsed, minDetect: R.info.minDetect || null,
                     nPcs: R.info.nPcs, nNeighbors: R.info.nNeighbors || null, init: R.info.init || null, seconds: +R.secs.toFixed(2),
@@ -3017,6 +3024,7 @@
       L.shapes = j.shapes.map((s, i) => ({ id: i + 1, name: s.name || `Shape ${i + 1}`, kind: s.kind || "free", pts: s.points || [],
                                            ...(Array.isArray(s.rows) ? { rows: Uint32Array.from(s.rows) } : {}),
                                            hex: s.color || LASSO_COLORS[i % LASSO_COLORS.length], bins: 0, shared: 0, lost: 0 }));
+      if (window.SodaShapes) window.SodaShapes.restore(L.shapes, j.shapes);   // combined shapes: their recipe (selections.js)
       L.next = L.shapes.length + 1; L.selShape = null;
     }
     if (Number.isInteger(j.seed)) $("lassoSeed").value = j.seed;
@@ -6230,6 +6238,21 @@
     });
   }
 
+  // ---- Combine and export shapes (selections.js): what it needs from here --------------------------------------
+  function shapesInit() {
+    if (!window.SodaShapes) return;
+    window.SodaShapes.init({
+      state: () => S, touch: TOUCH, words: wd, download: lassoDownload, colors: LASSO_COLORS, inPoly,
+      layer: () => (S.m && S.mode !== "rna" ? currentExpr() : null),
+      changed: lassoShapesChanged,                   // the shapes changed: assign the bins again, redraw, tell the volcano and plots
+      buf: (p) => S.src.buf(p),
+      layers: () => [...$("exprSelect").options].map((o) => o.value),
+      setLayer: async (k) => { $("exprSelect").value = k; return setExprKey(k); },
+      image: () => (S.m && S.m.image) || null,
+      um: () => (S.m && S.m.pixelSizeUm) || 0,
+    });
+  }
+
   async function init() {
     sheetEvents();                                  // first, so the controls open even if loading fails
     initDeck();
@@ -6241,6 +6264,7 @@
     touchInit();
     snapshotInit();
     cellSetsInit();
+    shapesInit();
     // a link to a view (viewlink.js) and linked windows (compare.js): handed only what they need from here
     const share = {
       state: () => S, seq: () => openSeq, status, render, renderRna, setCamera, sessionState, sessionApply,

@@ -194,11 +194,13 @@ def demo_commands(root: Path) -> list[list[str]]:
          "--markers", "examples/demo_protein_markers.json", "--no-umap", "--seam-correct"],
         [prep, "export", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_markers.json",
          "--user-layer", "008um", "--user-obs", f"{r}/user/clusters.csv", "--user-umap", f"{r}/user/umap.csv"],
+        # the optional barcode lists (layerids.py): added to an existing export here, written by export --ids below
+        [prep, "ids", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user"],
         ["examples/make_xenium_demo.py", "--out", raw],
         [prep, "xenium", "--id", XE, "--src", f"{raw}/xenium", "--out", cache, "--label", "Synthetic Xenium"],
         [prep, "export", "--id", XE, "--out", cache, "--dest", export, "--markers", "examples/demo_xenium_markers.json"],
         [prep, "export", "--id", XE, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_xenium_markers.json",
-         "--user-layer", "cells", "--user-obs", f"{r}/user/xenium_cells.csv", "--user-obs", f"{r}/user/xenium_groups.csv"],
+         "--user-layer", "cells", "--user-obs", f"{r}/user/xenium_cells.csv", "--user-obs", f"{r}/user/xenium_groups.csv", "--ids"],
         [prep, "xenium", "--id", XP, "--src", f"{raw}/xenium_pq", "--out", cache],
         [prep, "export", "--id", XP, "--out", cache, "--dest", export, "--grid-um", "0"],
         [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", cache],
@@ -823,6 +825,125 @@ def check_user(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict
     print(f"    user clusters: {ro.get('matched')}/{ro.get('inFile')} barcodes matched ({ro.get('methods')}), "
           f"cell_type {ct['n']} groups, labels agree {agree:.0%}; partial {pr.get('rate')}")
     return res
+
+
+def check_ids(c: Checker, root: Path) -> dict:
+    """The optional barcode / cell id lists (layerids.py): none in a default export; `prepare.py ids` on the
+    Visium HD export_user copy and `export --ids` on the Xenium one write expr/<key>/ids.txt.gz with one id per
+    positions.bin row in that order (= the cache's barcodes / the matrix's cell ids), named in the manifest."""
+    out = {}
+    for ds in (VIS, XE):
+        m = read_json(root / "export" / ds / "manifest.json")
+        c.ok(not any("ids" in L for L in m.get("expr", [])) and not list((root / "export" / ds).rglob("ids.txt*")),
+             f"{ds}: a default export has no id list")
+    # Xenium: the cell ids of the matrix, in its (= positions) order
+    xo = root / "export_user" / XE
+    L = next((x for x in read_json(xo / "manifest.json").get("expr", []) if x["key"] == "cells"), {})
+    e = L.get("ids") or {}
+    c.eq((e.get("file"), e.get("column")), ("ids.txt.gz", "cell_id"), f"{XE} --ids: manifest ids entry")
+    f = xo / "expr" / "cells" / "ids.txt.gz"
+    if c.ok(f.exists(), f"{XE} --ids: expr/cells/ids.txt.gz written"):
+        got = gzip.decompress(f.read_bytes()).decode("utf-8").split("\n")[:-1]
+        want = gzip.open(root / "raw" / "xenium" / "cell_feature_matrix" / "barcodes.tsv.gz", "rt").read().split()
+        c.eq(got, want, f"{XE} --ids: one cell id per positions.bin row, in matrix order")
+        c.eq((e.get("n"), e.get("bytes")), (len(f32(xo / "expr" / "cells" / "positions.bin", 2)), f.stat().st_size), f"{XE} --ids: n and bytes")
+        out[f"{XE}/cells"] = {"rows": len(got), "bytes": f.stat().st_size, "bytesPerRow": round(f.stat().st_size / max(len(got), 1), 2)}
+    # Visium HD: prepare.py ids on an existing export; the cache's barcodes of the rows with a position
+    vo = root / "export_user" / VIS
+    for L in read_json(vo / "manifest.json").get("expr", []):
+        key, e = L["key"], L.get("ids") or {}
+        f = vo / "expr" / key / "ids.txt.gz"
+        if not c.ok(f.exists() and e.get("column") == "barcode", f"{VIS} ids: {key}/ids.txt.gz and its manifest entry"):
+            continue
+        got = gzip.decompress(f.read_bytes()).decode("utf-8").split("\n")[:-1]
+        pos = f32(vo / "expr" / key / "positions.bin", 2)
+        c.eq((len(got), e.get("n"), e.get("bytes")), (len(pos), len(pos), f.stat().st_size), f"{VIS} ids {key}: rows, n, bytes")
+        c.eq(len(set(got)), len(got), f"{VIS} ids {key}: every barcode once")
+        c.ok(all(BARCODE.match(b) for b in got[:50]), f"{VIS} ids {key}: Space Ranger bin barcodes ({got[:2]})")
+        # a bin barcode names its grid row and column: they must follow the positions (same order)
+        rc = np.array([[int(b.split("_")[2]), int(b.split("_")[3].split("-")[0])] for b in got], np.float64)
+        ok = len(rc) > 3
+        if ok:
+            for k, col in ((0, 1), (1, 0)):          # x follows the column, y the row
+                A = np.column_stack([rc[:, col], rc[:, 1 - col], np.ones(len(rc))])
+                coef, res, *_ = np.linalg.lstsq(A, pos[:, k].astype(np.float64), rcond=None)
+                ok = ok and float(np.abs(A @ coef - pos[:, k]).max()) < 1.0
+        c.ok(ok, f"{VIS} ids {key}: the barcodes' grid row / column follow positions.bin (same order)")
+        try:
+            import zarr
+            zg = zarr.open_group(str(root / "cache" / VIS / "expr" / f"{key}.zarr"), mode="r")
+            xy = np.asarray(zg["xy"])
+            want = [b.decode() for b, on in zip(zg["barcodes"][()], ~np.isnan(xy[:, 0])) if on]
+            c.eq(got, want, f"{VIS} ids {key}: = the cache's barcodes of the bins with a position")
+        except ImportError:
+            print("    SKIP ids vs cache barcodes (zarr not installed)")
+        out[f"{VIS}/{key}"] = {"rows": len(got), "bytes": f.stat().st_size, "bytesPerRow": round(f.stat().st_size / max(len(got), 1), 2)}
+    print("    id lists: " + ", ".join(f"{k} {v['rows']:,} rows {v['bytes'] / 1e3:.1f} kB ({v['bytesPerRow']} B/row)" for k, v in out.items()))
+    check_ids_gates(c, root)
+    return out
+
+
+# a made-up sample ID of the shape deid.py knows (never a real one)
+FAKE_SAMPLE = "INT9907"   # deid:ok (fake)
+
+
+def check_ids_gates(c: Checker, root: Path):
+    """The id lists are published, so: (1) `deid.py check` reads ids.txt.gz and reports a sample ID planted in it
+    by file and line only; (2) `prepare.py ids` refuses a layer whose ids do not fit the platform's format
+    (a merge prefix, a sample name glued on), writes nothing for any layer, and never prints an id."""
+    work = root / "ids_gates"
+    if work.exists():
+        shutil.rmtree(work)
+    src = root / "export_user" / VIS / "expr" / "008um" / "ids.txt.gz"
+    if not c.ok(src.exists(), "ids gates: the Visium HD id list to start from"):
+        return
+    # (1) a sample ID planted on line 7 of a copy
+    lines = gzip.decompress(src.read_bytes()).decode("utf-8").split("\n")
+    planted = FAKE_SAMPLE + "_" + lines[6]
+    lines[6] = planted
+    bad = work / "deid" / VIS / "expr" / "008um" / "ids.txt.gz"
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(gzip.compress("\n".join(lines).encode("utf-8")))
+    p = subprocess.run([sys.executable, "web/SpatialViewer/deid.py", "check", str(work / "deid")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    c.eq(p.returncode, 1, "deid.py check finds a sample ID planted inside an ids.txt.gz (exit code)")
+    c.ok("ids.txt.gz:7" in p.stdout and "[deid] 1 sample ID(s) found" in p.stdout,
+         f"deid.py check names the .gz file and line 7: {p.stdout.strip().splitlines()[:2]}")
+    c.ok(FAKE_SAMPLE not in p.stdout and planted not in p.stdout, "deid.py check does not print the ID it found in a .gz file")
+    # (2) a cache whose 016um barcodes carry a merge prefix (4) and a sample ID (1): prepare.py ids refuses
+    try:
+        import zarr
+    except ImportError:
+        print("    SKIP the ids refusal check (zarr not installed)")
+        return
+    cache, exp = work / "cache" / VIS, work / "export" / VIS
+    (cache / "expr").mkdir(parents=True)
+    shutil.copyfile(root / "cache" / VIS / "manifest.json", cache / "manifest.json")
+    keys = [L["key"] for L in read_json(cache / "manifest.json").get("expr", [])]
+    for k in keys:
+        shutil.copytree(root / "cache" / VIS / "expr" / f"{k}.zarr", cache / "expr" / f"{k}.zarr")
+        (exp / "expr" / k).mkdir(parents=True)
+        shutil.copyfile(root / "export" / VIS / "expr" / k / "positions.bin", exp / "expr" / k / "positions.bin")
+    shutil.copyfile(root / "export" / VIS / "manifest.json", exp / "manifest.json")
+    g = zarr.open_group(str(cache / "expr" / "016um.zarr"), mode="r+")
+    bcs = [b.decode() for b in g["barcodes"][()]]
+    xy = np.asarray(g["xy"])
+    on = np.flatnonzero(~np.isnan(xy[:, 0]))
+    for j, r in enumerate(on[:5]):
+        bcs[r] = (f"{FAKE_SAMPLE}_" if j == 0 else "S1_") + bcs[r]
+    g.create_dataset("barcodes", data=np.array([b.encode() for b in bcs], dtype="S"), chunks=(1 << 20,), overwrite=True)
+    before = (exp / "manifest.json").read_bytes()
+    p = subprocess.run([sys.executable, "web/SpatialViewer/prepare.py", "ids", "--id", VIS, "--out", str(work / "cache"),
+                        "--dest", str(work / "export")], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    c.ok(p.returncode != 0, f"prepare.py ids refuses ids that do not fit the Visium HD format (exit {p.returncode})")
+    c.ok("REFUSING to write 016um/ids.txt.gz: 5 of" in p.stdout and "visium_hd id format" in p.stdout,
+         f"the refusal names the layer, the count and the format: {[ln for ln in p.stdout.splitlines() if 'REFUSING' in ln][:1]}")
+    c.ok(FAKE_SAMPLE not in p.stdout and "S1_" not in p.stdout and not any(b in p.stdout for b in bcs[:50]),
+         "the refusal prints no id (neither the bad ones nor the good ones)")
+    c.ok(not list(exp.rglob("ids.txt*")) and (exp / "manifest.json").read_bytes() == before,
+         "a refusal writes nothing: no id list for any layer (the good 008um included), manifest unchanged")
+    shutil.rmtree(work)
 
 
 def check_multiplex(c: Checker, root: Path, clustering: bool) -> dict:
@@ -1481,7 +1602,7 @@ def check_xenium_user(c: Checker, root: Path, clustering: bool) -> dict:
     sg = read_json(ud / "celltypes.json").get("clusterings", {}).get(ct.get("id"), [])
     c.eq([(s.get("top"), s.get("confidence")) for s in sg], [("TypeA", "high"), ("TypeB", "high"), ("TypeC", "high")],
          f"{XE} user: suggested names per group")
-    # no cell id in any text file of this export (they are the user's row keys, never published)
+    # no cell id in any text file of this export (they are the user's row keys; only the opt-in ids.txt.gz holds them)
     ids_set = set(ids)
     tok = re.compile(r"[a-p]{8}-1")
     leaked = [p.name for p in out.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson", ".txt")
@@ -3435,7 +3556,7 @@ def check_layout(c: Checker):
     from html.parser import HTMLParser
 
     html = (APP / "index.html").read_text(encoding="utf-8")
-    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js", "cellsets.js")}
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js", "cellsets.js", "selections.js")}
     names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
     c.ok("layout.js" in names and "layout.css" in names, "index.html loads layout.js and layout.css")
     c.ok("layout.js" in names and "viewer.js" in names and names.index("layout.js") < names.index("viewer.js"),
@@ -3482,17 +3603,19 @@ def check_layout(c: Checker):
          "snapshot.js: its Save image section names its tab and is handed to the layout")
     c.ok('sec.dataset.tab = "clusters"' in js["cellsets.js"] and "SodaLayout.adopt(sec)" in js["cellsets.js"],
          "cellsets.js: its Cell sets section names its tab and is handed to the layout")
+    c.ok('sec.dataset.tab = "analyze"' in js["selections.js"] and "SodaLayout.adopt(sec)" in js["selections.js"],
+         "selections.js: its Combine and export shapes section names its tab and is handed to the layout")
     # ids the layout makes must be new; ids it moves must exist (in the page or in the script that builds them)
     new_ids = set(i for i, _ in made) | set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
     clash = sorted(new_ids & set(ids))
     c.ok(not clash, f"layout.js makes ids that index.html already has: {clash}")
-    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"] + js["cellsets.js"])) | set(ids) | new_ids
+    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"] + js["cellsets.js"] + js["selections.js"])) | set(ids) | new_ids
     block = js["layout.js"][js["layout.js"].index("const SECTIONS = {"):js["layout.js"].index("const ORDER = {")]
     moved = set(re.findall(r'"(\w+)"', " ".join(re.findall(r'(?:more|notes): \[([^\]]*)\]', block))))
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
-    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets"}
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelShapes"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
                             ("SodaLayout.wording", "viewer.js", "hands its wording function to the layout"),
@@ -3679,6 +3802,8 @@ def main(argv=None) -> int:
     summary["xenium"] = check_xenium(c, root, clustering)
     print("checks: the lab's own clusters on the demo_xenium cells (userclusters.py)")
     summary["xeniumUserClusters"] = check_xenium_user(c, root, clustering)
+    print("checks: the optional barcode / cell id lists (layerids.py)")
+    summary["ids"] = check_ids(c, root)
     print("checks: demo_geomx (GeoMx ROI layer, two scans), demo_geomx_grid (no image)")
     summary["geomx"] = check_geomx(c, root)
     print("checks: demo_cosmx*, demo_merscope* (FOV mosaic / mosaics, cells layer, molecules, density background)")

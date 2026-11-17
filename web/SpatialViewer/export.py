@@ -10,6 +10,7 @@
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
     <dest>/<id>/expr/<key>/umap/clusters_user*  the lab's own clusterings / UMAP, matched by barcode (userclusters.py)
+    <dest>/<id>/expr/<key>/ids.txt.gz           only with write_ids=True (--ids): the barcode / cell id of each row, allow-listed (layerids.py)
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
@@ -41,6 +42,7 @@ import binqc
 import cellshapes
 import celltypes as celltypes_mod
 import hvgchunks
+import layerids
 import molecules
 import protgrid
 import regions
@@ -122,7 +124,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                   grid_um: float = protgrid.DEFAULT_GRID_UM,
                   tissue_smooth_um: float = protgrid.DEFAULT_TISSUE_SMOOTH_UM,
                   umap_sample: int | None = None, seam_correct: bool = False,
-                  user_clusters: list[dict] | None = None) -> Path:
+                  user_clusters: list[dict] | None = None, write_ids: bool = False) -> Path:
     """`markers`: the marker list for suggested cluster names. Default by modality:
     markers/rna_generic.json for RNA (Visium) layers, markers/protein_generic.json for the
     protein grid layer of an image dataset. `grid_um` (image datasets only): grid square size
@@ -131,10 +133,14 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     `umap_sample`: the grid layer's UMAP is fitted on a sample of this many squares above it
     (None = sectionumap.UMAP_SAMPLE, 0 = all). `seam_correct`: correct the grid layer's square
     means for per-tile differences where tile seams are found (off: detected and reported only).
-    `user_clusters`: the lab's own UMAP / clusterings per layer (userclusters.make_spec)."""
+    `user_clusters`: the lab's own UMAP / clusterings per layer (userclusters.make_spec).
+    `write_ids`: also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, layerids.py); off by default,
+    an export holds no barcode otherwise."""
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
     userclusters.check_layers(user_clusters, m)
+    # --ids: every layer's ids read and checked (allow-list, sample-ID patterns) before anything is written
+    ids_plan = layerids.plan(ds_dir, m, log=log) if write_ids else {}
     out = Path(dest) / m["id"]
     out.mkdir(parents=True, exist_ok=True)
     r = PyramidReader(ds_dir, m)
@@ -182,6 +188,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     layer_hvg: dict[str, dict] = {}
     layer_umap: dict[str, dict] = {}
     layer_binqc: dict[str, dict] = {}
+    layer_ids: dict[str, dict] = {}
 
     # ---- expression --------------------------------------------------------
     for layer in m.get("expr", []):
@@ -199,6 +206,10 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                 layer_regions[key] = table
                 log(f"[export] expr {key}: {len(table)} regions, "
                     f"{int(np.count_nonzero(ids)):,}/{len(ids):,} bins assigned")
+        if key in ids_plan:
+            if len(ids_plan[key]) != len(pos):
+                raise SystemExit(f"[ids] {key}: {len(ids_plan[key]):,} ids for {len(pos):,} rows of positions.bin")
+            layer_ids[key] = layerids.write_ids(ids_plan[key], d, layer, log=log)
         # GeoMx ROI segments (geomx.py): a few dozen rows. Their own QC values, every target in hvg/,
         # the annotation columns as groupings; no UMAP, Leiden, cell types or variable-gene selection.
         roi = layer.get("kind") == "rois"
@@ -313,6 +324,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
         sm["expr"] = [({**layer, "umap": layer_umap[layer["key"]]} if layer["key"] in layer_umap else layer)
                       for layer in sm.get("expr", [])]
     sm["expr"] = cellshapes.manifest_layers(sm.get("expr", []), layer_shapes)
+    if layer_ids:
+        sm["expr"] = [({**layer, "ids": layer_ids[layer["key"]]} if layer["key"] in layer_ids else layer)
+                      for layer in sm.get("expr", [])]
     if grid_layer:
         sm["expr"] = [L for L in sm.get("expr", []) if L.get("key") != grid_layer["key"]] + [grid_layer]
     (out / "manifest.json").write_text(json.dumps(sm, indent=1), encoding="utf-8")
