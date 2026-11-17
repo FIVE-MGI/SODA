@@ -306,10 +306,13 @@ const median = (xs) => { if (!xs.length) return null; const s = xs.slice().sort(
 // which job does not matter: every run is the same function of (graph, resolution, seed). Up to 8
 // helpers, one core left for the page (and one more for the layout when the sweep runs alongside it,
 // fitUmapEpochs); none when that leaves fewer than 2 or the browser cannot start a worker from a worker,
-// and any failure falls back to running them here.
+// and any failure falls back to running them here. Below POOL_MIN bins none either: the whole sweep of a
+// 1,000-bin run takes ~1.4 s here, and starting 8 helpers cost more than they saved on a CPU slowed 4x
+// (17.7 s against 13.7 s, Leiden alongside the layout).
+const POOL_MIN = 2000;
 function leidenPool(g, N, keeps) {
   const cores = (self.navigator && navigator.hardwareConcurrency) || 1, n = Math.min(8, cores - (sideWork.on ? 2 : 1));
-  if (n < 2 || typeof Worker === "undefined") return null;
+  if (n < 2 || N < POOL_MIN || typeof Worker === "undefined") return null;
   try {
     const ws = [];
     for (let i = 0; i < n; i++) {
