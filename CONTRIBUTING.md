@@ -37,5 +37,5 @@ Keep the docs' style: plain words, short sentences, and say what was tested and 
 
 ## Licence
 
-The licence is to be decided before public release (see the [README](README.md#licence)).
-Until then, ask before you send a large change.
+SODA is released under the Washington University licence in [LICENSE](LICENSE) (see the
+[README](README.md#licence)). Ask before you send a large change.
