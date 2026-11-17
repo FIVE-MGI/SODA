@@ -205,11 +205,11 @@ comparison are from its handoff notes.
 
 | | SODA 0.1.0-dev, Windows x64 | FIVE Atlas |
 |---|---|---|
-| app folder | 448 MB, 2,470 files | about 1,100 files |
+| app folder | 449 MB, 2,474 files (with deck.gl and umap-js in `vendor/`) | about 1,100 files |
 | download: zip | 176 MB | |
-| download: installer (`setup.exe`, LZMA2) | 117 MB; installed 453 MB, 2,472 files (with the uninstaller) | |
-| biggest parts | llvmlite 115 MB (numba's compiler, for UMAP), pyarrow 83 MB, scipy 70 MB, imagecodecs 44 MB, numpy 28 MB; SODA itself 2 MB | |
-| build time (`build_release.ps1`) | 7.8 to 9.1 min without the installer; 12.8 to 13.2 min with it (Inno Setup's LZMA2 compression) | "a few minutes" |
+| download: installer (`setup.exe`, LZMA2) | 117 MB; installed 455 MB, 2,476 files (with the uninstaller) | |
+| biggest parts | llvmlite 115 MB (numba's compiler, for UMAP), pyarrow 83 MB, scipy 70 MB, imagecodecs 44 MB, numpy 28 MB; SODA itself 2 MB, deck.gl + umap-js 1.5 MB | |
+| build time (`build_release.ps1`) | 7.8 to 9.1 min without the installer; 12.8 to 16.8 min with it (Inno Setup's LZMA2 compression; the 16.8 on a busy machine) | "a few minutes" |
 | `SODA.exe version` | 1.1 s first time, 0.3 s after | |
 | double-click to home page served | 0.4 to 0.6 s (then the browser opens) | about 2 s |
 | `selftest` (every library + a UMAP) | 91 s the first time (numba compiles UMAP's code into its cache), seconds after | |
@@ -273,7 +273,7 @@ Each Windows release has the same app in two forms:
 | | `SODA-<ver>-setup.exe` (installer) | `SODA-<ver>-win64.zip` |
 |---|---|---|
 | size (0.1.0-dev) | 117 MB download | 176 MB download |
-| installed | 453 MB in `%LOCALAPPDATA%\Programs\SODA` | 448 MB wherever the folder is copied |
+| installed | 455 MB in `%LOCALAPPDATA%\Programs\SODA` | 449 MB wherever the folder is copied |
 | admin rights | none (per-user install, no UAC prompt) | none |
 | start it | Start menu -> SODA (a desktop shortcut if ticked) | double-click `SODA.exe` in the folder |
 | update | run the new setup.exe: it installs over the old version (same folder, one entry in Settings -> Apps) | replace the folder |
@@ -327,15 +327,19 @@ shows a progress bar; use the line above for nothing on screen). An update remem
 install's choices: its folder (unless `/DIR=` is given) and whether there is a Start-menu entry
 (a later `setup.exe` without `/NOICONS` does not add one to an install made with it).
 
-**Tested** on the lab PC (0.1.0-dev, Inno Setup 6.7.3, all silent, nothing shown on screen):
+**Tested** on the lab PC (0.1.0-dev built with `-RequireVendor`, so deck.gl and umap-js inside;
+Inno Setup 6.7.3; all silent, nothing shown on screen). `SODA-0.1.0-dev-setup.exe`: 122,928,924
+bytes, SHA-256 `8dc613d351ecb078dfe8460353b4694cae7f4171ddac1dbda0cb0a7e981eef28`:
 
 1. `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /NOICONS /DIR=<scratch>`: installed in
    12 to 14 s, exit 0; no Start-menu folder, no desktop shortcut; the Settings -> Apps entry
    (HKCU only, none in HKLM) says SODA 0.1.0-dev; the setup.exe's file properties say 0.1.0 /
    0.1.0-dev.
-2. `tests/app_test.py --exe <scratch>\SODA.exe --full-selftest --browser` against the installed
-   app: 58 passed, 0 failed (including the viewer and home page in headless Chromium, and no
-   "Keep this dataset" in the viewer). The app wrote no file into its install folder.
+2. `tests/app_test.py --exe <scratch>\SODA.exe --full-selftest --expect-vendor --browser` against
+   the installed app: 59 passed, 0 failed. That includes `vendor/` served with the pinned
+   SHA-384, the viewer in headless Chromium with every request to cdn.jsdelivr.net blocked
+   (deck.gl loaded from the app, no request to the CDN), no "Keep this dataset" in the viewer,
+   and the home page. The app wrote no file into its install folder.
 3. The same setup.exe again over it (the update path): a stray file put in `_internal\` was
    removed, the rest reinstalled.
 4. `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`: exit 0, returned after the work was
@@ -372,10 +376,4 @@ install's choices: its folder (unless `/DIR=` is given) and whether there is a S
   stays private, Release downloads need a GitHub login with access, and the update check sees
   nothing. Options: make releases from a public repository, or attach the zip/dmg to a lab share.
 - **Notarisation and Windows signing**: need the certificates above.
-- **Offline viewing in a local build**: the release workflows now put deck.gl and umap-js in
-  the app (above), but the 0.1.0-dev build and installer tested on the lab PC were made without
-  `vendor/` (the pinned files were not fetched on that machine), so their viewer loads deck.gl
-  from cdn.jsdelivr.net, and keeps it after one "Open viewer" with internet (its service worker,
-  see [ADVANCED.md, Offline use](ADVANCED.md#9-offline-use)). The `--expect-vendor` and
-  CDN-blocked checks have therefore not run yet against a real vendored build.
 - **Self-update**, and an app icon (both `icon=None` today, as FIVE Atlas).
