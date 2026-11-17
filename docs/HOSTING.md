@@ -24,8 +24,12 @@ The options below are in order of effort.
 | [D. AWS (or another cloud), private](#d-aws-s3--cloudfront-or-another-backend) | people you give the password | your own token endpoint | a day, needs cloud experience |
 | [E. Live tile server](#e-optional-live-tile-server-serverpy) | people on your network | `server.py` | minutes, but a machine must stay on |
 
-Visitors need an internet connection in every case, also for option A: the page loads its
-drawing library (deck.gl) and, for the circle tool, umap-js from `cdn.jsdelivr.net`. The
+Visitors need an internet connection in every case, also for option A, unless you serve the
+two libraries yourself: the page loads its drawing library (deck.gl) and, for the circle tool,
+umap-js from `cdn.jsdelivr.net`, or from a `vendor/` folder next to `index.html` after
+`python web/SpatialViewer/prepare.py vendor` (copy that folder along with the page). After one
+visit over https or localhost the page also opens offline; see
+[Offline use](ADVANCED.md#9-offline-use). The
 viewer needs a browser with WebGL2; it is developed and tested in Chrome on desktop, and the
 image path was also tested on an iPhone (WebKit, Safari's engine). Other browsers have not
 been tested. The same link works on phones and tablets: the page lays itself out for the

@@ -69,13 +69,14 @@
       help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
     panelHelp: {},
+    panelOffline: { help: "After one visit the page opens with no network (it needs https or localhost, not a file). A dataset is kept only when you press Keep: what you have looked at in it so far, and the data Draw a region needs, after you see the size. Remove takes it off this computer again. Nothing from a password-protected source is kept." },   // offline.js builds the section
     panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
   };
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelMeasure", "panelRna"],
     clusters: ["panelUmap", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
-    save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
+    save: ["panelSave", "panelImage", "panelDataset", "panelOffline", "panelHelp"],
   };
   // a section that lives inside another one keeps its own heading and does not fold by itself
   const NESTED = { panelGate: "panelCount" };
@@ -513,6 +514,7 @@
     panelGenes: () => names("geneList", "none picked"),
     panelPaint: () => (window.SodaPaint ? window.SodaPaint.summary() : ""),
     panelMeasure: () => (window.SodaMeasure ? window.SodaMeasure.summary() : ""),
+    panelOffline: () => (window.SodaOffline ? window.SodaOffline.summary() : ""),
     panelMolecules: () => names("molList", "none picked"),
     panelOverlays() { const n = $("overlayList") ? $("overlayList").querySelectorAll("input[type=checkbox]:checked").length : 0; return n ? `${n} on` : "off"; },
     panelRna: () => names("rnaGeneList", "clusters, no gene picked"),

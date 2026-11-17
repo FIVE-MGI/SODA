@@ -63,13 +63,16 @@ const check = (cond, what, got) => { results.push({ ok: !!cond, what }); console
   const data = await serve(EXPORT, PORTS[0], true), pageSrv = await serve(PAGE, PORTS[1], false);
   const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
   const browser = await pw.chromium.launch({ args: GPU ? ["--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"] : ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
-  const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+  // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
+  // itself, out of page.route's sight; tests/offline_test.js tests it
+  const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block" });
   const errors = [];
   const open = async (ds) => {
     const page = await ctx.newPage();
-    page.on("console", (m) => { if (m.type() === "error") errors.push(`${ds}: console: ${m.text()}`); });
+    // vendor/: deck.gl and umap-js are asked for there first and come from the CDN when there is no vendor/ (libs.js)
+    page.on("console", (m) => { if (m.type() === "error" && !/\/vendor\//.test((m.location() || {}).url || "")) errors.push(`${ds}: console: ${m.text()}`); });
     page.on("pageerror", (e) => errors.push(`${ds}: pageerror: ${e.message}`));
-    page.on("response", (r) => { if (r.status() >= 400 && !/favicon/.test(r.url())) errors.push(`${ds}: http ${r.status()}: ${r.url()}`); });
+    page.on("response", (r) => { if (r.status() >= 400 && !/favicon|\/vendor\//.test(r.url())) errors.push(`${ds}: http ${r.status()}: ${r.url()}`); });
     await page.addInitScript(() => { window.__csp = []; document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`)); });
     await page.goto(`${URL0}?static=${encodeURIComponent(DATA)}&ds=${ds}`);
     await page.waitForFunction((id) => { const sv = window.__spatialViewer; return !!(sv && sv.state && sv.state.dsId === id && sv.state.m && sv.outlines) && document.getElementById("status").hidden; }, ds, { timeout: 120000 });

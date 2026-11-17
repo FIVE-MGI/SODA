@@ -10,9 +10,27 @@
 // mat/ chunks' raw means -> x with the whole slide's background and p99.5 (asinh; older
 // exports: x' with the 1st..99.5th percentile window) -> z-score within the selection ->
 // PCA -> the same UMAP, Leiden, markers and suggested names.
-/* global UMAP, leiden */
-importScripts("https://cdn.jsdelivr.net/npm/umap-js@1.4.0/lib/umap-js.min.js");
+/* global UMAP, leiden, SODA_LIBS */
+importScripts("libs.js?v=20261116of1");
 importScripts("leiden.js?v=20261102a");
+// umap-js (pinned in libs.js): the copy in vendor/ when it is there and matches its SHA-384, else the CDN's,
+// as before. importScripts has no integrity check of its own, so fetch() checks the hash first; the script
+// then comes from the browser's cache (or, offline, from the copy sw.js kept). Loaded before the first job.
+const umapReady = (async () => {
+  const L = SODA_LIBS.umap;
+  for (const [url, opts] of [[L.local, {}], [L.cdn, { mode: "cors", credentials: "omit" }]]) {
+    try {
+      const r = await fetch(url, { ...opts, integrity: L.sri });
+      if (!r.ok) continue;
+      await r.arrayBuffer();
+      importScripts(url);
+      return url === L.local ? "vendor" : "cdn";
+    } catch (e) { /* the next one */ }
+  }
+  importScripts(L.cdn);                        // the last try: its error says why (offline, blocked)
+  return "cdn";
+})();
+umapReady.catch(() => {});                     // reported with the first job
 
 const NO_SHAPE = 0xffff;                       // rowShape value for a bin in no shape
 
@@ -836,8 +854,9 @@ function run(msg) {
   return out;
 }
 
-onmessage = (ev) => {
+onmessage = async (ev) => {
   try {
+    await umapReady;
     const r = ev.data.protein ? runProtein(ev.data) : run(ev.data);
     const tr = [r.emb.buffer, r.rows.buffer, r.shape.buffer];
     if (r.cluster) tr.push(r.cluster.buffer);
