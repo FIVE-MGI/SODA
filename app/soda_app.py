@@ -33,7 +33,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import socket
 import subprocess
 import sys
@@ -42,7 +41,7 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 FROZEN = bool(getattr(sys, "frozen", False))
@@ -422,12 +421,38 @@ class App:
     def serve(self):
         app = self
 
-        class Handler(BaseHTTPRequestHandler):
+        # Files are served by static_serve.py's handler (one implementation of Range / 206 /
+        # Content-Range for the gene packs, shared with `python static_serve.py`). This subclass
+        # only routes /viewer/ and /data/<n>/ to their folders and tightens it for an app: no
+        # CORS (the page is same-origin here; an open CORS header would let any website read
+        # the export while SODA runs), no directory listings, no request log.
+        Base = soda_import("static_serve").CORSHandler
+
+        class Handler(Base):
             server_version = "SODA"
             sys_version = ""
 
             def log_message(self, fmt, *args):       # no request log: paths can name datasets
                 pass
+
+            def send_header(self, keyword, value):
+                if keyword.lower().startswith("access-control-"):
+                    return
+                super().send_header(keyword, value)
+
+            def end_headers(self):
+                self.send_header("X-Content-Type-Options", "nosniff")
+                super().end_headers()
+
+            def guess_type(self, path):              # not the Windows registry's idea of .js
+                return TEXT_TYPES.get(Path(str(path)).suffix.lower()) or super().guess_type(path)
+
+            def list_directory(self, path):
+                self.send_error(404, "not found")
+                return None
+
+            def do_OPTIONS(self):                    # same-origin only: no preflight to answer
+                self._send(405, b"", "text/plain")
 
             # -- plumbing ------------------------------------------------------------------
             def _host_ok(self) -> bool:
@@ -438,8 +463,6 @@ class App:
                 self.send_response(code)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("X-Content-Type-Options", "nosniff")
                 for k, v in (extra or {}).items():
                     self.send_header(k, v)
                 self.end_headers()
@@ -450,30 +473,17 @@ class App:
                 self._send(code, json.dumps(obj).encode(), "application/json; charset=utf-8")
 
             def _file(self, root: Path, rel: str, head: bool, blocked=False):
-                rel = urllib.parse.unquote(rel)
-                if rel in ("", "/") or rel.endswith("/"):
-                    rel += "index.html"
-                low = "/" + rel.lower()
+                """static_serve's GET / HEAD (Range included) on <root>/<rel>. Its translate_path
+                drops '..' and drive parts, so nothing outside <root> is reachable."""
+                low = "/" + urllib.parse.unquote(rel).lower()
                 if blocked and (low.endswith(_BLOCKED_SUFFIXES) and not low.endswith(".link.txt")
                                 or any(p in low for p in _BLOCKED_PARTS)):
-                    return self._send(404, b"not found", "text/plain")
-                try:
-                    root_r = root.resolve()
-                    p = (root_r / rel).resolve()
-                    if not p.is_relative_to(root_r) or not p.is_file():
-                        return self._send(404, b"not found", "text/plain")
-                    size = p.stat().st_size
-                except (OSError, ValueError):
-                    return self._send(404, b"not found", "text/plain")
-                self.send_response(200)
-                self.send_header("Content-Type", TEXT_TYPES.get(p.suffix.lower(), "application/octet-stream"))
-                self.send_header("Content-Length", str(size))
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("X-Content-Type-Options", "nosniff")
-                self.end_headers()
-                if not head:
-                    with open(p, "rb") as f:
-                        shutil.copyfileobj(f, self.wfile, 1 << 20)
+                    return self._send(404, b"not found", "text/plain", head=head)
+                if rel and not rel.endswith("/") and (Path(root) / urllib.parse.unquote(rel)).is_dir():
+                    return self._send(404, b"not found", "text/plain", head=head)   # no redirect: wrong prefix
+                self.directory = str(root)
+                self.path = "/" + rel
+                return super().do_HEAD() if head else super().do_GET()
 
             def _body(self) -> dict:
                 n = int(self.headers.get("Content-Length") or 0)

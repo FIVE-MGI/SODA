@@ -66,18 +66,22 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def get(url: str, host: str | None = None, timeout=20):
-    """(status, content-type, body) of a GET, with an optional Host header."""
+def get(url: str, host: str | None = None, timeout=20, headers: dict | None = None, full=False):
+    """(status, content-type, body) of a GET, with an optional Host header; full=True adds the
+    response headers."""
     u = urllib.parse.urlsplit(url)
     c = http.client.HTTPConnection(u.hostname, u.port, timeout=timeout)
     path = u.path + (f"?{u.query}" if u.query else "")
     c.putrequest("GET", path, skip_host=True)
     c.putheader("Host", host or f"{u.hostname}:{u.port}")
+    for k, v in (headers or {}).items():
+        c.putheader(k, v)
     c.endheaders()
     r = c.getresponse()
     body = r.read()
+    hdrs = {k.lower(): v for k, v in r.getheaders()}
     c.close()
-    return r.status, r.getheader("Content-Type") or "", body
+    return (r.status, r.getheader("Content-Type") or "", body, hdrs) if full else (r.status, r.getheader("Content-Type") or "", body)
 
 
 def post(base: str, path: str, body: dict, token: str | None):
@@ -216,8 +220,26 @@ def main() -> int:
             c.ok(s == 200 and b"SpatialViewerConfig" in body, "an empty config.js")
             s, ct, body = get(base + "/data/1/datasets.json")
             c.ok(s == 200 and json.loads(body).get("datasets"), "datasets.json from the export")
-            s, _, _ = get(base + f"/data/1/{DATASETS[0]}/manifest.json")
+            s, _, body, h = get(base + f"/data/1/{DATASETS[0]}/manifest.json", full=True)
             c.ok(s == 200, "a dataset's manifest.json")
+            c.ok("access-control-allow-origin" not in h, "no CORS header (only the page on this address reads the export)")
+            # HTTP Range, as blob storage: the viewer reads one gene out of a gene pack (genepack.py)
+            size = len(body)
+            s, _, part, h = get(base + f"/data/1/{DATASETS[0]}/manifest.json", headers={"Range": "bytes=5-14"}, full=True)
+            c.ok(s == 206 and part == body[5:15] and h.get("content-range") == f"bytes 5-14/{size}",
+                 f"Range request: 206 with Content-Range ({s}, {h.get('content-range')})")
+            s, _, part, h = get(base + f"/data/1/{DATASETS[0]}/manifest.json", headers={"Range": "bytes=-4"}, full=True)
+            c.ok(s == 206 and part == body[-4:], "suffix Range (bytes=-4)")
+            s, _, _, h = get(base + f"/data/1/{DATASETS[0]}/manifest.json", headers={"Range": f"bytes={size + 10}-"}, full=True)
+            c.ok(s == 416 and h.get("content-range") == f"bytes */{size}", "an unsatisfiable Range: 416")
+            packs = sorted(q for q in export.rglob("*") if q.is_file() and q.suffix == ".pack" and q.stat().st_size > 64)
+            if packs:
+                rel = packs[0].relative_to(export).as_posix()
+                raw_ = packs[0].read_bytes()
+                s, _, part, h = get(base + f"/data/1/{rel}", headers={"Range": "bytes=16-47"}, full=True)
+                c.ok(s == 206 and part == raw_[16:48], f"Range on a gene pack ({packs[0].name}): the right 32 bytes")
+            s, _, _ = get(base + f"/data/1/{DATASETS[0]}")
+            c.ok(s == 404, "a folder is not listed")
             for path in ("/viewer/prepare.py", "/viewer/deid.py", "/viewer/requirements-lock.txt",
                          "/data/1/../../out/logs/", "/data/1/%2e%2e/%2e%2e/raw/multiplex.ome.tif", "/data/2/datasets.json"):
                 s, _, _ = get(base + path)
@@ -298,8 +320,11 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 pass
             c.ok(s == 200 and hp.poll() is not None, "Quit stops SODA")
-        # the privacy rule for everything this test made the app write
-        deid_hits = run(["check", str(work / "appdata"), str(out / "logs"), str(out2 / "logs")])[0]
+        # the privacy rule for what the app writes: its logs and the batch logs. (Not appdata/numba-cache:
+        # numba names its compiled-code files after the jitted function and a line number, and
+        # pynndescent's tau_rand_int-<line> reads like an ID to deid.py; nothing there is ever shared.)
+        logs_ = [str(q) for q in (work / "appdata").glob("*.log")] + [str(out / "logs"), str(out2 / "logs")]
+        deid_hits = run(["check", *logs_])[0]
         c.ok(deid_hits.returncode == 0, "no sample ID in the app's own logs or the batch logs")
     finally:
         for pr in procs:

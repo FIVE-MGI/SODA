@@ -126,10 +126,15 @@ Design points, each a deliberate difference from a plain PyInstaller app:
 - **umap-learn and pynndescent ship as source** and numba's cache goes to the user's app-data
   folder: numba's `cache=True` needs real source files and a writable cache.
 - **One local server** for the home page, the viewer page and the export folders (FIVE Atlas
-  also serves everything from one port). It listens on 127.0.0.1 only, refuses other Host
-  headers (DNS rebinding), needs a per-launch token for every action (start, stop, pick, check,
-  quit), never serves the `.py` tools, never serves outside a chosen export folder, and keeps
-  no request log (paths can name datasets). The viewer gets an empty `config.js`, so no site
+  also serves everything from one port). Files are served by `static_serve.py`'s own handler,
+  so HTTP Range (206 with Content-Range, which the viewer uses to read one gene out of a gene
+  pack) behaves exactly as with `python static_serve.py` and on blob storage. The app's
+  subclass only routes `/viewer/` and `/data/<n>/` and tightens it: it listens on 127.0.0.1
+  only, refuses other Host headers (DNS rebinding), sends no CORS header (the page is
+  same-origin here, and an open one would let any website read the export while SODA runs),
+  lists no folders, never serves the `.py` tools or anything outside a chosen export folder,
+  needs a per-launch token for every action (start, stop, pick, check, quit), and keeps no
+  request log (paths can name datasets). The viewer gets an empty `config.js`, so no site
   configuration is needed for local viewing.
 - **Version** from the git tag, baked in at build time (`app/_buildinfo.py`, git-ignored), the
   same number in the file name, `SODA version`, the home page and the Mac `Info.plist`.
@@ -155,7 +160,25 @@ Then `python tests/app_test.py --exe <...>/SODA/SODA.exe` (or
 
 ## Size and start-up (measured on Windows)
 
-MEASURED_TABLE
+Built and tested on the lab PC (i7-13700KF, run on the E-cores; Python 3.13.9; PyInstaller
+6.21.0), with the build output on D:, which is a network share. FIVE Atlas's figures for
+comparison are from its handoff notes.
+
+| | SODA 0.1.0-dev, Windows x64 | FIVE Atlas |
+|---|---|---|
+| app folder | 448 MB, 2,460 files | about 1,100 files |
+| download (zip) | 175 MB | |
+| biggest parts | llvmlite 115 MB (numba's compiler, for UMAP), pyarrow 83 MB, scipy 70 MB, imagecodecs 44 MB, numpy 28 MB; SODA itself 2 MB | |
+| build time (`build_release.ps1`) | 7.8 to 9.1 min | "a few minutes" |
+| `SODA.exe version` | 1.1 s first time, 0.3 s after | |
+| double-click to home page served | 0.4 to 0.6 s (then the browser opens) | about 2 s |
+| `selftest` (every library + a UMAP) | 91 s the first time (numba compiles UMAP's code into its cache), seconds after | |
+| Prepare the README demo (Visium HD + 6-channel OME-TIFF, two datasets), through the app | 132 to 180 s; from source with python, 144 to 146 s | |
+
+Notes: the first UMAP on a new computer is slow once while numba compiles (the cache then
+lives in `%LOCALAPPDATA%\SODA\numba-cache`). Each dataset Prepare runs in its own copy of
+`SODA.exe`, which starts in under a second, so the frozen app costs nothing measurable over
+python. A macOS build should be about the same size (the same libraries, arm64 builds).
 
 ## The sample ID check stays in the flow
 
@@ -173,7 +196,10 @@ to read a warning in a log:
   (`SPATIALVIZ_KEY`, else `~/private/soda/sample_id_key.csv`).
 - Nothing the app writes holds a sample ID: progress lines, the app's `prepare.log` and the
   Check results go through `batch.scrub` (IDs become `[sample ID]`); the server keeps no request
-  log; folder paths are not remembered between launches.
+  log; folder paths are not remembered between launches. (One known false alarm: running
+  Check on the app's own data folder flags two file names in `numba-cache\`, where numba names
+  compiled code after a function and a line number, and `tau_rand_int-<line>` reads like an ID.
+  That folder is a local cache and is never shared.)
 - The app never uploads. Publishing stays a separate, deliberate step (docs/SHARE_YOUR_DATA.md,
   docs/HOSTING.md) for a folder the check has passed.
 
