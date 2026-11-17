@@ -3,7 +3,7 @@
 Reads, straight with h5py / pyarrow (no stereopy, no gefpy):
 
     <SN>.raw.gef | <SN>.tissue.gef | <SN>.gef     bin GEF (HDF5): geneExp/binN/{gene, expression}
-    <SN>.cellbin.gef                              cell bin GEF:   cellBin/{cell, cellExp, gene}
+    <SN>.cellbin.gef                              cell bin GEF:   cellBin/{cell, cellExp, gene, cellBorder}
     <SN>.gem | <SN>.tissue.gem.gz                 the same counts as text: geneID [geneName] x y MIDCount
     <SN>_<stain>_regist.tif                       the registered H&E / ssDNA image (built by prepare.py)
     <SN>_<stain>_tissue_cut.tif                   optional tissue mask (same size as the image)
@@ -802,7 +802,7 @@ def read_cellbin(path, log=print) -> dict:
 
 
 def build_cells(ds_dir: Path, path, dnb_um: float, image_scale: float = 1.0, offset=(0, 0), barcodes: str = "xy",
-                image_size=None, log=print) -> dict:
+                image_size=None, log=print, outlines_args=None) -> dict:
     from expr import build_cell_layer
     c = read_cellbin(path, log)
     px_um = dnb_um / image_scale
@@ -827,9 +827,10 @@ def build_cells(ds_dir: Path, path, dnb_um: float, image_scale: float = 1.0, off
                                    "medianAreaUm2": round(med * dnb_um * dnb_um, 2) if med else None,
                                    "fileOffsetDnb": [fo[0], fo[1]]},
                             barcodes=ids)
-    if c["hasBorders"]:
-        log("[stereoseq] cell borders (cellBin/cellBorder) are not imported: cells are drawn as dots of the "
-            "median cell size")
+    if not getattr(outlines_args, "no_outlines", False):
+        import cellshapes
+        cellshapes.attach(ds_dir, meta, cellshapes.stereoseq_sets(path, fo, offset, image_scale, log=log), px_um,
+                          args=outlines_args, log=log)
     return meta
 
 
@@ -957,7 +958,7 @@ def build(args, ds_dir: Path, manifest: dict, log=print) -> None:
     if args.cellbin and not args.no_cells:
         try:
             manifest["expr"].append(build_cells(ds_dir, args.cellbin, dnb_um, scale, offset, args.barcodes,
-                                                image_size=(W, H), log=log))
+                                                image_size=(W, H), log=log, outlines_args=args))
         except KeyError as e:
             log(f"[stereoseq] WARNING {Path(args.cellbin).name}: dataset {e} missing, no cells layer")
     elif not args.cellbin:
