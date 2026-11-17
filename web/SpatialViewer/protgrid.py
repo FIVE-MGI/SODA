@@ -8,6 +8,8 @@ that machinery works unchanged (cell segmentation is a later, separate step):
 
     expr/grid<NNN>um/positions.bin     float32 x,y  square centres in full-res image px (tissue squares only)
     expr/grid<NNN>um/genes.json        [{n, t}]     one per marker channel written; t = mean over the squares
+    expr/grid<NNN>um/genepack/         the per-channel float32 x,y,v arrays packed (genepack.py; s/o/b in
+                                       genes.json); gene/<NAME>.bin one file each with --gene-files loose:
     expr/grid<NNN>um/gene/<NAME>.bin   float32 x,y,v  EVERY square, in positions.bin order (v may be 0;
                                                     the viewer treats v <= 0 as "nothing here", as for RNA)
     expr/grid<NNN>um/umap/...          as sectionumap.py (index.json, coords.bin, clusters_r*.bin)
@@ -73,6 +75,7 @@ from urllib.parse import quote
 import numpy as np
 
 import deid
+import genepack
 import seams
 
 DEFAULT_GRID_UM = 16.0
@@ -504,7 +507,8 @@ def _atomic(p: Path, buf: bytes):
 def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, markers: Path | None = None,
                      umap: bool = True, celltypes: bool = True, log=print, force: bool = False,
                      tissue_smooth_um: float = DEFAULT_TISSUE_SMOOTH_UM, umap_sample: int | None = None,
-                     seam_correct: bool = False) -> dict | None:
+                     seam_correct: bool = False, gene_files: str = genepack.DEFAULT_MODE,
+                     shard_mb: float = genepack.SHARD_MB) -> dict | None:
     """Write expr/<key>/ for an image dataset (PyramidReader `r`, manifest `m`) into export folder `out`.
 
     `tissue_smooth_um`: moving-average window (µm) over the square means before the tissue
@@ -682,17 +686,30 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     pos[:, 0] = (ix + 0.5) * step_full
     pos[:, 1] = (iy + 0.5) * step_full
     d = Path(out) / "expr" / key
-    (d / "gene").mkdir(parents=True, exist_ok=True)
+    d.mkdir(parents=True, exist_ok=True)
+    loose = gene_files in ("loose", "both")
+    if loose:
+        (d / "gene").mkdir(exist_ok=True)
     _atomic(d / "positions.bin", np.ascontiguousarray(pos, dtype="<f4").tobytes())
     genes = [{"n": nm, "t": round(float(Vt[:, k].mean()), 4)} for k, nm in enumerate(wnames)]
     deid.assert_clean(genes, "grid genes.json")
-    _atomic(d / "genes.json", json.dumps(genes, separators=(",", ":")).encode("utf-8"))
     xyv = np.empty((n, 3), np.float32)
     xyv[:, :2] = pos
+    pw = genepack.PackWriter(d, shard_mb=shard_mb, unit=12, log=log) if gene_files in ("pack", "both") else None
+    where = {}
     for k, nm in enumerate(wnames):
         xyv[:, 2] = Vt[:, k]
-        _atomic(d / "gene" / f"{_encode(nm)}.bin", np.ascontiguousarray(xyv, dtype="<f4").tobytes())
-    log(f"[grid] {key}: {n:,} squares, {len(wnames)} gene files -> {d}")
+        buf = np.ascontiguousarray(xyv, dtype="<f4")
+        if pw is not None and n and nm not in where:
+            where[nm] = pw.add(nm, buf)
+        if loose:
+            _atomic(d / "gene" / f"{_encode(nm)}.bin", buf.tobytes())
+    pack = pw.finish() if pw is not None else None
+    if pack and not loose:
+        genepack.note_loose(d, log=log)
+    _atomic(d / "genes.json", json.dumps(genepack.with_index(genes, where), separators=(",", ":")).encode("utf-8"))
+    log(f"[grid] {key}: {n:,} squares, {len(wnames)} channels -> {d}"
+        + (f" ({len(pack['shards'])} pack shard(s))" if pack else "") + (" + one file each" if loose else ""))
     deid.assert_clean(qc, "grid qc.json")
     _atomic(d / "qc.json", json.dumps(qc, separators=(",", ":")).encode("utf-8"))
     _atomic(d / "qc_flags.bin", flags.tobytes())
@@ -723,6 +740,8 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
              "dropped": dropped}
     if mat:
         entry["mat"] = mat
+    if pack:
+        entry["genePack"] = pack
 
     if umap:
         feats = clr_features(Vt[:, embed], bg[embed], hi[embed]) if len(embed) >= CLR_MIN_CHANNELS else None

@@ -35,7 +35,8 @@ General rules:
   overlays/<NN>_<label>.geojson
   expr/<key>/genes.json
   expr/<key>/positions.bin
-  expr/<key>/gene/<NAME>.bin
+  expr/<key>/genepack/<hash>-<i>.pack    every gene's points, packed (exports from 16 Nov 2026; see "Gene packs")
+  expr/<key>/gene/<NAME>.bin             the same, one file per gene (older exports, or --gene-files loose / both)
   expr/<key>/region.bin                  only if an overlay has polygons
   expr/<key>/binqc/{total.bin, genes.bin, pct_mt.bin}   per-bin QC values (RNA layers, exports from 11 Nov 2026)
   expr/<key>/hvg/{genes.json, index.json, <tx>_<ty>.bin}
@@ -43,7 +44,7 @@ General rules:
   expr/<key>/umap/{index.json, coords.bin, clusters_r<res>.bin}
   expr/<key>/shapes/<set>/{index.json, <tx>_<ty>.bin}   cells layers with segmentation boundaries: cell (and nucleus) outlines
   molecules/index.json                   imaging platforms (Xenium): every transcript, per gene
-  molecules/gene/<NAME>.bin
+  molecules/genepack/<hash>-<i>.pack     packed like expr/ (molecules/gene/<NAME>.bin in older or loose exports)
 <root>/about.html                        optional, shown by "Read more about this project"
 ```
 
@@ -177,7 +178,10 @@ that contains its centre.
 ```
 
 Every gene of the layer in matrix order: `n` name, `t` total UMI count over all bins.
-Genes with no counts are listed but have no `gene/` file (the request returns 404).
+Genes with no counts are listed but have no points (no `gene/` file, no place in the pack).
+In a packed layer each gene with points also has `s`, `o`, `b`: its shard, byte offset and
+length in the layer's pack (`{"n": "Gapdh", "t": 123456.0, "s": 0, "o": 4128, "b": 2436}`; see
+"Gene packs" below).
 
 ### `positions.bin`
 
@@ -225,10 +229,49 @@ barcode is 22 bytes per row and a Xenium cell id 11, so gzip takes off 85-90 %; 
 `positions.bin` is 8 bytes per row. Grid barcodes compress this well because neighbouring rows differ in a
 digit or two; ids with no order (random cell ids) cost more, up to their plain-text size divided by 2-3.
 
-### `gene/<NAME>.bin`
+### `gene/<NAME>.bin` (and each gene's bytes in the pack)
 
 float32 triples `x, y, value` for each bin where the gene's count is > 0 (and the bin has a
 position), ordered by bin. `value` is the raw UMI count. Number of points = file size / 12.
+A packed layer holds exactly these bytes per gene, end to end (next section).
+
+### Gene packs: `genepack/<hash>-<i>.pack`
+
+Since 16 November 2026 an export writes each group of per-gene files (an expression layer,
+the molecules, an RNA-seq set) as a few **packs** instead of one file per gene: a Visium HD
+layer of ~16,000 genes becomes 1-23 files of about 64 MB instead of ~16,000 small ones
+(written by `genepack.py`; `prepare.py export --gene-files loose` writes the old layout,
+`--gene-files both` the two side by side).
+
+- A shard holds the payloads of the group's genes **end to end, byte for byte what
+  `gene/<NAME>.bin` would hold**, in listing order. A gene is never split across shards; a new
+  shard starts when the next gene would take it past the size (`--shard-mb`, default 64), so a
+  gene larger than that has a shard of its own.
+- `<hash>` (16 hex digits) is a hash over every name and payload of the group: shards of one
+  export run share it, and a listing can never point into shards of another run.
+- Each listing entry with points carries `s` (shard), `o` (byte offset) and `b` (bytes):
+  `genes.json` of a layer or an RNA-seq set, the `genes` of `molecules/index.json`.
+- The shard list is in the manifest, on the expression layer, on the `molecules` block, or at
+  the top of an RNA-seq manifest:
+
+```json
+"genePack": {"version": 1, "dir": "genepack", "unit": 12, "genes": 16203, "bytes": 1458201936,
+             "shards": [{"file": "3f9c0a1b2d4e5f60-0.pack", "bytes": 67108860}, ...]}
+```
+
+`unit` is the record size (12 for expression, 4 for molecules; absent for RNA-seq, whose
+records have a header). The viewer reads one gene with **one HTTP Range request**,
+`Range: bytes=o-(o+b-1)`, into `<dir>/<file>` of shard `s`; it requires a `206` answer of `b`
+bytes (and, when the host exposes `Content-Range`, the range asked for out of a shard of the
+manifest's size). A host that ignores Range answers `200` with the whole shard: the viewer then
+keeps the shard and cuts genes out of it if it is at most `packWholeMaxMB` (config.js, default
+160 MB), and otherwise says the host does not support Range requests. Export with
+`--gene-files loose` for such a host.
+
+`python genepack.py check <export>/<id>` checks a dataset's packs against its listings (every
+byte accounted for); `python genepack.py repack <export>/<id> [--delete-loose]` packs the gene
+files of an export made before the packs in place (no cache needed), verifies every gene
+against its file, and only then (with `--delete-loose`) deletes the files.
 
 ### `region.bin`
 
@@ -329,11 +372,11 @@ everything in the browser from files already described here; nothing extra is ex
 
 | Needed for | File |
 |---|---|
-| each gene shown | `gene/<NAME>.bin` (one request per gene, whole layer; placed on rows by walking `positions.bin` in order, or by exact position if the file is not in row order) |
+| each gene shown | the gene's bytes: one Range request into the pack, or `gene/<NAME>.bin` in older exports (one request per gene, whole layer; placed on rows by walking `positions.bin` in order, or by exact position if the file is not in row order) |
 | counts per 10k | `binqc/total.bin`. Without it (exports before 11 November 2026): the library sizes in the `hvg/` chunks under the groups; without those: log1p of the raw counts, labelled "not depth-normalised" |
 | groups | `umap/index.json` and `umap/<file>` of the chosen clustering (labelled by its `name` if it has one, else "Leiden <resolution>"); `region.bin` and the layer's `regions[]`; drawn shapes and the clusters of a Draw a region run come from the page itself |
 | default genes | `clusterings[].markers` (the first N per cluster) |
-| single-cell datasets | `obs/<NN>.bin` of a `category` column, `gene/<NAME>.bin` (values used as stored) |
+| single-cell datasets | `obs/<NN>.bin` of a `category` column, each gene's bytes (pack or `gene/<NAME>.bin`; values used as stored) |
 
 Definitions: a bin counts for a group if it is in it, kept by the QC filter (when one is set)
 and has ≥ 10 UMI (only when totals are available). Value of a bin = log1p(count × 10,000 /
@@ -613,8 +656,12 @@ dataset (the image under a transcripts panel). What is specific to it:
 ## Molecules: `molecules/`
 
 Written by `prepare.py xenium` (`molecules.py`, platform-neutral; `xenium.py` reads
-`transcripts.parquet` when present, else `transcripts.zarr.zip` level 0) and copied unchanged
-by `export`. One file per gene, fetched only when the gene is picked in the Molecules panel.
+`transcripts.parquet` when present, else `transcripts.zarr.zip` level 0). The cache holds one
+file per gene (`gene/<NAME>.bin`, which `server.py` serves as it is); `export` packs them in
+`index.json` order (`molecules/genepack/`, each gene's `s`, `o`, `b` on its `index.json` entry and
+`genePack` on the manifest's `molecules` block, as described under "Gene packs") or, with
+`--gene-files loose`, copies the files unchanged. A gene is fetched only when it is picked in
+the Molecules panel.
 
 - Kept: transcripts with quality value (`qv` / `quality_score`) ≥ 20 (`qvMin`; Xenium's own
   cut for its cell-feature matrix), of genes only: the control codewords listed above (and
@@ -626,7 +673,7 @@ by `export`. One file per gene, fetched only when the gene is picked in the Mole
   round(x / scale[0])`), so a step is ~0.8 px (0.18 µm) on a 54,000 px wide Xenium image;
   float32 x, y would be twice the size. Molecules are in a **seeded random order**: any prefix
   is a uniform sample of the gene, which the viewer uses to draw fewer dots when zoomed out.
-  Genes with no molecules have no file.
+  Genes with no molecules have no file (no place in the pack).
 - `index.json`:
 
   ```json
@@ -815,7 +862,8 @@ The viewer keys a clustering by `id` when present, else by `resolution`; it list
 <id>/umap.bin
 <id>/obs/<NN>.bin
 <id>/genes.json
-<id>/gene/<NAME>.bin
+<id>/genepack/<hash>-<i>.pack          every gene's record (below) end to end ("Gene packs"); s, o, b in genes.json
+<id>/gene/<NAME>.bin                   the same, one file per gene (older exports, or --gene-files loose)
 ```
 
 `manifest.json`:
@@ -836,8 +884,8 @@ The viewer keys a clustering by `id` when present, else by `resolution`; it list
 | `umap.bin` | float32 pairs `x, y` per cell. Cell order = the input's order (in `--mtx` mode, cells without a UMAP row are dropped first). |
 | `obs/<NN>.bin`, `type: "category"` | uint16 per cell: index into `categories`. Columns with fewer than 2 or more than 200 distinct values are not exported. `colors` is present only if the input carried a palette (`uns/<column>_colors`, streaming mode). |
 | `obs/<NN>.bin`, `type: "numeric"` | float32 per cell. `min`/`max` are the 1st and 99th percentiles. Integer columns with ≤ 30 distinct values are treated as categories. |
-| `genes.json` | `[{"n": name, "p": fraction of cells expressing, "m": maximum value}]`, sorted by `p`, most widely expressed first. |
-| `gene/<NAME>.bin` | uint32 `k`, then uint32[k] cell indices, then float32[k] values, for the cells where the gene is non-zero. |
+| `genes.json` | `[{"n": name, "p": fraction of cells expressing, "m": maximum value, "s", "o", "b"}]`, sorted by `p`, most widely expressed first; `s`, `o`, `b` = the gene's place in the pack (manifest `genePack`). |
+| a gene's record (in the pack, or `gene/<NAME>.bin`) | uint32 `k`, then uint32[k] cell indices, then float32[k] values, for the cells where the gene is non-zero. |
 
 `valueLabel` is `log1p(counts per 10k)` when the input held integer counts (the export
 normalises them), otherwise `expression (as provided)`. Genes expressed in no cell are

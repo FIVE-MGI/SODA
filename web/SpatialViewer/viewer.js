@@ -146,20 +146,102 @@
   //           Normally a PRIVATE blob container: `qs` appends the access token
   //           from /api/token to every request (see below).
   // "api":    the tile server (server.py), password protected.
+  // ---- gene packs (genepack.py) ----------------------------------------------------------------
+  // Exports made since the packs keep each layer's per-gene arrays in a few shards of ~64 MB
+  // (<group>/genepack/<hash>-<i>.pack) instead of one file per gene; the listing (genes.json,
+  // molecules/index.json) gives each gene's shard, offset and length (s, o, b) and the manifest the
+  // shards with their sizes (genePack). One gene is one Range request, "bytes=o-(o+b-1)", which
+  // must come back as a 206 of exactly b bytes (and, where the host exposes Content-Range, the range
+  // asked for out of a shard of the manifest's size: an index and a pack of different uploads never
+  // draw another gene's numbers). A host that ignores Range sends the whole shard with a 200: up to
+  // PACK_WHOLE_MAX it is kept (the last few shards) and the genes are cut out of it, beyond that
+  // the gene fails with a message saying so. Exports with loose gene files are read as before.
+  const PACK_WHOLE_MAX = (cfg.packWholeMaxMB || 160) * 1048576;
+  const PACK_WHOLE_KEEP = TOUCH ? 1 : 3;
   function staticSource(base, qs) {
     base = base.replace(/\/?$/, "/");
     const u = (p) => base + p + (qs ? qs() : "");
+    let man = null;                                   // this dataset's manifest: which groups are packed
+    // listings read once per dataset (genes.json of a layer or an RNA-seq set, molecules/index.json):
+    // the gene search and the packs both need them
+    const lists = new Map();
+    const listing = (p, signal) => {
+      if (!lists.has(p)) {
+        const pr = (async () => {
+          const r = await dataFetch(u(p), signal ? { signal } : {});
+          if (!r.ok) throw new Error(`${r.status} ${p}`);
+          const t = await r.text();
+          try { return JSON.parse(t); } catch (e) { return JSON.parse(t.replace(/:\s*(NaN|-?Infinity)\b/g, ":null")); }
+        })();
+        lists.set(p, pr);
+        pr.catch(() => lists.delete(p));
+      }
+      return lists.get(p);
+    };
+    const packIdx = new WeakMap();                    // listing -> Map(name -> entry with s, o, b)
+    const whole = new Map();                          // shard path -> Promise<ArrayBuffer> (a host without Range)
+    let warnedNoRange = false;
+    // one gene of a packed group: `dir` the group's folder ("" or ".../"), `listPath` its listing
+    async function packed(dir, pack, listPath, name, signal) {
+      const list = await listing(listPath, signal);
+      let idx = packIdx.get(list);
+      if (!idx) {
+        idx = new Map();
+        for (const e of (Array.isArray(list) ? list : list.genes || [])) if (e && e.b > 0 && !idx.has(e.n)) idx.set(e.n, e);
+        packIdx.set(list, idx);
+      }
+      const e = idx.get(name);
+      if (!e) throw new Error(`404 ${name}: no counts (not in the gene pack)`);
+      const sh = (pack.shards || [])[e.s];
+      if (!sh) throw new Error(`gene pack of ${dir || "the dataset"}: shard ${e.s} is not in the manifest`);
+      const path = `${dir}${pack.dir || "genepack"}/${sh.file}`;
+      const cut = (buf) => {
+        if (buf.byteLength !== sh.bytes) throw new Error(`${path} is ${buf.byteLength} bytes, the manifest says ${sh.bytes}: the upload is incomplete or from another export`);
+        return buf.slice(e.o, e.o + e.b);
+      };
+      if (whole.has(path)) {                          // already downloaded whole (no Range): cut it out
+        const pr = whole.get(path); whole.delete(path); whole.set(path, pr);
+        return cut(await pr);
+      }
+      const last = e.o + e.b - 1;
+      const r = await dataFetch(u(path), { headers: { Range: `bytes=${e.o}-${last}` }, ...(signal ? { signal } : {}) });
+      if (r.status === 206) {
+        const cr = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec((r.headers.get("Content-Range") || "").trim());
+        if (cr && (+cr[1] !== e.o || +cr[2] !== last || (cr[3] !== "*" && +cr[3] !== sh.bytes)))
+          throw new Error(`${path}: asked for bytes ${e.o}-${last} of ${sh.bytes}, got ${cr[0]}: the upload is incomplete or from another export`);
+        const buf = await r.arrayBuffer();
+        if (buf.byteLength !== e.b) throw new Error(`${path}: ${buf.byteLength} bytes for ${name}, expected ${e.b}`);
+        return buf;
+      }
+      if (r.status === 200) {                         // the host ignored Range: this is the whole shard
+        if (sh.bytes > PACK_WHOLE_MAX) {
+          try { if (r.body) r.body.cancel(); } catch (err) { /* already closed */ }
+          throw new Error(`this host ignores HTTP Range requests, so one gene would cost the whole ${(sh.bytes / 1e6).toFixed(0)} MB gene pack. ` +
+            "Host the folder where Range works (blob storage, S3, nginx, static_serve.py), or export it with --gene-files loose");
+        }
+        if (!warnedNoRange) { warnedNoRange = true; console.warn(`SODA: ${base.replace(/\?.*$/, "")} ignores HTTP Range requests: whole gene packs are downloaded and kept (slower; export with --gene-files loose for this host)`); }
+        const pr = r.arrayBuffer();
+        whole.set(path, pr);
+        pr.catch(() => whole.delete(path));
+        while (whole.size > PACK_WHOLE_KEEP) whole.delete(whole.keys().next().value);
+        return cut(await pr);
+      }
+      throw new Error(`${r.status} ${path}`);
+    }
+    const molDir = () => ((man && man.molecules && man.molecules.dir) || "molecules") + "/";
     return {
       kind: "static",
-      manifest: () => getJSON(u("manifest.json"), true),
+      manifest: async () => { const m = await getJSON(u("manifest.json"), true); man = m; return m; },
       tileUrl: (c, z, x, y, fmt) => u(`tiles/${c}/${z}/${x}/${y}.${fmt}`),
-      genes: (key) => getJSON(u(`expr/${key}/genes.json`), true),
+      genes: (key) => listing(`expr/${key}/genes.json`, srcSignal).then((l) => l.slice()),
       // The export names a gene file encodeURIComponent(name) + ".bin", so for a name with a
       // character that gets encoded ("TRBC1/2", "KIR Family": GeoMx panels have them) the file
       // name itself holds a "%", and the URL must encode it again. Names of letters and digits
       // are unchanged by either encoding. The singly encoded URL is tried second, for a host
-      // whose upload decoded the names.
+      // whose upload decoded the names. A packed layer has no such files: one Range request.
       gene: async (key, name) => {
+        const L = man && (man.expr || []).find((x) => x.key === key);
+        if (L && L.genePack) return new Float32Array(await packed(`expr/${key}/`, L.genePack, `expr/${key}/genes.json`, name, srcSignal));
         const e1 = encodeURIComponent(name), e2 = encodeURIComponent(e1);
         if (e2 === e1) return getF32(u(`expr/${key}/gene/${e1}.bin`), true);
         try { return await getF32(u(`expr/${key}/gene/${e2}.bin`), true); }
@@ -171,6 +253,23 @@
       json: (p) => getJSON(u(p), true),
       buf: async (p) => { const r = await dataFetch(u(p)); if (!r.ok) throw new Error(`${r.status} ${p}`); return r.arrayBuffer(); },
       mol: async (p) => { const r = await dataFetch(u(`molecules/${p}`)); if (!r.ok) throw new Error(`${r.status} molecules/${p}`); return r.arrayBuffer(); },
+      molIndex: () => listing(`${molDir()}index.json`, srcSignal),
+      // one gene's molecules (uint16 qx, qy pairs): from the pack, or its file in an older export
+      molGene: async (name) => {
+        const M = man && man.molecules;
+        if (M && M.genePack) return packed(molDir(), M.genePack, `${molDir()}index.json`, name, srcSignal);
+        const r = await dataFetch(u(`${molDir()}gene/${encodeURIComponent(name)}.bin`));
+        if (!r.ok) throw new Error(`${r.status} ${molDir()}gene/${name}.bin`);
+        return r.arrayBuffer();
+      },
+      // RNA-seq sets: the gene list, and one gene (uint32 k, uint32[k] cells, float32[k] values)
+      rnaIndex: () => listing("genes.json", srcSignal),
+      rnaGene: async (name) => {
+        if (man && man.genePack) return packed("", man.genePack, "genes.json", name, srcSignal);
+        const r = await dataFetch(u(`gene/${encodeURIComponent(name)}.bin`));
+        if (!r.ok) throw new Error(`${r.status} gene/${name}.bin`);
+        return r.arrayBuffer();
+      },
     };
   }
   function apiSource(dsId) {
@@ -184,6 +283,8 @@
       region: (key) => getU16(apiUrl(`datasets/${dsId}/expr/${key}/region`)),
       overlay: (key) => getJSON(apiUrl(`datasets/${dsId}/overlays/${key}`)),
       mol: async (p) => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/${p}`)); if (!r.ok) throw new Error(`${r.status} molecules/${p}`); return r.arrayBuffer(); },
+      molIndex: async () => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/index.json`)); if (!r.ok) throw new Error(`${r.status} molecules/index.json`); return r.json(); },
+      molGene: async (name) => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/gene/${encodeURIComponent(name)}.bin`)); if (!r.ok) throw new Error(`${r.status} molecules/gene/${name}.bin`); return r.arrayBuffer(); },
     };
   }
   // ---- one dataset at a time, one layer at a time ---------------------------------
@@ -887,7 +988,7 @@
     const meta = S.m && S.m.molecules;
     if (!meta || !S.src || !S.src.mol) return;
     try {
-      const idx = JSON.parse(new TextDecoder().decode(await S.src.mol("index.json")));
+      const idx = await S.src.molIndex();
       idx.genes.sort((a, b) => b.c - a.c || a.n.localeCompare(b.n));
       S.mol.index = idx;
       $("panelMolecules").hidden = false;
@@ -937,7 +1038,7 @@
     status(`Loading ${ent.c.toLocaleString()} ${name} molecules…`);
     M.loading.add(name);
     try {
-      const q = new Uint16Array(await S.src.mol(`gene/${encodeURIComponent(name)}.bin`));
+      const q = new Uint16Array(await S.src.molGene(name));
       const n = q.length >> 1, [sx, sy] = idx.scale, pos = new Float32Array(2 * n);
       for (let i = 0; i < n; i++) { pos[2 * i] = q[2 * i] * sx; pos[2 * i + 1] = q[2 * i + 1] * sy; }
       const used = new Set(M.genes.map((g) => g.hex));
@@ -5627,7 +5728,7 @@
     let pos, index;
     try {
       [pos, index] = await Promise.all([S.src.buf("umap.bin").then((b) => new Float32Array(b)),
-        S.src.buf("genes.json").then((b) => JSON.parse(new TextDecoder().decode(b).replace(/:(NaN|-?Infinity)\b/g, ":null")))]);
+        S.src.rnaIndex()]);
     } catch (e) { status(`Cannot load UMAP: ${e.message}`, true); return; }
     const n = pos.length / 2;
     S.rna = { pos, n, index, genes: [], obs: m.obs || [], colorBy: null, obsData: null, grid: "", vs: null,
@@ -5712,7 +5813,7 @@
     }
     status(`Loading ${name}…`);
     let buf;
-    try { buf = await S.src.buf(`gene/${encodeURIComponent(name)}.bin`); }
+    try { buf = await S.src.rnaGene(name); }
     catch (e) { status(`${name}: not expressed in this dataset`, true); setTimeout(() => status(null), 4000); return; }
     const k = new Uint32Array(buf, 0, 1)[0];
     const idx = new Uint32Array(buf, 4, k), val = new Float32Array(buf, 4 + 4 * k, k);

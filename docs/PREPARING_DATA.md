@@ -334,7 +334,7 @@ stops, since that is the wrong file).
 `scan X: N ROIs in the OME-XML`: must match the slide.
 `grouping 'tissue': 3 groups, sizes [...]`: the groups the viewer will offer.
 
-For scale: an 84-ROI study (two scans of 16,384 x 16,384 px and 4 stains, side by side as one 33,280 x 16,384 px image; 401 DCC files in the folder, 84 used; a 19,963-target mouse whole-transcriptome PKC) took 3 to 5.5 min to prepare on a loaded workstation reading from a network share (all but 10 s of it the image pyramid) and about 10 min to export (tiles 35 s; the 19,962 per-gene files 9 min, slow only because each is a separate small file on the share; QC, groupings and the volcano's data 3 s). The export is 149 MB in 22,883 files: tiles 123 MB (JPEG), gene files 19 MB, hvg/ 6 MB. The 88-segment example without an image (1,819 targets) took 6 s to prepare and 85 s to export (3.7 MB in 1,873 files).
+For scale: an 84-ROI study (two scans of 16,384 x 16,384 px and 4 stains, side by side as one 33,280 x 16,384 px image; 401 DCC files in the folder, 84 used; a 19,963-target mouse whole-transcriptome PKC) took 3 to 5.5 min to prepare on a loaded workstation reading from a network share (all but 10 s of it the image pyramid) and about 10 min to export (tiles 35 s; the 19,962 per-gene files 9 min, slow only because each is a separate small file on the share; QC, groupings and the volcano's data 3 s). The export is 149 MB in 22,883 files: tiles 123 MB (JPEG), gene files 19 MB, hvg/ 6 MB. The 88-segment example without an image (1,819 targets) took 6 s to prepare and 85 s to export (3.7 MB in 1,873 files). (Both were measured before the gene packs: an export now writes those genes into one pack file, so the 19,962 gene files (9 min of the export) become one file, and the export about 2,900 files.)
 
 ## CosMx SMI
 
@@ -791,22 +791,29 @@ python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache 
 | `--dest` | where to write `<dest>/<id>/` |
 | `--fmt png\|jpg` | tile format. `png` (default) is lossless. `jpg` is several times smaller and fine for viewing; it slightly shifts very dark pixels. Use `png` when exact intensities matter. |
 | `--workers` | parallel tile writers, default 8 |
+| `--gene-files pack\|loose\|both` | how the per-gene data is written. `pack` (default): each layer's genes (and the molecules) in a few packs of about 64 MB, which the viewer reads one gene at a time with HTTP Range requests; a Visium HD layer is 1-23 files instead of ~16,000. `loose`: one file per gene, as before the packs, for a host that ignores Range requests ([HOSTING.md](HOSTING.md#b-any-static-web-host-public-data)). `both`: the two side by side, readable by viewers from before the packs too. |
+| `--shard-mb` | pack size in MB, default 64. A gene is never split, so one larger than this gets a pack of its own. |
 | `--threads` | threads numpy and scipy may use for linear algebra. Default: 8, or the number of CPUs the process may use if that is fewer. The `SODA_THREADS` environment variable does the same. (The PCA before the UMAP always runs on one.) |
 
 What it writes, per dataset (layout in [DATA_FORMAT.md](DATA_FORMAT.md)):
 
 1. Image tiles for every channel and zoom level, then a check that one tile per channel
    matches the cache (`[export] verified N channel(s)`).
-2. Per expression layer: the gene list, bin positions, one file per gene, and, if a region
-   overlay exists, a region id per bin. Layers of 8 µm or more (and classic spots) also get
+2. Per expression layer: the gene list, bin positions, every gene's points packed into a few
+   files of about 64 MB (`genepack/`; one file per gene with `--gene-files loose`), and, if a
+   region overlay exists, a region id per bin. Layers of 8 µm or more (and classic spots) also get
    per-bin QC values (`binqc/`: total counts, genes detected, % mitochondrial) for the
    viewer's Quality filter.
 3. Per layer with bins of 8 µm or more (or classic spots): the data for the circle → UMAP
    tool (`hvg/`) and the whole-section UMAP with Leiden clusters (`umap/`). See below.
 4. Overlays and the manifest, without your local file paths.
 
-**Re-running** skips tiles and gene files that already exist, so an interrupted export
-can simply be started again. The flip side: after you re-run `prepare.py` on a dataset
+**Re-running** skips tiles (and, with `--gene-files loose`, gene files) that already exist, so
+an interrupted export can simply be started again; a layer's gene packs are written again whole,
+one sequential write per pack, under new names only if the data changed. A `gene/` folder left
+by an earlier export in the old layout is not read once the layer is packed (the log says so):
+delete it before uploading, or turn an old export into packs without re-exporting with
+`python web/SpatialViewer/genepack.py repack <dest>/<id> [--delete-loose]`. The flip side: after you re-run `prepare.py` on a dataset
 (new crop, new image), **delete `<dest>/<id>/` before exporting again**, or old tiles stay.
 
 ## Clustering and the whole-section UMAP
@@ -1082,12 +1089,19 @@ timing figures here. What can be said from the formats:
   a 40,000 × 30,000 pixel slide with 30 channels gives roughly 48,000 tiles. Mostly-black
   fluorescence tiles are small; JPEG is smaller than PNG.
 - **Expression**, per layer: 8 bytes per bin for positions, 12 bytes per non-zero
-  (bin, gene) pair across the gene files, one file per expressed gene (often 15,000-20,000
-  files).
+  (bin, gene) pair across the genes, in packs of about 64 MB: 1 to 23 files for the Visium HD
+  layers measured (37 MB to 1.46 GB). With `--gene-files loose` it is one file per expressed
+  gene instead, often 15,000-20,000 files a layer and 50,000-70,000 for a Visium HD dataset
+  of three layers; 100 such datasets were about 6 million files, against about 3,000 packs.
+  Measured on one Visium HD section (layers 2, 8 and 16 µm, ~16,200 genes each, 1.32 GB of
+  gene data; `--no-umap --no-hvg`, onto a local disk): packed, 1,405 files in 44-46 s, the
+  genes taking 5-7 s a layer in 21 packs; loose, 50,011 files in 584-855 s, the genes taking
+  190-280 s a layer. Same bytes either way: every gene in the packs equals its loose file.
 - **`hvg/`**: about 12 bytes per bin plus 4 bytes per non-zero value among the 2,000 genes,
   in one file per 500 µm square of tissue.
 - **`umap/`**: 8 bytes per bin, plus 2 bytes per bin for each of the three clusterings.
-- **Molecules** (Xenium): 4 bytes per transcript kept, one file per gene. A mouse brain
+- **Molecules** (Xenium): 4 bytes per transcript kept, packed like the genes of a layer (one
+  file per gene in the cache and with `--gene-files loose`). A mouse brain
   section with a 480-gene panel (209 million transcripts, 167 million of them quality ≥ 20)
   gave 667 MB in 480 files, the largest gene 37 MB; the viewer downloads only the genes
   someone picks. Reading its `transcripts.zarr.zip` took about 6 minutes.
@@ -1113,8 +1127,8 @@ timing figures here. What can be said from the formats:
   peak of 8.5 GB of memory: 6.5 GB in 111,395 files. bin20 (523,000 bins, 206 million non-zero
   values) is 2.6 GB and took 12 min to cluster, bin50 (84,000 bins) 1.9 GB and 1.5 min, bin100
   (21,000 bins) 1.2 GB and half a minute, the cells 0.6 GB and 2 min; the H&E tiles are 0.28 GB
-  as JPEG. Each layer writes one file per gene that has counts (about 27,400 files; 4 to 10 min
-  per layer onto a network drive). Opening the dataset loads 11 MB in 22 files before a gene is
+  as JPEG. Each layer wrote one file per gene that has counts (about 27,400 files; 4 to 10 min
+  per layer onto a network drive); exports now pack them into a few files per layer. Opening the dataset loads 11 MB in 22 files before a gene is
   picked, most of it the bin positions and QC values of bin20; a widely expressed gene drawn on
   bin20 is 3 to 6 MB. `--bins 50,100` leaves out the largest layer.
 
@@ -1149,8 +1163,9 @@ full path can pass Windows' 260-character limit. Keep the virtual environment at
 path such as `<repo>\.venv`, or enable long paths in Windows.
 
 **`[umap] ...: skipped - umap is not installed`.** Install
-`requirements-clustering.txt`, delete nothing, and run the export again: existing tiles and
-gene files are skipped, so it only adds the missing part.
+`requirements-clustering.txt`, delete nothing, and run the export again: existing tiles are
+skipped (the gene packs are written again, one sequential write each), so it mostly adds the
+missing part.
 
 **`[export] *** N channel(s) do not match the pyramid`.** Some tiles on disk differ from the
 cache (an earlier export of an older cache, or a disk problem). Delete

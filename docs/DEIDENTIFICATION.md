@@ -132,6 +132,16 @@ per-gene files: binary, named by numbers and gene symbols), and `*.link.txt` fil
 (encrypted, random-looking text). A line containing the marker `deid:ok` is skipped: it is
 meant for documented, made-up examples in source code. Do not use it to silence a real hit.
 
+Gene packs (`genepack/*.pack`, the per-gene data of an export, see
+[DATA_FORMAT.md](DATA_FORMAT.md#gene-packs-genepackhash-ipack)) are binary and are not read as
+text. Instead, for every `manifest.json` it finds, the check reads each packed group's listing
+(`genes.json`, `molecules/index.json`): every listed name is checked like any other text
+(`gene <path> -> <id>`), a listing entry may carry only the gene fields (name, totals, shard,
+offset, length), and every byte of every shard the manifest names must belong to a listed gene,
+with no gap and no overlap (`pack <path> -> <problem>`). So a pack cannot carry anything a gene
+listing does not account for. (Shards an earlier export left in the same folder are not named by
+the manifest and never read; the export log lists them for deleting before the upload.)
+
 It prints every hit as `name <path> -> <id>` or `content <path>:<line> -> <id>`, then
 `[deid] N sample ID(s) found` and exits with status 1, or prints `[deid] clean` and
 exits with 0. So it can guard an upload:
