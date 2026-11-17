@@ -65,7 +65,8 @@ Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
 tile and graphics failures, and, when node is installed, tests/diag_test.js passes (the
-panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright).
+panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright); tests/browsers_test.js
+runs the page on this export in Chromium, WebKit (Safari's engine), Edge and an iPhone-sized WebKit (Playwright).
 Also: prepare.py caps the BLAS / OpenMP threads before numpy loads (threadcap.py: default,
 SODA_THREADS, --threads, a variable already set), the PCA runs on one thread and gives the same
 numbers as on the cap's threads; and the dataset picker (dspicker.js) is wired into the page with its
@@ -3493,6 +3494,15 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     for ln in [x for x in lines if x.startswith("packed exports (")] + [lines[-1]]:
         print("    " + ln)
     c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions and packed current ones (exit code)")
+    # the same page in Chromium, WebKit (Safari's engine), Edge and a phone-sized WebKit, on this run's demo export
+    # (SKIPPED without Playwright; a browser that is not installed is skipped on its own)
+    p = subprocess.run([node, str(REPO / "tests" / "browsers_test.js"), "--export", str(root / "export"),
+                        "--shots", str(root / "browsers_shots")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/browsers_test.js: the page works in Chromium, WebKit and Edge (exit code)")
 
 
 THREAD_PROBE = r"""
@@ -3756,7 +3766,7 @@ def check_sharing(c: Checker, log_path: Path):
         c.ok(not re.search(r"""<[a-z][^>`]*\son[a-z]+\s*=""", t) and "javascript:" not in t
              and not re.search(r"""\beval\(|new Function\(|setTimeout\(\s*["'`]""", t),
              f"{f}: no inline handler attribute, no eval, no javascript: address")
-        c.ok(not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),
+        c.ok(not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),  # deid:ok (type names)
              f"{f}: only unsigned typed arrays (the de-identification check reads the signed names as sample IDs)")
         lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
         c.ok(all("try" in ln for ln in lines), f"{f}: a storage access outside try / catch: {[ln.strip()[:60] for ln in lines if 'try' not in ln]}")

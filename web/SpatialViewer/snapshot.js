@@ -82,14 +82,22 @@
     } catch (e) { return Infinity; }
   }
   // the pixels of the map at scale s, and why not, when it is too large
+  // On a phone or tablet the limits count the whole picture (the map, the name above it and the legend
+  // beside it, with the options as set), so a picture over them is refused before anything is drawn.
   function sizeAt(s) {
     const c = mapCanvas();
     if (!c || !c.clientWidth) return null;
     const w = Math.round(c.width * s), h = Math.round(c.height * s);
+    let W = w, H = h;
+    if (api.touch) {
+      const opts = { legend: !$("snapLegend") || $("snapLegend").checked, name: !$("snapName") || $("snapName").checked };
+      const F = frameAround(w / Math.max(1, c.clientWidth), h, api.mode(), opts);
+      W = w + F.legW; H = h + F.headH;
+    }
     const dim = Math.min(api.touch ? LIMITS.dimTouch : LIMITS.dim, glLimit()), area = api.touch ? LIMITS.areaTouch : LIMITS.area;
-    const why = Math.max(w, h) > dim ? `wider than ${dim.toLocaleString()} px, this browser's limit` : w * h > area
+    const why = Math.max(w, h) > dim || Math.max(W, H) > (api.touch ? LIMITS.dimTouch : Infinity) ? `wider than ${dim.toLocaleString()} px, this browser's limit` : W * H > area
       ? (api.touch ? "too large for a phone or tablet's memory" : `over ${Math.round(area / 1e6)} million pixels`) : "";
-    return { w, h, why };
+    return { w, h, W, H, why };
   }
   function fillScales() {
     const sel = $("snapScale"); if (!sel || !api) return;
@@ -199,17 +207,21 @@
   }
 
   // ---- the picture with its legend, name and scale bar -------------------------------------------------
-  function compose(shot, mode, opts) {
-    const T = THEME[opts.bg] || THEME.black, k = shot.k, pw = shot.w, ph = shot.h;
+  // what goes around a map of ph pixels high, at k picture pixels per screen pixel: the name and the view
+  // above it (headH high), the legend beside it (legW wide)
+  function frameAround(k, ph, mode, opts) {
     const font = (px, bold) => `${bold ? "600 " : ""}${Math.round(px * k)}px ${FONT}`;
     const meas = document.createElement("canvas").getContext("2d");
     const pad = Math.round(10 * k);
-    // the name and the view, above the picture
     const head = opts.name ? [api.label(), api.layer(), MODE_NAME[mode] || mode].filter(Boolean).join("  ·  ") : "";
     const headH = head ? Math.round(30 * k) : 0;
-    // the legend, beside it
-    const L = opts.legend ? legendLayout(meas, font, k, ph - 2 * pad) : null;
+    const L = opts.legend && meas ? legendLayout(meas, font, k, ph - 2 * pad) : null;
     const legW = L && L.w ? Math.ceil(L.w + 2 * pad) : 0;               // a margin on both sides
+    return { font, pad, head, headH, L, legW };
+  }
+  function compose(shot, mode, opts) {
+    const T = THEME[opts.bg] || THEME.black, k = shot.k, pw = shot.w, ph = shot.h;
+    const { font, pad, head, headH, L, legW } = frameAround(k, ph, mode, opts);
     const out = document.createElement("canvas");
     out.width = pw + legW; out.height = ph + headH;
     const ctx = out.getContext("2d");
@@ -360,6 +372,9 @@
   window.SodaSnapshot = {
     init(a) { api = a; buildDom(); },
     save,
+    // for tests from the console: each size with the map's pixels (w, h), the whole picture's on a phone or
+    // tablet (W, H; the map's elsewhere) and why it is not offered; the limits
+    _sizes: () => ({ limits: { ...LIMITS }, touch: !!(api && api.touch), sizes: SCALES.map((s) => ({ s, ...(sizeAt(s) || {}) })) }),
     // for tests from the console: set the options and save, resolving when it is done
     _save: async (o = {}) => {
       if (o.scale) { fillScales(); $("snapScale").value = String(o.scale); }
