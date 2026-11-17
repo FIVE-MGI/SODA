@@ -19,7 +19,7 @@
 /* global UMAP, leiden, SODA_LIBS, SodaUmapFit */
 importScripts("libs.js?v=20261116of1");
 importScripts("leiden.js?v=20261102a");
-importScripts("umapfit.js?v=20261117a");
+importScripts("umapfit.js?v=20261117b");
 const LEIDEN_WORKER = "leiden_worker.js?v=20261117a";
 const now = () => performance.now();
 // umap-js (pinned in libs.js): the copy in vendor/ when it is there and matches its SHA-384, else the CDN's,
@@ -170,6 +170,17 @@ function sizeRule(N) {
 // umap-js's fit itself runs as umapfit.js (the same numbers over typed arrays); the returned fit holds
 // the embedding flat (point i at embedding[2i], [2i + 1]) and the fuzzy graph. T: stage times (ms).
 function fitUmap(scores, N, k, minDist, rand, T) {
+  const fit = fitUmapStart(scores, N, k, minDist, rand, T), nEpochs = fit.nEpochs;
+  const t = now();
+  for (let e = 0; e < nEpochs; e++) {
+    fit.step(e);
+    if (e % 10 === 0) progress("UMAP", 0.2 + 0.8 * e / nEpochs);
+  }
+  if (T) T.layout = now() - t;
+  return fit;
+}
+// the neighbours, the graph and the start (T gets knn, graph, layoutPrep); the epochs are the caller's
+function fitUmapStart(scores, N, k, minDist, rand, T) {
   const D = scores[0].length, X = new Float64Array(N * D);
   for (let i = 0; i < N; i++) { const r = scores[i]; for (let d = 0; d < D; d++) X[i * D + d] = r[d]; }
   const [a, b] = SodaUmapFit.abParams(UMAP, minDist);
@@ -181,10 +192,38 @@ function fitUmap(scores, N, k, minDist, rand, T) {
     const s = hi > lo ? 10 / (hi - lo) : 0;
     for (let i = 0; i < N; i++) E[2 * i + a] = ((scores[i][a] || 0) - lo) * s + 1e-4 * gauss(rand);
   }
+  return fit;
+}
+
+// The Leiden sweep needs only the graph, not the layout, so a run with clustering starts it on the helper
+// workers before the layout's epochs and lays out meanwhile: the same epochs, edge for edge in the same
+// order (umapfit.js edges / endEpoch), handing this thread back every ~25 ms while the sweep is pending
+// so the helpers' results are taken and their next runs given out. The numbers are those of fitUmap;
+// only the waiting overlaps. side: the sweep's promise (or null: fitUmap's loop, no hand-backs).
+const sideWork = { on: false, step: null, frac: 0 };
+const yieldTurn = (() => {
+  let ch = null; const q = [];
+  return () => new Promise((r) => {
+    if (typeof MessageChannel === "undefined") { setTimeout(r, 0); return; }
+    if (!ch) { ch = new MessageChannel(); ch.port1.onmessage = () => q.shift()(); if (ch.port1.unref) ch.port1.unref(); }
+    q.push(r); ch.port2.postMessage(0);
+  });
+})();
+async function fitUmapEpochs(fit, T, side) {
+  const nEpochs = fit.nEpochs, nE = fit.nEdges, SLICE = 4096;
+  let pending = !!side, last = now();
+  if (side) side.then(() => (pending = false), () => (pending = false));
   const t = now();
   for (let e = 0; e < nEpochs; e++) {
-    fit.step(e);
-    if (e % 10 === 0) progress("UMAP", 0.2 + 0.8 * e / nEpochs);
+    if (!pending) fit.step(e);
+    else {
+      for (let i = 0; i < nE; i += SLICE) {
+        fit.edges(e, i, Math.min(nE, i + SLICE));
+        if (pending && now() - last > 25) { await yieldTurn(); last = now(); }
+      }
+      fit.endEpoch(e);
+    }
+    if (e % 10 === 0) progress(pending && sideWork.step ? `UMAP, and alongside it ${sideWork.step.toLowerCase()}` : "UMAP", 0.2 + 0.8 * e / nEpochs);
   }
   if (T) T.layout = now() - t;
   return fit;
@@ -325,7 +364,8 @@ async function clusterGraph(g, N, resolution, seed, info, fullSweep) {
   for (const [li, res] of list.entries()) {
     const last2 = rows.slice(-2);
     if (!fullSweep && last2.length === 2 && last2.every((r) => r.stability < SWEEP.stopBelow)) break;
-    progress(`Clustering, resolution ${res}`, li / list.length);
+    const step = `Clustering, resolution ${res}`;
+    if (sideWork.on && pool) { sideWork.step = step; sideWork.frac = li / list.length; } else progress(step, li / list.length);
     const jobs = [];
     for (let s = 0; s < R.seeds; s++) jobs.push({ res, seed: seed + s, sub: -1, iters: SWEEP.iters });
     for (let s = 0; s < R.subs; s++) jobs.push({ res, seed: seed + s, sub: s, iters: SWEEP.iters });
@@ -975,7 +1015,8 @@ function layoutKey(msg) {
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 // log1p CP10k, gene choice, scaling, PCA and UMAP of the bins in d: the exact path (and fast mode's sample)
-function exactCore(d, msg, rand, T, wantLoadings) {
+// during(fit, N): called once the graph is built, before the epochs; returns the side work's promise or null
+async function exactCore(d, msg, rand, T, wantLoadings, during) {
   const P = msg.params, N = d.rows.length;
   let t = now();
   // log1p CP10k, then gene stats over the selection (zeros included) and in how many bins
@@ -1036,7 +1077,8 @@ function exactCore(d, msg, rand, T, wantLoadings) {
     method = "pca";
     for (let i = 0; i < N; i++) { emb[2 * i] = pca.scores[i][0]; emb[2 * i + 1] = pca.scores[i][1] || 0; }
   } else {
-    umap = fitUmap(pca.scores, N, size.k, P.minDist, rand, T);
+    umap = fitUmapStart(pca.scores, N, size.k, P.minDist, rand, T);
+    await fitUmapEpochs(umap, T, during ? during(umap, N) : null);
     const Y = umap.embedding;
     for (let i = 0; i < 2 * N; i++) emb[i] = Y[i];
   }
@@ -1044,8 +1086,9 @@ function exactCore(d, msg, rand, T, wantLoadings) {
 }
 
 // gather, the QC filter, the UMI floor, the cap; then the exact path, or in fast mode the sample's
-// exact path and every other bin placed by its nearest sample bins
-function layout(msg) {
+// exact path and every other bin placed by its nearest sample bins. startSweep(csr, n, fast): the Leiden
+// sweep on the layout's graph, started before its epochs (run below), or null
+async function layout(msg, startSweep) {
   const P = msg.params, rand = mulberry32(P.seed), T = {};
   let t = now();
   progress("Reading bins", 0);
@@ -1096,19 +1139,21 @@ function layout(msg) {
   // fast mode: "fast", or "auto" above fastAbove bins; never when the sample would be all of them
   const nSample = P.fastSample || 10000;
   const fast = P.mode === "bins" && N > nSample && (P.sampling === "fast" || (P.sampling !== "exact" && P.fastAbove > 0 && N > P.fastAbove));
+  const sweep = { csr: null, promise: null };
+  const during = startSweep ? (fit, n) => { sweep.csr = fuzzyGraphCSR(fit.graph, n); return (sweep.promise = startSweep(sweep.csr, n, fast)); } : null;
   if (!fast) {
-    const core = exactCore(d, msg, rand, T, false);
+    const core = await exactCore(d, msg, rand, T, false, during);
     info.nGenesUsed = core.K; info.minDetect = core.minDet; info.nPcs = core.nPcs;
     info.nNeighbors = core.umap ? Math.max(2, Math.min(core.size.k, N - 1)) : null; info.init = core.umap ? "pca" : null;
     info.varFrac = core.pca.varFrac.slice(0, 2); info.method = core.method;
     return { d, val: core.val, genes: core.genes, colOf: core.colOf, emb: core.emb, info, umap: !!core.umap,
-             csr: core.umap ? fuzzyGraphCSR(core.umap.graph, N) : null, nG: N, fast: null };
+             csr: core.umap ? sweep.csr || fuzzyGraphCSR(core.umap.graph, N) : null, nG: N, fast: null, sweep: sweep.promise };
   }
 
   // ---- fast mode ----
   const sIdx = stratifiedSample(d.shape, nShapes, nSample, rand), nS = sIdx.length;
   const ds = subset(d, sIdx);
-  const core = exactCore(ds, msg, rand, T, true);
+  const core = await exactCore(ds, msg, rand, T, true, during);
   t = now();
   progress("Placing the other bins", 0.97);
   // every bin: log1p CP10k (for the markers), and its row of Z (the sample's scaling) on the sample's PCs
@@ -1148,8 +1193,8 @@ function layout(msg) {
   info.varFrac = core.pca.varFrac.slice(0, 2); info.method = "umap";
   info.fast = { sample: nS, of: N, k, isSample, placedBy: `the ${k} nearest sample bins in PCA space (weighted mean of their UMAP positions; their clusters by weighted vote)`,
                 above: P.fastAbove || null, chosen: P.sampling === "fast" ? "asked" : "auto" };
-  return { d, val, genes: core.genes, colOf: core.colOf, emb, info, umap: true, csr: fuzzyGraphCSR(core.umap.graph, nS), nG: nS,
-           fast: { sIdx, others, nb, w, k } };
+  return { d, val, genes: core.genes, colOf: core.colOf, emb, info, umap: true, csr: sweep.csr || fuzzyGraphCSR(core.umap.graph, nS), nG: nS,
+           fast: { sIdx, others, nb, w, k }, sweep: sweep.promise };
 }
 const FAST = { k: 15 };
 
@@ -1159,7 +1204,13 @@ async function clusterStage(Lay, msg, info) {
   const P = msg.params, resolution = wantedResolution(msg, P);
   if (!(P.mode === "bins" && Lay.umap && resolution)) return null;
   let t = now();
-  let cluster = await clusterGraph(Lay.csr, Lay.nG, resolution, P.seed, info, !!Lay.fast);
+  // the sweep started alongside the layout (run below) is this run's only: a re-cluster of a kept layout sweeps again
+  const pre = Lay.sweep; Lay.sweep = null;
+  let cluster;
+  if (pre) {
+    const r = await pre;
+    cluster = r.cluster; Object.assign(info, r.info); info.timings.leiden = r.ms; info.timings.leidenAlongside = 1;
+  } else cluster = await clusterGraph(Lay.csr, Lay.nG, resolution, P.seed, info, !!Lay.fast);
   const nCl = info.nClusters;
   if (Lay.fast) {
     const F = Lay.fast, N = Lay.d.rows.length, all = new Uint16Array(N), votes = new Float64Array(nCl);
@@ -1175,7 +1226,8 @@ async function clusterStage(Lay, msg, info) {
     info.clusterSizes = sizes;
     cluster = all;
   }
-  info.timings.leiden = now() - t; t = now();
+  if (pre) info.timings.leidenWait = now() - t; else info.timings.leiden = now() - t;
+  t = now();
   info.markers = nCl > 1 ? clusterMarkers(Lay.d, Lay.val, Lay.genes, Lay.colOf, cluster, nCl, msg.geneNames || null) : [[]];
   // a suggested name per cluster, when the page found a marker set and the gene names
   const ms = msg.markerSet;
@@ -1198,7 +1250,17 @@ async function run(msg) {
     progress("Same shapes and settings: re-clustering the last layout", 0.9);
   } else {
     lastLayout = null;                          // a new layout: drop the old one first (memory)
-    Lay = layout(msg);
+    // with clustering on, the sweep runs on the helper workers while this thread lays out (fitUmapEpochs);
+    // it fills its own info, merged in clusterStage, so the kept layout's info holds no clusters
+    const P = msg.params, resolution = wantedResolution(msg, P);
+    const startSweep = P.mode === "bins" && resolution ? (csr, n, fast) => {
+      const t = now(), sw = {};
+      sideWork.on = true; sideWork.step = null;
+      return clusterGraph(csr, n, resolution, P.seed, sw, fast).then((cluster) => ({ cluster, info: sw, ms: now() - t }));
+    } : null;
+    try { Lay = await layout(msg, startSweep); }
+    finally { sideWork.on = false; }
+    if (Lay.sweep && sideWork.step) progress(sideWork.step, sideWork.frac);
     info = Lay.info;
     const keepInfo = { ...info, fast: null, timings: null };
     lastLayout = { key, lay: Lay, info: { ...clone(keepInfo), fast: info.fast ? { ...clone({ ...info.fast, isSample: null }), isSample: info.fast.isSample.slice() } : null } };

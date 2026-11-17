@@ -9,7 +9,7 @@
 //
 //   const f = SodaUmapFit.init(X, N, D, { nNeighbors, random, a, b })   X: Float64Array N*D, row-major
 //   f.nEpochs; f.embedding (Float64Array 2N, start written in place as umap-js's embedding is)
-//   for (let e = 0; e < f.nEpochs; e++) f.step(e);
+//   for (let e = 0; e < f.nEpochs; e++) f.step(e);   (or per epoch f.edges(e, i0, i1) over 0..f.nEdges, then f.endEpoch(e))
 //   f.graph = { n, rows, cols, vals }: the fuzzy simplicial set in umap-js's Map order (umap.graph.forEach)
 //   f.knn = { k, idx, dist }: the nearest neighbours, each row sorted by distance (umap.knnIndices / knnDistances)
 // a and b: umap-js's own fit of the curve for minDist (abParams below asks umap-js for them).
@@ -332,9 +332,14 @@
     const a = opt.a, b = opt.b, gamma = 1.0, initialAlpha = 1.0, clipValue = 4.0, nV = N;
     let alpha = initialAlpha;
     const clip = (x) => (x > clipValue ? clipValue : x < -clipValue ? -clipValue : x);
-    // UMAP.optimizeLayoutStep(n), the embedding held flat: point j at E[2j], E[2j + 1]
-    function step(n) {
-      for (let i = 0; i < nE; i++) {
+    // UMAP.optimizeLayoutStep(n), the embedding held flat: point j at E[2j], E[2j + 1]. edges(n, i0, i1) is
+    // that epoch's loop over the edges i0..i1-1 only; edges(n, 0, a) ... edges(n, z, nE) then endEpoch(n)
+    // is step(n) exactly (the same edges in the same order, the same draws), so a caller can hand its
+    // thread back between slices of an epoch.
+    function step(n) { edges(n, 0, nE); endEpoch(n); }
+    function endEpoch(n) { alpha = initialAlpha * (1.0 - n / nEpochs); }
+    function edges(n, i0, i1) {
+      for (let i = i0; i < i1; i++) {
         if (eon[i] > n) continue;
         const j2 = 2 * head[i], k2 = 2 * tail[i];
         let x = E[j2] - E[k2], y = E[j2 + 1] - E[k2 + 1];
@@ -366,9 +371,8 @@
         }
         eonn[i] += nNeg * epns[i];
       }
-      alpha = initialAlpha * (1.0 - n / nEpochs);
     }
-    return { nEpochs, embedding: E, graph, knn, step, nEdges: nE };
+    return { nEpochs, embedding: E, graph, knn, step, edges, endEpoch, nEdges: nE };
   }
 
   // a and b of UMAP's curve for this minDist, from umap-js itself (its findABParams, a Levenberg-Marquardt

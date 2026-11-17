@@ -2885,7 +2885,7 @@
     L.running = true; $("lassoCancel").hidden = false; buildLassoUI();
     lassoWake(true);
     // started now, so it loads umap-js while the chunks download
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117a");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117b");
     msg(`Fetching ${need.size} data chunk(s)…`);
     const { bufs, missing } = await lassoFetch([...need.keys()]);
     if (!L.running) return;                         // cancelled while fetching
@@ -2902,7 +2902,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117a");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117b");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const sampling = L.prot ? "exact" : L.sampling || "auto";
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
