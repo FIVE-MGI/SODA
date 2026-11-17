@@ -384,6 +384,8 @@
     tokenWait = (async () => {
       try {
         let t = await requestToken(null);                  // cookie still valid? then no prompt
+        // a window opened beside another one (compare.js): that one already has a token, so no second prompt
+        if (!t && window.SodaCompare) t = await window.SodaCompare.askToken(new URL(TOKEN_URL, location.href).href);
         for (let tries = 0; !t && tries < 6; tries++) {
           const pw = await askPassword(tries > 0, "This viewer is password protected.");
           t = await requestToken(pw);
@@ -1349,6 +1351,21 @@
     if (umapSbs() && S.umap.sideVs) out.uside = S.umap.sideVs;
     return out;
   }
+  // The camera goes somewhere: by the mouse (deck's controller), by a link to a view (viewlink.js)
+  // or by a linked window (compare.js).
+  function setCamera(viewState, viewId) {
+    autoFit = false;
+    $("tapTip").hidden = true;                   // it pointed at a spot that has just moved
+    if (S.mode === "rna" && S.rna) { S.rna.vs = viewState; deckgl.setProps({ viewState: rnaViewStates() }); return; }
+    if (viewId === "uside") { S.umap.sideVs = viewState; deckgl.setProps({ viewState: deckVs() }); return; }
+    const zoomed = !S.viewState || Math.abs(S.viewState.zoom - viewState.zoom) > 1e-6;
+    S.viewState = viewState; deckgl.setProps({ viewState: deckVs() }); updateHud();
+    // the heat map's squares have a screen-space floor, so their size in world
+    // units changes with the zoom
+    if (zoomed && ((S.geneBlend === "heatmap" && S.genes.length) || gatePreviewOn())) requestRender();
+    molViewChanged();
+    if (outlines && outlines.viewChanged(viewState)) requestRender();
+  }
   function initDeck() {
     deckgl = new Deck({
       parent: $("viewport"),
@@ -1372,19 +1389,7 @@
       deviceProps: { webgl: { preserveDrawingBuffer: true } },
       style: { background: "#000" },
       getCursor: ({ isDragging }) => (isDragging ? "grabbing" : "crosshair"),
-      onViewStateChange: ({ viewState, viewId }) => {
-        autoFit = false;
-        $("tapTip").hidden = true;                   // it pointed at a spot that has just moved
-        if (S.mode === "rna" && S.rna) { S.rna.vs = viewState; deckgl.setProps({ viewState: rnaViewStates() }); return; }
-        if (viewId === "uside") { S.umap.sideVs = viewState; deckgl.setProps({ viewState: deckVs() }); return; }
-        const zoomed = !S.viewState || Math.abs(S.viewState.zoom - viewState.zoom) > 1e-6;
-        S.viewState = viewState; deckgl.setProps({ viewState: deckVs() }); updateHud();
-        // the heat map's squares have a screen-space floor, so their size in world
-        // units changes with the zoom
-        if (zoomed && ((S.geneBlend === "heatmap" && S.genes.length) || gatePreviewOn())) requestRender();
-        molViewChanged();
-        if (outlines && outlines.viewChanged(viewState)) requestRender();
-      },
+      onViewStateChange: ({ viewState, viewId }) => setCamera(viewState, viewId),
       onHover: (info) => {
         if (info.coordinate && !(info.viewport && info.viewport.id === "uside")) updateHud(info.coordinate);
         umapHover(info);
@@ -3025,7 +3030,9 @@
     a.download = name; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
-  function lassoSaveJson() {
+  // What Save JSON writes and what a link to this view carries (viewlink.js): one state, two outputs.
+  // full: with the run's parameters and result (the file); without: what it takes to show the view again (the link).
+  function sessionState(full) {
     const L = S.lasso, R = L.result;
     const out = {
       tool: "SODA circle -> UMAP", version: 1, umapJs: LASSO.umapJs, dataset: S.dsId, layer: S.exprKey,
@@ -3060,7 +3067,16 @@
       qcFilter: R ? R.qc || null : binQc ? binQc.state() : null,
       saved: new Date().toISOString(),
     };
-    lassoDownload(`${S.dsId}_${S.exprKey}_shapes.json`, JSON.stringify(out, null, 1), "application/json");
+    if (!full) {
+      for (const k of ["umapJs", "params", "result", "saved"]) delete out[k];
+      out.qcFilter = binQc ? binQc.state() : null;         // the thresholds on show, not the last run's
+    }
+    // the camera, mode, stains, genes, molecules, outlines, colour-by and the open tab
+    if (window.SodaViewLink) out.view = window.SodaViewLink.capture();
+    return out;
+  }
+  function lassoSaveJson() {
+    lassoDownload(`${S.dsId}_${S.exprKey}_shapes.json`, JSON.stringify(sessionState(true), null, 1), "application/json");
   }
   function lassoSaveCsv() {
     const L = S.lasso, R = L.result; if (!R) return;
@@ -3085,22 +3101,38 @@
     try { j = JSON.parse(await file.text()); } catch (e) { $("lassoMsg").textContent = "Not a JSON file."; return; }
     if (!Array.isArray(j.shapes)) { $("lassoMsg").textContent = "No shapes in that file."; return; }
     if (j.dataset && j.dataset !== S.dsId && !confirm(`These shapes were drawn on ${j.dataset}, not ${S.dsId}. Load them anyway?`)) return;
+    await sessionApply(j, true);
+  }
+  // Put a saved state back: a Save JSON file (run: the UMAP is run again, as Load JSON always did) or a
+  // link to a view (viewlink.js: no run, a link should open fast). Resolves to notes for the user, or
+  // null when another layer or dataset was picked meanwhile.
+  async function sessionApply(j, run) {
+    const seq = openSeq;
+    let notes = [];
     if (j.layer && j.layer !== S.exprKey && [...$("exprSelect").options].some((o) => o.value === j.layer)) {
       $("exprSelect").value = j.layer;
-      if (!(await setExprKey(j.layer))) return;    // another layer or dataset was picked while it loaded
+      if (!(await setExprKey(j.layer))) return null;   // another layer or dataset was picked while it loaded
     }
-    const L = S.lasso;
-    L.shapes = j.shapes.map((s, i) => ({ id: i + 1, name: s.name || `Shape ${i + 1}`, kind: s.kind || "free", pts: s.points || [],
-                                         ...(Array.isArray(s.rows) ? { rows: Uint32Array.from(s.rows) } : {}),
-                                         hex: s.color || LASSO_COLORS[i % LASSO_COLORS.length], bins: 0, shared: 0, lost: 0 }));
-    L.next = L.shapes.length + 1; L.selShape = null;
+    const L = S.lasso, canDraw = !$("panelLasso").hidden;
+    if (canDraw && Array.isArray(j.shapes)) {
+      L.shapes = j.shapes.map((s, i) => ({ id: i + 1, name: s.name || `Shape ${i + 1}`, kind: s.kind || "free", pts: s.points || [],
+                                           ...(Array.isArray(s.rows) ? { rows: Uint32Array.from(s.rows) } : {}),
+                                           hex: s.color || LASSO_COLORS[i % LASSO_COLORS.length], bins: 0, shared: 0, lost: 0 }));
+      L.next = L.shapes.length + 1; L.selShape = null;
+    }
     if (Number.isInteger(j.seed)) $("lassoSeed").value = j.seed;
     if (Number.isFinite(j.resolution) || j.resolution === "auto") $("lassoRes").value = j.resolution;
     umapLoadState(j.sectionClusters);
     L.qcNote = binQc ? binQc.setState(j.qcFilter || null) : null;   // a file without qcFilter = no filter
     if (j.mode === "bins" || j.mode === "shapes") $("lassoMode").value = j.mode;
-    lassoShapesChanged();
-    lassoRun();
+    if (canDraw && Array.isArray(j.shapes)) lassoShapesChanged();
+    if (j.view && window.SodaViewLink) {
+      notes = await window.SodaViewLink.apply(j.view, j);
+      if (seq !== openSeq) return null;
+    }
+    if (run) lassoRun();
+    else if (canDraw && L.shapes.length) notes.push("The drawn shapes are back: press Run UMAP (Analyze tab) for their UMAP.");
+    return notes;
   }
 
   function lassoInit() {
@@ -6047,7 +6079,11 @@
   // returns (see liveSource), so each start gets a number and only the latest one's end counts.
   async function openDataset(id) {
     const lay = window.SodaLayout, tok = lay ? lay.opening(true) : 0;
-    try { return await openDatasetNow(id); } finally { if (lay) lay.opening(false, tok); }
+    try { return await openDatasetNow(id); }
+    finally {
+      if (lay) lay.opening(false, tok);
+      window.dispatchEvent(new CustomEvent("soda:opened", { detail: { id } }));   // viewlink.js, compare.js
+    }
   }
   async function openDatasetNow(id) {
     if (dsPicker) dsPicker.setValue(id);           // whoever asked (the picker, ?ds=, the console): the picker shows it
@@ -6306,6 +6342,20 @@
     touchInit();
     snapshotInit();
     cellSetsInit();
+    // a link to a view (viewlink.js) and linked windows (compare.js): handed only what they need from here
+    const share = {
+      state: () => S, seq: () => openSeq, status, render, renderRna, setCamera, sessionState, sessionApply,
+      addGene, addMolGene, addRnaGene, setColorBy, recolorGene, recolorRnaGene, hexToRgb01, hexToRgb255,
+      buildChannelUI, buildGeneUI, buildMolUI, buildRnaGeneUI, imageFitVs, umapFitVs, umapPaneSize, umapApplyViews,
+      umapLoad, umapSetRes, umapSetView, umapDirty, syncUmapUI,
+      hasClusterings: () => umapClusterings().length > 0,
+      clusterN: () => { const i = S.umap && S.umap.cl ? umapClusterInfo() : null; return i ? i.n || (i.sizes || []).length || 0xffff : 0; },
+      // the access token of a private site, for a window this one opened (never the password)
+      tokenUrl: TOKEN_URL ? new URL(TOKEN_URL, location.href).href : "",
+      token: () => (token && Date.now() < token.expires - 60000 ? { sas: token.sas, base: token.base, expires: token.expires } : null),
+    };
+    if (window.SodaViewLink) window.SodaViewLink.init(share);
+    if (window.SodaCompare) window.SodaCompare.init(share);
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
       group: cfgSets[id].group, base: cfgSets[id].base, tags: cfgSets[id].tags }));

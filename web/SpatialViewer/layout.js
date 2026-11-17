@@ -63,6 +63,7 @@
       help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
     panelHelp: {},
+    panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
   };
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
@@ -535,6 +536,7 @@
       const t = txt("plTitle"), has = up("plShow") || up("plotsPanel");
       return has && t && t !== "Plots" ? t : "not drawn";
     },
+    panelCompare: () => (window.SodaCompare ? window.SodaCompare.summary() : ""),
     panelDataset() { const p = txt("dsInfo").split(" · "); return p.length > 3 ? `${p[0]} · ${p[p.length - 1]}` : p.slice(0, 2).join(" · "); },   // size and pixel size
   };
   function paintSummaries() {

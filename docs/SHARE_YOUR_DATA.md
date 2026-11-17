@@ -116,10 +116,16 @@ If your storage link has a read pass on the end (Azure's `?sv=...&sig=...`, an S
 pre-signed link), keep it: the page adds it to every file it reads. **Anyone with the link
 can then read the folder** until the pass expires, so treat that link like a password.
 
-**Copy link** in the page's Save tab gives the same address plus the dataset on show and
-the quality filter, if one is set. It does not keep zoom, genes, stains or drawn shapes. To
-pass on a Draw a region result, send the file from **Save JSON**; the other person opens the
-same dataset and uses **Load JSON**.
+**Copy link to this view** in the page's Save tab gives the same address plus the dataset on
+show and the view as it looks now: position and zoom, genes, stains, colours, clusters and
+their names, the quality filter. The view is in the part after `#`; the `?data=` part stays
+as it is, read pass included, so that link is as private as the one you were given. Drawn
+shapes are in it when they fit (the message under the button says when they do not). To pass
+on a Draw a region result, send the file from **Save JSON**; the other person opens the same
+dataset and uses **Load JSON**.
+
+**Compare** (top bar) opens a second dataset of the same folder in a window beside the
+first, with the two views linked; the second window's address carries the same `?data=`.
 
 If something is wrong, the page says what in plain words: no `datasets.json` in the folder
 (run Step 1 and upload again), the storage refused (the folder is private and the link has
