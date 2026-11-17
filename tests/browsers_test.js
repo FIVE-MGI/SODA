@@ -27,7 +27,7 @@
 //             WebKit compared with Chromium by pixels.
 //
 //   node tests/browsers_test.js                         (needs demo/export: run tests/smoke_test.py first)
-//   node tests/browsers_test.js --only webkit,msedge --shots <dir> --export <dir> --all --ports 8892,8893
+//   node tests/browsers_test.js --only webkit,msedge --shots <dir> --export <dir> --all --ports 8892,8893 (default: free ports)
 //        --ds demo_visiumhd,demo_xenium (only these datasets)  --skip probe,datasets,walk,links,outlines
 //   browsers: chromium, webkit, msedge (Edge; skipped when it is not installed), webkit-phone, chromium-phone
 //
@@ -56,7 +56,7 @@ const SHOTS = arg("--shots", "");
 const ALL = process.argv.includes("--all");
 const DS = arg("--ds", "");                                          // e.g. demo_visiumhd,demo_xenium: only these
 const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, links, outlines
-const PORTS = arg("--ports", "8892,8893").split(",").map(Number);   // data server, page server
+const PORTS = arg("--ports", "0,0").split(",").map(Number);         // data server, page server; 0 = any free port
 const OPEN_MS = 45000;
 
 let pw = null;
@@ -597,7 +597,8 @@ async function walk(browser, eng, urls) {
 }
 
 // ---- cell outlines (outlines.js): a cells layer with segmentation boundaries, zoomed in, Outlines on ------
-const OUTLINE_DS = allIds.find((id) => exists(EXPORT, id, "expr", "cells", "shapes", "cell", "index.json"));
+const hasShapes = (id) => exists(EXPORT, id, "expr", "cells", "shapes", "cell", "index.json");
+const OUTLINE_DS = ["demo_xenium"].concat(allIds).find(hasShapes);           // Xenium (cell + nucleus boundaries) first
 async function cellOutlines(browser, eng, urls) {
   const id = OUTLINE_DS, feature = "cell outlines (Outlines on, zoomed in)";
   const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, `${id} outlines`, feature);
@@ -622,9 +623,10 @@ async function cellOutlines(browser, eng, urls) {
     const quiet = await idle();
     await tilesDone(P);
     const r = await lookDrawn(P, 0.01);
-    const s = await ev(() => window.__spatialViewer.outlines.stats());
+    const s = await ev(() => ({ ...window.__spatialViewer.outlines.stats(),
+      layers: window.__spatialViewer.deck.layerManager.getLayers().filter((l) => /^ol-line-/.test(l.id) && l.props.visible !== false).length }));
     t.ok(quiet && s.mode === "outlines" && s.alpha === 1 && s.dot === 0 && s.layers > 0 && s.shown > 50 && s.sets[0].tiles > 0 && !s.sets.some((x) => x.bad),
-      `outlines drawn: ${s.shown} shown, ${s.sets.map((x) => `${x.key}: ${x.tiles} tiles, ${x.polygons} polygons`).join("; ")} (alpha ${s.alpha}, dots ${s.dot}${s.note ? `; "${s.note}"` : ""})`);
+      `outlines drawn: ${s.shown} shown, ${s.sets.map((x) => `${x.key}: ${x.tiles} tiles, ${x.polygons} polygons, ${x.bad} bad`).join("; ")} (alpha ${s.alpha}, dots ${s.dot}, ${s.layers} outline layers drawn, mode ${s.mode}, ${quiet ? "settled" : "STILL LOADING after 60 s"}${s.note ? `; "${s.note}"` : ""})`);
     t.ok(r.lit > 0.01 && !r.err, `map drawn (lit ${r.lit.toFixed(3)}${r.status ? `; status "${r.status}"` : ""})`);
     const k = `${eng.group}|${id} outlines`; (thumbs[k] = thumbs[k] || {})[eng.name] = r.thumb;
     await t.shot(`${id}_outlines`);
