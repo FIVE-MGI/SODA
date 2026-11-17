@@ -63,16 +63,30 @@ Times run from navigation start, as the median of 3 runs. *Cold* is a fresh brow
 
 ## Draw a region → Run UMAP
 
-Visium HD 8 µm layer, in the browser's web worker, timed from the run starting to the UMAP drawn:
+Visium HD 8 µm layer, in the browser's web worker, timed from the run starting to the UMAP drawn.
+These were measured on 17 November 2026 while other test runs shared the same 8 efficiency cores,
+so they are slower than an idle machine; the page before the speed-up (b7eb968) and now were run
+in turn, twice each (both runs shown):
 
-| Bins in the region | Leiden off | Leiden on |
-|---|---|---|
-| 1,000 | 2.4 s | 3.2 s |
-| 10,000 | 12.5 s | 26.7 s |
-| 50,000 | 81 s | 137 s |
+| Bins in the region | Leiden | Before | Now, every bin | Now, default |
+|---|---|---|---|---|
+| 1,000 | off | 2.5 / 3.3 s | 2.6 / 3.0 s | the same |
+| 1,000 | on | 3.9 / 4.4 s | 3.2 / 2.7 s | the same |
+| 10,000 | off | 16.1 / 19.7 s | 16.7 / 14.9 s | the same |
+| 10,000 | on | 36.2 / 32.7 s | 19.3 / 20.1 s | the same |
+| 50,000 | off | 120 / 118 s | 90 / 104 s | 12.1 / 14.1 s (fast mode) |
+| 50,000 | on | 228 / 196 s | 93 / 142 s | 16.7 / 33.0 s (fast mode) |
 
-On a CPU about 4 times slower (the page capped at a quarter of one core), the same regions took
-8.3 s, 53 s and 401 s with Leiden off.
+Every bin gives the same layout and clusters as before, bit for bit in the same browser. Above
+20,000 bins the default is fast mode (a 10,000-bin sample; see PREPARING_DATA.md). On every bin,
+the layout's epochs are most of the time (63 of the 93 s at 50,000 bins, Leiden on), then the
+nearest neighbours (11 s) and Leiden (15 s, run alongside the layout). Changing only the
+resolution of a 50,000-bin run re-clustered the kept layout in 14-24 s.
+
+On a CPU about 4 times slower (the page capped at a quarter of one core), with Leiden off: 1,000
+bins 8.3 s before and 7.3 s now, 10,000 bins 53 s and 35 s, 50,000 bins 401 s and 184 s (40 s in
+fast mode). With Leiden on: 10,000 bins 112 s and 102 s, 50,000 bins 593 s and 497 s (118 s in
+fast mode).
 
 ## What was not measured
 
