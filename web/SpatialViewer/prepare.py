@@ -31,6 +31,7 @@ the server just scans <out> for manifest.json files.
     python prepare.py export --id sample1 --out <cache folder> --dest <static folder> [--fmt jpg]
            [--user-layer 008um --user-umap umap.csv --user-obs clusters.csv | --user-h5ad analysis.h5ad]
     python prepare.py userclusters --id sample1 --out <cache folder> --dest <static folder> --user-layer 008um ...
+    python prepare.py ids --id sample1 --out <cache folder> --dest <static folder>
     python prepare.py outlines --id x1 --out <cache folder> [--dest <static folder>] [--boundaries cells.geojson --nuclei nuclei.geojson]
            (cell outlines for a dataset that is already prepared: from the platform's own files, or your own; cellshapes.py)
 
@@ -48,6 +49,8 @@ arrays are written as a few packs of about 64 MB that the viewer reads with HTTP
 (genepack.py): a Visium HD layer is a handful of files instead of ~16,000. --gene-files loose
 writes one file per gene as before (for a host that ignores Range requests); --gene-files both
 writes the two side by side (a viewer older than the packs reads that too).
+--ids also writes each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, for the viewer's "Save barcodes";
+off by default: an export holds no barcode otherwise); `ids` adds them to an existing export (layerids.py).
 """
 from __future__ import annotations
 
@@ -315,6 +318,11 @@ def main(argv=None):
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
     gene_file_args(e)
+    e.add_argument("--ids", action="store_true",
+                   help="also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz) so the viewer can save the "
+                        "bins or cells inside drawn shapes with them. Off by default: without it no barcode is written. "
+                        "Every id must fully match its platform's id format and none may look like a sample ID, "
+                        "else nothing is written and the export stops (layerids.py)")
     userclusters.add_args(e)
     uc = sub.add_parser("userclusters", help="add your own UMAP / clusters (Seurat, scanpy) to a layer of an existing export")
     uc.add_argument("--id", required=True)
@@ -323,6 +331,10 @@ def main(argv=None):
     uc.add_argument("--markers", help="marker list for the suggested names (default: the one the export used)")
     uc.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     userclusters.add_args(uc)
+    ids = sub.add_parser("ids", help="add each layer's barcodes / cell ids to an existing export (as export --ids)")
+    ids.add_argument("--id", required=True)
+    ids.add_argument("--out", required=True, help="cache root that prepare wrote into")
+    ids.add_argument("--dest", required=True, help="export root holding <dest>/<id>/")
     ol = sub.add_parser("outlines", help="add cell outlines (segmentation boundaries) to a dataset that is already prepared, "
                                          "and to its export: from the platform's own files or from your own (cellshapes.py)")
     cellshapes.add_args(ol)
@@ -439,7 +451,13 @@ def main(argv=None):
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
                       grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample,
                       seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args),
-                      gene_files=args.gene_files, shard_mb=args.shard_mb)
+                      gene_files=args.gene_files, shard_mb=args.shard_mb, write_ids=args.ids)
+
+        return
+
+    if args.kind == "ids":
+        import layerids
+        layerids.add_to_export(Path(args.out) / args.id, Path(args.dest), log=log)
         return
 
     if args.kind == "userclusters":

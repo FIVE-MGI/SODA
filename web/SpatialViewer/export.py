@@ -13,6 +13,7 @@
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
     <dest>/<id>/expr/<key>/umap/clusters_user*  the lab's own clusterings / UMAP, matched by barcode (userclusters.py)
+    <dest>/<id>/expr/<key>/ids.txt.gz           only with write_ids=True (--ids): the barcode / cell id of each row, allow-listed (layerids.py)
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
@@ -48,6 +49,7 @@ import cellshapes
 import celltypes as celltypes_mod
 import genepack
 import hvgchunks
+import layerids
 import molecules
 import protgrid
 import regions
@@ -130,7 +132,8 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                   tissue_smooth_um: float = protgrid.DEFAULT_TISSUE_SMOOTH_UM,
                   umap_sample: int | None = None, seam_correct: bool = False,
                   user_clusters: list[dict] | None = None, gene_files: str = genepack.DEFAULT_MODE,
-                  shard_mb: float = genepack.SHARD_MB) -> Path:
+                  shard_mb: float = genepack.SHARD_MB,
+                  write_ids: bool = False) -> Path:
     """`markers`: the marker list for suggested cluster names. Default by modality:
     markers/rna_generic.json for RNA (Visium) layers, markers/protein_generic.json for the
     protein grid layer of an image dataset. `grid_um` (image datasets only): grid square size
@@ -142,12 +145,16 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     `user_clusters`: the lab's own UMAP / clusterings per layer (userclusters.make_spec).
     `gene_files`: "pack" (default) = each layer's genes in shards read with HTTP Range requests
     (genepack.py); "loose" = one file per gene, for a host that cannot answer Range requests;
-    "both" = the two side by side (either viewer version reads it). `shard_mb`: pack shard size."""
+    "both" = the two side by side (either viewer version reads it). `shard_mb`: pack shard size.
+    `write_ids`: also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, layerids.py); off by default,
+    an export holds no barcode otherwise."""
     if gene_files not in genepack.MODES:
         raise ValueError(f"gene_files must be one of {genepack.MODES}, not {gene_files!r}")
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
     userclusters.check_layers(user_clusters, m)
+    # --ids: every layer's ids read and checked (allow-list, sample-ID patterns) before anything is written
+    ids_plan = layerids.plan(ds_dir, m, log=log) if write_ids else {}
     out = Path(dest) / m["id"]
     out.mkdir(parents=True, exist_ok=True)
     r = PyramidReader(ds_dir, m)
@@ -197,6 +204,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     layer_binqc: dict[str, dict] = {}
     layer_pack: dict[str, dict] = {}
     packing, loose = gene_files in ("pack", "both"), gene_files in ("loose", "both")
+    layer_ids: dict[str, dict] = {}
 
     # ---- expression --------------------------------------------------------
     for layer in m.get("expr", []):
@@ -216,6 +224,10 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                 layer_regions[key] = table
                 log(f"[export] expr {key}: {len(table)} regions, "
                     f"{int(np.count_nonzero(ids)):,}/{len(ids):,} bins assigned")
+        if key in ids_plan:
+            if len(ids_plan[key]) != len(pos):
+                raise SystemExit(f"[ids] {key}: {len(ids_plan[key]):,} ids for {len(pos):,} rows of positions.bin")
+            layer_ids[key] = layerids.write_ids(ids_plan[key], d, layer, log=log)
         # GeoMx ROI segments (geomx.py): a few dozen rows. Their own QC values, every target in hvg/,
         # the annotation columns as groupings; no UMAP, Leiden, cell types or variable-gene selection.
         roi = layer.get("kind") == "rois"
@@ -351,6 +363,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     if mol_pack:
         sm["molecules"] = {**sm["molecules"], "genePack": mol_pack}
     sm["expr"] = cellshapes.manifest_layers(sm.get("expr", []), layer_shapes)
+    if layer_ids:
+        sm["expr"] = [({**layer, "ids": layer_ids[layer["key"]]} if layer["key"] in layer_ids else layer)
+                      for layer in sm.get("expr", [])]
     if grid_layer:
         sm["expr"] = [L for L in sm.get("expr", []) if L.get("key") != grid_layer["key"]] + [grid_layer]
     (out / "manifest.json").write_text(json.dumps(sm, indent=1), encoding="utf-8")
