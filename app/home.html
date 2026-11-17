@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="soda-token" content="{{SODA_TOKEN}}">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>SODA</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --ink: #1d2330; --muted: #5b6475; --line: #d9dde5;
+    --accent: #2457c5; --accent-ink: #ffffff; --ok-bg: #e6f4ea; --ok-ink: #1e6b34;
+    --bad-bg: #fde8e8; --bad-ink: #9b1c1c; --warn-bg: #fff4d6; --warn-ink: #7a5300; --code: #f0f2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171d; --card: #1c2028; --ink: #e6e9ef; --muted: #9aa3b4; --line: #303644;
+      --accent: #6f9bff; --accent-ink: #0b1020; --ok-bg: #16351f; --ok-ink: #8fe0a6;
+      --bad-bg: #3d1717; --bad-ink: #ffb1b1; --warn-bg: #3a2f10; --warn-ink: #ffd98a; --code: #11141a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+           border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: .02em; }
+  header .ver { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+            padding: 16px 18px; margin: 14px 0; }
+  h2 { font-size: 17px; margin: 0 0 4px; }
+  p.hint { color: var(--muted); margin: 0 0 12px; font-size: 14px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 10px 0 4px; }
+  .row { display: flex; gap: 8px; }
+  .row input[type=text] { flex: 1; min-width: 0; }
+  input[type=text], input[type=number] { font: inherit; padding: 7px 9px; border: 1px solid var(--line);
+         border-radius: 6px; background: var(--bg); color: var(--ink); }
+  button { font: inherit; padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--card); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  pre.log { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+            max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  .banner { border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-weight: 600; }
+  .banner.ok { background: var(--ok-bg); color: var(--ok-ink); }
+  .banner.bad { background: var(--bad-bg); color: var(--bad-ink); }
+  .banner.warn { background: var(--warn-bg); color: var(--warn-ink); }
+  .banner .small { font-weight: 400; display: block; font-size: 13px; margin-top: 2px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 10px; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .status { color: var(--muted); font-size: 14px; }
+  .hidden { display: none; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; padding: 8px 16px 24px; }
+  code { background: var(--code); padding: 1px 4px; border-radius: 4px; font-size: 13px; }
+  @media (max-width: 560px) { .row { flex-direction: column; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>SODA</h1><span class="ver">version {{SODA_VERSION}}</span>
+  <span class="spacer"></span>
+  <button id="quit" title="Stop SODA (a running Prepare is stopped too)">Quit SODA</button>
+</header>
+<main>
+  <div id="update" class="banner warn hidden"></div>
+
+  <section>
+    <h2>1. Prepare a folder of datasets</h2>
+    <p class="hint">Put each dataset in its own folder inside one data folder (a Visium HD
+      <code>outs</code> folder with its image, a Xenium output folder, a CosMx or MERSCOPE folder, a
+      GeoMx folder, or one OME-TIFF / QPTIFF / .h5ad file). SODA works out what each one is, prepares
+      and exports it, then checks the export for sample IDs. Your data folder is only read, never changed.</p>
+    <label for="src">Data folder</label>
+    <div class="row"><input type="text" id="src" placeholder="the folder that holds one folder per dataset" spellcheck="false">
+      <button data-pick="src">Browse...</button></div>
+    <label for="work">Output folder</label>
+    <div class="row"><input type="text" id="work" placeholder="an empty folder, not inside the data folder" spellcheck="false">
+      <button data-pick="work">Browse...</button></div>
+    <details>
+      <summary>More options</summary>
+      <label for="options">Options file (optional: the notebook's OPTIONS as JSON, see docs/PREPARING_DATA.md)</label>
+      <div class="row"><input type="text" id="options" spellcheck="false"><button data-pick="options" data-kind="file">Browse...</button></div>
+      <label for="title">A name for the whole collection (optional)</label>
+      <input type="text" id="title" style="width:100%">
+      <label for="jobs">Datasets at the same time</label>
+      <input type="number" id="jobs" min="1" max="8" value="1" style="width:6em">
+      <label><input type="checkbox" id="rebuild"> Prepare again even what is already done</label>
+    </details>
+    <div class="actions">
+      <button class="primary" id="prepare">Prepare</button>
+      <button id="stop" disabled>Stop</button>
+      <span class="status" id="pstatus"></span>
+    </div>
+    <div id="result"></div>
+    <details id="logbox" class="hidden"><summary>Progress (the full log is in the output folder's logs folder)</summary>
+      <pre class="log" id="log"></pre></details>
+  </section>
+
+  <section>
+    <h2>2. Look at it in the viewer</h2>
+    <p class="hint">Opens the viewer in a new browser tab on an export folder (the <code>export</code>
+      folder inside the output folder). It stays on this computer: nothing is uploaded.</p>
+    <label for="exp">Export folder</label>
+    <div class="row"><input type="text" id="exp" spellcheck="false"><button data-pick="exp">Browse...</button></div>
+    <div class="actions"><button class="primary" id="view">Open viewer</button><span class="status" id="vstatus"></span></div>
+  </section>
+
+  <section>
+    <h2>3. Check a folder for sample IDs</h2>
+    <p class="hint">The same check Prepare runs at the end (<code>deid.py check</code>). Run it on any
+      folder before you upload or share it.</p>
+    <label for="chk">Folder</label>
+    <div class="row"><input type="text" id="chk" spellcheck="false"><button data-pick="chk">Browse...</button></div>
+    <div class="actions"><button id="check">Check</button><span class="status" id="cstatus"></span></div>
+    <div id="cresult"></div>
+  </section>
+</main>
+<footer>Everything runs on this computer. <span id="keyinfo"></span></footer>
+
+<script>
+"use strict";
+const TOKEN = document.querySelector('meta[name="soda-token"]').content;
+const $ = (id) => document.getElementById(id);
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-SODA-Token": TOKEN },
+                                body: JSON.stringify(body || {}) });
+  const d = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+  if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+  return d;
+}
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  for (const k of kids) e.append(k);
+  return e;
+}
+function banner(kind, text, small) {
+  const b = el("div", { class: `banner ${kind}` }, text);
+  if (small) b.append(el("span", { class: "small" }, small));
+  return b;
+}
+
+// folder pickers: a native dialog opened by SODA itself (a web page cannot see folder paths)
+for (const b of document.querySelectorAll("button[data-pick]")) {
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      const d = await post("/app/api/pick", { kind: b.dataset.kind || "folder" });
+      if (d.path) $(b.dataset.pick).value = d.path;
+    } catch (e) { alert(`Could not open the picker: ${e.message}. Type or paste the path instead.`); }
+    b.disabled = false;
+  });
+}
+
+// 1. prepare ----------------------------------------------------------------------------------
+let since = 0, polling = null;
+function sep(p) { return p.includes("\\") ? "\\" : "/"; }
+
+$("prepare").addEventListener("click", async () => {
+  $("result").replaceChildren();
+  $("log").textContent = ""; since = 0;
+  try {
+    await post("/app/api/prepare", { src: $("src").value, work: $("work").value, options: $("options").value,
+                                     title: $("title").value, jobs: +$("jobs").value || 1, rebuild: $("rebuild").checked });
+  } catch (e) { $("result").append(banner("bad", e.message)); return; }
+  $("logbox").classList.remove("hidden"); $("logbox").open = true;
+  setRunning(true);
+  poll();
+});
+$("stop").addEventListener("click", () => post("/app/api/stop").catch(() => {}));
+
+function setRunning(on) {
+  $("prepare").disabled = on; $("stop").disabled = !on;
+  $("pstatus").textContent = on ? "preparing... (large datasets take a while; you can keep working in other tabs)" : "";
+}
+async function poll() {
+  clearTimeout(polling);
+  let d;
+  try { d = await (await fetch(`/app/api/job?since=${since}`)).json(); }
+  catch (e) { polling = setTimeout(poll, 2000); return; }
+  if (d.none) { setRunning(false); $("logbox").classList.add("hidden"); return; }
+  if (d.lines && d.lines.length) {
+    const pre = $("log"), atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+    pre.textContent += d.lines.join("\n") + "\n";
+    if (pre.textContent.length > 400000) pre.textContent = pre.textContent.slice(-300000);
+    if (atEnd) pre.scrollTop = pre.scrollHeight;
+  }
+  since = d.next || since;
+  if (d.running) { $("pstatus").textContent = `preparing... ${d.seconds} s`; polling = setTimeout(poll, 1000); return; }
+  setRunning(false);
+  showResult(d);
+}
+function showResult(d) {
+  const box = $("result"); box.replaceChildren();
+  const rep = d.report;
+  if (d.stopped) box.append(banner("warn", "Stopped."));
+  if (!rep) {
+    box.append(banner("bad", `Prepare ended (exit code ${d.exit}) without a report.`, "See the progress log below."));
+    return;
+  }
+  const de = rep.deid || {};
+  if (de.clean) box.append(banner("ok", "Sample ID check: clean.",
+    "Nothing that looks like a sample ID was found in the export or the logs. The export folder can be uploaded or shared."));
+  else box.append(banner("bad", "Sample ID check: NOT clean. Do not upload or share the export folder yet.",
+    `${de.exportHits || 0} found in the export, ${de.logHits || 0} in the logs. Use step 3 on the export folder to see where, ` +
+    "then rename the dataset folders or labels (see docs/DEIDENTIFICATION.md) and prepare again."));
+  box.append(el("p", { class: "status" }, `Datasets: ${rep.counts || ""}. ${rep.catalog || ""}`));
+  if (rep.datasets && rep.datasets.length) {
+    const t = el("table", {}, el("tr", {}, el("th", {}, "dataset"), el("th", {}, "kind"), el("th", {}, "result"), el("th", {}, "note")));
+    for (const r of rep.datasets) t.append(el("tr", {}, el("td", {}, r.id || ""), el("td", {}, r.kind || ""),
+                                               el("td", {}, r.status || ""), el("td", {}, r.reason || "")));
+    box.append(t);
+  }
+  box.append(el("p", { class: "status" }, `Full report: ${rep.report}`));
+  if (rep.export) {
+    $("exp").value = rep.export; $("chk").value = rep.export;
+    const b = el("button", { class: "primary" }, "Open viewer on this export");
+    b.addEventListener("click", () => openViewer(rep.export));
+    box.append(el("div", { class: "actions" }, b));
+  }
+}
+
+// 2. viewer ------------------------------------------------------------------------------------
+async function openViewer(folder) {
+  const w = window.open("about:blank", "_blank");   // opened now, so a pop-up blocker allows it
+  $("vstatus").replaceChildren();
+  try {
+    const d = await post("/app/api/view", { folder });
+    if (w) { w.opener = null; w.location = d.url; }
+    $("vstatus").append("Opened in a new tab. ", el("a", { href: d.url, target: "_blank", rel: "noopener" }, "Open again"));
+  } catch (e) { if (w) w.close(); $("vstatus").textContent = e.message; }
+}
+$("view").addEventListener("click", () => openViewer($("exp").value));
+
+// 3. check -------------------------------------------------------------------------------------
+$("check").addEventListener("click", async () => {
+  $("cresult").replaceChildren(); $("cstatus").textContent = "checking...";
+  try {
+    const d = await post("/app/api/check", { folder: $("chk").value });
+    $("cstatus").textContent = "";
+    if (d.clean) $("cresult").append(banner("ok", "Clean: nothing that looks like a sample ID."));
+    else {
+      $("cresult").append(banner("bad", `${d.count} place(s) look like a sample ID.`, "Each one is listed with the ID itself hidden."));
+      $("cresult").append(el("pre", { class: "log" }, d.lines.join("\n")));
+    }
+  } catch (e) { $("cstatus").textContent = e.message; }
+});
+
+// header ---------------------------------------------------------------------------------------
+$("quit").addEventListener("click", async () => {
+  if (!$("stop").disabled && !confirm("A Prepare is running. Stop it and quit SODA?")) return;
+  await post("/app/api/quit").catch(() => {});
+  document.body.replaceChildren(el("main", {}, el("section", {}, el("h2", {}, "SODA has stopped."),
+    el("p", { class: "hint" }, "You can close this tab. Open SODA again to start it."))));
+});
+
+(async () => {
+  try {
+    const s = await (await fetch("/app/api/status")).json();
+    $("keyinfo").textContent = s.keyFound
+      ? `De-identification key: ${s.keyFile}`
+      : "The sample ID check runs on every Prepare.";
+    if (s.update) {
+      const u = $("update"); u.classList.remove("hidden");
+      u.append(`SODA ${s.update.latest} is out. `, el("a", { href: s.update.url, target: "_blank", rel: "noopener" }, "Download it"));
+    }
+    // a reloaded page picks up the run that is going (or the last one's result)
+    $("logbox").classList.remove("hidden"); setRunning(!!s.jobRunning); poll();
+  } catch (e) { /* the page still works */ }
+})();
+</script>
+</body>
+</html>
