@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 // Standard formats in the browser: opens the exports made from the synthetic spatial AnnData, OME-Zarr and
 // SpatialData files (examples/make_stdformats_demo.py, web/SpatialViewer/stdformats.py) in Playwright's Chromium
-// and checks that each one is an ordinary SODA dataset to the page: the image tiles are drawn, the expression
+// (and each other browser of --browsers, e.g. firefox) and checks that each one is an ordinary SODA dataset to the page: the image tiles are drawn, the expression
 // layer loads and a gene from the search shows on the slide, the side panel matches the image (a photo shows
 // "Image", a fluorescence image or a density background its channels), the file's own clusterings are there,
 // the SpatialData cells have their outlines, and the page logs no error and no failed request.
 //
 //   node tests/stdformats_browser_test.js                  (needs demo/export: run tests/smoke_test.py first)
 //   node tests/stdformats_browser_test.js --export <dir> --page <dir> --shots <dir> --ports 8868,8869 --gpu
+//        --browsers chromium,firefox   (default chromium; a browser other than Chromium that is not installed is
+//                                       SKIPPED on its own, with a "SKIPPED <browser>: ..." line)
 //
 // Playwright is not a dependency of this repo. Install it anywhere (npm i playwright; npx playwright install
 // chromium) and point NODE_PATH or --playwright at its node_modules. Without it, or without the exports, the
-// test says SKIPPED and exits 0. It draws with software rendering unless --gpu is given.
+// test says SKIPPED and exits 0. Chromium draws with software rendering unless --gpu is given.
 "use strict";
 const http = require("http");
 const fs = require("fs");
@@ -25,6 +27,11 @@ const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer"))
 const SHOTS = arg("--shots", "");
 const PORTS = arg("--ports", "0,0").split(",").map(Number);      // data server, page server; 0 = any free port
 const GPU = process.argv.includes("--gpu");
+const BROWSERS = arg("--browsers", "chromium").split(",").map((s) => s.trim()).filter(Boolean);
+// Firefox's console lines that are not the page's faults (see tests/browsers_test.js): the vendor/ tag's SHA-384
+// checked against a 404 when there is no vendor/, and deck.gl's WebAssembly probe refused by the page's CSP
+const FIREFOX_QUIET = [/integrity attribute match the content of the subresource at .[^ ]*\/vendor\//,
+  /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 
 // id, what it is, the panel it must show (photo: "Image" without a channel list), its layer, what else to check
 const DATASETS = [
@@ -64,20 +71,19 @@ function serve(root, port) {
 }
 
 const results = [];
-const check = (cond, what, got) => { results.push({ ok: !!cond, what }); console.log(`  ${cond ? "ok  " : "FAIL"} ${what}${cond || got === undefined ? "" : "  got " + JSON.stringify(got)}`); return !!cond; };
+let TAG = "";                                    // "firefox: " before each check after Chromium's
+const check = (cond, what, got) => { what = TAG + what; results.push({ ok: !!cond, what }); console.log(`  ${cond ? "ok  " : "FAIL"} ${what}${cond || got === undefined ? "" : "  got " + JSON.stringify(got)}`); return !!cond; };
 
-(async () => {
-  const data = await serve(EXPORT, PORTS[0]), pageSrv = await serve(PAGE, PORTS[1]);
-  const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
-  const browser = await pw.chromium.launch({ args: GPU ? ["--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"] : ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
+// every dataset in one browser (B: its name)
+async function run(B, browser, DATA, URL0) {
   // the service worker (sw.js) is tested by tests/offline_test.js; here the page as it loads
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block" });
   const errors = [];
   for (const D of present) {
-    console.log(`${D.id} (${D.what})`);
+    console.log(`${TAG}${D.id} (${D.what})`);
     const page = await ctx.newPage();
     // a failed request is reported by its URL below; the browser's own "Failed to load resource" line repeats it
-    page.on("console", (m) => { if (m.type() === "error" && !/^Failed to load resource/.test(m.text())) errors.push(`${D.id}: console: ${m.text()}`); });
+    page.on("console", (m) => { if (m.type() === "error" && !/^Failed to load resource/.test(m.text()) && !(B === "firefox" && FIREFOX_QUIET.some((re) => re.test(m.text())))) errors.push(`${D.id}: console: ${m.text()}`); });
     page.on("pageerror", (e) => errors.push(`${D.id}: pageerror: ${e.message}`));
     page.on("response", (r) => { if (r.status() >= 400 && !/favicon/.test(r.url()) && !OPTIONAL.some((re) => re.test(r.url().split("?")[0]))) errors.push(`${D.id}: http ${r.status()}: ${r.url()}`); });
     await page.goto(`${URL0}?static=${encodeURIComponent(DATA)}&ds=${D.id}`);
@@ -121,12 +127,35 @@ const check = (cond, what, got) => { results.push({ ok: !!cond, what }); console
     if (D.user) check(st.user.includes(D.user), `${D.id}: the file's own '${D.user}' column is a clustering of the layer`, st.user);
     if (D.outlines) check(st.outlines, `${D.id}: the cells have outlines (Cell shapes)`);
     if (D.molecules) check(st.molecules, `${D.id}: the transcripts are the molecules layer`);
-    if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, `${D.id}.png`) }); }
+    // Chromium's in <shots>/ as before, another browser's in <shots>/<browser>/
+    const dir = B === "chromium" ? SHOTS : path.join(SHOTS, B);
+    if (SHOTS) { fs.mkdirSync(dir, { recursive: true }); await page.screenshot({ path: path.join(dir, `${D.id}.png`) }); }
     await page.close();
   }
   check(errors.length === 0, "no console error, page error or failed request", errors.slice(0, 5));
-  await browser.close(); data.close(); pageSrv.close();
+  await ctx.close();
+}
+
+(async () => {
+  const data = await serve(EXPORT, PORTS[0]), pageSrv = await serve(PAGE, PORTS[1]);
+  const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
+  const ran = [];
+  for (const B of BROWSERS) {
+    if (!pw[B]) { console.log(`SKIPPED ${B}: not a Playwright browser`); continue; }
+    let browser;
+    try {
+      browser = await pw[B].launch(B === "chromium" ? { args: GPU ? ["--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"] : ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] } : {});
+    } catch (e) {
+      if (B === "chromium") throw e;
+      console.log(`SKIPPED ${B}: cannot launch (${String(e.message || e).split("\n")[0]})`); continue;
+    }
+    TAG = B === "chromium" ? "" : `${B}: `;
+    console.log(`== ${B} ${browser.version()}`);
+    try { await run(B, browser, DATA, URL0); } finally { await browser.close(); }
+    ran.push(B);
+  }
+  data.close(); pageSrv.close();
   const bad = results.filter((r) => !r.ok);
-  console.log(bad.length ? `\nFAILED: ${bad.length} of ${results.length} checks` : `\nPASSED: ${results.length} checks`);
+  console.log(bad.length ? `\nFAILED: ${bad.length} of ${results.length} checks (${ran.join(", ")})` : `\nPASSED: ${results.length} checks (${ran.join(", ")})`);
   process.exit(bad.length ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(2); });

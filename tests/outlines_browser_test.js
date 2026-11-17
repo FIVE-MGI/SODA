@@ -5,7 +5,7 @@
 // a cluster, quality filter), hover and click answering as the dot does, nucleus outlines, the
 // Dots choice, Fit, a dataset without outlines, and that the page logs no error and no
 // Content-Security-Policy violation that it does not also log without outlines.
-// Then, in each browser of --browsers (chromium, webkit), what draws a subset of the cells, on demo_xenium_nt: Colour by
+// Then, in each browser of --browsers (chromium, webkit, firefox), what draws a subset of the cells, on demo_xenium_nt: Colour by
 // a value (one value, two genes, a gene set score), the region click-filter, Draw a region (and a picked shape), the
 // Dots choice bringing the dots back, Save image (its PNG and legend) and a link to the view, checked by pixel where it
 // matters: a selected cell's polygon is coloured inside, also where its dot would not reach.
@@ -29,6 +29,10 @@ const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer"))
 const SHOTS = arg("--shots", "");
 const PORTS = arg("--ports", "0,0").split(",").map(Number);      // data server, page server; 0 = any free port
 const GPU = process.argv.includes("--gpu");
+// Firefox's console lines that are not the page's faults (see tests/browsers_test.js): the vendor/ tag's SHA-384
+// checked against a 404 when there is no vendor/, and deck.gl's WebAssembly probe refused by the page's CSP
+const FIREFOX_QUIET = [/integrity attribute match the content of the subresource at .[^ ]*\/vendor\//,
+  /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 // the browsers the checks of what draws a subset of the cells run in (Draw a region, the region click-filter, Colour by
 // a value, Save image, a link to the view); the checks before them run in Chromium only
 const BROWSERS = arg("--browsers", "chromium").split(",").map((s) => s.trim()).filter(Boolean);
@@ -121,7 +125,7 @@ const reddish = (p) => p[0] >= 40 && p[0] > p[1] + 25 && p[0] > p[2] + 12;      
 const share = (list, f) => (list.length ? list.filter(f).length / list.length : 0);
 
 // Draw a region, the region click-filter, Colour by a value, Save image and a link to the view, with the cells drawn as
-// their outlines, in one browser (chromium or webkit): the selected cells' polygons are filled, not only dotted.
+// their outlines, in one browser (chromium, webkit or firefox): the selected cells' polygons are filled, not only dotted.
 async function selectionChecks(B, browser, DATA, URL0) {
   const DS = "demo_xenium_nt";
   if (!fs.existsSync(path.join(EXPORT, DS, "expr", "cells", "shapes", "cell", "index.json"))) { console.log(`${B}: no ${DS} with outlines, selection checks skipped`); return; }
@@ -129,7 +133,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block", acceptDownloads: true });
   const errors = [];
   const watch = (page) => {
-    page.on("console", (m) => { if (m.type() === "error" && !/\/vendor\//.test((m.location() || {}).url || "")) errors.push(`console: ${m.text()}`); });
+    page.on("console", (m) => { if (m.type() === "error" && !/\/vendor\//.test((m.location() || {}).url || "") && !(B === "firefox" && FIREFOX_QUIET.some((re) => re.test(m.text())))) errors.push(`console: ${m.text()}`); });
     page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
     page.on("response", (r) => { if (r.status() >= 400 && !/favicon|\/vendor\//.test(r.url())) errors.push(`http ${r.status()}: ${r.url()}`); });
   };
@@ -559,7 +563,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
     if (!pw[name]) { console.log(`${name}: not in this Playwright, skipped`); continue; }
     let b = null;
     try { b = await pw[name].launch(name === "chromium" ? { args: GPU ? GPU_ARGS : SOFT_ARGS } : {}); }
-    catch (e) { console.log(`${name}: not installed (${String(e.message || e).split("\n")[0]}), skipped`); continue; }
+    catch (e) { console.log(`SKIPPED ${name}: not installed (${String(e.message || e).split("\n")[0]})`); continue; }
     try { await selectionChecks(name, b, DATA, URL0); }
     catch (e) { check(false, `${name}: the selection checks ran to the end`, String(e && e.stack || e).slice(0, 400)); }
     await b.close();

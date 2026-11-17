@@ -344,15 +344,19 @@ email wbuchser@wustl.edu with any questions about hosting.
 ## Browser support
 
 The viewer needs **WebGL2**. It is developed and tested in **Google Chrome** on desktop.
-Other desktop browsers (Edge, Firefox, Safari) have not been tested; they may work if they
-support WebGL2. On an iPhone every browser runs on Safari's engine (WebKit); what was tested
+Other desktop browsers (Edge, Firefox, Safari) have not been tested by hand; they may work if they
+support WebGL2. Automated tests (`tests/browsers_test.js`, `tests/offline_test.js`) run the page in
+Playwright's Chromium, WebKit, Edge and Firefox builds, Firefox also in a phone-sized window (the size
+only: Playwright cannot emulate a touch screen in Firefox). On an iPhone every browser runs on
+Safari's engine (WebKit); what was tested
 there is below. Password-encrypted dataset links need the page to be served over
 `https://` or from `localhost`.
 
 **Copy link to this view** and **Compare** were checked with automated tests in Chromium
 and in Playwright's WebKit build (the engine behind Safari), at desktop size and at
 390 × 844; they have not been tried in Safari itself, in Firefox, or on a real phone.
-A link made in one browser opens in the other.
+A link made in one browser opens in the other. Copy link to this view (not Compare) was
+also checked in Playwright's Firefox, at desktop size.
 
 **Phones and tablets** open the same page and link; the layout follows the screen.
 
