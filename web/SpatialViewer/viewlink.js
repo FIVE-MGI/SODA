@@ -241,6 +241,7 @@
     put(o, "dataset", str(j.dataset, 200)); put(o, "layer", str(j.layer, 120));
     put(o, "seed", int(j.seed, 0, 2147483647)); put(o, "mode", oneOf(j.mode, ["bins", "shapes"]));
     if (j.resolution === "auto") o.resolution = "auto"; else put(o, "resolution", num(j.resolution, 0, 100));
+    put(o, "sampling", oneOf(j.sampling, ["auto", "exact", "fast"]));     // Draw a region: every bin, or a sample above the threshold
     put(o, "shapes", list(j.shapes, 64, cleanShape));
     if (isObj(j.sectionClusters)) {
       const c = j.sectionClusters, s = {};
@@ -277,7 +278,17 @@
         const ids = isObj(x) ? list(x.ids, 2000, (k) => int(k, 0, 65534)) : null;
         return ids && ids.length >= 2 ? { ids, prev: str(x.prev, 60), name: str(x.name, 60) } : null;
       });
-      if (sizes && sizes.length && sets && sets.length) o.runSets = { sizes, sets };
+      if (sizes && sizes.length && sets && sets.length) {
+        o.runSets = { sizes, sets };
+        // the run they were made on: every bin, or fast mode's sample (viewer.js runLayoutOf)
+        const sampling = oneOf(j.runSets.sampling, ["exact", "fast"]);
+        if (sampling) o.runSets.sampling = sampling;
+        const sm = j.runSets.sample;
+        if (sampling === "fast" && isObj(sm)) {
+          const n = int(sm.n, 1, 2147483647), of = int(sm.of, 1, 2147483647), hash = int(sm.hash, 0, 4294967295);
+          if (n !== null && of !== null && hash !== null) o.runSets.sample = { n, of, hash };
+        }
+      }
     }
     if (isObj(j.qcFilter) && isObj(j.qcFilter.thresholds)) {
       const th = {};
@@ -303,6 +314,7 @@
     if (Number.isInteger(st.seed) && st.seed !== 42) o.seed = st.seed;
     if (st.mode === "shapes") o.mode = st.mode;
     if (st.resolution !== "auto" && Number.isFinite(st.resolution)) o.resolution = st.resolution;
+    if (st.sampling === "exact" || st.sampling === "fast") o.sampling = st.sampling;
     if (Array.isArray(st.shapes) && st.shapes.length) o.shapes = st.shapes;
     const sc = st.sectionClusters;
     if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [], ...(sc.sets ? { sets: sc.sets } : {}) };

@@ -363,7 +363,11 @@ by `viewlink.js`):
   A set takes its lowest member's number and colour; `name` is the set's name, `prev` what that member was
   called before. Saved in the file and the link; on opening they wait for the next run and are applied only
   when its clusters have exactly these sizes (the same shapes, seed and resolution), else left out with a
-  note. The file's `result.cluster` keeps the run's own clusters.
+  note. The file's `result.cluster` keeps the run's own clusters. `"sampling": "fast"` and
+  `"sample": {"n", "of", "hash"}` say they were made on a fast-mode run (Draw a region above 20,000 bins:
+  the clusters of a sample, voted onto the other bins); they are then applied only to a fast-mode run of
+  the same sample (its size, of how many bins, an FNV-1a hash of its bin rows in result order), and merges
+  without `sampling` (or `"exact"`) only to a run on every bin.
 - `paint` (Colour by a value): two genes carry `pc`, the colours the reader chose: `"mg"` (magenta / green,
   both light grey; the default, and what a file or link without `pc` opens with) or `"rg"` (red / green,
   both yellow).
