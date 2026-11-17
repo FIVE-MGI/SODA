@@ -40,14 +40,15 @@ if (!fs.existsSync(path.join(EXPORT, "demo_visiumhd", "manifest.json"))) {
 }
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream" };
+const { sendFile, preflight } = require("./static_files");
 function serve(root, port) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
+      if (req.method === "OPTIONS") { preflight(req, res); return; }
       const rel = decodeURIComponent(req.url.split("?")[0]);
       const file = path.join(root, rel === "/" ? "index.html" : rel);
       if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
-      res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" });
-      fs.createReadStream(file).pipe(res);
+      sendFile(req, res, file, TYPES[path.extname(file)]);            // with Range: gene packs are read by range
     });
     srv.listen(port || 0, "127.0.0.1", () => resolve(srv));
   });

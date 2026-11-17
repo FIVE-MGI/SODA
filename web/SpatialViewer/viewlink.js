@@ -193,8 +193,46 @@
     const o = { points: pts };
     put(o, "name", str(s.name, 60)); put(o, "color", hex(s.color)); put(o, "kind", oneOf(s.kind, ["circle", "free", "sel"]));
     if (Array.isArray(s.rows)) o.rows = s.rows.slice(0, 500000).filter((r) => Number.isInteger(r) && r >= 0 && r < 4294967295);
-    return o.rows || pts.length >= 3 ? o : null;
+    put(o, "def", cleanDef(s.def));
+    return o.rows || pts.length >= 3 || o.def ? o : null;
   }
+  // How a combined shape was made (selections.js saveDef): outlines and set operations on them. A link carries this
+  // instead of the shape's bins; selections.js checks it again as it reads it.
+  const DEF_DEPTH = 6, DEF_NODES = 128, DEF_POINTS = 20000;
+  function cleanDef(d) {
+    let nodes = 0, points = 0;
+    const pt = (p) => {
+      if (!Array.isArray(p) || p.length < 2) return null;
+      const a = num(p[0], -1e9, 1e9), b = num(p[1], -1e9, 1e9);
+      return a === null || b === null ? null : [a, b];
+    };
+    const ring = (r) => {
+      const l = list(r, 5000, pt);
+      if (!l || l.length < 3 || (points += l.length) > DEF_POINTS) return null;
+      return l;
+    };
+    const walk = (x, depth) => {
+      if (!isObj(x) || depth > DEF_DEPTH || ++nodes > DEF_NODES) return null;
+      if (Array.isArray(x.points)) { const r = ring(x.points); return r ? { points: r } : null; }
+      if (Array.isArray(x.geo)) {
+        const geo = x.geo.slice(0, 64).map((rings) => (Array.isArray(rings) ? rings.slice(0, 64).map(ring) : [null]));
+        return geo.length && geo.every((rs) => rs.length && rs.every(Boolean)) ? { geo } : null;
+      }
+      const op = oneOf(x.op, ["union", "inter", "sub"]);
+      if (op && Array.isArray(x.parts) && x.parts.length >= 2 && x.parts.length <= 64) {
+        const parts = x.parts.map((y) => walk(y, depth + 1));
+        return parts.every(Boolean) ? { op, parts } : null;
+      }
+      return null;
+    };
+    return d === undefined ? null : walk(d, 0);
+  }
+  function thinDef(d) {
+    if (d.points) return { points: thin(d.points, THIN_POINTS) };
+    if (d.geo) return { geo: d.geo.map((rings) => rings.map((r) => thin(r, THIN_POINTS))) };
+    return { op: d.op, parts: d.parts.map(thinDef) };
+  }
+  const defPoints = (d) => (d.points ? d.points.length : d.geo ? d.geo.flat().reduce((n, r) => Math.max(n, r.length), 0) : Math.max(0, ...d.parts.map(defPoints)));
   // The whole state of a link (not of a file: Load JSON reads its file as it always did, and only
   // the `view` block of a file goes through cleanView).
   function clean(j) {
@@ -275,8 +313,9 @@
       const all = s.shapes || [], drawn = all.filter((x) => !x.rows);
       const left = [];
       if (drawn.length < all.length) left.push(all.length - drawn.length === 1 ? "a shape made from a selection" : `${all.length - drawn.length} shapes made from selections`);
-      if (drawn.some((x) => (x.points || []).length > THIN_POINTS)) left.push("the fine detail of the drawn outlines");
-      return [{ ...s, shapes: drawn.map((x) => ({ ...x, points: thin(x.points || [], THIN_POINTS) })) }, left];
+      if (drawn.some((x) => (x.points || []).length > THIN_POINTS || (x.def && defPoints(x.def) > THIN_POINTS))) left.push("the fine detail of the drawn outlines");
+      // a combined shape (no rows in a link: its recipe, def) is thinned like a drawn outline
+      return [{ ...s, shapes: drawn.map((x) => ({ ...x, points: thin(x.points || [], THIN_POINTS), ...(x.def ? { def: thinDef(x.def) } : {}) })) }, left];
     },
     (s) => { const o = { ...s }; delete o.shapes; return [o, (s.shapes || []).length ? ["the drawn shapes"] : []]; },
     (s) => {

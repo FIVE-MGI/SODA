@@ -437,6 +437,13 @@ def _flag(key: str) -> str:
     return "--" + key.replace("_", "-")
 
 
+def gene_file_argv(a) -> list[str]:
+    """--gene-files / --shard-mb as given to the batch (genepack.py): for every export, and for
+    single-cell RNA-seq, which is written straight to the export by its prepare step."""
+    out = ["--gene-files", a.gene_files] if getattr(a, "gene_files", None) else []
+    return out + (["--shard-mb", str(a.shard_mb)] if getattr(a, "shard_mb", None) else [])
+
+
 def prepare_argv(d: dict, a) -> list[str]:
     o, k = d["opts"], d["kind"]
     argv = ["auto", "--src", str(d["src"]), "--id", d["id"], "--out", str(a.out), "--dest", str(a.dest),
@@ -462,6 +469,8 @@ def prepare_argv(d: dict, a) -> list[str]:
             argv += [_flag(key)] + ([] if v is True else [str(v)])
     if k == "visium" and d["variant"] == "visium-hd" and a.bins:
         argv += ["--bins", a.bins]
+    if k == "rnaseq":
+        argv += gene_file_argv(a)
     return argv
 
 
@@ -470,7 +479,7 @@ def export_argv(d: dict, a) -> list[str]:
     `prepare.py export` on its own); the options file cannot add it either (only KNOWN_OPTIONS pass)."""
     o = d["opts"]
     argv = ["export", "--id", d["id"], "--out", str(a.out), "--dest", str(a.dest), "--fmt", a.fmt,
-            "--workers", str(a.workers)]
+            "--workers", str(a.workers)] + gene_file_argv(a)
     markers = o.get("markers") or (a.markers_proteins if d["kind"] in PROTEIN_KINDS else a.markers_genes)
     if markers:
         argv += ["--markers", str(markers)]
@@ -683,6 +692,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--fmt", choices=["jpg", "png"], default="jpg",
                     help="image tiles: jpg (default, as the notebook: several times smaller) or png (lossless)")
     ap.add_argument("--workers", type=int, default=8, help="tile writers per export (default 8)")
+    ap.add_argument("--gene-files", choices=["pack", "loose", "both"],
+                    help="per-gene data: pack (prepare.py's default: a few ~64 MB packs per layer, read with HTTP "
+                         "Range requests), loose (one file per gene, for a host that ignores Range) or both")
+    ap.add_argument("--shard-mb", type=float, help="gene pack size in MB (prepare.py's default 64)")
     ap.add_argument("--bins", help="Visium HD layers to build, e.g. 008um,016um (the default) or all")
     ap.add_argument("--markers-genes", help="marker list for gene data (default markers/rna_generic.json)")
     ap.add_argument("--markers-proteins", help="marker list for protein images (default markers/protein_generic.json)")

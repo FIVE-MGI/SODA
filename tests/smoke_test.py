@@ -139,6 +139,8 @@ XE_USER_COLORS = ["#1b9e77", "#d95f02", "#7570b3"]
 # synthetic GeoMx DSP study (examples/make_geomx_demo.py): with its two scans / without images (drawn grid)
 GX, GXG = "demo_geomx", "demo_geomx_grid"
 GEOMX_DS = (GX, GXG)
+# a small synthetic RNA-seq set written by rnaseq.export_rnaseq in-process (gene packs of that kind)
+RNA = "demo_rnaseq"
 # synthetic Stereo-seq folder (examples/make_stereoseq_demo.py): raw GEF + cell bin GEF / tissue GEM /
 # older tissue GEF with stored bin10 + bin50 / shuffled whole-chip GEM cut with the mask image
 ST, STG, STL, STM = "demo_stereoseq", "demo_stereoseq_gem", "demo_stereoseq_lv", "demo_stereoseq_mask"
@@ -194,11 +196,19 @@ def demo_commands(root: Path) -> list[list[str]]:
          "--markers", "examples/demo_protein_markers.json", "--no-umap", "--seam-correct"],
         [prep, "export", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_markers.json",
          "--user-layer", "008um", "--user-obs", f"{r}/user/clusters.csv", "--user-umap", f"{r}/user/umap.csv"],
+        # the old layout, one file per gene, for hosts without Range requests (check_packs compares it with the packs)
+        [prep, "export", "--id", VIS, "--out", cache, "--dest", f"{r}/export_loose", "--markers", "examples/demo_markers.json",
+         "--no-umap", "--no-hvg", "--gene-files", "loose"],
+        # the optional barcode lists (layerids.py): added to an existing export here, written by export --ids below
+        [prep, "ids", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user"],
         ["examples/make_xenium_demo.py", "--out", raw],
         [prep, "xenium", "--id", XE, "--src", f"{raw}/xenium", "--out", cache, "--label", "Synthetic Xenium"],
         [prep, "export", "--id", XE, "--out", cache, "--dest", export, "--markers", "examples/demo_xenium_markers.json"],
         [prep, "export", "--id", XE, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_xenium_markers.json",
-         "--user-layer", "cells", "--user-obs", f"{r}/user/xenium_cells.csv", "--user-obs", f"{r}/user/xenium_groups.csv"],
+         "--user-layer", "cells", "--user-obs", f"{r}/user/xenium_cells.csv", "--user-obs", f"{r}/user/xenium_groups.csv", "--ids"],
+        # packs AND files, in tiny shards so the cells layer and the molecules each need several
+        [prep, "export", "--id", XE, "--out", cache, "--dest", f"{r}/export_both", "--no-umap", "--grid-um", "0",
+         "--gene-files", "both", "--shard-mb", "0.05"],
         [prep, "xenium", "--id", XP, "--src", f"{raw}/xenium_pq", "--out", cache],
         [prep, "export", "--id", XP, "--out", cache, "--dest", export, "--grid-um", "0"],
         [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", cache],
@@ -323,7 +333,9 @@ def run(args: list[str], log_path: Path) -> float:
 def clean(root: Path):
     """Remove only what this test itself writes, so nothing stale gets checked."""
     for p in [root / "raw", root / "user", root / "export_sample" / MX, root / "export_user" / VIS,
-              root / "export_user" / XE, root / "export_partial" / VIS] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS]:
+              root / "export_user" / XE, root / "export_partial" / VIS, root / "export_loose" / VIS,
+              root / "export_both" / XE, root / "export" / RNA, root / "export_rnaseq_loose", root / "export_repack",
+              root / "export_tamper"] + [root / sub / ds for sub in ("cache", "export") for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -340,6 +352,67 @@ def enc(name: str) -> str:
 
 def f32(p: Path, cols: int) -> np.ndarray:
     return np.fromfile(str(p), dtype="<f4").reshape(-1, cols)
+
+
+# ---- gene files: packed (genepack.py, the default) or loose (gene/<NAME>.bin) -------------------
+def app_module(name: str):
+    sys.path.insert(0, str(APP))
+    try:
+        return importlib.import_module(name)
+    finally:
+        sys.path.pop(0)
+
+
+_GROUPS: dict = {}
+
+
+def gene_group(d: Path) -> tuple[dict | None, dict]:
+    """An exported gene-group folder (expr/<key>, molecules, an RNA-seq set): its genePack (None =
+    loose files) and {name: listing entry with s, o, b}."""
+    gp = app_module("genepack")
+    d = Path(d)
+    for ds in (d.parent.parent, d.parent, d):
+        mf = ds / "manifest.json"
+        if not mf.is_file():
+            continue
+        stamp = (str(d.resolve()), mf.stat().st_mtime_ns)
+        if stamp in _GROUPS:
+            return _GROUPS[stamp]
+        for g in gp.groups(read_json(mf)):
+            if (ds / g["dir"] if g["dir"] else ds).resolve() == d.resolve():
+                idx = {}
+                if g["pack"]:
+                    for e in gp.read_listing(ds, g):
+                        if "s" in e:
+                            idx.setdefault(e["n"], e)
+                _GROUPS[stamp] = (g["pack"], idx)
+                return _GROUPS[stamp]
+    return None, {}
+
+
+def gene_bytes(d: Path, name: str) -> bytes | None:
+    """One gene's payload in an exported group: its slice of the pack, or its loose file. None = none."""
+    pack, idx = gene_group(d)
+    if pack:
+        e = idx.get(name)
+        if e is None:
+            return None
+        with open(Path(d) / pack["dir"] / pack["shards"][e["s"]]["file"], "rb") as f:
+            f.seek(e["o"])
+            return f.read(e["b"])
+    p = Path(d) / "gene" / f"{enc(name)}.bin"
+    return p.read_bytes() if p.exists() else None
+
+
+def gene_f32(d: Path, name: str, cols: int = 3) -> np.ndarray | None:
+    b = gene_bytes(d, name)
+    return None if b is None else np.frombuffer(b, dtype="<f4").reshape(-1, cols).copy()
+
+
+def gene_count(d: Path) -> int:
+    """Genes with a payload in the group (pack entries, or loose files)."""
+    pack, idx = gene_group(d)
+    return len(idx) if pack else len(list((Path(d) / "gene").glob("*.bin")))
 
 
 def ari(a: np.ndarray, b: np.ndarray) -> float:
@@ -444,7 +517,7 @@ def check_layer(c: Checker, root: Path, out: Path, L: dict, clustering: bool) ->
              (root / "raw" / "visiumhd" / f"truth_square_{key}.csv").read_text(encoding="utf-8").split("\n")[1:] if ln]
     c.eq(len(truth), n, f"{key}: rows in positions.bin vs bins the demo wrote")
 
-    # genes.json + gene/<NAME>.bin: [x, y, v] float32, values summing to the gene total
+    # genes.json + each gene's [x, y, v] float32 (pack or gene/<NAME>.bin), values summing to the gene total
     genes = read_json(d / "genes.json")
     c.eq(len(genes), L["nGenes"], f"{key}: genes.json length")
     c.eq(len(genes), 300, f"{key}: demo gene count")
@@ -453,14 +526,13 @@ def check_layer(c: Checker, root: Path, out: Path, L: dict, clustering: bool) ->
     dense = {}
     n_files, bad = 0, []
     for g in genes:
-        p = d / "gene" / f"{enc(g['n'])}.bin"
         if g["t"] <= 0:
             continue
-        if not p.exists():
-            bad.append(f"missing {p.name}")
+        a = gene_f32(d, g["n"])
+        if a is None:
+            bad.append(f"missing {g['n']}")
             continue
         n_files += 1
-        a = f32(p, 3)
         if abs(float(a[:, 2].sum()) - g["t"]) > 1e-3 * max(1.0, g["t"]):
             bad.append(f"{g['n']}: sum {a[:, 2].sum()} != total {g['t']}")
         rows = np.array([row_of.get(r.tobytes(), -1) for r in a[:, :2]])
@@ -470,8 +542,8 @@ def check_layer(c: Checker, root: Path, out: Path, L: dict, clustering: bool) ->
         np.add.at(lib, rows, a[:, 2])
         dense[g["n"]] = (rows, a[:, 2])
     c.ok(not bad, f"{key}: gene files: {bad[:5]}")
-    c.eq(len(list((d / "gene").glob("*.bin"))), n_files, f"{key}: gene/*.bin count")
-    print(f"    positions.bin {n:,} rows, {n_files} gene files, median {np.median(lib):.0f} UMI per bin")
+    c.eq(gene_count(d), n_files, f"{key}: genes with a payload (pack entries / gene files)")
+    print(f"    positions.bin {n:,} rows, {n_files} genes, median {np.median(lib):.0f} UMI per bin")
 
     # a marker gene sits in the region it was drawn for
     fasc = np.array([t == "fascicle" for t in truth])
@@ -825,6 +897,125 @@ def check_user(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict
     return res
 
 
+def check_ids(c: Checker, root: Path) -> dict:
+    """The optional barcode / cell id lists (layerids.py): none in a default export; `prepare.py ids` on the
+    Visium HD export_user copy and `export --ids` on the Xenium one write expr/<key>/ids.txt.gz with one id per
+    positions.bin row in that order (= the cache's barcodes / the matrix's cell ids), named in the manifest."""
+    out = {}
+    for ds in (VIS, XE):
+        m = read_json(root / "export" / ds / "manifest.json")
+        c.ok(not any("ids" in L for L in m.get("expr", [])) and not list((root / "export" / ds).rglob("ids.txt*")),
+             f"{ds}: a default export has no id list")
+    # Xenium: the cell ids of the matrix, in its (= positions) order
+    xo = root / "export_user" / XE
+    L = next((x for x in read_json(xo / "manifest.json").get("expr", []) if x["key"] == "cells"), {})
+    e = L.get("ids") or {}
+    c.eq((e.get("file"), e.get("column")), ("ids.txt.gz", "cell_id"), f"{XE} --ids: manifest ids entry")
+    f = xo / "expr" / "cells" / "ids.txt.gz"
+    if c.ok(f.exists(), f"{XE} --ids: expr/cells/ids.txt.gz written"):
+        got = gzip.decompress(f.read_bytes()).decode("utf-8").split("\n")[:-1]
+        want = gzip.open(root / "raw" / "xenium" / "cell_feature_matrix" / "barcodes.tsv.gz", "rt").read().split()
+        c.eq(got, want, f"{XE} --ids: one cell id per positions.bin row, in matrix order")
+        c.eq((e.get("n"), e.get("bytes")), (len(f32(xo / "expr" / "cells" / "positions.bin", 2)), f.stat().st_size), f"{XE} --ids: n and bytes")
+        out[f"{XE}/cells"] = {"rows": len(got), "bytes": f.stat().st_size, "bytesPerRow": round(f.stat().st_size / max(len(got), 1), 2)}
+    # Visium HD: prepare.py ids on an existing export; the cache's barcodes of the rows with a position
+    vo = root / "export_user" / VIS
+    for L in read_json(vo / "manifest.json").get("expr", []):
+        key, e = L["key"], L.get("ids") or {}
+        f = vo / "expr" / key / "ids.txt.gz"
+        if not c.ok(f.exists() and e.get("column") == "barcode", f"{VIS} ids: {key}/ids.txt.gz and its manifest entry"):
+            continue
+        got = gzip.decompress(f.read_bytes()).decode("utf-8").split("\n")[:-1]
+        pos = f32(vo / "expr" / key / "positions.bin", 2)
+        c.eq((len(got), e.get("n"), e.get("bytes")), (len(pos), len(pos), f.stat().st_size), f"{VIS} ids {key}: rows, n, bytes")
+        c.eq(len(set(got)), len(got), f"{VIS} ids {key}: every barcode once")
+        c.ok(all(BARCODE.match(b) for b in got[:50]), f"{VIS} ids {key}: Space Ranger bin barcodes ({got[:2]})")
+        # a bin barcode names its grid row and column: they must follow the positions (same order)
+        rc = np.array([[int(b.split("_")[2]), int(b.split("_")[3].split("-")[0])] for b in got], np.float64)
+        ok = len(rc) > 3
+        if ok:
+            for k, col in ((0, 1), (1, 0)):          # x follows the column, y the row
+                A = np.column_stack([rc[:, col], rc[:, 1 - col], np.ones(len(rc))])
+                coef, res, *_ = np.linalg.lstsq(A, pos[:, k].astype(np.float64), rcond=None)
+                ok = ok and float(np.abs(A @ coef - pos[:, k]).max()) < 1.0
+        c.ok(ok, f"{VIS} ids {key}: the barcodes' grid row / column follow positions.bin (same order)")
+        try:
+            import zarr
+            zg = zarr.open_group(str(root / "cache" / VIS / "expr" / f"{key}.zarr"), mode="r")
+            xy = np.asarray(zg["xy"])
+            want = [b.decode() for b, on in zip(zg["barcodes"][()], ~np.isnan(xy[:, 0])) if on]
+            c.eq(got, want, f"{VIS} ids {key}: = the cache's barcodes of the bins with a position")
+        except ImportError:
+            print("    SKIP ids vs cache barcodes (zarr not installed)")
+        out[f"{VIS}/{key}"] = {"rows": len(got), "bytes": f.stat().st_size, "bytesPerRow": round(f.stat().st_size / max(len(got), 1), 2)}
+    print("    id lists: " + ", ".join(f"{k} {v['rows']:,} rows {v['bytes'] / 1e3:.1f} kB ({v['bytesPerRow']} B/row)" for k, v in out.items()))
+    check_ids_gates(c, root)
+    return out
+
+
+# a made-up sample ID of the shape deid.py knows (never a real one)
+FAKE_SAMPLE = "INT9907"   # deid:ok (fake)
+
+
+def check_ids_gates(c: Checker, root: Path):
+    """The id lists are published, so: (1) `deid.py check` reads ids.txt.gz and reports a sample ID planted in it
+    by file and line only; (2) `prepare.py ids` refuses a layer whose ids do not fit the platform's format
+    (a merge prefix, a sample name glued on), writes nothing for any layer, and never prints an id."""
+    work = root / "ids_gates"
+    if work.exists():
+        shutil.rmtree(work)
+    src = root / "export_user" / VIS / "expr" / "008um" / "ids.txt.gz"
+    if not c.ok(src.exists(), "ids gates: the Visium HD id list to start from"):
+        return
+    # (1) a sample ID planted on line 7 of a copy
+    lines = gzip.decompress(src.read_bytes()).decode("utf-8").split("\n")
+    planted = FAKE_SAMPLE + "_" + lines[6]
+    lines[6] = planted
+    bad = work / "deid" / VIS / "expr" / "008um" / "ids.txt.gz"
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(gzip.compress("\n".join(lines).encode("utf-8")))
+    p = subprocess.run([sys.executable, "web/SpatialViewer/deid.py", "check", str(work / "deid")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    c.eq(p.returncode, 1, "deid.py check finds a sample ID planted inside an ids.txt.gz (exit code)")
+    c.ok("ids.txt.gz:7" in p.stdout and "[deid] 1 sample ID(s) found" in p.stdout,
+         f"deid.py check names the .gz file and line 7: {p.stdout.strip().splitlines()[:2]}")
+    c.ok(FAKE_SAMPLE not in p.stdout and planted not in p.stdout, "deid.py check does not print the ID it found in a .gz file")
+    # (2) a cache whose 016um barcodes carry a merge prefix (4) and a sample ID (1): prepare.py ids refuses
+    try:
+        import zarr
+    except ImportError:
+        print("    SKIP the ids refusal check (zarr not installed)")
+        return
+    cache, exp = work / "cache" / VIS, work / "export" / VIS
+    (cache / "expr").mkdir(parents=True)
+    shutil.copyfile(root / "cache" / VIS / "manifest.json", cache / "manifest.json")
+    keys = [L["key"] for L in read_json(cache / "manifest.json").get("expr", [])]
+    for k in keys:
+        shutil.copytree(root / "cache" / VIS / "expr" / f"{k}.zarr", cache / "expr" / f"{k}.zarr")
+        (exp / "expr" / k).mkdir(parents=True)
+        shutil.copyfile(root / "export" / VIS / "expr" / k / "positions.bin", exp / "expr" / k / "positions.bin")
+    shutil.copyfile(root / "export" / VIS / "manifest.json", exp / "manifest.json")
+    g = zarr.open_group(str(cache / "expr" / "016um.zarr"), mode="r+")
+    bcs = [b.decode() for b in g["barcodes"][()]]
+    xy = np.asarray(g["xy"])
+    on = np.flatnonzero(~np.isnan(xy[:, 0]))
+    for j, r in enumerate(on[:5]):
+        bcs[r] = (f"{FAKE_SAMPLE}_" if j == 0 else "S1_") + bcs[r]
+    g.create_dataset("barcodes", data=np.array([b.encode() for b in bcs], dtype="S"), chunks=(1 << 20,), overwrite=True)
+    before = (exp / "manifest.json").read_bytes()
+    p = subprocess.run([sys.executable, "web/SpatialViewer/prepare.py", "ids", "--id", VIS, "--out", str(work / "cache"),
+                        "--dest", str(work / "export")], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    c.ok(p.returncode != 0, f"prepare.py ids refuses ids that do not fit the Visium HD format (exit {p.returncode})")
+    c.ok("REFUSING to write 016um/ids.txt.gz: 5 of" in p.stdout and "visium_hd id format" in p.stdout,
+         f"the refusal names the layer, the count and the format: {[ln for ln in p.stdout.splitlines() if 'REFUSING' in ln][:1]}")
+    c.ok(FAKE_SAMPLE not in p.stdout and "S1_" not in p.stdout and not any(b in p.stdout for b in bcs[:50]),
+         "the refusal prints no id (neither the bad ones nor the good ones)")
+    c.ok(not list(exp.rglob("ids.txt*")) and (exp / "manifest.json").read_bytes() == before,
+         "a refusal writes nothing: no id list for any layer (the good 008um included), manifest unchanged")
+    shutil.rmtree(work)
+
+
 def check_multiplex(c: Checker, root: Path, clustering: bool) -> dict:
     out = root / "export" / MX
     m = read_json(out / "manifest.json")
@@ -900,10 +1091,9 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
     V = {}
     bad = []
     for x in genes:
-        p = d / "gene" / f"{enc(x['n'])}.bin"
-        if not p.exists():
-            bad.append(f"missing {p.name}"); continue
-        a = f32(p, 3)
+        a = gene_f32(d, x["n"])
+        if a is None:
+            bad.append(f"missing {x['n']}"); continue
         if len(a) != n or not np.array_equal(a[:, :2], pos):
             bad.append(f"{x['n']}: rows / xy differ from positions.bin"); continue
         if not (np.isfinite(a[:, 2]).all() and (a[:, 2] >= 0).all()):
@@ -912,7 +1102,7 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
             bad.append(f"{x['n']}: mean {a[:, 2].mean()} != t {x['t']}")
         V[x["n"]] = a[:, 2].astype(np.float64)
     c.ok(not bad, f"{key}: gene files: {bad[:5]}")
-    c.eq(len(list((d / "gene").glob("*.bin"))), len(genes), f"{key}: gene/*.bin count")
+    c.eq(gene_count(d), len(genes), f"{key}: genes with a payload (pack entries / gene files)")
 
     # mat/: the embedded channels square by square, for circle -> UMAP (protgrid.write_mat_chunks)
     mi = read_json(d / "mat" / "index.json") if (d / "mat" / "index.json").exists() else None
@@ -937,7 +1127,7 @@ def check_grid(c: Checker, out: Path, L: dict, clustering: bool) -> dict:
                 bad.append(f"{p.name}: a square outside its chunk")
             for j, nm in enumerate(ch):
                 if nm in V and np.abs(q[:, j] - V[nm][rows]).max() > 0.5 / sc + 1e-6:
-                    bad.append(f"{p.name}: {nm} values differ from gene/{enc(nm)}.bin"); break
+                    bad.append(f"{p.name}: {nm} values differ from the gene's [x, y, v]"); break
         c.ok(not bad, f"{key}: mat chunks: {bad[:5]}")
         c.ok((seen == 1).all(), f"{key}: mat chunks must hold every square exactly once")
         c.ok(all(len(mi.get(k, [])) == K for k in ("bg", "hi", "median")), f"{key}: mat bg / hi / median per channel")
@@ -1194,8 +1384,8 @@ def check_tiled(c: Checker, root: Path) -> dict:
         pb = f32(d / "positions.bin", 2)
         if not c.ok(len(pa) == len(pb) and np.array_equal(pa, pb), "demo_tiled: squares differ from demo_multiplex"):
             continue
-        plain = f32(root / "export" / MX / "expr" / GRID_KEY / "gene" / f"{enc(nm)}.bin", 3)[:, 2]
-        fixed = f32(d / "gene" / f"{enc(nm)}.bin", 3)[:, 2]
+        plain = gene_f32(root / "export" / MX / "expr" / GRID_KEY, nm)[:, 2]
+        fixed = gene_f32(d, nm)[:, 2]
         sel = (plain > np.median(plain)) & (fixed > 0)
         lr = np.log(fixed[sel] / plain[sel])
         rsd = float(1.4826 * np.median(np.abs(lr - np.median(lr))))
@@ -1254,17 +1444,17 @@ def _mol_files(c: Checker, out: Path, ds: str) -> tuple[dict, dict]:
     idx = read_json(md / "index.json")
     packed, bad = {}, []
     for g in idx["genes"]:
-        f = md / "gene" / f"{enc(g['n'])}.bin"
+        b = gene_bytes(md, g["n"])
         if not g["c"]:
-            if f.exists():
-                bad.append(f"{g['n']}: file although c = 0")
+            if b is not None:
+                bad.append(f"{g['n']}: a payload although c = 0")
             continue
-        if not f.exists() or f.stat().st_size != 4 * g["c"]:
-            bad.append(f"{g['n']}: {f.stat().st_size if f.exists() else 'no'} bytes, want {4 * g['c']}")
+        if b is None or len(b) != 4 * g["c"]:
+            bad.append(f"{g['n']}: {len(b) if b is not None else 'no'} bytes, want {4 * g['c']}")
             continue
-        packed[g["n"]] = np.fromfile(str(f), dtype="<u4")
+        packed[g["n"]] = np.frombuffer(b, dtype="<u4").copy()
     c.ok(not bad, f"{ds}: molecule files: {bad[:4]}")
-    c.eq(len(list((md / "gene").glob("*.bin"))), len(packed), f"{ds}: molecules/gene/*.bin count")
+    c.eq(gene_count(md), len(packed), f"{ds}: molecule genes with a payload (pack entries / gene files)")
     return idx, packed
 
 
@@ -1307,14 +1497,14 @@ def check_xenium(c: Checker, root: Path, clustering: bool) -> dict:
     lib = cnt.sum(1)
     dense, bad = {}, []
     for j, g in enumerate(genes):
-        f = d / "gene" / f"{enc(g)}.bin"
         rows = np.flatnonzero(cnt[:, j] > 0)
-        a = f32(f, 3) if f.exists() else np.zeros((0, 3), np.float32)
+        a = gene_f32(d, g)
+        a = np.zeros((0, 3), np.float32) if a is None else a
         if len(a) != len(rows) or not np.allclose(a[:, :2], pos[rows]) or not np.allclose(a[:, 2], cnt[rows, j]):
             bad.append(g)
         dense[g] = (rows, cnt[rows, j])
     c.ok(not bad, f"cells gene files differ from the count matrix: {bad[:4]}")
-    c.ok(not any((d / "gene" / f"{enc(x)}.bin").exists() for x in tr["controls"]), "cells: a control feature has a gene file")
+    c.ok(not any(gene_bytes(d, x) is not None for x in tr["controls"]), "cells: a control feature has a gene file")
     # the cache keeps each row's cell id (user clusters are matched to cells by it)
     try:
         import gzip
@@ -1412,8 +1602,9 @@ def check_xenium(c: Checker, root: Path, clustering: bool) -> dict:
     # (cells.csv.gz holds 4 decimals of a µm, cells.parquet the full value: equal to well under a pixel)
     c.ok(np.allclose(f32(out_n / "expr" / "cells" / "positions.bin", 2), pos, atol=1e-3),
          f"{XN}: positions.bin = the csv / mtx import")
-    c.ok(all(np.allclose(f32(out_n / "expr" / "cells" / "gene" / f"{enc(g)}.bin", 3), f32(d / "gene" / f"{enc(g)}.bin", 3),
-                         atol=1e-3) for g in genes), f"{XN}: gene files = the csv / mtx import")
+    c.ok(all((gene_f32(out_n / "expr" / "cells", g) is None) == (gene_f32(d, g) is None) and
+             (gene_f32(d, g) is None or np.allclose(gene_f32(out_n / "expr" / "cells", g), gene_f32(d, g), atol=1e-3))
+             for g in genes), f"{XN}: gene files = the csv / mtx import")
     return res
 
 
@@ -1481,7 +1672,7 @@ def check_xenium_user(c: Checker, root: Path, clustering: bool) -> dict:
     sg = read_json(ud / "celltypes.json").get("clusterings", {}).get(ct.get("id"), [])
     c.eq([(s.get("top"), s.get("confidence")) for s in sg], [("TypeA", "high"), ("TypeB", "high"), ("TypeC", "high")],
          f"{XE} user: suggested names per group")
-    # no cell id in any text file of this export (they are the user's row keys, never published)
+    # no cell id in any text file of this export (they are the user's row keys; only the opt-in ids.txt.gz holds them)
     ids_set = set(ids)
     tok = re.compile(r"[a-p]{8}-1")
     leaked = [p.name for p in out.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson", ".txt")
@@ -1567,14 +1758,13 @@ def check_geomx(c: Checker, root: Path) -> dict:
     c.ok(np.allclose([g["t"] for g in gl], V.sum(1), rtol=1e-5, atol=1e-3), "genes.json totals = sums of the collapsed values")
     worst, files = 0.0, 0
     for k, name in enumerate(genes):
-        p = d / "gene" / f"{enc(name)}.bin"
+        a = gene_f32(d, name)
         if V[k].sum() == 0:
-            c.ok(not p.exists(), f"target {name} was never counted: no gene file")
+            c.ok(a is None, f"target {name} was never counted: no gene file")
             continue
         files += 1
-        if not c.ok(p.exists(), f"gene file of {name} ({p.name})"):
+        if not c.ok(a is not None, f"gene file of {name}"):
             continue
-        a = f32(p, 3)
         got = np.zeros(len(aois))
         for x, y, v in a:
             j = int(np.argmin(np.abs(pos[:, 0] - x) + np.abs(pos[:, 1] - y)))
@@ -1582,9 +1772,9 @@ def check_geomx(c: Checker, root: Path) -> dict:
         worst = max(worst, float(np.abs(got - V[k]).max() / max(1.0, V[k].max())))
     c.ok(worst < 1e-5, f"gene file values = geometric mean of the probes with the + 0.5 rule (worst relative difference {worst:.2e})")
     k2 = genes.index("Multi2")
-    c.ok(np.allclose(V[k2], 0.5) and f32(d / "gene" / "Multi2.bin", 3)[:, 2].tolist() == [0.5] * len(aois),
+    c.ok(np.allclose(V[k2], 0.5) and gene_f32(d, "Multi2")[:, 2].tolist() == [0.5] * len(aois),
          "a multi-probe target with every probe at 0 reads 0.5 in every AOI (as GeomxTools)")
-    c.ok((d / "gene" / "TRB1%2F2.bin").exists() and (d / "gene" / "H2-T23.bin").exists(), "gene files of 'TRB1/2' and 'H2-T23'")
+    c.ok(gene_bytes(d, "TRB1/2") is not None and gene_bytes(d, "H2-T23") is not None, "gene files of 'TRB1/2' and 'H2-T23'")
 
     # ---- QC values per AOI -----------------------------------------------------------------------
     q = L.get("binQc") or {}
@@ -1737,14 +1927,14 @@ def _img_cells(c: Checker, root: Path, ds: str, L: dict, want_px, counts, genes,
     c.ok(np.allclose([g["t"] for g in gj], cnt.sum(0)), f"{ds}: cells genes.json totals = count-matrix column sums")
     dense, bad = {}, []
     for j, g in enumerate(genes):
-        f = d / "gene" / f"{enc(g)}.bin"
         rows = np.flatnonzero(cnt[:, j] > 0)
-        a = f32(f, 3) if f.exists() else np.zeros((0, 3), np.float32)
+        a = gene_f32(d, g)
+        a = np.zeros((0, 3), np.float32) if a is None else a
         if len(a) != len(rows) or not np.allclose(a[:, :2], pos[rows]) or not np.allclose(a[:, 2], cnt[rows, j]):
             bad.append(g)
         dense[g] = (rows, cnt[rows, j])
     c.ok(not bad, f"{ds}: cells gene files differ from the count matrix: {bad[:4]}")
-    c.ok(not any((d / "gene" / f"{enc(x)}.bin").exists() for x in controls), f"{ds}: a control code has a gene file")
+    c.ok(not any(gene_bytes(d, x) is not None for x in controls), f"{ds}: a control code has a gene file")
     try:
         import zarr
         zc = zarr.open_group(str(root / "cache" / ds / "expr" / "cells.zarr"), mode="r")
@@ -2054,13 +2244,13 @@ def _st_layer_files(c: Checker, d: Path, what: str, names: list[str], pos_want, 
     dense, bad = {}, []
     for j, g in enumerate(names):
         rows = np.flatnonzero(dense_want[:, j] > 0)
-        f = d / "gene" / f"{enc(g)}.bin"
-        a = f32(f, 3) if f.exists() else np.zeros((0, 3), np.float32)
+        a = gene_f32(d, g)
+        a = np.zeros((0, 3), np.float32) if a is None else a
         if len(a) != len(rows) or not np.array_equal(a[:, :2], pos_want[rows]) or not np.array_equal(a[:, 2], dense_want[rows, j]):
             bad.append(g)
         dense[g] = (rows, dense_want[rows, j])
     c.ok(not bad, f"{what}: gene files differ from the drawn counts: {bad[:4]}")
-    c.eq(len(list((d / "gene").glob("*.bin"))), int((dense_want.sum(0) > 0).sum()), f"{what}: gene/*.bin count")
+    c.eq(gene_count(d), int((dense_want.sum(0) > 0).sum()), f"{what}: genes with a payload (pack entries / gene files)")
     return pos, dense
 
 
@@ -2186,8 +2376,7 @@ def check_stereoseq(c: Checker, root: Path, clustering: bool, log_path: Path) ->
         a, b = root / "export" / ref_ds / "expr" / key, root / "export" / ds / "expr" / key
         ok = (b / "positions.bin").exists() and (a / "positions.bin").read_bytes() == (b / "positions.bin").read_bytes()
         for ga, gb in zip(names_a, names_b):
-            fa, fb = a / "gene" / f"{enc(ga)}.bin", b / "gene" / f"{enc(gb)}.bin"
-            ok = ok and fa.exists() == fb.exists() and (not fa.exists() or fa.read_bytes() == fb.read_bytes())
+            ok = ok and gene_bytes(a, ga) == gene_bytes(b, gb)
         return ok
 
     mg = read_json(root / "export" / STG / "manifest.json")
@@ -3292,10 +3481,18 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     for f in ("viewer.js", "diag.js"):
         q = subprocess.run([node, "--check", str(APP / f)], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         c.eq(q.returncode, 0, f"node --check {f}")
-    p = subprocess.run([node, str(REPO / "tests" / "compat_test.js"), "--python", sys.executable], cwd=str(REPO),   # old exports still open (SKIPPED without Playwright)
+    # old exports still open (SKIPPED without Playwright); and the current, packed ones (--packed): a gene by
+    # Range, with a read pass on a ?data= link, and from a host that ignores Range
+    packed_ids = [ds for ds in (VIS, MX, XE, RNA) if (root / "export" / ds / "manifest.json").exists()]
+    p = subprocess.run([node, str(REPO / "tests" / "compat_test.js"), "--python", sys.executable,
+                        "--packed", str(root / "export"), "--packed-ids", ",".join(packed_ids)], cwd=str(REPO),
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
-    c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions (exit code)")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    lines = p.stdout.strip().splitlines() or ["(no output)"]
+    for ln in [x for x in lines if x.startswith("packed exports (")] + [lines[-1]]:
+        print("    " + ln)
+    c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions and packed current ones (exit code)")
 
 
 THREAD_PROBE = r"""
@@ -3435,7 +3632,7 @@ def check_layout(c: Checker):
     from html.parser import HTMLParser
 
     html = (APP / "index.html").read_text(encoding="utf-8")
-    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js", "cellsets.js", "binpaint.js")}
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js", "cellsets.js", "binpaint.js", "selections.js")}
     names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
     c.ok("layout.js" in names and "layout.css" in names, "index.html loads layout.js and layout.css")
     c.ok("layout.js" in names and "viewer.js" in names and names.index("layout.js") < names.index("viewer.js"),
@@ -3486,17 +3683,19 @@ def check_layout(c: Checker):
          "binpaint.js: its Colour by a value section names its tab and is handed to the layout")
     c.ok("binpaint.js" in names and not re.search(r"\bInt(8|16|32)Array\b", js["binpaint.js"]),
          "index.html loads binpaint.js, which uses only unsigned typed arrays (deid.py check reads the signed names as sample IDs)")
+    c.ok('sec.dataset.tab = "analyze"' in js["selections.js"] and "SodaLayout.adopt(sec)" in js["selections.js"],
+         "selections.js: its Combine and export shapes section names its tab and is handed to the layout")
     # ids the layout makes must be new; ids it moves must exist (in the page or in the script that builds them)
     new_ids = set(i for i, _ in made) | set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
     clash = sorted(new_ids & set(ids))
     c.ok(not clash, f"layout.js makes ids that index.html already has: {clash}")
-    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"] + js["cellsets.js"] + js["binpaint.js"])) | set(ids) | new_ids
+    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"] + js["cellsets.js"] + js["binpaint.js"] + js["selections.js"])) | set(ids) | new_ids
     block = js["layout.js"][js["layout.js"].index("const SECTIONS = {"):js["layout.js"].index("const ORDER = {")]
     moved = set(re.findall(r'"(\w+)"', " ".join(re.findall(r'(?:more|notes): \[([^\]]*)\]', block))))
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
-    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint"}
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint", "panelShapes"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
                             ("SodaLayout.wording", "viewer.js", "hands its wording function to the layout"),
@@ -3609,7 +3808,8 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
             [str(export / ds) for ds in XEN_DS + GEOMX_DS])
     if (root / "export_sample" / MX).exists():
         args.append(str(root / "export_sample" / MX))
-    for extra in (root / "export_user" / VIS, root / "export_user" / XE, root / "export_partial" / VIS):
+    for extra in (root / "export_user" / VIS, root / "export_user" / XE, root / "export_partial" / VIS, root / "export" / RNA,
+                  root / "export_loose" / VIS, root / "export_both" / XE):
         if extra.exists():
             args.append(str(extra))
     print(f"$ python {' '.join(args)}", flush=True)
@@ -3619,6 +3819,298 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
         lg.write(p.stdout)
     print("    " + p.stdout.strip().splitlines()[-1] if p.stdout.strip() else "    (no output)")
     c.eq(p.returncode, 0, "deid.py check on the export (exit code)")
+
+
+# ------------------------------------------------------------------ gene packs
+def _http(url: str, method: str = "GET", headers: dict | None = None):
+    """(status, headers, body) of one request; HTTP errors are answers too."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(url, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read()
+
+
+def write_rnaseq_demo(root: Path, log_path: Path) -> dict:
+    """A small synthetic RNA-seq set, packed (root/export/demo_rnaseq) and loose
+    (root/export_rnaseq_loose/demo_rnaseq), by rnaseq.export_rnaseq in this process."""
+    from scipy import sparse
+    rnaseq = app_module("rnaseq")
+    rng = np.random.default_rng(7)
+    n_cells, n_genes = 400, 60
+    dense = rng.poisson(rng.gamma(0.6, 2.0, size=(1, n_genes)), size=(n_cells, n_genes)).astype(np.float32)
+    dense[:, 5] = 0                                   # a gene nobody expresses: listed nowhere, no payload
+    dense[0, 0] = 40                                  # integer counts above 20: normalised to log1p CP10k
+    genes = [f"Rg{i:03d}" for i in range(n_genes)]
+    genes[7] = "TRB1/2"                               # a name that is encoded in a loose file name
+    emb = rng.normal(size=(n_cells, 2)).astype(np.float32)
+    obs = {"cluster": np.array([f"c{k % 4}" for k in range(n_cells)], dtype=object)}
+    X = sparse.csr_matrix(dense)
+    with open(log_path, "a", encoding="utf-8") as lg:
+        say = lambda *a: lg.write(" ".join(map(str, a)) + "\n")
+        rnaseq.export_rnaseq(X, genes, emb, obs, root / "export", RNA, "Synthetic RNA-seq", log=say)
+        rnaseq.export_rnaseq(X, genes, emb, obs, root / "export_rnaseq_loose", RNA, "Synthetic RNA-seq", log=say,
+                             gene_files="loose")
+    return {"cells": n_cells, "genes": n_genes, "expressed": int((dense.sum(0) > 0).sum())}
+
+
+def check_packs(c: Checker, root: Path, log_path: Path, rna_demo: dict) -> dict:
+    """Gene packs (genepack.py), the default since they replaced one file per gene:
+    - every current export is packed, with no gene/ folder, and every pack agrees with its listing
+      byte for byte (genepack.check_group with the content hash re-read);
+    - --gene-files loose writes the old layout, and each of its files equals the gene's slice of the
+      pack; --gene-files both writes the two side by side, equal again, in shards of 0.05 MB: several
+      shards, a gene never split, no shard over the size unless it holds a single gene;
+    - static_serve.py and server.py answer a Range request with 206, the asked bytes (equal to the
+      loose file) and Content-Range, also with a read pass (?sv=..&sig=..) on the URL; a plain GET
+      gets the whole shard, a preflight is allowed, a range past the end is refused (416);
+    - genepack.py repack turns the loose export into the same packs the export writes, and deletes
+      the files only after checking them; an RNA-seq set packs like the rest;
+    - deid.py check on a pack with an extra byte or an extra listing field reports it."""
+    gp = app_module("genepack")
+    deid = app_module("deid")
+    export = root / "export"
+    res = {"rnaseqDemo": rna_demo}
+    # ---- every current export: packed, consistent ----------------------------------------------
+    # (the cell-outline exports too: their shapes/ tiles sit beside the packs, unpacked and untouched)
+    ids = [(export, ds) for ds in (VIS, MX, TL, RNA) + XEN_DS + GEOMX_DS + ST_DS + IMG_DS if (export / ds / "manifest.json").exists()]
+    ids += [(root / r, ds) for r in (OL_ZARR, OL_OWN, OL_NONE) for ds in XEN_DS if (root / r / ds / "manifest.json").exists()]
+    n_groups = n_shards = n_genes = n_shapes = 0
+    for base, ds in ids:
+        m = read_json(base / ds / "manifest.json")
+        for L in m.get("expr", []):
+            if L.get("shapes"):
+                n_shapes += 1
+                sd = base / ds / "expr" / L["key"] / "shapes"
+                c.ok(sd.is_dir() and not any(sd.rglob("*.pack")), f"{base.name}/{ds} {L['key']}: shapes/ present, nothing packed in it")
+        for g in gp.groups(m):
+            gdir = base / ds / g["dir"] if g["dir"] else base / ds
+            c.ok(bool(g["pack"]), f"{base.name}/{ds} {g['what']}: not packed by default")
+            c.ok(not (gdir / "gene").exists(), f"{base.name}/{ds} {g['what']}: a gene/ folder in a packed export")
+            probs = gp.check_group(base / ds, g, verify_hash=True)
+            c.ok(not probs, f"{base.name}/{ds} {g['what']}: pack vs listing: {probs[:3]}")
+            if g["pack"]:
+                n_groups += 1
+                n_shards += len(g["pack"]["shards"])
+                n_genes += g["pack"]["genes"]
+    res["current"] = {"datasets": len(ids), "groups": n_groups, "shards": n_shards, "genes": n_genes, "layersWithShapes": n_shapes}
+    print(f"    {len(ids)} exports: {n_groups} packed groups, {n_genes:,} genes in {n_shards} shards; {n_shapes} layer(s) with outlines")
+
+    # ---- prepare.py batch: its exports are packed and consistent too; --gene-files / --shard-mb pass through
+    bx = root / "batch" / "export"
+    bids = sorted(p.parent.name for p in bx.glob("*/manifest.json")) if bx.exists() else []
+    nb_groups = 0
+    for ds in bids:
+        m = read_json(bx / ds / "manifest.json")
+        for g in gp.groups(m):
+            nb_groups += 1
+            c.ok(bool(g["pack"]) and not gp.check_group(bx / ds, g, verify_hash=True), f"batch export {ds} {g['what']}: packed and consistent")
+    bm = app_module("batch")
+    ba = bm.build_parser().parse_args(["--src", "s", "--out", "o", "--dest", "d", "--gene-files", "loose", "--shard-mb", "32"])
+    d0 = {"id": "x", "kind": "xenium", "variant": "", "opts": {}, "user": None, "src": "s", "forceKind": False}
+    ex, rn = bm.export_argv(d0, ba), bm.prepare_argv({**d0, "kind": "rnaseq"}, ba)
+    c.ok(ex[ex.index("--gene-files") + 1] == "loose" and ex[ex.index("--shard-mb") + 1] == "32.0"
+         and "--gene-files" in rn and "--gene-files" not in bm.prepare_argv(d0, ba)
+         and "--gene-files" not in bm.export_argv(d0, bm.build_parser().parse_args(["--src", "s", "--out", "o", "--dest", "d"])),
+         f"batch --gene-files / --shard-mb: on every export and the RNA-seq step, nowhere else, absent by default ({ex})")
+    res["batch"] = {"datasets": bids, "groups": nb_groups}
+    print(f"    batch: {len(bids)} exports, {nb_groups} packed groups; --gene-files passes through")
+
+    # ---- --gene-files loose: the old layout, equal to the packs byte for byte ------------------
+    lo, pk = root / "export_loose" / VIS, export / VIS
+    ml, mp = read_json(lo / "manifest.json"), read_json(pk / "manifest.json")
+    c.ok(not any(L.get("genePack") for L in ml.get("expr", [])) and not (lo / "expr" / "008um" / "genepack").exists(),
+         "export --gene-files loose: no genePack, no genepack/")
+    n_eq = n_files = 0
+    bad = []
+    for L in mp.get("expr", []):
+        key = L["key"]
+        gl, gpk = read_json(lo / "expr" / key / "genes.json"), read_json(pk / "expr" / key / "genes.json")
+        c.eq([(g["n"], g["t"]) for g in gl], [(g["n"], g["t"]) for g in gpk], f"loose vs packed {key}: genes.json names and totals")
+        c.ok(not any(set(g) - {"n", "t"} for g in gl), f"loose {key}: genes.json entries carry only n, t")
+        files = {f.name for f in (lo / "expr" / key / "gene").glob("*.bin")}
+        n_files += len(files)
+        c.eq(len(files), L["genePack"]["genes"], f"loose {key}: one file per packed gene")
+        for g in gpk:
+            a, b = gene_bytes(lo / "expr" / key, g["n"]), gene_bytes(pk / "expr" / key, g["n"])
+            if a != b:
+                bad.append(f"{key}/{g['n']}")
+            elif a is not None:
+                n_eq += 1
+    c.ok(not bad and n_eq, f"loose files = pack slices byte for byte ({n_eq} genes; differ: {bad[:4]})")
+    res["loose"] = {"files": n_files, "equal": n_eq}
+
+    # ---- --gene-files both, tiny shards ----------------------------------------------------------
+    bo = root / "export_both" / XE
+    mb = read_json(bo / "manifest.json")
+    multi = 0
+    for g in gp.groups(mb):
+        gdir = bo / g["dir"] if g["dir"] else bo
+        if not c.ok(bool(g["pack"]) and (gdir / "gene").is_dir(), f"both {g['what']}: pack and gene/ files"):
+            continue
+        c.ok(not gp.check_group(bo, g, verify_hash=True), f"both {g['what']}: pack vs listing")
+        sh = g["pack"]["shards"]
+        multi += len(sh) > 1
+        per = {}
+        for e in gp.read_listing(bo, g):
+            if "s" in e:
+                per.setdefault(e["s"], []).append(e["b"])
+        lim = 0.05 * (1 << 20)
+        c.ok(all(x["bytes"] <= lim or len(per.get(i, [])) == 1 for i, x in enumerate(sh)),
+             f"both {g['what']}: a shard over 0.05 MB holds more than one gene")
+        c.ok(all(sum(per[i][:-1]) + 0 < lim for i in per if len(per[i]) > 1),
+             f"both {g['what']}: a shard was filled past its size before the last gene")
+        diff = [e["n"] for e in gp.read_listing(bo, g) if "s" in e and
+                gp.gene_bytes(bo, g, e) != (gdir / "gene" / f"{enc(e['n'])}.bin").read_bytes()]
+        c.ok(not diff, f"both {g['what']}: pack slices = files ({diff[:3]})")
+        # the same genes as the default export (64 MB shards): sharding changes where, not what
+        ref = export / XE / g["dir"]
+        diff = [e["n"] for e in gp.read_listing(bo, g) if gene_bytes(ref, e["n"]) != gene_bytes(gdir, e["n"])]
+        c.ok(not diff, f"both {g['what']}: same genes as {XE} in one shard ({diff[:3]})")
+    c.ok(multi >= 2, f"both: several shards in the cells layer and the molecules ({multi} groups with more than one)")
+
+    # ---- HTTP Range: static_serve.py ---------------------------------------------------------------
+    import threading
+    ss = app_module("static_serve")
+    srv = ss.serve(root, 0)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        res["staticServe"] = _range_checks(c, base, root, "static_serve.py")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    # ---- HTTP Range: server.py (FastAPI StaticFiles at /, the repo's web/ in real use) -------------
+    if all(importlib.util.find_spec(mod) for mod in ("fastapi", "uvicorn", "zarr")):
+        import socket
+        with socket.socket() as so:
+            so.bind(("127.0.0.1", 0))
+            port = so.getsockname()[1]
+        proc = subprocess.Popen([sys.executable, str(APP / "server.py"), "--cache", str(root / "cache"), "--web", str(root),
+                                 "--no-password", "--host", "127.0.0.1", "--port", str(port)], cwd=str(APP),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        try:
+            up = False
+            for _ in range(120):
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=1):
+                        up = True
+                        break
+                except OSError:
+                    time.sleep(0.25)
+            if c.ok(up, "server.py started"):
+                res["serverPy"] = _range_checks(c, f"http://127.0.0.1:{port}", root, "server.py")
+        finally:
+            proc.terminate()
+            try:
+                out, _ = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                out, _ = proc.communicate()
+            with open(log_path, "a", encoding="utf-8") as lg:
+                lg.write(out or "")
+    else:
+        print("    SKIP server.py Range check (fastapi / uvicorn not installed)")
+
+    # ---- repack: the loose export -> the export's own packs --------------------------------------
+    rp = root / "export_repack" / VIS
+    shutil.copytree(lo, rp)
+    p = subprocess.run([sys.executable, str(APP / "genepack.py"), "repack", str(rp), "--delete-loose"], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    c.eq(p.returncode, 0, "genepack.py repack (exit code)")
+    mr = read_json(rp / "manifest.json")
+    for L in mr.get("expr", []):
+        ref = next(x for x in mp["expr"] if x["key"] == L["key"])
+        c.eq(L.get("genePack"), ref["genePack"], f"repack {L['key']}: the same shards (names, sizes) as the export's own packs")
+        c.eq(read_json(rp / "expr" / L["key"] / "genes.json"), read_json(pk / "expr" / L["key"] / "genes.json"),
+             f"repack {L['key']}: the same genes.json as the export's")
+        c.ok(not (rp / "expr" / L["key"] / "gene").exists(), f"repack {L['key']}: --delete-loose removed gene/")
+    c.ok(not gp.check_dataset(rp, verify_hash=True), "repack: packs consistent")
+
+    # ---- RNA-seq set: packed and loose agree; repack of the loose one ------------------------------
+    rs, rl = export / RNA, root / "export_rnaseq_loose" / RNA
+    mr = read_json(rs / "manifest.json")
+    gj = read_json(rs / "genes.json")
+    c.ok(bool(mr.get("genePack")) and not (rs / "gene").exists() and (rl / "gene").is_dir() and not read_json(rl / "manifest.json").get("genePack"),
+         "rnaseq: packed by default (genePack, no gene/), loose with gene_files='loose'")
+    c.eq(sum(1 for e in gj if "s" in e), len(list((rl / "gene").glob("*.bin"))), "rnaseq: one pack entry per loose gene file")
+    diff = [e["n"] for e in gj if gene_bytes(rs, e["n"]) != gene_bytes(rl, e["n"])]
+    c.ok(not diff, f"rnaseq: pack slices = loose files ({diff[:3]})")
+    c.ok((rl / "gene" / "TRB1%2F2.bin").exists() and gene_bytes(rs, "TRB1/2") == (rl / "gene" / "TRB1%2F2.bin").read_bytes(),
+         "rnaseq: 'TRB1/2' in the pack = its encoded loose file")
+    c.ok(not gp.check_dataset(rs, verify_hash=True), "rnaseq: pack consistent")
+    k = np.frombuffer(gene_bytes(rs, gj[0]["n"])[:4], "<u4")[0]
+    c.ok(abs(k / mr["nCells"] - gj[0]["p"]) < 1e-3, f"rnaseq: {gj[0]['n']} k = {k} matches p = {gj[0]['p']}")
+    rr = root / "export_repack" / RNA
+    shutil.copytree(rl, rr)
+    gp.repack(rr, log=lambda *a: None)
+    diff = [e["n"] for e in read_json(rr / "genes.json") if gene_bytes(rr, e["n"]) != gene_bytes(rl, e["n"])]
+    c.ok(read_json(rr / "manifest.json").get("genePack") and not diff, f"rnaseq repack: slices = files ({diff[:3]})")
+
+    # ---- deid.py check covers the packs ---------------------------------------------------------
+    c.eq(deid.check_packs([export / RNA / "manifest.json"]), [], "deid check_packs: a good pack is clean")
+    tp = root / "export_tamper" / RNA
+    shutil.copytree(rs, tp)
+    sh0 = tp / mr["genePack"]["dir"] / mr["genePack"]["shards"][0]["file"]
+    with open(sh0, "ab") as f:
+        f.write(b"\0" * 12)                          # bytes no listing entry accounts for
+    probs = deid.check_paths([tp])
+    c.ok(any("bytes" in x and "pack" in x for x in probs), f"deid check: an extra 12 bytes in a shard is reported ({probs[:2]})")
+    with open(sh0, "r+b") as f:
+        f.truncate(mr["genePack"]["shards"][0]["bytes"])
+    gl = read_json(tp / "genes.json")
+    gl[0]["sample"] = "a sample label"                # a field a listing must not carry
+    (tp / "genes.json").write_text(json.dumps(gl), encoding="utf-8")
+    probs = deid.check_paths([tp])
+    c.ok(any("fields" in x and "sample" in x for x in probs), f"deid check: an extra listing field is reported ({probs[:2]})")
+    return res
+
+
+def _range_checks(c: Checker, base: str, root: Path, what: str) -> dict:
+    """Range requests into the demo_visiumhd packs, answered by the server at `base` serving `root`."""
+    pk, lo = root / "export" / VIS, root / "export_loose" / VIS
+    m = read_json(pk / "manifest.json")
+    n = 0
+    bad = []
+    for L in m["expr"]:
+        key, pack = L["key"], L["genePack"]
+        gl = [e for e in read_json(pk / "expr" / key / "genes.json") if "s" in e]
+        pick = {gl[0]["n"]: gl[0], gl[-1]["n"]: gl[-1], gl[len(gl) // 2]["n"]: gl[len(gl) // 2]}
+        big = max(gl, key=lambda e: e["b"])
+        pick[big["n"]] = big
+        for e in pick.values():
+            sh = pack["shards"][e["s"]]
+            url = f"{base}/export/{VIS}/expr/{key}/{pack['dir']}/{sh['file']}?sv=2099-01-01&sig=FAKE%2Fsig%3D"
+            st, hd, body = _http(url, headers={"Range": f"bytes={e['o']}-{e['o'] + e['b'] - 1}", "Origin": "http://example.org"})
+            want = (lo / "expr" / key / "gene" / f"{enc(e['n'])}.bin").read_bytes()
+            cr = (hd.get("Content-Range") or "").strip()
+            if st != 206 or body != want or cr != f"bytes {e['o']}-{e['o'] + e['b'] - 1}/{sh['bytes']}":
+                bad.append(f"{key}/{e['n']}: {st}, {len(body)} bytes (file {len(want)}), Content-Range {cr!r}")
+            n += 1
+        expose = (hd.get("Access-Control-Expose-Headers") or "").lower()
+        c.ok("content-range" in expose and hd.get("Access-Control-Allow-Origin") in ("*", "http://example.org"),
+             f"{what}: CORS on a ranged answer lets a page read Content-Range ({expose!r})")
+    c.ok(not bad, f"{what}: Range requests with a read pass give 206 and the gene's file bytes: {bad[:3]}")
+    L = m["expr"][0]
+    sh = L["genePack"]["shards"][0]
+    url = f"{base}/export/{VIS}/expr/{L['key']}/{L['genePack']['dir']}/{sh['file']}"
+    st, hd, body = _http(url)
+    c.ok(st == 200 and len(body) == sh["bytes"], f"{what}: a plain GET gets the whole shard ({st}, {len(body)} bytes)")
+    st, hd, _ = _http(url, headers={"Range": f"bytes={sh['bytes'] + 10}-{sh['bytes'] + 20}"})
+    c.eq(st, 416, f"{what}: a range past the end is refused")
+    st, hd, _ = _http(url, method="OPTIONS", headers={"Origin": "http://example.org", "Access-Control-Request-Method": "GET",
+                                                      "Access-Control-Request-Headers": "range"})
+    c.ok(st in (200, 204) and "range" in (hd.get("Access-Control-Allow-Headers") or "").lower()
+         or hd.get("Access-Control-Allow-Headers") == "*", f"{what}: a CORS preflight for Range is allowed ({st})")
+    print(f"    {what}: {n} genes fetched by Range = their loose files")
+    return {"genes": n}
 
 
 # ------------------------------------------------------------------ main
@@ -3648,6 +4140,7 @@ def main(argv=None) -> int:
             label = Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"
             label += " (sample)" if "--umap-sample" in cmd else ""
             label += " (user clusters)" if "--user-layer" in cmd else ""
+            label += f" ({cmd[cmd.index('--gene-files') + 1]} gene files)" if "--gene-files" in cmd else ""
             timings[label] = run(cmd, log_path)
             if cmd[0] == "examples/make_demo.py":
                 write_user_files(root)
@@ -3668,6 +4161,11 @@ def main(argv=None) -> int:
         t_b = time.time()                                # prepare.py batch: always fresh, never skipped by --reuse
         run_batch(root, log_path)
         timings["batch (3 runs)"] = time.time() - t_b
+        t1 = time.time()
+        rna_demo = write_rnaseq_demo(root, log_path)
+        timings["rnaseq demo"] = time.time() - t1
+    else:
+        rna_demo = {}
 
     c = Checker()
     t0 = time.time()
@@ -3683,6 +4181,8 @@ def main(argv=None) -> int:
     summary["xenium"] = check_xenium(c, root, clustering)
     print("checks: the lab's own clusters on the demo_xenium cells (userclusters.py)")
     summary["xeniumUserClusters"] = check_xenium_user(c, root, clustering)
+    print("checks: the optional barcode / cell id lists (layerids.py)")
+    summary["ids"] = check_ids(c, root)
     print("checks: demo_geomx (GeoMx ROI layer, two scans), demo_geomx_grid (no image)")
     summary["geomx"] = check_geomx(c, root)
     print("checks: demo_cosmx*, demo_merscope* (FOV mosaic / mosaics, cells layer, molecules, density background)")
@@ -3697,6 +4197,8 @@ def main(argv=None) -> int:
     check_notebook(c)
     print("checks: cell outlines (every platform's boundaries, traced label masks, a lab's own file)")
     summary["outlines"] = check_outlines(c, root, log_path)
+    print("checks: gene packs (genepack.py): every export, loose / both, Range over HTTP, repack, deid")
+    summary["genePacks"] = check_packs(c, root, log_path, rna_demo)
     print("checks: marker lists and name cleanup")
     check_marker_lists(c)
     print("checks: the page (index.html, viewer.js tile path, diag.js)")
