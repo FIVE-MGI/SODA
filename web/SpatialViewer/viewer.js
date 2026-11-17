@@ -15,7 +15,7 @@
   const $ = (id) => document.getElementById(id);
 
   if (!window.deck) {
-    $("status").textContent = "deck.gl failed to load (no internet?)";
+    $("status").textContent = "deck.gl failed to load (no internet, and no copy in vendor/ or kept for offline use)";
     $("status").hidden = false; $("status").classList.add("err");
     return;
   }
@@ -2842,7 +2842,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261111q");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261116of2");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
@@ -6208,18 +6208,37 @@
       const d = S.datasets.find((x) => x.id === id);
       const staticRoot = params.get("static");   // ?static=http://host/folder -> <folder>/<id>/ (test exports before upload)
       let src;
-      if (staticRoot) src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
+      // offline.js: where this dataset's files are (Keep this dataset for offline use), or why it is never kept
+      const slash = (u) => new URL(u, location.href).href.replace(/\/?$/, "/");
+      S.keepInfo = null;
+      if (staticRoot) {
+        src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
+        S.keepInfo = { root: slash(`${staticRoot.replace(/\/$/, "")}/${id}/`), folder: slash(staticRoot) };
+      }
       else if (TOKEN_URL && !params.get("api") && !(d && (d.linkPath || d.base))) {   // ?api= wins: a local tile server
         const t = await ensureToken();           // asks for the password once per session
         src = staticSource(`${t.base}${id}/`, tokenQuery);
+        S.keepInfo = { why: "password" };
       }
-      else if (d && d.linkPath) src = staticSource(await resolveLink(d.linkPath));
-      else if (d && d.base) src = staticSource(d.base, d.qs ? () => d.qs : undefined);   // d.qs: a ?data= link's read pass
-      else src = apiSource(id);
+      else if (d && d.linkPath) { src = staticSource(await resolveLink(d.linkPath)); S.keepInfo = { why: "link" }; }
+      else if (d && d.base) {
+        src = staticSource(d.base, d.qs ? () => d.qs : undefined);   // d.qs: a ?data= link's read pass
+        S.keepInfo = d.qs || /[?#]/.test(d.base) ? { why: "pass" }
+          : { root: slash(d.base), folder: DATA && !DATA.qs && slash(d.base).startsWith(DATA.root) ? DATA.root : null };
+      }
+      else { src = apiSource(id); S.keepInfo = { why: "server" }; }
+      if (TOKEN_URL && S.keepInfo.root) S.keepInfo = { why: "password" };   // nothing of a password-protected site is kept
       if (stale()) return;                       // another dataset was picked while the password box was up
       S.src = liveSource(src, seq, openCtl.signal);
       S.m = await S.src.manifest();
-    } catch (e) { if (!stale()) status(`Cannot open ${id}: ${e.message}`, true); return; }
+    } catch (e) {
+      // offline, or the data out of reach (a network error) on a page that keeps itself: say whether it is kept
+      const off = window.SodaOffline ? window.SodaOffline.state() : null;
+      const notKept = !!off && !(S.keepInfo && S.keepInfo.root && off.kept.some((k) => k.root === S.keepInfo.root));
+      if (!stale()) status(`Cannot open ${id}: ${navigator.onLine === false && notKept ? "this computer is offline, and this dataset is not kept for offline use (Save tab, Offline use)"
+        : e instanceof TypeError && notKept && !!navigator.serviceWorker && !!navigator.serviceWorker.controller ? `${e.message} (the data cannot be reached, and this dataset is not kept for offline use)` : e.message}`, true);
+      return;
+    }
     if (stale()) return;
     if (S.m.kind === "rnaseq") {
       await openRna();
@@ -6518,6 +6537,14 @@
     };
     if (window.SodaViewLink) window.SodaViewLink.init(share);
     if (window.SodaCompare) window.SodaCompare.init(share);
+    // offline use (offline.js): the open dataset, where its files are, and whether it may be kept
+    if (window.SodaOffline) window.SodaOffline.init({
+      dataset: () => {
+        if (!S.m || !S.dsId || !S.keepInfo) return null;
+        const d = S.datasets.find((x) => x.id === S.dsId);
+        return { id: S.dsId, label: d ? d.label : S.dsId, manifest: S.m, ...S.keepInfo };
+      },
+    });
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
       group: cfgSets[id].group, base: cfgSets[id].base, tags: cfgSets[id].tags }));

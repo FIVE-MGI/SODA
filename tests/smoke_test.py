@@ -103,6 +103,12 @@ serialiser for Save JSON and the link, nothing in them needs an inline handler o
 Content-Security-Policy), the access token is kept out of storage and addresses, and, when node is
 installed, tests/viewlink_test.js passes (encode / decode round trips, the length budget, oversize,
 truncated, malformed and hostile links).
+Offline use (libs.js, vendor.py, sw.js, offline.js): deck.gl and umap-js pinned by version and SHA-384 in one
+place (libs.js) and the same in index.html's vendor/ tag, the worker and vendor.py; vendor/ git-ignored; the
+Content-Security-Policy no wider (no eval of any kind); every worker named with a ?v= string (the service
+worker finds them that way); sw.js's marker list = markers/; and tests/offline_test.js (Playwright,
+Chromium and WebKit): the page and a kept dataset open with no network, Run UMAP works offline, a new ?v=
+replaces the cache, the libraries from vendor/ instead of the CDN, and vendor.py.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -3707,7 +3713,8 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     """The page's files hang together, and the tile path keeps its fallbacks and its error reports."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     refs = re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)
-    local = [r for r in refs if not re.match(r"https?:", r)]
+    # vendor/ holds the libraries only after `prepare.py vendor` (git-ignored, version in the path): check_offline
+    local = [r for r in refs if not re.match(r"https?:", r) and not r.startswith("vendor/")]
     for r in local:
         name, _, query = r.partition("?")
         if name != "config.js":                      # config.js is each deployment's own file (git-ignored)
@@ -3967,7 +3974,8 @@ def check_layout(c: Checker):
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
-    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint", "panelShapes", "panelMeasure"}
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint", "panelShapes", "panelMeasure",
+                                                               "panelOffline"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
                             ("SodaLayout.wording", "viewer.js", "hands its wording function to the layout"),
@@ -4063,6 +4071,106 @@ def check_sharing(c: Checker, log_path: Path):
         print("    " + ln.strip())
     c.eq(p.returncode, 0, "node tests/viewlink_test.js (exit code)")
     c.ok(bool(re.search(r"viewlink_test: \d+ checks passed", p.stdout)), "tests/viewlink_test.js: every check passed")
+
+
+def check_offline(c: Checker, root: Path, log_path: Path):
+    """Offline use: the pinned libraries agree everywhere, nothing widens the page's Content-Security-Policy, the
+    service worker can find every file it must keep, and tests/offline_test.js passes in Chromium and WebKit."""
+    import tempfile
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("libs.js", "sw.js", "offline.js", "lasso_worker.js", "viewer.js", "layout.js", "diag.js")}
+    m = re.search(r"/\* LIBS-JSON \*/(.*?)/\* END-LIBS-JSON \*/", js["libs.js"], re.S)
+    libs = json.loads(m.group(1)) if m else {}
+    c.ok(set(libs) == {"deck", "umap"} and all(re.fullmatch(r"sha384-[A-Za-z0-9+/]{64}", L.get("sri", "")) and L.get("bytes", 0) > 0
+                                               and L["path"].startswith(f"{L['name']}@{L['version']}/") for L in libs.values()),
+         f"libs.js: deck.gl and umap-js, each with a version, a path, a size and a SHA-384: {sorted(libs)}")
+    tags = re.findall(r"<script\b[^>]*>", html)
+    srcs = [re.search(r'src="([^"]+)"', s).group(1) for s in tags if 'src="' in s]
+    deck = libs.get("deck", {})
+    vtag = next((s for s in tags if 'src="vendor/' in s), "")
+    c.ok(f'src="vendor/{deck.get("path")}"' in vtag and f'integrity="{deck.get("sri")}"' in vtag and "data-soda-lib" in vtag,
+         "index.html: deck.gl from vendor/<path> with libs.js's SHA-384 as its integrity, marked data-soda-lib")
+    names = [s.split("?")[0] for s in srcs]
+    vname = f"vendor/{deck.get('path')}"
+    c.ok(all(n in names for n in ("libs.js", vname, "diag.js", "config.js", "viewer.js"))
+         and names.index("libs.js") == names.index(vname) + 1
+         and names.index("diag.js") < names.index("libs.js") < names.index("config.js") < names.index("viewer.js"),
+         "index.html: libs.js right after the vendor/ tag (it writes the CDN copy when that did not run), before config.js and viewer.js")
+    c.ok("offline.js" in names and names.index("layout.js") < names.index("offline.js") < names.index("viewer.js"),
+         "index.html: offline.js loads after layout.js and before viewer.js")
+    c.ok(not any("cdn.jsdelivr.net" in s for s in srcs), "index.html names no CDN script itself (libs.js writes the fallback)")
+    c.ok("cdn.jsdelivr.net/npm/" in js["libs.js"] and "integrity=" in js["libs.js"] and 'crossorigin="anonymous"' in js["libs.js"],
+         "libs.js: the CDN fallback carries the same SHA-384 (integrity, crossorigin)")
+    csp = re.search(r'http-equiv="Content-Security-Policy" content="([^"]+)"', html)
+    csp = csp.group(1) if csp else ""
+    c.ok("script-src 'self' https://cdn.jsdelivr.net;" in csp and "worker-src 'self' blob:;" in csp and "unsafe-eval" not in csp,
+         f"index.html: the Content-Security-Policy is no wider than before (no 'unsafe-eval', no 'wasm-unsafe-eval'): {csp[:120]}")
+    for f in ("libs.js", "sw.js", "offline.js"):
+        t = js[f]
+        c.ok(not re.search(r"""\beval\(|new Function\(|setTimeout\(\s*["'`]""", t) and "javascript:" not in t
+             and not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),  # deid:ok (type names)
+             f"{f}: no eval, no javascript: address, only unsigned typed arrays")
+        lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
+        c.ok(not lines, f"{f}: no local / session storage (offline copies live in the Cache API only): {lines[:2]}")
+    w = js["lasso_worker.js"]
+    c.ok("https://" not in "".join(re.findall(r"importScripts\([^)]*\)", w)) and "SODA_LIBS.umap" in w and "integrity: L.sri" in w,
+         "lasso_worker.js: umap-js from libs.js (vendor/ first, the CDN after), its SHA-384 checked with fetch() before importScripts")
+    v_index = re.search(r'libs\.js\?v=([\w.-]+)"', html)
+    v_worker = re.search(r'importScripts\("libs\.js\?v=([\w.-]+)"\)', w)
+    c.ok(bool(v_index and v_worker and v_index.group(1) == v_worker.group(1)),
+         "lasso_worker.js imports the same libs.js ?v= as index.html loads")
+    # the service worker keeps what a script names as "<name>.js?v=...": every worker and import must be named that way
+    allj = "".join((APP / f).read_text(encoding="utf-8") for f in sorted(os.listdir(APP))
+                   if f.endswith(".js") and f not in ("config.js", "sw.js"))
+    wk = re.findall(r"""["'`]([\w-]+_worker\.js)(\?v=[\w.-]+)?["'`]""", allj)
+    c.ok(len(wk) >= 3 and all(v for _, v in wk), f"every worker is named with a ?v= string (sw.js keeps it): {sorted(set(n + v for n, v in wk))}")
+    imp = re.findall(r"""importScripts\(\s*["'`]([^"'`]+)["'`]""", "".join((APP / f).read_text(encoding="utf-8") for f in sorted(os.listdir(APP)) if f.endswith("_worker.js")))
+    c.ok(imp and all(re.fullmatch(r"[\w-]+\.js\?v=[\w.-]+", i) for i in imp),
+         f"every importScripts of the page's workers names a local script with a ?v= string: {imp}")
+    mk = re.search(r"const MARKERS = \[([^\]]*)\]", js["sw.js"])
+    listed = sorted(re.findall(r'"([\w.-]+\.json)"', mk.group(1))) if mk else []
+    c.eq(listed, sorted(p.name for p in (APP / "markers").glob("*.json")), "sw.js MARKERS = the files in markers/")
+    body = lambda t: re.sub(r"\s+", " ", (re.search(r"function hashRefs\(list\) \{.*?return [^\n]*\n", t, re.S) or re.search("x^", "")).group(0)) \
+        if re.search(r"function hashRefs\(list\) \{", t) else None
+    c.ok(body(js["sw.js"]) is not None and body(js["sw.js"]) == body(js["offline.js"]), "sw.js and offline.js hash the page's ?v= strings the same way")
+    rule = r"""if (!r || /^[a-z][\w+.-]*:|^\/\//i.test(r) || /^vendor\//.test(r) || !/[?&]v=/.test(r)) continue;"""
+    c.ok(rule.replace("!r || ", "") in js["sw.js"] and rule in js["offline.js"], "sw.js and offline.js pick the page's ?v= files by the same rule")
+    for needle, f, what in (("soda-data:${SCOPE}|", "sw.js", "kept datasets in caches of their own, per page folder"),
+                            ("name.startsWith(`soda-app:${SCOPE}|`)", "sw.js", "on activate, only this folder's own app caches are deleted"),
+                            ('if (req.method !== "GET") return;', "sw.js", "only GET requests are answered"),
+                            ("e.respondWith(fromKept(req, k))", "sw.js", "data: only a kept dataset's files are answered"),
+                            ("!cfg.tokenEndpoint", "offline.js", "off by default on a password-protected site"),
+                            ('why: "password"', "viewer.js", "a password-protected dataset is never kept"),
+                            ("window.SodaOffline.init(", "viewer.js", "viewer.js hands offline.js the open dataset"),
+                            ('sec.dataset.tab = "save"', "offline.js", "its section names its tab"),
+                            ("SodaLayout.adopt(sec)", "offline.js", "its section is handed to the layout"),
+                            ("panelOffline: { help:", "layout.js", "the Offline use section's ? note"),
+                            ("el.dataset.sodaLib", "diag.js", "the vendor/ probe is not reported as an error")):
+        c.ok(needle in js[f], f"{f}: {what} ({needle!r} not found)")
+    gi = (REPO / ".gitignore").read_text(encoding="utf-8")
+    c.ok("web/SpatialViewer/vendor/" in gi.splitlines(), ".gitignore: web/SpatialViewer/vendor/ (the library files are not committed)")
+    prep = (APP / "prepare.py").read_text(encoding="utf-8")
+    c.ok('raw[:1] == ["vendor"]' in prep and "vendor.main(raw[1:])" in prep, "prepare.py vendor runs vendor.py")
+    # vendor.py: reads libs.js; --check on a folder without vendor/ says MISSING and exits 1 (downloads nothing)
+    with tempfile.TemporaryDirectory() as td:
+        p = subprocess.run([sys.executable, str(APP / "vendor.py"), "--check", "--dest", td], cwd=str(REPO),
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        c.ok(p.returncode == 1 and p.stdout.count("MISSING") == len(libs) and not (Path(td) / "vendor").exists(),
+             f"vendor.py --check on an empty folder: MISSING for each library, exit 1, nothing written ({p.returncode})")
+    node = shutil.which("node")
+    if not node:
+        print("    node not found: tests/offline_test.js skipped")
+        return
+    p = subprocess.run([node, str(REPO / "tests" / "offline_test.js"), "--export", str(root / "export"),
+                        "--shots", str(root / "offline_shots"), "--python", sys.executable], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    lines = p.stdout.strip().splitlines() or ["(no output)"]
+    tab = lines.index("feature table:") if "feature table:" in lines else len(lines) - 1
+    for ln in lines[tab:]:
+        print("    " + ln)
+    c.eq(p.returncode, 0, "node tests/offline_test.js: offline in Chromium and WebKit (exit code)")
 
 
 def check_publishable(c: Checker, root: Path, log_path: Path):
@@ -4489,6 +4597,8 @@ def main(argv=None) -> int:
     check_layout(c)
     print("checks: sharing (the link that restores a view, linked windows)")
     check_sharing(c, log_path)
+    print("checks: offline use (libs.js, vendor.py, sw.js, offline.js)")
+    check_offline(c, root, log_path)
     print("checks: publishable")
     check_publishable(c, root, log_path)
     timings["checks"] = time.time() - t0

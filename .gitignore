@@ -4,6 +4,9 @@ web/SpatialViewer/config.js
 # Local branding assets that go with config.js
 web/SpatialViewer/logos/
 
+# deck.gl and umap-js, put there by `python web/SpatialViewer/prepare.py vendor` (pinned in libs.js; not committed)
+web/SpatialViewer/vendor/
+
 # The de-identification key: maps published numbers back to real sample IDs. Never commit it.
 sample_id_key.csv
 *_key.csv

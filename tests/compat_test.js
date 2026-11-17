@@ -199,7 +199,9 @@ const failures = [...catFail];
 const packedTally = { pass: 0, fail: 0 };
 
 async function openPage(browser, url, version, label, config) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
+  // itself, out of page.route's sight; tests/offline_test.js tests it
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
   const page = await ctx.newPage();
   const log = { console: [], pageErrors: [], bad: [], ok: [] };
   page.on("console", (m) => { if (m.type() === "error") log.console.push({ text: m.text(), url: (m.location() || {}).url || "" }); });
@@ -228,7 +230,8 @@ async function openPage(browser, url, version, label, config) {
 // (viewer.js gateFetchPublished, "absent = none, quietly"), and the page's own markers/<file> named by
 // a grid layer's celltypes markerSet (the fixtures were exported with examples/demo_protein_markers.json,
 // which the page does not ship; no list = no suggested names, as for a current export made that way).
-const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/];
+// vendor/: deck.gl and umap-js are asked for there first and come from the CDN when a copy has no vendor/ (libs.js)
+const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/vendor\//];
 function checkClean(t, allowed) {
   // a data link's read pass (?sv=...&sig=...) follows every file name: match the path without it too
   const allow = (u) => allowed.concat(OPTIONAL).some((re) => re.test(u) || re.test(String(u).split("?")[0]));
@@ -536,7 +539,7 @@ async function checkCatalog(browser, urls, version) {
   catch (e) { console.log(`SKIPPED: cannot launch Chromium (${String(e.message).split("\n")[0]})`); data.close(); pageSrv.close(); process.exit(0); }
   // deck.gl is loaded from the CDN by the page: without it nothing can be checked
   {
-    const ctx = await browser.newContext(), page = await ctx.newPage();
+    const ctx = await browser.newContext({ serviceWorkers: "block" }), page = await ctx.newPage();
     await page.route("**/config.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript", body: "window.SpatialViewerConfig = {};" }));
     await page.goto(`${urls.page}/index.html`, { waitUntil: "load" }).catch(() => {});
     const deck = await page.evaluate(() => !!window.deck).catch(() => false);

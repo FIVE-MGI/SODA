@@ -46,7 +46,8 @@ if (!present.length) { console.log(`SKIPPED: no standard-format export at ${EXPO
 
 // files the page asks for that no export has to have (as in tests/compat_test.js): a lab's published gates, and the
 // page's markers/<file> named by a protein grid layer exported with a markers list the page does not ship
-const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/];
+// vendor/: deck.gl from the page's own site when `prepare.py vendor` put it there, else the CDN (libs.js)
+const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/vendor\//];
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream" };
 function serve(root, port) {
   return new Promise((resolve) => {
@@ -69,7 +70,8 @@ const check = (cond, what, got) => { results.push({ ok: !!cond, what }); console
   const data = await serve(EXPORT, PORTS[0]), pageSrv = await serve(PAGE, PORTS[1]);
   const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
   const browser = await pw.chromium.launch({ args: GPU ? ["--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"] : ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
-  const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+  // the service worker (sw.js) is tested by tests/offline_test.js; here the page as it loads
+  const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block" });
   const errors = [];
   for (const D of present) {
     console.log(`${D.id} (${D.what})`);

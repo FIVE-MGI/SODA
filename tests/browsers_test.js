@@ -218,10 +218,13 @@ const info = (feature, eng, yes) => { (table[feature] = table[feature] || {})[en
 const thumbs = {};                                // thumbs[`${group}|${key}`][engine]
 
 // files the page asks for that an export need not have (see tests/compat_test.js)
-const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/about\.html$/];
+// vendor/: deck.gl and umap-js are asked for there first and come from the CDN when a copy has no vendor/ (libs.js)
+const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/about\.html$/, /\/vendor\//];
 
 async function openPage(browser, eng, url, label, feature) {
-  const ctx = await browser.newContext({ ...(eng.device || { viewport: { width: 1280, height: 800 } }), acceptDownloads: true });
+  // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
+  // itself, out of page.route's sight; tests/offline_test.js tests it
+  const ctx = await browser.newContext({ ...(eng.device || { viewport: { width: 1280, height: 800 } }), acceptDownloads: true, serviceWorkers: "block" });
   if (eng.clipboard) await ctx.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
   const page = await ctx.newPage();
   const log = { console: [], pageErrors: [], bad: [], ok: [] };
@@ -801,7 +804,7 @@ async function phone(browser, eng, urls) {
       console.log(`\n== ${eng.name} ${browser.version()}`);
       try {
         if (deckOk === null) {                         // deck.gl comes from the CDN: without it nothing can be checked
-          const ctx = await browser.newContext(), page = await ctx.newPage();
+          const ctx = await browser.newContext({ serviceWorkers: "block" }), page = await ctx.newPage();
           await page.route("**/config.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript", body: "window.SpatialViewerConfig = {};" }));
           await page.goto(`${urls.page}/index.html`, { waitUntil: "load" }).catch(() => {});
           deckOk = await page.evaluate(() => !!window.deck).catch(() => false);

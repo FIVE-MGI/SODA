@@ -8,6 +8,9 @@ r"""Build the viewer cache for one dataset.
            [--options options.json] [--jobs 1] [--rebuild] [--only id1,id2] [--dry-run]
            (auto + export for every dataset folder, each in its own process; skips what is not certain or
             already exported, then catalog.py and the sample ID check; writes a log table. batch.py)
+    python prepare.py vendor [--check] [--from <folder>] [--dest <folder>]
+           (deck.gl and umap-js into vendor/ next to index.html, checked against their pinned SHA-384, so
+            the page needs no CDN; vendor.py)
 
     python prepare.py akoya  --src <folder of NN_Marker_Sample_gray.tif> --id sample1 --out <cache folder>
     python prepare.py tiff   --src <stack.tif|qptiff|ome.tif>            --id x        --out <cache folder>
@@ -248,11 +251,17 @@ def main(argv=None):
     if raw[:1] == ["batch"]:                       # a whole folder of datasets: batch.py, its own options
         import batch
         raise SystemExit(batch.main(raw[1:]))
+    if raw[:1] == ["vendor"]:                      # the page's libraries into vendor/: vendor.py, its own options
+        import vendor
+        raise SystemExit(vendor.main(raw[1:]))
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="kind", required=True)
     sub.add_parser("batch", add_help=False,
                    help="prepare and export every dataset folder under --src, each in its own process, with a log "
                         "of any that fail (batch.py; `prepare.py batch -h` lists its options)")
+    sub.add_parser("vendor", add_help=False,
+                   help="put deck.gl and umap-js in vendor/ next to index.html, checked against their pinned hashes, "
+                        "so the page needs no CDN (vendor.py; `prepare.py vendor -h` lists its options)")
     dt = sub.add_parser("detect", allow_abbrev=False,
                         help="say what kind of dataset a folder (or file) holds, how sure that is, what was "
                              "found and what is missing; nothing is written (detect.py)")

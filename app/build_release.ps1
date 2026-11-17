@@ -73,6 +73,16 @@ try {
     $piv = & $Py -m PyInstaller --version
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller is not installed for $Py (pip install pyinstaller==6.21.0)" }
     Write-Host "   PyInstaller $piv" -ForegroundColor DarkGray
+    # deck.gl and umap-js, optional: with web\SpatialViewer\vendor\ (python web\SpatialViewer\prepare.py vendor
+    # before the build) they go into the app (SODA.spec takes the whole page folder) and Open viewer needs no
+    # internet; without it the viewer loads them from cdn.jsdelivr.net. A vendor\ that is there must be complete.
+    if (Test-Path (Join-Path $Repo "web\SpatialViewer\vendor")) {
+        & $Py (Join-Path $Repo "web\SpatialViewer\vendor.py") --check
+        if ($LASTEXITCODE -ne 0) { throw "web\SpatialViewer\vendor\ is incomplete or not the pinned files: run python web\SpatialViewer\prepare.py vendor again" }
+        Write-Host "   vendor\: deck.gl and umap-js included (the viewer works with no internet)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "   no web\SpatialViewer\vendor\: the viewer will load deck.gl from the CDN (prepare.py vendor includes it)" -ForegroundColor DarkGray
+    }
 
     # 2. PyInstaller ---------------------------------------------------------------------
     Write-Host "[2/5] running PyInstaller (several minutes)..." -ForegroundColor Yellow

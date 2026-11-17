@@ -332,9 +332,12 @@ email wbuchser@wustl.edu with any questions about hosting.
 - Disk space: the prepare cache holds a compressed full-resolution copy of each image, and
   the export a tiled copy. Time has not been benchmarked on a reference machine; measured
   examples are in [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
-- Viewing needs no installation, only a browser and an internet connection, also for a copy
-  on your own computer: the page loads its drawing library (deck.gl), and Draw a region its
-  UMAP library (umap-js), from `cdn.jsdelivr.net`.
+- Viewing needs no installation, only a browser. The page loads its drawing library (deck.gl),
+  and Draw a region its UMAP library (umap-js), from `cdn.jsdelivr.net`, or from your own copy
+  after `python web/SpatialViewer/prepare.py vendor`. Served over https or from localhost, the
+  page keeps itself after one visit and opens with no network; a dataset is kept for offline use
+  only when you ask (Save tab > Offline use). See
+  [Offline use](docs/ADVANCED.md#9-offline-use).
 
 ## Browser support
 

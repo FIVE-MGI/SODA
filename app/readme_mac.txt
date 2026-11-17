@@ -37,8 +37,9 @@ WHAT IT DOES
      prepares and exports it into <output folder>/export, writes a log table
      into <output folder>/logs, and checks the export for sample IDs.
   2. Open viewer: the viewer opens in a new browser tab on the export folder.
-     It needs an internet connection (it loads its map library from the web);
-     your data stays on this Mac.
+     The first time, it needs an internet connection (it loads its map library
+     from the web, unless this copy of SODA includes it); after that the browser
+     keeps the library. Your data stays on this Mac.
   3. Check a folder for sample IDs: run it on anything before you share it.
   Your data folder is only read, never changed. Nothing is uploaded.
 

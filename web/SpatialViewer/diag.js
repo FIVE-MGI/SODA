@@ -74,6 +74,8 @@
   };
   window.addEventListener("error", (e) => {
     const el = e.target;
+    // vendor/deck.gl not there: libs.js takes the CDN's copy instead, so that is not a problem in itself
+    if (el && el.dataset && el.dataset.sodaLib) return;
     if (el && el !== window && (el.src || el.href)) D.note("load", `could not load ${el.src || el.href}`);
     else D.note("script", `${e.message || "error"}${e.filename ? ` (${String(e.filename).split("/").pop()}:${e.lineno})` : ""}`);
   }, true);
@@ -237,8 +239,11 @@
       add("Online / cookies / https", `${navigator.onLine ? "yes" : "NO"} / ${navigator.cookieEnabled ? "yes" : "NO"} / ${window.isSecureContext ? "yes" : "no"}`);
 
       head("Graphics");
-      add("deck.gl", window.deck ? `loaded, version ${window.deck.VERSION || "?"}` : "NOT loaded (the drawing library did not arrive: offline, or blocked)", window.deck ? "good" : "bad");
-      if (!window.deck) verdicts.push("deck.gl (the drawing library, from cdn.jsdelivr.net) did not load: a content blocker or the network stopped it");
+      const from = window.SODA_LIBS_FROM && window.SODA_LIBS_FROM.deck === "local" ? "this site's vendor/" : "cdn.jsdelivr.net";
+      add("deck.gl", window.deck ? `loaded, version ${window.deck.VERSION || "?"}, from ${from}` : "NOT loaded (the drawing library did not arrive: offline, or blocked)", window.deck ? "good" : "bad");
+      if (!window.deck) verdicts.push("deck.gl (the drawing library, from this site's vendor/ or cdn.jsdelivr.net) did not load: a content blocker or the network stopped it, and there is no copy kept for offline use");
+      const off = window.SodaOffline ? window.SodaOffline.state() : null;
+      if (off) add("Offline use", `${off.state}${off.why ? " (" + off.why + ")" : ""}; service worker ${navigator.serviceWorker && navigator.serviceWorker.controller ? "in charge of this page" : "not in charge"}; ${off.kept.length} dataset(s) kept`);
       const gl = glInfo();
       if (!gl) verdicts.push("this browser has no WebGL2, which the map needs");
       const hasCIB = typeof createImageBitmap === "function";
