@@ -217,7 +217,11 @@ async function fromPage(e) {
       // the same version's page as it is now (its ?v= strings unchanged): that is the one to open offline
       const copy = r.clone();
       e.waitUntil(copy.text().then(async (t) => {
-        if (hashRefs(appRefs(t)) === APP && await caches.has(APP_CACHE)) await (await caches.open(APP_CACHE)).put(PAGE, new Response(t, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
+        // as fromApp: nothing once a newer version is in charge, and its activate can delete this cache
+        // between has() and open(), which then makes it again: when no longer in charge, it goes
+        if (hashRefs(appRefs(t)) !== APP || !current() || !(await caches.has(APP_CACHE))) return;
+        await (await caches.open(APP_CACHE)).put(PAGE, new Response(t, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
+        if (!current()) await caches.delete(APP_CACHE);
       }).catch(() => {}));
     }
     return r;
