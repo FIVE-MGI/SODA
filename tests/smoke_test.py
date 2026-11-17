@@ -3766,7 +3766,7 @@ def check_sharing(c: Checker, log_path: Path):
         c.ok(not re.search(r"""<[a-z][^>`]*\son[a-z]+\s*=""", t) and "javascript:" not in t
              and not re.search(r"""\beval\(|new Function\(|setTimeout\(\s*["'`]""", t),
              f"{f}: no inline handler attribute, no eval, no javascript: address")
-        c.ok(not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),
+        c.ok(not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),  # deid:ok (type names)
              f"{f}: only unsigned typed arrays (the de-identification check reads the signed names as sample IDs)")
         lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
         c.ok(all("try" in ln for ln in lines), f"{f}: a storage access outside try / catch: {[ln.strip()[:60] for ln in lines if 'try' not in ln]}")
