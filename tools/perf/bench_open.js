@@ -8,8 +8,8 @@
 // Last-Modified, open CORS, and by default no Cache-Control header (Azure Blob's default; --cache-control
 // sets one). Every response's bytes are counted on the server side too.
 //
-// Mode "open" (default): for each repetition, a fresh browser profile, then
-//   cold   the first visit with an empty cache
+// Mode "open" (default): for each repetition, a fresh browser profile, started on an untimed about:blank page, then
+//   cold   the first visit with an empty cache (the browser itself already running)
 //   warm   a second visit in the same browser (HTTP cache and service worker from the first visit)
 // and for each visit records, in the page's clock (ms from navigation start):
 //   first_tile_ms     the first frame in which an image tile is on screen
@@ -287,6 +287,12 @@ async function launch(profile) {
   const ctx = await chromium.launchPersistentContext(profile, { headless: true, args, viewport: { width: VIEW_W, height: VIEW_H } });
   await ctx.addInitScript(INIT);
   await ctx.addInitScript(`window.__ADD_GENE = ${ADD_GENE.toString()};`);
+  // warm-up, not timed: a blank page first, so browser / renderer / GPU-process start-up is not charged to the
+  // cold visit ("cold" = empty cache, not a browser still starting; as tilebench's blank page + 1 s)
+  const blank = await ctx.newPage();
+  await blank.goto("about:blank");
+  await sleep(1000);
+  await blank.close();
   return ctx;
 }
 
