@@ -291,7 +291,9 @@ def main(argv=None):
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
     e.add_argument("--ids", action="store_true",
                    help="also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz) so the viewer can save the "
-                        "bins or cells inside drawn shapes with them. Off by default: without it no barcode is written.")
+                        "bins or cells inside drawn shapes with them. Off by default: without it no barcode is written. "
+                        "Every id must fully match its platform's id format and none may look like a sample ID, "
+                        "else nothing is written and the export stops (layerids.py)")
     userclusters.add_args(e)
     uc = sub.add_parser("userclusters", help="add your own UMAP / clusters (Seurat, scanpy) to a layer of an existing export")
     uc.add_argument("--id", required=True)

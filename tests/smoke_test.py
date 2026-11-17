@@ -865,7 +865,71 @@ def check_ids(c: Checker, root: Path) -> dict:
             print("    SKIP ids vs cache barcodes (zarr not installed)")
         out[f"{VIS}/{key}"] = {"rows": len(got), "bytes": f.stat().st_size, "bytesPerRow": round(f.stat().st_size / max(len(got), 1), 2)}
     print("    id lists: " + ", ".join(f"{k} {v['rows']:,} rows {v['bytes'] / 1e3:.1f} kB ({v['bytesPerRow']} B/row)" for k, v in out.items()))
+    check_ids_gates(c, root)
     return out
+
+
+# a made-up sample ID of the shape deid.py knows (never a real one)
+FAKE_SAMPLE = "INT9907"   # deid:ok (fake)
+
+
+def check_ids_gates(c: Checker, root: Path):
+    """The id lists are published, so: (1) `deid.py check` reads ids.txt.gz and reports a sample ID planted in it
+    by file and line only; (2) `prepare.py ids` refuses a layer whose ids do not fit the platform's format
+    (a merge prefix, a sample name glued on), writes nothing for any layer, and never prints an id."""
+    work = root / "ids_gates"
+    if work.exists():
+        shutil.rmtree(work)
+    src = root / "export_user" / VIS / "expr" / "008um" / "ids.txt.gz"
+    if not c.ok(src.exists(), "ids gates: the Visium HD id list to start from"):
+        return
+    # (1) a sample ID planted on line 7 of a copy
+    lines = gzip.decompress(src.read_bytes()).decode("utf-8").split("\n")
+    planted = FAKE_SAMPLE + "_" + lines[6]
+    lines[6] = planted
+    bad = work / "deid" / VIS / "expr" / "008um" / "ids.txt.gz"
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(gzip.compress("\n".join(lines).encode("utf-8")))
+    p = subprocess.run([sys.executable, "web/SpatialViewer/deid.py", "check", str(work / "deid")], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    c.eq(p.returncode, 1, "deid.py check finds a sample ID planted inside an ids.txt.gz (exit code)")
+    c.ok("ids.txt.gz:7" in p.stdout and "[deid] 1 sample ID(s) found" in p.stdout,
+         f"deid.py check names the .gz file and line 7: {p.stdout.strip().splitlines()[:2]}")
+    c.ok(FAKE_SAMPLE not in p.stdout and planted not in p.stdout, "deid.py check does not print the ID it found in a .gz file")
+    # (2) a cache whose 016um barcodes carry a merge prefix (4) and a sample ID (1): prepare.py ids refuses
+    try:
+        import zarr
+    except ImportError:
+        print("    SKIP the ids refusal check (zarr not installed)")
+        return
+    cache, exp = work / "cache" / VIS, work / "export" / VIS
+    (cache / "expr").mkdir(parents=True)
+    shutil.copyfile(root / "cache" / VIS / "manifest.json", cache / "manifest.json")
+    keys = [L["key"] for L in read_json(cache / "manifest.json").get("expr", [])]
+    for k in keys:
+        shutil.copytree(root / "cache" / VIS / "expr" / f"{k}.zarr", cache / "expr" / f"{k}.zarr")
+        (exp / "expr" / k).mkdir(parents=True)
+        shutil.copyfile(root / "export" / VIS / "expr" / k / "positions.bin", exp / "expr" / k / "positions.bin")
+    shutil.copyfile(root / "export" / VIS / "manifest.json", exp / "manifest.json")
+    g = zarr.open_group(str(cache / "expr" / "016um.zarr"), mode="r+")
+    bcs = [b.decode() for b in g["barcodes"][()]]
+    xy = np.asarray(g["xy"])
+    on = np.flatnonzero(~np.isnan(xy[:, 0]))
+    for j, r in enumerate(on[:5]):
+        bcs[r] = (f"{FAKE_SAMPLE}_" if j == 0 else "S1_") + bcs[r]
+    g.create_dataset("barcodes", data=np.array([b.encode() for b in bcs], dtype="S"), chunks=(1 << 20,), overwrite=True)
+    before = (exp / "manifest.json").read_bytes()
+    p = subprocess.run([sys.executable, "web/SpatialViewer/prepare.py", "ids", "--id", VIS, "--out", str(work / "cache"),
+                        "--dest", str(work / "export")], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    c.ok(p.returncode != 0, f"prepare.py ids refuses ids that do not fit the Visium HD format (exit {p.returncode})")
+    c.ok("REFUSING to write 016um/ids.txt.gz: 5 of" in p.stdout and "visium_hd id format" in p.stdout,
+         f"the refusal names the layer, the count and the format: {[ln for ln in p.stdout.splitlines() if 'REFUSING' in ln][:1]}")
+    c.ok(FAKE_SAMPLE not in p.stdout and "S1_" not in p.stdout and not any(b in p.stdout for b in bcs[:50]),
+         "the refusal prints no id (neither the bad ones nor the good ones)")
+    c.ok(not list(exp.rglob("ids.txt*")) and (exp / "manifest.json").read_bytes() == before,
+         "a refusal writes nothing: no id list for any layer (the good 008um included), manifest unchanged")
+    shutil.rmtree(work)
 
 
 def check_multiplex(c: Checker, root: Path, clustering: bool) -> dict:

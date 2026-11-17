@@ -10,7 +10,7 @@
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
     <dest>/<id>/expr/<key>/umap/clusters_user*  the lab's own clusterings / UMAP, matched by barcode (userclusters.py)
-    <dest>/<id>/expr/<key>/ids.txt.gz           only with ids=True (--ids): the barcode / cell id of each row (layerids.py)
+    <dest>/<id>/expr/<key>/ids.txt.gz           only with write_ids=True (--ids): the barcode / cell id of each row, allow-listed (layerids.py)
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
@@ -139,6 +139,8 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
     userclusters.check_layers(user_clusters, m)
+    # --ids: every layer's ids read and checked (allow-list, sample-ID patterns) before anything is written
+    ids_plan = layerids.plan(ds_dir, m, log=log) if write_ids else {}
     out = Path(dest) / m["id"]
     out.mkdir(parents=True, exist_ok=True)
     r = PyramidReader(ds_dir, m)
@@ -204,10 +206,10 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                 layer_regions[key] = table
                 log(f"[export] expr {key}: {len(table)} regions, "
                     f"{int(np.count_nonzero(ids)):,}/{len(ids):,} bins assigned")
-        if write_ids:
-            entry = layerids.write_layer_ids(er, d, layer, ds_dir, log=log)
-            if entry:
-                layer_ids[key] = entry
+        if key in ids_plan:
+            if len(ids_plan[key]) != len(pos):
+                raise SystemExit(f"[ids] {key}: {len(ids_plan[key]):,} ids for {len(pos):,} rows of positions.bin")
+            layer_ids[key] = layerids.write_ids(ids_plan[key], d, layer, log=log)
         # GeoMx ROI segments (geomx.py): a few dozen rows. Their own QC values, every target in hvg/,
         # the annotation columns as groupings; no UMAP, Leiden, cell types or variable-gene selection.
         roi = layer.get("kind") == "rois"

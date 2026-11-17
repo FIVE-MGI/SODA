@@ -17,7 +17,10 @@ General rules:
   right, y down, origin at the top-left corner of the image.
 - A **row** means a position in `expr/<key>/positions.bin`. `region.bin`, `binqc/`, `hvg/`
   and `umap/` all refer to bins by row. No file contains a barcode, except the optional
-  `ids.txt.gz` written only when asked for (`prepare.py export --ids`, see below).
+  `ids.txt.gz` written only when asked for (`prepare.py export --ids`, see below). It is written
+  only when every id fully matches its platform's instrument id format (an allow-list) and none
+  looks like a sample ID; otherwise the export stops, writes no list, and says which layer and how
+  many ids failed without printing any of them.
 - File names made from gene names use JavaScript's `encodeURIComponent` (Python:
   `urllib.parse.quote(name, safe="-_.!~*'()")`). Known issue: for a name that actually
   changes under encoding (a space, `/`, `|`, `+` ...), the file on disk contains a literal
@@ -190,8 +193,31 @@ the manifest entries; nothing else changes). gzip of UTF-8 text, one id per line
 (Visium spots, Visium HD and Stereo-seq bins) or `cell_id` (cells layers: Xenium `cell_id`, CosMx
 `<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id). GeoMx ROI layers and protein grid layers get none.
 The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes; without it that button says how
-to add one. The ids pass `deid.find_ids` before they are written (the export stops on a hit). A host that
-unpacks `.gz` files itself is fine: the viewer reads the text either way.
+to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
+
+Before anything is written, every layer's ids pass two gates (layerids.py), and one refused layer means no
+list for any layer of the dataset:
+
+1. **Allow-list.** Each id must match, in full, the instrument id format of its platform, as the readers put it
+   in the cache:
+
+   | Platform | Accepted ids |
+   |---|---|
+   | Visium HD bins | `s_<3 digits>um_<5 digits>_<5 digits>-1` |
+   | Visium spots | 16 of `ACGT`, `-` and a 1-3 digit GEM well (`-1`; aggr gives `-2` ...) |
+   | Xenium cells | 8 letters `a`-`p`, `-`, 1-3 digits (`aaabbbcc-1`), or an integer (Xenium before Ranger 1.3) |
+   | CosMx cells | `c_<slide>_<fov>_<cell>` (AtoMx; all integers) or `<cell_ID>_<fov>` (made from the matrix) |
+   | MERSCOPE cells | an integer `EntityID` |
+   | Stereo-seq | bins `<x>_<y>` or an integer (`--barcodes stereopy`); cells an integer |
+
+   A CosMx id keeps its slide number: it is the instrument's slide index, an integer, and the form AtoMx and
+   Seurat use. Anything else, such as a merge prefix (`S1_`), a sample or run name glued to a barcode, or a
+   GeoMx Sample_ID, is refused, never stripped or rewritten. Other platforms get no list.
+2. **Sample-ID patterns.** `deid.find_ids` over the whole list, as for every other file.
+
+A refusal prints the layer, the platform, the format and the count of failing ids, never an id. `deid.py
+check` also reads `ids.txt.gz` (any `.gz` that unpacks to text) and reports a hit there as file and line
+only.
 
 Size, measured on the smoke-test demo data: 8 µm bins 13,291 rows 35.1 kB (2.64 bytes per row), 16 µm
 bins 3,388 rows 8.5 kB (2.50 B/row), Xenium cells 838 rows 2.3 kB (2.69 B/row). As plain text a Visium HD

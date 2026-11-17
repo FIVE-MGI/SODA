@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import csv
 import datetime as _dt
+import gzip
 import json
 import os
 import re
@@ -200,14 +201,44 @@ _ALLOW = "deid:ok"          # a line containing this marker is a documented FAKE
 _SKIP_DIRS = {".venv", "__pycache__", ".git", "tiles", "gene"}
 
 
+_GZ_SHOW = 10               # per .gz file: this many line numbers, then a count
+
+
+def _gz_text_hits(q: Path) -> list[int] | None:
+    """Line numbers of a gzip TEXT file (e.g. expr/<key>/ids.txt.gz) holding a sample ID, read as a
+    stream; None when it does not unpack to text (a NUL byte in its first 8 kB, or not gzip at all)."""
+    try:
+        with gzip.open(q, "rb") as f:
+            head = f.read(8192)
+        if b"\0" in head:
+            return None
+        lines = []
+        with gzip.open(q, "rt", encoding="utf-8", errors="ignore") as f:
+            for ln, line in enumerate(f, 1):
+                if _ALLOW not in line and find_ids(line):
+                    lines.append(ln)
+        return lines
+    except (OSError, EOFError):
+        return None
+
+
 def check_paths(paths) -> list[str]:
-    """Scan file/folder NAMES and text-file CONTENTS for sample IDs."""
+    """Scan file/folder NAMES and text-file CONTENTS for sample IDs, including gzip text files
+    (ids.txt.gz). For a .gz file only the file and line numbers are reported, never the ID itself:
+    those files are lists of ids, and the report should not copy what it found into a log."""
     problems = []
     for p in map(Path, paths):
         items = [p] if p.is_file() else [q for q in p.rglob("*") if not (set(q.parts) & _SKIP_DIRS)]
         for q in items:
             for i in find_ids(q.name):
                 problems.append(f"name    {q}  ->  {i}")
+            if q.is_file() and q.suffix.lower() == ".gz" and q.stat().st_size < 50_000_000:
+                hits = _gz_text_hits(q)
+                for ln in (hits or [])[:_GZ_SHOW]:
+                    problems.append(f"content {q}:{ln}  ->  looks like a sample ID (not shown)")
+                if hits and len(hits) > _GZ_SHOW:
+                    problems.append(f"content {q}  ->  {len(hits) - _GZ_SHOW:,} more line(s) that look like sample IDs (not shown)")
+                continue
             if q.is_file() and q.suffix.lower() in _TEXT_EXT and q.stat().st_size < 50_000_000:
                 if q.name.endswith(".link.txt"):
                     continue                      # encrypted payloads are random base64
@@ -235,7 +266,10 @@ def main(argv=None):
         probs = check_paths(rest or ["."])
         for p in probs:
             print(p)
-        print(f"[deid] {len(probs)} sample ID(s) found" if probs else "[deid] clean")
+        # a .gz file's "N more line(s)" entry stands for N hits
+        more = [re.search(r"->  ([\d,]+) more line", p) for p in probs]
+        n = sum(int(m.group(1).replace(",", "")) if m else 1 for m in more)
+        print(f"[deid] {n} sample ID(s) found" if probs else "[deid] clean")
         return 1 if probs else 0
     elif cmd == "key":
         print(KEY_PATH.read_text(encoding="utf-8") if KEY_PATH.exists() else "(no key yet)")
