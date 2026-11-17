@@ -1030,7 +1030,8 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   clusters, markers); the per-shape counts say how many each shape lost. The thresholds go into
   Save JSON (`qcFilter`) and the page link (`?qc=`), and Load JSON restores them (a file
   without them loads with the filter off). The whole-section UMAP made at export is not filtered.
-- "Save JSON" stores the shapes, layer, seed and every parameter so a result can be redone;
+- "Save JSON" stores the shapes, layer, seed and every parameter so a result can be redone,
+  and the view (position and zoom, genes, stains, colours), which "Load JSON" puts back;
   "Save CSV" saves bin row, shape and UMAP coordinates (no barcodes).
 - It works with exported data only, not with the live tile server.
 
