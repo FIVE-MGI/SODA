@@ -333,7 +333,7 @@ stops, since that is the wrong file).
 `scan X: N ROIs in the OME-XML`: must match the slide.
 `grouping 'tissue': 3 groups, sizes [...]`: the groups the viewer will offer.
 
-For scale: an 84-ROI study (two scans of 16,384 x 16,384 px and 4 stains, side by side as one 33,280 x 16,384 px image; 401 DCC files in the folder, 84 used; a 19,963-target mouse whole-transcriptome PKC) took 3 to 5.5 min to prepare on a loaded workstation reading from a network share (all but 10 s of it the image pyramid) and about 10 min to export (tiles 35 s; the 19,962 per-gene files 9 min, slow only because each is a separate small file on the share; QC, groupings and the volcano's data 3 s). The export is 149 MB in 22,883 files: tiles 123 MB (JPEG), gene files 19 MB, hvg/ 6 MB. The 88-segment example without an image (1,819 targets) took 6 s to prepare and 85 s to export (3.7 MB in 1,873 files).
+For scale: an 84-ROI study (two scans of 16,384 x 16,384 px and 4 stains, side by side as one 33,280 x 16,384 px image; 401 DCC files in the folder, 84 used; a 19,963-target mouse whole-transcriptome PKC) took 3 to 5.5 min to prepare on a loaded workstation reading from a network share (all but 10 s of it the image pyramid) and about 10 min to export (tiles 35 s; the 19,962 per-gene files 9 min, slow only because each is a separate small file on the share; QC, groupings and the volcano's data 3 s). The export is 149 MB in 22,883 files: tiles 123 MB (JPEG), gene files 19 MB, hvg/ 6 MB. The 88-segment example without an image (1,819 targets) took 6 s to prepare and 85 s to export (3.7 MB in 1,873 files). (Both were measured before the gene packs: an export now writes those genes into one pack file, so the 9 min of per-gene files and nearly all 22,883 files are gone.)
 
 ## CosMx SMI
 
@@ -1074,6 +1074,10 @@ timing figures here. What can be said from the formats:
   layers measured (37 MB to 1.46 GB). With `--gene-files loose` it is one file per expressed
   gene instead, often 15,000-20,000 files a layer and 50,000-70,000 for a Visium HD dataset
   of three layers; 100 such datasets were about 6 million files, against about 3,000 packs.
+  Measured on one Visium HD section (layers 2, 8 and 16 µm, ~16,200 genes each, 1.32 GB of
+  gene data; `--no-umap --no-hvg`, onto a local disk): packed, 1,405 files in 44-46 s, the
+  genes taking 5-7 s a layer in 21 packs; loose, 50,011 files in 584-855 s, the genes taking
+  190-280 s a layer. Same bytes either way: every gene in the packs equals its loose file.
 - **`hvg/`**: about 12 bytes per bin plus 4 bytes per non-zero value among the 2,000 genes,
   in one file per 500 µm square of tissue.
 - **`umap/`**: 8 bytes per bin, plus 2 bytes per bin for each of the three clusterings.
