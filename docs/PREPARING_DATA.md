@@ -84,7 +84,9 @@ dataset, `run1_zip`, and say they may be the same data); every other kind must b
 store on its own, `<name>_transcripts.zarr.zip` (not in a Xenium output folder), is a dataset of its own too: its
 molecules on a transcript-density background ([Xenium](#xenium), *Without the stain images*). `python web/SpatialViewer/prepare.py detect path --json`
 prints the full report for scripts. The notebook (`notebooks/SODA_pipeline.ipynb`) uses the
-same check: put each dataset in its own folder under `inputs/`, with any name.
+same check: put each dataset in its own folder under `inputs/`, with any name. Names starting with `_` or `.`
+(and `README.txt`) are left out by `prepare.py batch`, the notebook and the app, so a folder such as `_old/` is a
+place to keep what is not a dataset.
 
 ## Options shared by every image kind
 
