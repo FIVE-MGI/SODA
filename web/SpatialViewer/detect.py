@@ -28,6 +28,12 @@ stereoseq.py, geomx.py, rnaseq.py, expr.find_visium_layers):
     akoya      a folder of one TIFF per marker (NN_Marker_..._gray.tif)
     tiff       one image file: QPTIFF, OME-TIFF, a TIFF stack, an RGB (H&E) image, one channel
     rnaseq     an .h5ad with a UMAP in obsm, or a 10x matrix folder + a UMAP CSV
+    anndata    a spatial AnnData: an .h5ad, or an AnnData .zarr folder, with obsm['spatial'] (an
+               .h5ad without it is single-cell data: rnaseq)
+    omezarr    an OME-Zarr image folder (.zattrs with multiscales, or a bioformats2raw layout)
+    spatialdata  a SpatialData .zarr folder (images/, shapes/, points/, tables/)
+               (the three standard formats are read by stdformats.py; zarr v3 stores are recognised
+               and reported as not readable yet)
 
 Verdicts (the rule: when it is not sure it does not guess, it shows what it found):
 
@@ -51,16 +57,21 @@ import zipfile
 from pathlib import Path
 
 PLATFORM_KINDS = ("visium", "xenium", "cosmx", "merscope", "stereoseq", "geomx")
-GENERIC_KINDS = ("akoya", "tiff", "rnaseq")
+GENERIC_KINDS = ("akoya", "tiff", "rnaseq", "anndata", "omezarr", "spatialdata")
+STD_KINDS = ("anndata", "omezarr", "spatialdata")          # standard formats (stdformats.py)
 KINDS = PLATFORM_KINDS + GENERIC_KINDS
 # other names people (and the notebook's older input folders) use for a kind
 ALIASES = {"proteomics_file": "tiff", "proteomics_markers": "akoya", "scrnaseq": "rnaseq", "qptiff": "tiff",
            "ome-tiff": "tiff", "ometiff": "tiff", "he": "tiff", "h&e": "tiff", "visiumhd": "visium",
            "visium-hd": "visium", "visium_hd": "visium", "h5ad": "rnaseq", "10x": "rnaseq", "codex": "tiff",
-           "phenocycler": "tiff", "stereo-seq": "stereoseq", "saw": "stereoseq"}
+           "phenocycler": "tiff", "stereo-seq": "stereoseq", "saw": "stereoseq",
+           "ome-zarr": "omezarr", "ome.zarr": "omezarr", "ome_zarr": "omezarr", "ngff": "omezarr", "zarr": "omezarr",
+           "spatial-data": "spatialdata", "spatial_data": "spatialdata", "sdata": "spatialdata",
+           "anndata-zarr": "anndata", "spatial-h5ad": "anndata", "squidpy": "anndata", "ann-data": "anndata"}
 KIND_WORDS = {"visium": "Visium (Space Ranger output)", "xenium": "Xenium output folder", "cosmx": "CosMx flat files",
               "merscope": "MERSCOPE region folder", "stereoseq": "Stereo-seq (SAW output)", "geomx": "GeoMx DSP study",
-              "akoya": "one TIFF per marker", "tiff": "one image file", "rnaseq": "single-cell RNA-seq"}
+              "akoya": "one TIFF per marker", "tiff": "one image file", "rnaseq": "single-cell RNA-seq",
+              "anndata": "spatial AnnData", "omezarr": "OME-Zarr image", "spatialdata": "SpatialData store"}
 NEEDS = {
     "visium": "Space Ranger's outs folder (binned_outputs/square_NNNum/ for Visium HD, or filtered_feature_bc_matrix.h5 "
               "+ spatial/tissue_positions for classic Visium) and the full-resolution image given to spaceranger",
@@ -72,16 +83,20 @@ NEEDS = {
     "akoya": "a folder of TIFF files, one per marker, all the same size",
     "tiff": "one image file (.qptiff, .ome.tif, .tif, .tiff, .btf)",
     "rnaseq": "an .h5ad with a UMAP in obsm, or a 10x matrix folder (matrix.mtx, features.tsv, barcodes.tsv) with a UMAP CSV",
+    "anndata": "an .h5ad file or an AnnData .zarr folder (zarr v2) with the positions in obsm['spatial']",
+    "omezarr": "an OME-Zarr image folder (OME-NGFF 0.4 or older, zarr v2: .zattrs with multiscales)",
+    "spatialdata": "a SpatialData .zarr folder (zarr v2) with a table in tables/ annotating a shapes element",
 }
 # the options of each kind that detection fills in (in the order prepare.py gets them)
 KIND_ARGS = {"visium": ("image", "outs"), "xenium": ("src",), "cosmx": ("src",), "merscope": ("src", "cells_dir"),
              "stereoseq": ("image", "gef", "gem", "cellbin", "tissue_mask"),
              "geomx": ("dcc", "pkc", "annotation", "image"), "akoya": ("src",), "tiff": ("src",),
-             "rnaseq": ("h5ad", "mtx", "umap", "obs")}
+             "rnaseq": ("h5ad", "mtx", "umap", "obs"), "anndata": ("src", "image"), "omezarr": ("src",),
+             "spatialdata": ("src",)}
 _REPEAT = {"annotation", "image", "obs"}      # given once per value: --annotation a --annotation b
 _NARGS = {"pkc"}                              # given once with every value: --pkc a b
-# options that are not files but change what is required
-OVERRIDE_FLAGS = ("images", "embedding")
+# options that are not files but change what is required (they are passed on to the kind's command too)
+OVERRIDE_FLAGS = ("images", "embedding", "library", "series", "table", "region", "coordinate_system", "image_element")
 
 MAX_DEPTH = 8                  # folders below the one given
 MAX_ENTRIES = 200_000          # files + folders listed before giving up
@@ -365,7 +380,9 @@ def h5ad_obsm(path) -> dict | None:
         with h5py.File(str(path), "r") as f:
             if "X" not in f and "obs" not in f:
                 return {"error": "no X / obs group: not an AnnData file"}
-            return {"obsm": sorted(f["obsm"].keys()) if "obsm" in f else []}
+            sp = f.get("uns/spatial") if "uns" in f else None
+            libs = [k for k in sp.keys() if isinstance(sp[k], h5py.Group)] if isinstance(sp, h5py.Group) else []
+            return {"obsm": sorted(f["obsm"].keys()) if "obsm" in f else [], "libraries": len(libs)}
     except Exception as e:
         return {"error": f"not a readable HDF5 file ({type(e).__name__})"}
 
@@ -1234,7 +1251,24 @@ def _is_mtx_dir(f: dict) -> bool:
                 and _first(f, "features.tsv", "features.tsv.gz", "genes.tsv", "genes.tsv.gz"))
 
 
-def find_rnaseq(cx: Ctx, skip_dir, skip_file) -> list[dict]:
+def _anndata_checks(c: dict, cx: Ctx, keys: list[str], libraries: int, where: str):
+    """A spatial AnnData candidate: positions in obsm['spatial'], one image library (or --library)."""
+    if "spatial" in keys:
+        _ev(c, "positions", f"obsm of {where}", ", ".join(keys))
+    else:
+        _miss(c, f"positions: no obsm['spatial'] (obsm holds: {', '.join(keys) or 'nothing'})", None,
+              "an AnnData without positions is single-cell data: --kind rnaseq (with a UMAP in obsm); "
+              "positions under another key: add --spatial-key <key> to the anndata command")
+    if libraries > 1 and "library" not in cx.ov:
+        _choice(c, "library", f"uns['spatial'] holds {libraries} image libraries (sections); which one?",
+                [{"path": str(i + 1), "note": f"library {i + 1} of {libraries}"} for i in range(libraries)])
+    elif libraries == 1:
+        _ev(c, "image library", f"uns['spatial'] of {where}", "1 library")
+
+
+def find_rnaseq(cx: Ctx, skip_dir, skip_file, want: str | None = None) -> list[dict]:
+    """.h5ad files (single-cell; a spatial one, with obsm['spatial'], is an `anndata` dataset) and 10x
+    matrix folders. `want`: rnaseq or anndata when the user said which."""
     t, out = cx.t, []
     emb = cx.ov.get("embedding") or "X_umap"
     for rel, f in t.files.items():
@@ -1243,8 +1277,23 @@ def find_rnaseq(cx: Ctx, skip_dir, skip_file) -> list[dict]:
         for n in sorted(f):
             if not n.lower().endswith(".h5ad") or skip_file(rel, n):
                 continue
-            c = _cand("rnaseq", "h5ad", "single-cell RNA-seq (AnnData .h5ad)", _join(rel, n), is_file=True)
             info = h5ad_obsm(t.path(rel, n)) if t.real else None
+            spatial = bool(info and "obsm" in info and "spatial" in info["obsm"])
+            if want == "anndata" or (want != "rnaseq" and spatial):
+                c = _cand("anndata", "h5ad", "spatial AnnData (.h5ad)", _join(rel, n), is_file=True)
+                _ev(c, "AnnData file", _join(rel, n), _mb(f[n]))
+                if info is None:
+                    c["notes"].append("the file was not opened: its positions (obsm['spatial']) are not checked")
+                elif "error" in info:
+                    _miss(c, f"{n}: {info['error']}")
+                else:
+                    _anndata_checks(c, cx, info["obsm"], info.get("libraries", 0), n)
+                c["args"]["src"] = t.path(rel, n)
+                out.append(c)
+                continue
+            if want == "anndata":
+                continue
+            c = _cand("rnaseq", "h5ad", "single-cell RNA-seq (AnnData .h5ad)", _join(rel, n), is_file=True)
             _ev(c, "AnnData file", _join(rel, n), _mb(f[n]))
             if info is None:
                 c["notes"].append("the file was not opened: its UMAP (obsm) is not checked")
@@ -1259,6 +1308,8 @@ def find_rnaseq(cx: Ctx, skip_dir, skip_file) -> list[dict]:
                           "add --embedding <one of those keys>, or save the UMAP into the file from scanpy / Seurat first")
             c["args"]["h5ad"] = t.path(rel, n)
             out.append(c)
+    if want == "anndata":
+        return out
     mtx = [rel for rel, f in t.files.items() if _is_mtx_dir(f) and not skip_dir(rel)]
     by_parent: dict[str, list[str]] = {}
     for rel in mtx:
@@ -1397,6 +1448,122 @@ def find_images(cx: Ctx, skip_dir, skip_file, want: str | None = None) -> list[d
             out += [one(n) for n in rest[:40]]
             if len(rest) > 40:
                 out[-1]["notes"].append(f"{len(rest) - 40} more TIFF files in this folder are not listed")
+    return out
+
+
+# -------------------------------------------------- generic: zarr stores (standard formats)
+def _zattrs(path: Path) -> dict:
+    try:
+        return json.loads((path / ".zattrs").read_text(encoding="utf-8")) if (path / ".zattrs").exists() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _zarr3_attrs(path: Path) -> dict:
+    try:
+        return (json.loads((path / "zarr.json").read_text(encoding="utf-8")).get("attributes") or {})
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _subdirs(path: Path) -> list[str]:
+    got = _listdir(path)
+    return got[1] if got else []
+
+
+_SD_ELEMENTS = ("images", "labels", "shapes", "points", "tables")
+
+
+def zarr_kind(path) -> tuple:
+    """(kind, zarr version, attrs) of a zarr store folder: omezarr, anndata, spatialdata or None. Reads
+    only the top metadata file and the names of the folders below it."""
+    p = Path(path)
+    if (p / ".zgroup").exists() or (p / ".zattrs").exists():
+        ver, a = 2, _zattrs(p)
+    elif (p / "zarr.json").exists():
+        ver, a = 3, _zarr3_attrs(p)
+        a = dict(a.get("ome") or {}, **{k: v for k, v in a.items() if k != "ome"})
+    else:
+        return None, 0, {}
+    if any(k in a for k in ("multiscales", "bioformats2raw.layout", "plate", "well", "image-label")):
+        return "omezarr", ver, a
+    if a.get("encoding-type") == "anndata":
+        return "anndata", ver, a
+    subs = _subdirs(p)
+    low = {d.lower() for d in subs}
+    if "spatialdata_attrs" in a or (low & set(_SD_ELEMENTS)) or ("table" in low and "obs" not in low):
+        return "spatialdata", ver, a
+    if {"obs", "var"} <= low:
+        return "anndata", ver, a
+    if "OME" in subs and any(d.isdigit() for d in subs):
+        return "omezarr", ver, a
+    return None, ver, a
+
+
+def find_stdformats(cx: Ctx, skip_dir, want: str | None = None) -> list[dict]:
+    """OME-Zarr images, AnnData .zarr folders and SpatialData stores: every .zarr folder (and every folder
+    holding .zgroup / zarr.json) not inside a platform dataset. The store's insides are not listed."""
+    t, out = cx.t, []
+    if not t.real:
+        return out
+    stores = []
+    for rel, f in t.files.items():
+        if skip_dir(rel):
+            continue
+        if ".zgroup" in f or "zarr.json" in f:
+            stores.append(rel)
+            continue
+        for dn in t.d(rel):
+            if dn.lower().endswith(".zarr") and not dn.startswith("."):
+                stores.append(_join(rel, dn))
+    stores = sorted(set(stores), key=lambda r: (_depth(r), r.lower()))
+    for rel in stores:
+        if any(s != rel and _under(rel, s) for s in stores):
+            continue                                     # inside another store (its images/ etc.)
+        path = Path(t.path(rel))
+        kind, ver, a = zarr_kind(path)
+        if kind is None or (want and want != kind):
+            continue
+        name = t.name(rel) or path.name
+        label = {"omezarr": "OME-Zarr image", "anndata": "spatial AnnData (.zarr)", "spatialdata": "SpatialData store (.zarr)"}[kind]
+        c = _cand(kind, "zarr-v3" if ver == 3 else "zarr", label, rel)
+        c["args"]["src"] = str(path)
+        _ev(c, f"zarr v{ver} store", rel or ".", ", ".join(k for k in list(a)[:6]) or "no attributes")
+        if ver == 3:
+            _miss(c, "the store is zarr v3 (zarr.json): SODA reads zarr v2 stores only", None,
+                  "write it again as zarr v2 (anndata.settings.zarr_write_format = 2; OME-NGFF 0.4 for images), "
+                  "or give the data as .h5ad / OME-TIFF")
+            out.append(c)
+            continue
+        if kind == "omezarr":
+            if "plate" in a or "well" in a:
+                _miss(c, "an HCS plate / well: SODA reads one image", None, "point at one field's image folder (<well>/<field>)")
+            elif "image-label" in a:
+                _miss(c, "a label image (segmentation mask), not an image")
+            elif "multiscales" in a:
+                ms = (a.get("multiscales") or [{}])[0]
+                _ev(c, "multiscales", rel or ".", f"NGFF {ms.get('version') or a.get('version') or '?'}, "
+                                                  f"{len(ms.get('datasets') or [])} level(s)")
+            else:
+                series = (_zattrs(path / "OME").get("series") or sorted((d for d in _subdirs(path) if d.isdigit()), key=int))
+                _ev(c, "bioformats2raw layout", rel or ".", f"{len(series)} series")
+                if len(series) > 1 and "series" not in cx.ov:
+                    c["notes"].append(f"{len(series)} series: series 0 is read (--series picks another)")
+        elif kind == "anndata":
+            _anndata_checks(c, cx, _subdirs(path / "obsm"), len(_subdirs(path / "uns" / "spatial")), name)
+        else:
+            subs = {d.lower(): d for d in _subdirs(path)}
+            el = {k: _subdirs(path / subs[k]) for k in _SD_ELEMENTS if k in subs}
+            if "table" in subs and "tables" not in el:
+                el["tables"] = ["table"]
+            _ev(c, "elements", rel or ".", ", ".join(f"{len(v)} {k}" for k, v in el.items()) or "none")
+            if not el.get("tables"):
+                imgs = el.get("images") or []
+                _miss(c, "a table (tables/): SODA needs a table of counts annotating shapes", None,
+                      (f"an image on its own: --kind omezarr --src {_quote(str(path / subs['images'] / imgs[0]))}" if imgs else ""))
+            elif len(el["tables"]) > 1 and "table" not in cx.ov:
+                c["notes"].append(f"{len(el['tables'])} tables: each one that annotates shapes becomes a layer (--table picks one)")
+        out.append(c)
     return out
 
 
@@ -1640,8 +1807,10 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
     generic: list[dict] = []
     if not want or want in ("tiff", "akoya"):
         generic += [c for c in find_images(cx, skip_dir, skip_file, want) if not want or c["kind"] == want]
-    if not want or want == "rnaseq":
-        generic += find_rnaseq(cx, skip_dir, skip_file)
+    if not want or want in ("rnaseq", "anndata"):
+        generic += find_rnaseq(cx, skip_dir, skip_file, want)
+    if not want or want in STD_KINDS:
+        generic += find_stdformats(cx, skip_dir, want)
     for c in generic:
         _finish(c, ov)
 
@@ -1755,7 +1924,7 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
         rep.update({k: d[k] for k in ("verdict", "reason", "message", "kind", "variant", "label", "candidates", "suggestions")})
         rep["extras"] = d["extras"] + notes
         if d["root"] and not t.single and d["verdict"] == "certain":
-            is_file = d["candidates"][0]["kind"] in ("tiff", "rnaseq") and Path(d["path"]).is_file()
+            is_file = d["candidates"][0]["kind"] in ("tiff", "rnaseq", "anndata") and Path(d["path"]).is_file()
             rep["extras"].insert(0, f"the dataset is the file {d['root']} in the folder given" if is_file
                                  else f"the dataset is in {d['root']}/ below the folder given")
         return done()

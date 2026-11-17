@@ -6271,7 +6271,9 @@
     // list and gets the expression panel too, worded for markers (see syncWording).
     // Xenium, CosMx and MERSCOPE are imaging platforms, and a GeoMx scan is an image too: their
     // stains stay a marker list even with a cells / ROI layer.
-    const isVisium = S.m.kind === "visium" || (!["xenium", "cosmx", "merscope", "geomx"].includes(S.m.kind) && ex.some((e) => e.kind !== "protein"));
+    // a fluorescence image (S.m.imaging, standard formats) or a density background shows its channels, as Xenium does
+    const isVisium = S.m.kind === "visium" || (!["xenium", "cosmx", "merscope", "geomx"].includes(S.m.kind) && !S.m.imaging
+      && !(S.m.image && S.m.image.background) && ex.some((e) => e.kind !== "protein"));
     const hasProt = !isVisium && ex.length > 0;
     $("panelGenes").hidden = !isVisium && !hasProt;
     $("chanList").hidden = isVisium;

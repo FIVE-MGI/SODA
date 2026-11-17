@@ -53,6 +53,14 @@ the generator's own probe collapse, negative probes out of the genes and behind 
 positions inside the ROI outlines, the annotation columns as groupings with no UMAP, the GeoMx
 QC values, the Q3 normalisation factors (= the generator's plain-loop GeomxTools Q3), and no slide
 name or Sample_ID in the export (check_geomx).
+Standard formats (examples/make_stdformats_demo.py, web/SpatialViewer/stdformats.py, annstore.py, ngff.py): a spatial
+AnnData .h5ad in the Squidpy layout (classic Visium: the hires image, scale factors, obs clusters with colours, X_umap),
+an AnnData-Zarr of cells without an image, an OME-Zarr image (NGFF 0.4), and two SpatialData stores (Xenium-like:
+circles, cell / nucleus polygons, transcripts, a second coordinate system; Visium HD-like: equal squares under an image
+with a scale). Checked (check_stdformats): positions through scale factors and NGFF transformations, counts, genes, the
+image pixels, outlines, molecules, the file's own clusterings, no made-up sample ID in any message or export file, the
+cases that are refused (zarr v3, a plate, two libraries, a labels region, mapAxis), and the pages in Chromium
+(tests/stdformats_browser_test.js).
 Cell outlines (web/SpatialViewer/cellshapes.py): the Xenium fixture carries cell and nucleus boundaries as
 csv.gz, parquet, cells.zarr.zip (both layouts) and "a lab's own" GeoJSON + vertex table, CosMx CellLabels
 images and a polygons file, MERSCOPE an older cell_boundaries HDF5 and a WKB parquet with z-planes, Stereo-seq
@@ -2490,6 +2498,230 @@ def check_stereoseq(c: Checker, root: Path, clustering: bool, log_path: Path) ->
 
 
 
+# ------------------------------------------------------------------ standard formats (examples/make_stdformats_demo.py, stdformats.py)
+# a spatial AnnData .h5ad (Squidpy layout, classic Visium) / an AnnData-Zarr of cells without an image / an OME-Zarr
+# image / a SpatialData store shaped like spatialdata-io's Xenium / one shaped like a Visium HD 16 µm layer
+SA_AV, SA_AC, SA_OZ, SA_SX, SA_SH = "demo_anndata_visium", "demo_anndata_cells", "demo_omezarr", "demo_sdata_xenium", "demo_sdata_visiumhd"
+STD_DS = (SA_AV, SA_AC, SA_OZ, SA_SX, SA_SH)
+STD_FAKE = "INT" + "9961"           # the generator's made-up sample ID (library name, a column's values; deid:ok)
+STD_CASES = "stdformats_cases"
+
+
+def stdformats_commands(root: Path) -> list[list[str]]:
+    try:
+        r = root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        r = root.resolve().as_posix()
+    raw, cache, export = f"{r}/raw", f"{r}/cache", f"{r}/export"
+    prep, mk = "web/SpatialViewer/prepare.py", "examples/demo_xenium_markers.json"
+    return [
+        ["examples/make_stdformats_demo.py", "--out", raw, "--cases", f"{r}/{STD_CASES}"],
+        [prep, "anndata", "--id", SA_AV, "--src", f"{raw}/anndata_visium.h5ad", "--out", cache, "--label", "Synthetic spatial AnnData"],
+        [prep, "export", "--id", SA_AV, "--out", cache, "--dest", export, "--markers", mk],
+        [prep, "anndata", "--id", SA_AC, "--src", f"{raw}/anndata_cells.zarr", "--out", cache, "--coords-um", "1"],
+        # no UMAP: the file's leiden column has no embedding to sit on -> a message, the export goes on
+        [prep, "export", "--id", SA_AC, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "omezarr", "--id", SA_OZ, "--src", f"{raw}/image.ome.zarr", "--out", cache],
+        [prep, "export", "--id", SA_OZ, "--out", cache, "--dest", export, "--markers", "examples/demo_protein_markers.json"],
+        [prep, "spatialdata", "--id", SA_SX, "--src", f"{raw}/sdata_xenium.zarr", "--out", cache, "--pixel-size", "0.5"],
+        [prep, "export", "--id", SA_SX, "--out", cache, "--dest", export, "--markers", mk],
+        [prep, "spatialdata", "--id", SA_SH, "--src", f"{raw}/sdata_visiumhd.zarr", "--out", cache, "--pixel-size", "2"],
+        [prep, "export", "--id", SA_SH, "--out", cache, "--dest", export, "--no-umap"],
+    ]
+
+
+def clean_stdformats(root: Path):
+    for p in [root / STD_CASES] + [root / sub / ds for sub in ("cache", "export") for ds in STD_DS]:
+        if p.exists():
+            print(f"  removing earlier output {p}", flush=True)
+            shutil.rmtree(p)
+
+
+def _std_layer(c: Checker, root: Path, ds: str, key: str, want_px: np.ndarray, counts: np.ndarray, genes: list,
+               what: str) -> np.ndarray:
+    """An expression layer of a standard-format export against the fixture: positions (image pixels, table
+    order), genes, totals and every gene file."""
+    d = root / "export" / ds / "expr" / key
+    pos = f32(d / "positions.bin", 2)
+    c.ok(pos.shape == want_px.shape and np.allclose(pos, want_px, atol=2e-2),
+         f"{ds}: {key} positions.bin = {what}, in the file's row order (max off "
+         f"{float(np.abs(pos - want_px).max()) if pos.shape == want_px.shape else 'shape ' + str(pos.shape)})")
+    gj = read_json(d / "genes.json")
+    c.eq([g["n"] for g in gj], list(genes), f"{ds}: {key} genes.json (features that are not genes and controls left out)")
+    c.ok(np.allclose([g["t"] for g in gj], counts.sum(0)), f"{ds}: {key} genes.json totals = the matrix's column sums")
+    bad = []
+    for j, g in enumerate(genes):
+        rows = np.flatnonzero(counts[:, j] > 0)
+        a = gene_f32(d, g)
+        a = np.zeros((0, 3), np.float32) if a is None else a
+        if len(a) != len(rows) or not np.allclose(a[:, :2], pos[rows]) or not np.allclose(a[:, 2], counts[rows, j]):
+            bad.append(g)
+    c.ok(not bad, f"{ds}: {key} gene files = the matrix (differ: {bad[:4]})")
+    return pos
+
+
+def check_stdformats(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict:
+    """The standard formats (stdformats.py, annstore.py, ngff.py) against the generator's truth: positions through
+    scale factors / NGFF transformations, counts, genes, images, outlines, molecules, the file's own clusterings,
+    what the export must not hold, the cases that are refused, and the page in a browser."""
+    raw, export, cache = root / "raw", root / "export", root / "cache"
+    tr = np.load(raw / "truth_stdformats.npz")
+    tj = read_json(raw / "truth_stdformats.json")
+    genes = tj["genes"]
+    out = {}
+    for ds in STD_DS:
+        if not c.ok((export / ds / "manifest.json").exists(), f"{ds}: exported"):
+            return out
+    # ---- spatial AnnData, classic Visium (uns spatial hires image, scale factors)
+    m = read_json(export / SA_AV / "manifest.json")
+    L = (m.get("expr") or [{}])[0]
+    um = 55.0 / tj["spotPx"] / tj["hires"]
+    c.ok(m.get("kind") == "anndata" and abs((m.get("pixelSizeUm") or 0) - um) < 1e-9,
+         f"{SA_AV}: kind anndata, pixel size = 55 µm / spot_diameter_fullres / tissue_hires_scalef ({m.get('pixelSizeUm')})")
+    c.eq([ch["name"] for ch in m["image"]["channels"]], ["Red", "Green", "Blue"], f"{SA_AV}: the hires image as an RGB photo")
+    c.eq((m["image"]["width"], m["image"]["height"]), (1000, 600), f"{SA_AV}: image size = the hires image")
+    c.ok("source" not in m and "userObs" not in m and not m.get("imaging"), f"{SA_AV}: no local paths / cache tables / imaging flag in the export manifest")
+    c.eq((L.get("key"), L.get("platform"), L.get("nBins"), L.get("nGenes"), L.get("spotDiameterPx")),
+         ("spots", "visium", 240, 20, tj["spotPx"] * tj["hires"]), f"{SA_AV}: spots layer (key, platform, rows, genes, dot)")
+    _std_layer(c, root, SA_AV, "spots", tr["av_xy"] * tj["hires"], tr["av_counts"], genes, "obsm spatial x tissue_hires_scalef")
+    c.ok((cache / SA_AV / "userobs" / "spots" / "obs.csv").exists() and not (export / SA_AV / "userobs").exists(),
+         f"{SA_AV}: the obs tables stay in the cache")
+    if clustering:
+        idx = read_json(export / SA_AV / "expr" / "spots" / "umap" / "index.json")
+        cls = {x.get("name"): x for x in idx.get("clusterings", []) if x.get("source") == "user"}
+        cl = cls.get("cluster", {})
+        c.ok(cl.get("categories") and sorted(cl["categories"]) == ["Region A", "Region B", "Region C"]
+             and dict(zip(cl["categories"], cl.get("colors") or [])) == {"Region A": "#1f77b4", "Region B": "#ff7f0e", "Region C": "#2ca02c"},
+             f"{SA_AV}: obs 'cluster' became your own clustering with uns cluster_colors ({cl.get('categories')}, {cl.get('colors')})")
+        c.eq(idx.get("embedding", {}).get("source"), "user", f"{SA_AV}: obsm X_umap became your own UMAP")
+        lab = np.fromfile(str(export / SA_AV / "expr" / "spots" / "umap" / cl.get("file", "missing")), dtype="<u2") if cl else np.zeros(0)
+        if len(lab) == len(tr["av_types"]):
+            c.ok(ari(lab, tr["av_types"]) > 0.99, f"{SA_AV}: your own clustering = the cluster column, row by row")
+        else:
+            c.ok(False, f"{SA_AV}: clusters_user rows {len(lab)}")
+        smp = cls.get("sample", {})
+        c.ok(len(smp.get("categories") or []) == 2 and not any(STD_FAKE in str(x) for x in smp.get("categories") or []),
+             f"{SA_AV}: the sample column (made-up sample IDs) kept, with its values de-identified ({smp.get('categories')})")
+        out["anndataUserClusters"] = sorted(cls)
+    # ---- AnnData-Zarr of cells, no image: density background in µm (--coords-um 1)
+    m = read_json(export / SA_AC / "manifest.json")
+    L = (m.get("expr") or [{}])[0]
+    c.ok(m["image"].get("background") == "cell density" and m.get("pixelSizeUm") == 1.0,
+         f"{SA_AC}: a cell-density background at 1 µm per pixel ({m['image'].get('background')}, {m.get('pixelSizeUm')})")
+    c.eq((L.get("key"), L.get("kind"), L.get("nBins")), ("cells", "cells", 300), f"{SA_AC}: cells layer")
+    pos = f32(export / SA_AC / "expr" / "cells" / "positions.bin", 2)
+    xy = tr["ac_xy"]
+    c.ok(pos.shape == xy.shape and np.allclose(pos - pos.min(0), xy - xy.min(0), atol=2e-3),
+         f"{SA_AC}: positions = obsm spatial in µm, shifted onto the background")
+    lt = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+    c.ok("the file's own clusterings / UMAP were not attached" in lt and not (export / SA_AC / "expr" / "cells" / "umap").exists(),
+         f"{SA_AC}: export --no-umap: the leiden column has no embedding to sit on, a message and the export goes on")
+    # ---- OME-Zarr image
+    m = read_json(export / SA_OZ / "manifest.json")
+    c.eq([(ch["name"], ch["color"]) for ch in m["image"]["channels"]],
+         [("DAPI", "#0000ff"), ("CD45", "#ff0000"), ("PanCK", "#00ff00"), ("CD3", "#ffff00")],
+         f"{SA_OZ}: channel names and colours from omero")
+    c.eq(m.get("pixelSizeUm"), 0.5, f"{SA_OZ}: pixel size from the level-0 scale (micrometer axes)")
+    try:
+        import zarr
+        img = zarr.open_group(str(cache / SA_OZ / "image.zarr"), mode="r")["0"][:]
+        c.ok(np.array_equal(img, tr["oz_image"]), f"{SA_OZ}: level 0 of the pyramid = the OME-Zarr's level 0, pixel for pixel")
+    except ImportError:
+        print("    SKIP the OME-Zarr pixel check (zarr not installed)")
+    c.ok(any(x.get("kind") == "protein" for x in m.get("expr", [])), f"{SA_OZ}: the protein grid layer, as for an OME-TIFF")
+    # ---- SpatialData, Xenium-like: circles, outlines, transcripts, a second coordinate system
+    m = read_json(export / SA_SX / "manifest.json")
+    L = next((x for x in m.get("expr", []) if x.get("key") == "cells"), {})
+    c.ok(m.get("imaging") is True and m.get("pixelSizeUm") == 0.5 and (m.get("spatialdata") or {}).get("coordinateSystem") == "global",
+         f"{SA_SX}: fluorescence image (imaging), --pixel-size, the global coordinate system of two")
+    c.eq((L.get("kind"), L.get("platform"), L.get("nBins"), L.get("nGenes")), ("cells", "spatialdata", 80, 20), f"{SA_SX}: cells layer")
+    c.ok(abs((L.get("spotDiameterPx") or 0) - float(np.median(2 * tr["sx_rad_px"]))) < 1e-3,
+         f"{SA_SX}: dot = the median circle diameter ({L.get('spotDiameterPx')})")
+    pos = _std_layer(c, root, SA_SX, "cells", tr["sx_xy_px"], tr["sx_counts"], genes, "circle centres x scale (µm -> pixels)")
+    sets = [s.get("key") for s in ((L.get("shapes") or {}).get("sets") or [])]
+    c.eq(sets, ["cell", "nucleus"], f"{SA_SX}: cell outlines (cell_boundaries, scale) and nucleus outlines (nucleus_boundaries, affine)")
+    cs = app_module("cellshapes")
+    for key in sets:
+        try:
+            _i, rows, start, vx = cs.read_set(export / SA_SX / "expr" / "cells" / "shapes" / key)
+            def centroid(r):                         # area centroid of a ring (the vertex mean moves when one is simplified away)
+                x, y = r[:, 0], r[:, 1]
+                x1, y1 = np.roll(x, -1), np.roll(y, -1)
+                cr = x * y1 - x1 * y
+                a = cr.sum() / 2.0
+                return np.array([((x + x1) * cr).sum() / (6 * a), ((y + y1) * cr).sum() / (6 * a)])
+            cen = np.array([centroid(vx[start[k]:start[k + 1]]) for k in range(len(rows)) if start[k + 1] > start[k]])
+            rr = np.array([rows[k] for k in range(len(rows)) if start[k + 1] > start[k]])
+            off = np.abs(cen - pos[rr]).max() if len(rr) else 99
+            c.ok(len(rr) == 80 and off < 0.5, f"{SA_SX}: {key} outlines: 80 polygons, each around its own cell (max off {off:.3f} px)")
+        except (OSError, ValueError, KeyError) as e:
+            c.ok(False, f"{SA_SX}: {key} outlines readable ({e})")
+    mol = m.get("molecules") or {}
+    c.eq((mol.get("n"), mol.get("nGenes")), (int(tr["sx_molecules"][0]), 20),
+         f"{SA_SX}: molecules = the transcripts with qv >= 20, controls left out (two parquet parts, dictionary and plain)")
+    if clustering:
+        idx = read_json(export / SA_SX / "expr" / "cells" / "umap" / "index.json")
+        ct = next((x for x in idx.get("clusterings", []) if x.get("name") == "cell_type" and x.get("source") == "user"), {})
+        c.ok(sorted(ct.get("categories") or []) == ["Type A", "Type B", "Type C"], f"{SA_SX}: the table's cell_type as your own clustering")
+    # ---- SpatialData, Visium HD-like: equal squares, an image with a scale of 4
+    m = read_json(export / SA_SH / "manifest.json")
+    L = (m.get("expr") or [{}])[0]
+    c.eq((L.get("key"), L.get("binSizeUm"), L.get("spotDiameterPx"), L.get("nBins")), ("016um", 16.0, 8.0, 140),
+         f"{SA_SH}: equal squares = a 16 µm bin layer (side through the inverse image transformation)")
+    c.ok(not m.get("imaging"), f"{SA_SH}: an RGB image is a photo")
+    _std_layer(c, root, SA_SH, "016um", tr["sh_xy_px"], tr["sh_counts"], genes, "square centres / the image's scale")
+
+    # ---- what is refused, and that no message names the made-up sample ID
+    def cli(*argv):
+        p = subprocess.run([sys.executable, str(APP / "prepare.py"), *argv], cwd=str(REPO), stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        with open(log_path, "a", encoding="utf-8") as lg:
+            lg.write(f"\n$ prepare.py {' '.join(argv)}\n{p.stdout}")
+        return p.returncode, p.stdout
+    cases, never = root / STD_CASES, root / "std_never"
+    for kind, name, say, extra in (("omezarr", "v3.ome.zarr", ["zarr v3", "zarr_write_format = 2"], []),
+                                   ("omezarr", "plate.ome.zarr", ["plate", "one field"], []),
+                                   ("anndata", "two_libraries.h5ad", ["2 image libraries", "--library"], []),
+                                   ("anndata", "two_libraries.h5ad", ["not one of the 2 libraries"], ["--library", "zz"]),
+                                   ("spatialdata", "labels_region.zarr", ["labels element", "not read yet"], []),
+                                   ("spatialdata", "mapaxis.zarr", ["mapAxis", "identity, scale"], [])):
+        rc, txt = cli(kind, "--src", str(cases / name), "--id", "x", "--out", str(never), *extra)
+        c.ok(rc != 0 and all(w in txt for w in say) and "Traceback" not in txt and STD_FAKE not in txt,
+             f"prepare.py {kind} {name} {' '.join(extra)}: refused with {say}, no traceback, no sample ID (exit {rc}: {txt[-240:]!r})")
+    c.ok(not (never / "x" / "manifest.json").exists(), "standard formats: nothing prepared from a refused file")
+    rc, txt = cli("anndata", "--src", str(cases / "two_libraries.h5ad"), "--id", "lib2", "--out", str(never), "--library", "2")
+    m2 = read_json(never / "lib2" / "manifest.json") if (never / "lib2" / "manifest.json").exists() else {}
+    c.ok(rc == 0 and ((m2.get("expr") or [{}])[0]).get("nBins") == 120 and STD_FAKE not in txt,
+         f"prepare.py anndata --library 2: that section's 120 rows, no sample ID in the log (exit {rc})")
+    rc, txt = cli("ids", "--id", SA_SX, "--out", str(cache), "--dest", str(export))
+    c.ok(rc != 0 and "REFUSING" in txt and not list((export / SA_SX / "expr").rglob("ids.txt.gz")),
+         f"prepare.py ids on a SpatialData export: refused (no allow-listed id format for its cell ids), nothing written (exit {rc})")
+    lt = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+    nl = chr(10)
+    ours = [blk for blk in lt.split(nl + "$ ") if any(k in blk.split(nl, 1)[0] for k in STD_DS + (STD_CASES, "make_stdformats_demo"))]
+    c.ok(len(ours) >= 10 and not [blk.split(nl, 1)[0] for blk in ours if STD_FAKE in blk],
+         f"standard formats: no prepare / export message holds the made-up sample ID (library name, column values; {len(ours)} commands read)")
+    texts = [p for ds in STD_DS for p in (export / ds).rglob("*") if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
+    c.ok(not [p for p in texts if STD_FAKE in p.read_text(encoding="utf-8", errors="ignore")],
+         "standard formats: no export text file holds the made-up sample ID")
+
+    # ---- the page, in Chromium (SKIPPED without node / Playwright)
+    node = shutil.which("node")
+    if not node:
+        print("    node not found: tests/stdformats_browser_test.js skipped")
+    else:
+        p = subprocess.run([node, str(REPO / "tests" / "stdformats_browser_test.js"), "--export", str(export),
+                            "--shots", str(root / "stdformats_shots")], cwd=str(REPO), stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        with open(log_path, "a", encoding="utf-8") as lg:
+            lg.write(p.stdout)
+        print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+        c.eq(p.returncode, 0, "node tests/stdformats_browser_test.js: the standard-format exports open in Chromium (exit code)")
+        out["browser"] = (p.stdout.strip().splitlines() or [""])[-1]
+    return out
+
+
 # ------------------------------------------------------------------ automatic detection (detect.py)
 # every synthetic folder the generators above write: the kind and variant detect.py must name, with verdict "certain"
 DETECT_WANT = {
@@ -2499,10 +2731,14 @@ DETECT_WANT = {
     "cosmx_tx": ("cosmx", "molecules"), "merscope": ("merscope", "images+cells+molecules"),
     "merscope_noimg": ("merscope", "cells+molecules"), "merscope_pq": ("merscope", "images+molecules"),
     "stereoseq": ("stereoseq", "bins+cells"),
+    "anndata_visium.h5ad": ("anndata", "h5ad"), "anndata_cells.zarr": ("anndata", "zarr"), "image.ome.zarr": ("omezarr", "zarr"),
+    "sdata_xenium.zarr": ("spatialdata", "zarr"), "sdata_visiumhd.zarr": ("spatialdata", "zarr"),
 }
 # `prepare.py auto` runs whose cache must equal the explicit subcommand's: (id, source under raw/, options passed through)
 AUTO_SAME = ((VIS, "visiumhd", []), (XE, "xenium", ["--label", "Synthetic Xenium"]), (MX, "multiplex.ome.tif", []),
-             (CXT, "cosmx_tx", ["--pixel-size", "0.5"]), (MSN, "merscope_noimg", []))
+             (CXT, "cosmx_tx", ["--pixel-size", "0.5"]), (MSN, "merscope_noimg", []),
+             (SA_AV, "anndata_visium.h5ad", ["--label", "Synthetic spatial AnnData"]), (SA_OZ, "image.ome.zarr", []),
+             (SA_SX, "sdata_xenium.zarr", ["--pixel-size", "0.5"]))
 
 
 def _touch(p: Path, data: bytes = b"x") -> Path:
@@ -2759,6 +2995,27 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
         case("h5ad/no_umap.h5ad", "incomplete", "missing-files", "rnaseq", say=["x_umap", "x_pca", "--embedding"])
         case("h5ad/no_umap.h5ad", "certain", "one-kind", "rnaseq", overrides={"embedding": "X_pca"})
         case("h5ad", "ambiguous", "several-datasets")
+    std = root / STD_CASES                               # standard formats (stdformats.py) that are refused or asked about
+    if std.exists():
+        r = detect.detect(std / "v3.ome.zarr")
+        c.ok(r["verdict"] == "incomplete" and r["kind"] == "omezarr" and "zarr v3" in r["message"],
+             f"detect a zarr v3 OME-Zarr: incomplete, says zarr v3 (got {r['verdict']} {r['kind']}: {r['message'][:120]})")
+        r = detect.detect(std / "plate.ome.zarr")
+        c.ok(r["verdict"] == "incomplete" and "plate" in r["message"], f"detect an HCS plate: incomplete ({r['verdict']}: {r['message'][:120]})")
+        r = detect.detect(std / "two_libraries.h5ad")
+        text = " | ".join(r["suggestions"]) + " | " + detect.format_report(r)
+        c.ok(r["verdict"] == "ambiguous" and r["reason"] == "open-choice" and r["kind"] == "anndata" and "--library 2" in text
+             and STD_FAKE not in text, f"detect two libraries in one AnnData: a choice by number, no library name ({r['verdict']}: {r['message'][:120]})")
+        r = detect.detect(std / "two_libraries.h5ad", overrides={"library": "2"})
+        c.eq(r["verdict"], "certain", "detect two libraries with library 2 given: certain")
+        c.ok(any('"library": r"2"' in ln for ln in detect.option_lines(detect.detect(std / "two_libraries.h5ad"), "two_libraries")),
+             "detect two libraries: the notebook's option line names library")
+        r = detect.detect(std / "two_libraries.h5ad", kind="rnaseq")
+        c.eq((r["kind"], r["verdict"]), ("rnaseq", "certain"), "detect a spatial .h5ad with --kind rnaseq: the single-cell reading")
+    if (neg / "h5ad").exists():
+        r = detect.detect(neg / "h5ad" / "with_umap.h5ad", kind="anndata")
+        c.ok(r["verdict"] == "incomplete" and "obsm['spatial']" in r["message"],
+             f"detect an .h5ad without positions with --kind anndata: incomplete, says obsm['spatial'] ({r['message'][:120]})")
     out["cases"] = c.n
 
     # ---- the command line
@@ -2819,7 +3076,8 @@ BATCH_MIXED = "bx_mixed"            # xenium_pq + MERSCOPE tables: two kinds; th
 BATCH_BROKEN = "bx_broken"          # a Xenium folder whose stain file is not a TIFF: certain, then prepare fails
 BATCH_AMBIG = "bx_two_runs"         # MERSCOPE with two segmentation runs: skipped, with the --cells-dir to add
 BATCH_IDLIKE = "INT" + "9961_scan"  # a folder name that looks like a sample ID (made up; deid:ok): skipped, never written
-BATCH_OK = sorted(list(BATCH_GOOD) + [BATCH_MIXED])
+BATCH_STD = "bx_sdata"              # sdata_xenium.zarr copied as bx_sdata.zarr: the id drops .zarr, pixel_size from the options
+BATCH_OK = sorted(list(BATCH_GOOD) + [BATCH_MIXED, BATCH_STD])
 
 
 def make_batch_inputs(root: Path) -> tuple[Path, Path]:
@@ -2831,6 +3089,7 @@ def make_batch_inputs(root: Path) -> tuple[Path, Path]:
     for name, raw in BATCH_GOOD.items():
         shutil.copytree(root / "raw" / raw, inp / name)
     shutil.copytree(root / "raw" / "xenium_pq", inp / BATCH_MIXED)
+    shutil.copytree(root / "raw" / "sdata_xenium.zarr", inp / f"{BATCH_STD}.zarr")
     for n in ("detected_transcripts.csv", "cell_by_gene.csv", "cell_metadata.csv"):
         _touch(inp / BATCH_MIXED / n, b"a,b\n")
     for d in (BATCH_BROKEN, BATCH_IDLIKE):
@@ -2845,7 +3104,7 @@ def make_batch_inputs(root: Path) -> tuple[Path, Path]:
     opts = b / "options.json"
     opts.write_text(json.dumps({"_comment": "the notebook's OPTIONS as JSON",
                                 "bx_cosmx": {"pixel_size": 0.5, "label": "Batch CosMx"},
-                                BATCH_MIXED: {"kind": "xenium"}}, indent=1), encoding="utf-8")
+                                BATCH_MIXED: {"kind": "xenium"}, BATCH_STD: {"pixel_size": 0.5}}, indent=1), encoding="utf-8")
     return inp, opts
 
 
@@ -3808,7 +4067,7 @@ def check_sharing(c: Checker, log_path: Path):
 
 def check_publishable(c: Checker, root: Path, log_path: Path):
     export = root / "export"
-    texts = [p for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS for p in (export / ds).rglob("*")
+    texts = [p for ds in (VIS, MX, TL) + XEN_DS + GEOMX_DS + STD_DS for p in (export / ds).rglob("*")
              if p.is_file() and p.suffix in (".json", ".geojson", ".txt")]
     texts += [p for p in (root / "export_sample" / MX).rglob("*") if p.is_file() and p.suffix == ".json"]
     texts += [p for ds in (VIS, XE) for p in (root / "export_user" / ds).rglob("*")
@@ -3818,7 +4077,7 @@ def check_publishable(c: Checker, root: Path, log_path: Path):
     lp = [p for p in texts if LOCAL_PATH.search(p.read_text(encoding="utf-8", errors="ignore"))]
     c.ok(not lp, f"export text files contain local paths: {lp[:3]}")
     args = (["web/SpatialViewer/deid.py", "check", str(export / VIS), str(export / MX), str(export / TL)] +
-            [str(export / ds) for ds in XEN_DS + GEOMX_DS])
+            [str(export / ds) for ds in XEN_DS + GEOMX_DS] + [str(export / ds) for ds in STD_DS if (export / ds).exists()])
     if (root / "export_sample" / MX).exists():
         args.append(str(root / "export_sample" / MX))
     for extra in (root / "export_user" / VIS, root / "export_user" / XE, root / "export_partial" / VIS, root / "export" / RNA,
@@ -3889,7 +4148,7 @@ def check_packs(c: Checker, root: Path, log_path: Path, rna_demo: dict) -> dict:
     res = {"rnaseqDemo": rna_demo}
     # ---- every current export: packed, consistent ----------------------------------------------
     # (the cell-outline exports too: their shapes/ tiles sit beside the packs, unpacked and untouched)
-    ids = [(export, ds) for ds in (VIS, MX, TL, RNA) + XEN_DS + GEOMX_DS + ST_DS + IMG_DS if (export / ds / "manifest.json").exists()]
+    ids = [(export, ds) for ds in (VIS, MX, TL, RNA) + XEN_DS + GEOMX_DS + ST_DS + IMG_DS + STD_DS if (export / ds / "manifest.json").exists()]
     ids += [(root / r, ds) for r in (OL_ZARR, OL_OWN, OL_NONE) for ds in XEN_DS if (root / r / ds / "manifest.json").exists()]
     n_groups = n_shards = n_genes = n_shapes = 0
     for base, ds in ids:
@@ -4164,6 +4423,10 @@ def main(argv=None) -> int:
         for cmd in imaging_commands(root):               # CosMx / MERSCOPE fixtures
             timings[Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"] = run(cmd, log_path)
         if not args.reuse:
+            clean_stdformats(root)
+        for cmd in stdformats_commands(root):            # OME-Zarr, spatial AnnData, SpatialData
+            timings[Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"] = run(cmd, log_path)
+        if not args.reuse:
             clean_outlines(root)
         for i, cmd in enumerate(outline_commands(root)):  # outlines from cells.zarr.zip and from a lab's own files
             timings[f"{cmd[1]} {cmd[3]} (outlines {i + 1})"] = run(cmd, log_path)
@@ -4200,6 +4463,8 @@ def main(argv=None) -> int:
     summary["geomx"] = check_geomx(c, root)
     print("checks: demo_cosmx*, demo_merscope* (FOV mosaic / mosaics, cells layer, molecules, density background)")
     summary["imaging"] = check_imaging(c, root, clustering, log_path)
+    print("checks: standard formats (spatial AnnData, OME-Zarr, SpatialData)")
+    summary["stdformats"] = check_stdformats(c, root, clustering, log_path)
     print("checks: demo_stereoseq (bin layers + cells), _gem, _lv, _mask")
     summary["stereoseq"] = check_stereoseq(c, root, clustering, log_path)
     print("checks: automatic detection (detect.py, prepare.py detect / auto)")

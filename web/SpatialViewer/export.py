@@ -152,6 +152,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
         raise ValueError(f"gene_files must be one of {genepack.MODES}, not {gene_files!r}")
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
+    if m.get("userObs"):            # obs columns / X_umap a standard-format prepare kept (stdformats.py)
+        import stdformats
+        user_clusters = stdformats.user_specs(ds_dir, m, user_clusters)
     userclusters.check_layers(user_clusters, m)
     # --ids: every layer's ids read and checked (allow-list, sample-ID patterns) before anything is written
     ids_plan = layerids.plan(ds_dir, m, log=log) if write_ids else {}
@@ -344,6 +347,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     sm["static"] = True
     sm["tileFormat"] = ext
     sm.pop("source", None)          # local paths are nobody else's business
+    sm.pop("userObs", None)         # cache paths of the obs tables (attached above as your own clusterings)
     if layer_regions:               # Tier A: per-layer region tables for the viewer
         sm["expr"] = [({**layer, "regions": layer_regions[layer["key"]], "regionOverlay": region_file}
                        if layer["key"] in layer_regions else dict(layer))

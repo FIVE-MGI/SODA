@@ -112,7 +112,12 @@ Section 0. Run that cell even if you change nothing.
 Two more, outside Section 0:
 
 - **`OPTIONS`** (Section 2): settings per dataset, such as `label`, `pixel_size`, `crop`,
-  `flip`, `channels` or `user_layer`. The notebook's Section 2 lists every key.
+  `flip`, `channels` or `user_layer`. The notebook's Section 2 lists every key. For the
+  standard formats (spatial AnnData, OME-Zarr, SpatialData) there are also `library`,
+  `matrix`, `spatial_key`, `image_res`, `layer_kind`, `coords_um`, `series`, `table`,
+  `region`, `coordinate_system`, `image_element`, `points` and `no_user_clusters`, the
+  `prepare.py` options of the same names
+  ([PREPARING_DATA.md](PREPARING_DATA.md#standard-formats-spatial-anndata-ome-zarr-spatialdata)).
 - **`IS_THIS_DATA_PUBLIC`** (Section 7): `"yes"` or `"no"`. The cell stops until you answer.
 
 The same steps without the notebook, one command each:
@@ -184,7 +189,10 @@ The page, in `web/SpatialViewer/`:
 The Python tools that write the data are in the same folder. `prepare.py` is the entry
 point (one subcommand per input type, plus `export`, `userclusters`, `inspect`, `detect`, `auto` and
 `batch`, which is `batch.py`); each
-other `.py` file starts with a note on what it does. What they write, file by file:
+other `.py` file starts with a note on what it does. The standard formats are three of them:
+`stdformats.py` (the `anndata`, `omezarr` and `spatialdata` subcommands), `annstore.py` (reads an
+AnnData's groups from `.h5ad` or zarr with h5py / zarr, without the anndata package) and `ngff.py`
+(OME-NGFF images and coordinate transformations). What they write, file by file:
 [DATA_FORMAT.md](DATA_FORMAT.md). The password function is
 `deploy/azure/api/token/index.js`.
 
@@ -214,6 +222,11 @@ python web/SpatialViewer/prepare.py batch --src D:/SODA_work/inputs --out D:/SOD
 - `--options options.json` is the notebook's `OPTIONS` as JSON, with the same keys (and
   `markers`, a marker list for that dataset only). Relative paths are read from the options
   file's folder.
+- A dataset can also be a single `.h5ad` file or `.zarr` folder (spatial AnnData, OME-Zarr,
+  SpatialData) directly in `--src`: its id is the name without `.h5ad`, `.zarr` or `.ome.zarr`.
+  A choice the file leaves open (which library, table or coordinate system) makes it
+  skipped, with the option to add (`library`, `table`, `region`, `coordinate_system`,
+  `image_element`) for `options.json`.
 
   ```json
   {"nerve_section1": {"label": "Normal nerve"},

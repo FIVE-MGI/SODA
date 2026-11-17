@@ -72,22 +72,29 @@ WHOLE_SECTION_GB = 8.5          # largest measured peak (README, Requirements): 
 # The notebook's OPTIONS keys (Section 2), plus "markers" (a marker list for this dataset only).
 # Keys that settle which files are read (detect.py overrides, passed to `prepare.py auto`):
 FILE_OPTIONS = ("image", "outs", "gef", "gem", "cellbin", "tissue_mask", "dcc", "pkc", "annotation", "cells_dir",
-                "h5ad", "mtx", "umap", "obs", "images")
+                "h5ad", "mtx", "umap", "obs", "images",
+                # standard formats: choices, not files (detect.OVERRIDE_FLAGS)
+                "library", "series", "table", "region", "coordinate_system", "image_element")
+CHOICE_OPTIONS = {"images", "library", "series", "table", "region", "coordinate_system", "image_element"}
 # Options of the kind's own command, and the kinds that take them (the notebook's prepare_args):
-KIND_OPTIONS = {"pixel_size": None, "channels": ("tiff",), "image_scale": ("visium",),
-                "no_cells": ("xenium", "cosmx", "merscope"), "no_transcripts": ("xenium", "cosmx", "merscope"),
-                "qv_min": ("xenium",), "z": ("cosmx", "merscope"), "bins": ("stereoseq",),
+KIND_OPTIONS = {"pixel_size": None, "channels": ("tiff", "omezarr"), "image_scale": ("visium", "anndata"),
+                "no_cells": ("xenium", "cosmx", "merscope"),
+                "no_transcripts": ("xenium", "cosmx", "merscope", "spatialdata"),
+                "qv_min": ("xenium",), "z": ("cosmx", "merscope", "omezarr", "spatialdata"), "bins": ("stereoseq",),
+                "matrix": ("anndata", "spatialdata"), "spatial_key": ("anndata",), "image_res": ("anndata",),
+                "layer_kind": ("anndata",), "coords_um": ("anndata", "spatialdata"), "points": ("spatialdata",),
+                "no_user_clusters": ("anndata", "spatialdata"),
                 "sheet": ("geomx",), "layout": ("geomx",), "keep_slide_names": ("geomx",),
                 "crop": ("tiff", "akoya", "visium"), "flip": ("tiff", "akoya", "visium")}
 USER_OPTIONS = ("user_layer", "user_umap", "user_obs", "user_h5ad", "user_embedding", "user_columns",
                 "user_barcode_prefix", "user_barcode_suffix", "user_replace")
 OTHER_OPTIONS = ("kind", "label", "group", "src", "markers")
 KNOWN_OPTIONS = set(FILE_OPTIONS) | set(KIND_OPTIONS) | set(USER_OPTIONS) | set(OTHER_OPTIONS)
-PATH_OPTIONS = set(FILE_OPTIONS) - {"images"} | {"src", "markers"}
+PATH_OPTIONS = set(FILE_OPTIONS) - CHOICE_OPTIONS | {"src", "markers"}
 # the notebook's names for three kinds (also the folder names of its older inputs/<kind>/<id>/ layout)
 KIND_FOLDERS = {"visium", "xenium", "stereoseq", "cosmx", "merscope", "geomx", "proteomics_file",
                 "proteomics_markers", "scrnaseq"}
-PROTEIN_KINDS = ("tiff", "akoya")      # these get the protein marker list, every other kind the gene list
+PROTEIN_KINDS = ("tiff", "akoya", "omezarr")   # these get the protein marker list, every other kind the gene list
 
 _print_lock = threading.Lock()
 
@@ -130,8 +137,9 @@ def scrub_obj(obj):
 
 
 def safe_id(name) -> str:
-    """The notebook's rule: a folder name becomes the dataset id."""
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", str(name)).strip("_") or "dataset"
+    """The notebook's rule: a folder name becomes the dataset id (a store's .zarr / .ome.zarr is dropped)."""
+    name = re.sub(r"(?:\.ome)?\.zarr$", "", str(name), flags=re.I)
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "dataset"
 
 
 def secs(s) -> str:

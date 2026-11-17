@@ -22,6 +22,11 @@ r"""Build the viewer cache for one dataset.
            (FOV mosaic / mosaic stains, cells and molecules as for xenium; cosmx.py, merscope.py)
     python prepare.py stereoseq --image <SN>_HE_regist.tif --gef <SN>.raw.gef --cellbin <SN>.cellbin.gef --id s1 --out <cache folder>
            (Stereo-seq / SAW: bin20 / bin50 / bin100 layers cut to the tissue + a "cells" layer; --gem instead of --gef works too)
+    python prepare.py omezarr     --src <image.ome.zarr>                 --id z1 --out <cache folder>
+    python prepare.py anndata     --src <section.h5ad | anndata.zarr>    --id a1 --out <cache folder>
+    python prepare.py spatialdata --src <sdata.zarr>                     --id s1 --out <cache folder>
+           (standard formats: an OME-Zarr image; a spatial AnnData (obsm['spatial'], uns['spatial'] image,
+            obs clusterings); a SpatialData store (images, tables on shapes, points). stdformats.py)
 
 Common options: --label, --pixel-size (µm/px), --tile, --geojson "Label=path" (repeatable),
 --rgb-split (keep RGB files as three channels instead of max-projecting).
@@ -180,20 +185,21 @@ def _detect_overrides(extra):
             op.add_argument(opt, action="append")
         else:
             op.add_argument(opt)
-    op.add_argument("--images")
-    op.add_argument("--embedding")
+    for k in detect.OVERRIDE_FLAGS:                   # --images, --embedding, --library, --table ...
+        op.add_argument("--" + k.replace("_", "-"), dest=k)
     ns, rest = op.parse_known_args(list(extra))
     ov = {k: v for k, v in vars(ns).items() if v is not None}
-    for k in ("images", "embedding"):                 # the kind's command needs these two as well
+    for k in detect.OVERRIDE_FLAGS:                   # the kind's command needs these as well
         if k in ov:
-            rest += ["--" + k, ov[k]]
+            rest += ["--" + k.replace("_", "-"), ov[k]]
     return ov, rest
 
 
 def run_detect(args, extra) -> int:
     import detect
     ov, rest = _detect_overrides(extra)
-    rest = [r for i, r in enumerate(rest) if not (r in ("--images", "--embedding") or (i and rest[i - 1] in ("--images", "--embedding")))]
+    flags = {"--" + k.replace("_", "-") for k in detect.OVERRIDE_FLAGS}
+    rest = [r for i, r in enumerate(rest) if not (r in flags or (i and rest[i - 1] in flags))]
     if rest:
         raise SystemExit(f"prepare.py detect: unrecognized arguments: {' '.join(rest)}")
     try:
@@ -257,12 +263,14 @@ def main(argv=None):
                         help="detect the kind of a folder and run the matching command when that is certain; "
                              "otherwise stop (exit 3 ambiguous, 4 incomplete, 5 unknown) and say what to add. "
                              "Options of the kind's own command are passed through")
-    au.add_argument("--src", required=True, help="the dataset folder (or one file: a QPTIFF, an OME-TIFF, an .h5ad)")
+    au.add_argument("--src", required=True, help="the dataset folder (or one file: a QPTIFF, an OME-TIFF, an .h5ad; "
+                                                 "or a .zarr folder: OME-Zarr, AnnData-Zarr, SpatialData)")
     au.add_argument("--id", required=True, help="dataset id (folder name in the cache, URL-safe)")
     au.add_argument("--out", help="cache root folder (every kind except rnaseq)")
     au.add_argument("--dest", help="static export root (rnaseq only: it has no cache step)")
     au.add_argument("--kind", dest="force_kind", metavar="KIND",
-                    help="you say what it is (visium, xenium, cosmx, merscope, stereoseq, geomx, akoya, tiff, rnaseq): "
+                    help="you say what it is (visium, xenium, cosmx, merscope, stereoseq, geomx, akoya, tiff, rnaseq, "
+                         "anndata, omezarr, spatialdata): "
                          "used as given even when detection is unsure; stops with the reason when that kind's "
                          "required files are not there")
 
@@ -409,7 +417,12 @@ def main(argv=None):
                                           "(square-bin layers) + cell bin GEF (a 'cells' layer)")
     stereoseq.add_args(ss)
     common(ss)
-    for p_ in (x, cx, mc, ss):
+    import stdformats
+    for k_ in ("omezarr", "anndata", "spatialdata"):     # standard formats (stdformats.py)
+        p_ = sub.add_parser(k_, help=stdformats.HELP[k_])
+        stdformats.ADD_ARGS[k_](p_)
+        common(p_)
+    for p_ in (x, cx, mc, ss, sub.choices["spatialdata"]):
         cellshapes.add_prepare_args(p_)                 # --no-outlines, --outline-tolerance-um
     for p in sub.choices.values():
         p.add_argument("--threads", type=int,
@@ -499,6 +512,7 @@ def main(argv=None):
     manifest = {"id": args.id, "label": args.label or args.id, "kind": args.kind,
                 "pixelSizeUm": args.pixel_size, "created": datetime.now().isoformat(timespec="seconds"),
                 "source": {}, "expr": [], "overlays": []}
+    plat = None                                   # cosmx / merscope / standard formats: their plan
 
     if args.kind == "akoya":
         files = akoya_files(Path(args.src))
@@ -546,6 +560,11 @@ def main(argv=None):
         src = plat.source
         manifest["pixelSizeUm"] = plat.pixel_size_um
         manifest["source"] = plat.manifest_source
+    elif args.kind in ("omezarr", "anndata", "spatialdata"):
+        plat = stdformats.plan(args.kind, args, log=log)                   # stdformats.py
+        src = plat.source
+        manifest["pixelSizeUm"] = args.pixel_size or plat.pixel_size_um
+        manifest["source"] = plat.manifest_source
     elif args.kind == "tiff":
         names = args.channels.split(",") if args.channels else None
         src = pyramid.TiffStackSource(Path(args.src), names=names, rgb_split=True)
@@ -584,7 +603,8 @@ def main(argv=None):
         manifest["pixelSizeUm"] = float(src.pixel_size_um)
         log(f"[image] pixel size from file: {manifest['pixelSizeUm']:.4f} µm/px")
     try:
-        manifest["image"] = pyramid.build_image(src, ds_dir, tile=args.tile, log=log)
+        manifest["image"] = pyramid.build_image(src, ds_dir, tile=args.tile, log=log,
+                                                colors=getattr(plat, "colors", None))
     finally:
         src.close()
 
@@ -613,7 +633,7 @@ def main(argv=None):
                 if mol:
                     manifest["molecules"] = mol
 
-    if args.kind in ("cosmx", "merscope"):
+    if args.kind in ("cosmx", "merscope", "omezarr", "anndata", "spatialdata"):
         plat.finish(ds_dir, manifest, args, log=log)                       # cells layer, molecules
     if args.kind == "stereoseq":
         stereoseq.build(args, ds_dir, manifest, log=log)
