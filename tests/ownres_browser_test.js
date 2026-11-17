@@ -2,7 +2,7 @@
 // Your own results (web/SpatialViewer/ownres.js) in the browser: a reader loads a table of results they already have
 // (UMAP, clusterings, cell types, numbers) from a file, with no re-export. On the demo's Visium HD export with barcode
 // lists (export_user/demo_visiumhd, 16 um layer; tests/smoke_test.py makes it with `prepare.py ids`), in each browser of
-// --browsers (chromium, webkit):
+// --browsers (chromium, webkit, firefox; one that is not installed is SKIPPED with a line saying so):
 //   a Seurat-style CSV (write.csv: an empty first header cell, a sample prefix on the barcodes, a tenth of the bins
 //   dropped, seurat_clusters, cell_type with a colour column, a number, UMAP_1 / UMAP_2): roles guessed, the match rate,
 //   colours on the tissue and on the file's UMAP checked by pixel, Colour by a value with the file's number;
@@ -14,7 +14,7 @@
 //   a "# soda row order" file) and a layer without SODA's UMAP; and the section at 375 px phone width.
 //
 //   node tests/ownres_browser_test.js                         (needs demo/: run tests/smoke_test.py first)
-//   node tests/ownres_browser_test.js --root <demo dir> --page <dir> --shots <dir> --browsers chromium,webkit --gpu
+//   node tests/ownres_browser_test.js --root <demo dir> --page <dir> --shots <dir> --browsers chromium,webkit,firefox --gpu
 //
 // Playwright is not a dependency of this repo (see tests/outlines_browser_test.js): without it the test says so and
 // exits 0. The fixtures are made here from the export's own ids.txt.gz and positions.bin; nothing is downloaded.
@@ -35,6 +35,10 @@ const BROWSERS = arg("--browsers", "chromium").split(",").map((s) => s.trim()).f
 const GPU_ARGS = ["--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"];
 const SOFT_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"];
 const DS = "demo_visiumhd", KEY = "016um";
+// Firefox's console lines that are not the page's faults (see tests/browsers_test.js): the vendor/ tag's SHA-384
+// checked against a 404 when there is no vendor/, and deck.gl's WebAssembly probe refused by the page's CSP
+const FIREFOX_QUIET = [/integrity attribute match the content of the subresource at .[^ ]*\/vendor\//,
+  /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 
 let pw = null;
 for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").split(path.delimiter), path.join(REPO, "node_modules")].filter(Boolean)) {
@@ -166,7 +170,7 @@ async function run(B, browser, URL0, DATA) {
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block", acceptDownloads: true });
   const errors = [];
   const watch = (page, tag) => {
-    page.on("console", (m) => { if (m.type() === "error" && !/\/vendor\//.test((m.location() || {}).url || "")) errors.push(`${tag}: console: ${m.text()}`); });
+    page.on("console", (m) => { if (m.type() === "error" && !/\/vendor\//.test((m.location() || {}).url || "") && !(B === "firefox" && FIREFOX_QUIET.some((re) => re.test(m.text())))) errors.push(`${tag}: console: ${m.text()}`); });
     page.on("pageerror", (e) => errors.push(`${tag}: pageerror: ${e.message}`));
     page.on("response", (r) => { if (r.status() >= 400 && !/favicon|\/vendor\//.test(r.url())) errors.push(`${tag}: http ${r.status()}: ${r.url()}`); });
   };
@@ -440,7 +444,7 @@ async function run(B, browser, URL0, DATA) {
     if (!pw[name]) { console.log(`${name}: not in this Playwright, skipped`); continue; }
     let b = null;
     try { b = await pw[name].launch(name === "chromium" ? { args: GPU ? GPU_ARGS : SOFT_ARGS } : {}); }
-    catch (e) { console.log(`${name}: not installed (${String(e.message || e).split("\n")[0]}), skipped`); continue; }
+    catch (e) { console.log(`SKIPPED ${name}: not installed (${String(e.message || e).split("\n")[0]})`); continue; }
     try { await run(name, b, URL0, DATA); }
     catch (e) { check(false, `${name}: the checks ran to the end`, String(e && e.stack || e).slice(0, 600)); }
     await b.close();
