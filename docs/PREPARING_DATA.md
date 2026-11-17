@@ -566,7 +566,11 @@ For Xenium, MERSCOPE, CosMx and Stereo-seq cell bins, SODA loads the outline of 
 the instrument or its software wrote (it does not segment anything itself) and the viewer draws
 those outlines, filled with the colour of the gene, cluster or selection on show, once you zoom
 in far enough for a cell to be about 5 screen pixels across (dots when zoomed out; "Cell
-shapes: Outlines / Dots" in the View tab; nucleus outlines under More options). Nothing needs
+shapes: Outlines / Dots" in the View tab; nucleus outlines under More options). What picks out
+some of the cells fills their outlines too, in the colours its dots have: Draw a region's shapes
+(and a picked shape, lit), a region picked with a click, Colour by a value (one value, two genes,
+a gene set score), cell sets, the quality filter. Save image draws the outlines as on screen and
+names them in its legend, and a link to the view keeps the Outlines / Dots choice. Nothing needs
 to be asked for: `prepare.py xenium | merscope | cosmx | stereoseq` picks the files up when they
 are in the folder, and says so in a line starting `[outlines]`:
 
