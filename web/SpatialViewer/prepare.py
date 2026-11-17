@@ -15,8 +15,9 @@ r"""Build the viewer cache for one dataset.
     python prepare.py akoya  --src <folder of NN_Marker_Sample_gray.tif> --id sample1 --out <cache folder>
     python prepare.py tiff   --src <stack.tif|qptiff|ome.tif>            --id x        --out <cache folder>
     python prepare.py visium --image <hires.tif> --outs <spaceranger outs> --id sample1_visiumhd --out <cache folder>
-    python prepare.py xenium --src <xenium output folder> --id x1 --out <cache folder>
-           (stains; cells -> a "cells" expression layer; transcripts -> the molecules layer)
+    python prepare.py xenium --src <xenium output folder, or a zip of it> --id x1 --out <cache folder>
+           (stains; cells -> a "cells" expression layer; transcripts -> the molecules layer; without stain
+            images a density background; a zip is read as it is, xenium.py / zipinput.py)
     python prepare.py geomx  --dcc <folder of .dcc> --pkc <panel.pkc ...> --annotation <xlsx|csv|LabWorksheet.txt>
            [--image <scan.ome.tiff> ...] --id g1 --out <cache folder>
            (GeoMx DSP: one row per ROI segment in a "rois" layer, ROI outlines, annotation columns as groups)
@@ -368,14 +369,12 @@ def main(argv=None):
     gene_file_args(r)
     i = sub.add_parser("inspect", help="print channels / levels / dtype of a TIFF or qptiff without building")
     i.add_argument("--src", required=True)
-    x = sub.add_parser("xenium", help="Xenium output folder: morphology_focus stains, cells (cells.csv.gz + "
+    x = sub.add_parser("xenium", help="Xenium output folder, or a zip of it: morphology_focus stains (else a "
+                                      "transcript / cell density background), cells (cells.csv.gz + "
                                       "cell_feature_matrix) as a 'cells' expression layer, transcripts as the "
-                                      "molecules layer (+ Custom_annotation.geojson if present)")
-    x.add_argument("--src", required=True, help="the Xenium output folder (the one holding morphology_focus/)")
-    x.add_argument("--no-cells", action="store_true", help="skip the cells layer")
-    x.add_argument("--no-transcripts", action="store_true", help="skip the molecules layer")
-    x.add_argument("--qv-min", type=float, default=20.0,
-                   help="molecules: keep transcripts with quality value >= this (default 20, Xenium's own cut)")
+                                      "molecules layer (+ Custom_annotation.geojson if present; xenium.py)")
+    import xenium as _xenium
+    _xenium.add_args(x)
     common(x)
     gx = sub.add_parser("geomx", help="GeoMx DSP: DCC counts + PKC probe kit(s) + annotation sheet (+ scan OME-TIFFs "
                                       "with the ROI polygons) -> a 'rois' layer, one row per ROI segment (geomx.py)")
@@ -516,6 +515,7 @@ def main(argv=None):
         return
 
     ds_dir = Path(args.out) / args.id
+    made_dir = not ds_dir.exists()
     ds_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     manifest = {"id": args.id, "label": args.label or args.id, "kind": args.kind,
@@ -531,38 +531,15 @@ def main(argv=None):
         src = pyramid.TiffFileSource(files, rgb_split=args.rgb_split)
         manifest["source"] = {"folder": str(args.src), "files": [str(p) for _, p in files]}
     elif args.kind == "xenium":
-        import re as _re
-        import tifffile as _tf
-        folder = Path(args.src)
-        if not (folder / "morphology_focus").is_dir() and (folder / "data" / "morphology_focus").is_dir():
-            folder = folder / "data"                      # an archive's <name>/data/ layout
-        files = sorted((folder / "morphology_focus").glob("*.ome.tif*"))
-        if not files:
-            sys.exit(f"no morphology_focus/*.ome.tif in {folder}")
-        with _tf.TiffFile(str(files[0])) as tf0:           # the OME block lists every channel
-            ome = tf0.ome_metadata or ""
-        names = _re.findall(r'<Channel[^>]*?\sName="([^"]*)"', ome)
-        px = _re.findall(r'PhysicalSizeX="([^"]*)"', ome)
-        pairs = []
-        for f in files:
-            m = _re.match(r"ch(\d+)_", f.name)
-            idx = int(m.group(1)) if m else len(pairs)
-            pairs.append((names[idx] if idx < len(names) else f.stem.split("_", 1)[-1], f))
-        src = pyramid.TiffFileSource(pairs)
-        if args.pixel_size is None and px:
-            manifest["pixelSizeUm"] = float(px[0])
-        import xenium as _xen
-        xpx = _xen.pixel_size(folder)
-        if args.pixel_size is None and xpx:
-            old = manifest["pixelSizeUm"]
-            if old and abs(old - xpx) / xpx > 0.01:
-                log(f"[xenium] pixel size: experiment.xenium says {xpx:.4f} µm/px, the OME metadata {old:.4f}; "
-                    f"using experiment.xenium's (cells and transcripts are placed with it)")
-            manifest["pixelSizeUm"] = xpx
-        ann = folder / "Custom_annotation.geojson"
-        if ann.exists() and not args.geojson:
-            args.geojson = [f"Annotations={ann}"]
-        manifest["source"] = {"folder": str(folder), "files": [str(p) for _, p in pairs]}
+        try:
+            plat = _xenium.plan(args, log=log)                             # xenium.py: a folder or a zip
+        except SystemExit:
+            if made_dir and not any(ds_dir.iterdir()):
+                ds_dir.rmdir()                                             # refused before anything was written
+            raise
+        src = plat.source
+        manifest["pixelSizeUm"] = plat.pixel_size_um
+        manifest["source"] = plat.manifest_source
     elif args.kind in ("cosmx", "merscope"):
         import importlib
         plat = importlib.import_module(args.kind).plan(args, log=log)      # cosmx.py / merscope.py
@@ -617,32 +594,7 @@ def main(argv=None):
     finally:
         src.close()
 
-    if args.kind == "xenium":
-        import xenium as _xen
-        inp = _xen.find_inputs(folder)
-        um = manifest["pixelSizeUm"]
-        size = (manifest["image"]["width"], manifest["image"]["height"])
-        if not um:
-            log("[xenium] WARNING no pixel size (experiment.xenium / OME): cells and transcripts skipped; "
-                "give --pixel-size")
-        else:
-            if not args.no_cells:
-                cells = _xen.read_cells(inp, log=log)
-                if cells:
-                    area = cells["medianAreaUm2"]
-                    diam = 2.0 * (area / 3.141592653589793) ** 0.5 if area else None
-                    meta = build_cell_layer(ds_dir, cells["xy_um"], um, cells["X"], cells["genes"], key="cells",
-                                            label="Cells", cell_diameter_um=diam, log=log,
-                                            extra={"platform": "xenium"}, barcodes=cells["barcodes"])
-                    if not args.no_outlines:
-                        cellshapes.attach(ds_dir, meta, cellshapes.xenium_sets(folder, um, log=log), um, args=args, log=log)
-                    manifest["expr"].append(meta)
-            if not args.no_transcripts:
-                mol = _xen.write_transcripts(inp, ds_dir, size, um, qv_min=args.qv_min, log=log)
-                if mol:
-                    manifest["molecules"] = mol
-
-    if args.kind in ("cosmx", "merscope", "omezarr", "anndata", "spatialdata"):
+    if args.kind in ("xenium", "cosmx", "merscope", "omezarr", "anndata", "spatialdata"):
         plat.finish(ds_dir, manifest, args, log=log)                       # cells layer, molecules
     if args.kind == "stereoseq":
         stereoseq.build(args, ds_dir, manifest, log=log)
@@ -670,6 +622,8 @@ def main(argv=None):
     manifest["overlays"] = parse_geojson_args(args.geojson, ds_dir)
     with open(ds_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=1)
+    if hasattr(plat, "cleanup"):
+        plat.cleanup(args, log=log)                                        # xenium: the files copied out of a zip
     log(f"[done] {ds_dir}\\manifest.json  ({time.time() - t0:.0f}s)")
 
 

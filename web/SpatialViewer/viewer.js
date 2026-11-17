@@ -1364,6 +1364,7 @@
 
   function tooltipFor(info) {
     const orow = outlines ? outlines.rowAt(info) : -1;           // a cell's outline: what its dot would say
+    if (orow >= 0 && paint && paint.active() && !umapByCat() && !gatePreviewOn()) { const t = paint.tip(orow); if (t) return { text: t }; }
     if (orow >= 0) return umapTooltip(orow);
     if (paint && info.layer && info.layer.id.startsWith("paint-") && info.index >= 0) { const t = paint.tip(info.index); if (t) return { text: t }; }
     if (info.layer && info.layer.id.includes("ucloud") && info.index >= 0) return umapTooltip(umapRowAt(info.layer.id, info.index));
@@ -1468,7 +1469,14 @@
           if (info.object && info.object.i >= 0) lassoPickShape(info.object.i);
           return;
         }
-        const p = info && info.object && info.object.properties;
+        let p = info && info.object && info.object.properties;
+        // a cell's outline drawn over the region outlines (something is lit): the click is for the region under it,
+        // as it is when the cells are dots (those are not picked there)
+        if (orow >= 0 && !(p && p.__region_id) && S.region.meta) {
+          const ids = S.overlays.filter((o) => o.on && o.data).map((o) => `ov-${S.dsId}-${o.key}`);
+          const hit = ids.length ? deckgl.pickObject({ x: info.x, y: info.y, radius: 0, layerIds: ids }) : null;
+          p = hit && hit.object && hit.object.properties;
+        }
         const rid = p && p.__region_id;
         if (rid) selectRegion(rid);
         else if (S.region.selected) selectRegion(null);
@@ -2146,6 +2154,7 @@
     return n;
   }
   const LASSO_NONE = 0xffff;
+  let lassoBinSeq = 0;
 
   // ---- cell outlines (outlines.js): a cells layer's segmentation boundaries, drawn instead of the
   // dots once the cells are large enough on screen. The tiles and layers are outlines.js's; the
@@ -2173,12 +2182,35 @@
     const byCl = umapByCluster(), byCt = !byCl && umapByType();
     const mix = byCl || byCt ? null : umapGeneMix();
     const keep = binQc ? binQc.greyMask() : null;
+    const only = mix ? regionOnlyRows(U.pos.length / 2) : null, hl = lassoHl();
     return { pos: U.pos, mix, lit: umapLit("tissue"), keep, sel: UMAP_SEL, opacity: S.geneOpacity,
       radius: Math.max(0.5, (e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale),
-      pick: !!(U.cl || mix),                         // hovering has something to say
+      pick: !!(U.cl || mix || hl),                   // hovering has something to say
       cat: byCl ? (r) => { const c = U.cl[r]; return U.hidden.has(c) ? null : c === UMAP_NONE ? undefined : sectionRgb(c); }
         : byCt ? (r) => (U.ct[r] === CT_OUT ? undefined : ctRgb(U.ct[r])) : null,
-      key: `${S.dsId}|${S.exprKey}|${U.ver}|${byCl ? `cl${U.clRes}|${[...U.hidden].join(",")}` : byCt ? "ct" : mix ? mix.key : "-"}|${keep ? binQc.ver() : "-"}` };
+      only: only && only.mask, hl,
+      key: `${S.dsId}|${S.exprKey}|${U.ver}|${byCl ? `cl${U.clRes}|${[...U.hidden].join(",")}` : byCt ? "ct" : mix ? mix.key : "-"}|${keep ? binQc.ver() : "-"}|${only ? only.key : "-"}` };
+  }
+  // A region picked with a click (Tier A): the gene density map is cut to that region's bins (geneHeat), so the
+  // outlines' gene colouring is too. Only where the density map is: with Colour by a value, or the glow blend,
+  // the dots are not cut either. { key, mask (1 = in the region) } or null.
+  function regionOnlyRows(N) {
+    const sel = S.region.selected, ids = S.region.ids;
+    if (!sel || !ids || ids.length !== N || S.geneBlend !== "heatmap" || (paint && paint.active())) return null;
+    const R = S.region;
+    if (!R.only || R.only.sel !== sel || R.only.ids !== ids) {
+      const mask = new Uint8Array(N);
+      for (let r = 0; r < N; r++) if (ids[r] === sel) mask[r] = 1;
+      R.only = { sel, ids, mask, key: `r${sel}` };
+    }
+    return R.only;
+  }
+  // Draw a region's colours by row (lassoRefresh) when the outlines can take them: the rows line up with theirs
+  function lassoHl() {
+    const L = S.lasso, U = S.umap;
+    // (S.umap is made again for each layer, so its positions are this layer's rows; U.key is only set with an embedding)
+    if (!outlines || !L || !L.bin || !L.bin.n || !L.bin.byRow || !U || !U.pos || L.bin.byRow.length !== 2 * U.pos.length || inUmap()) return null;
+    return { key: L.bin.key, rgba: L.bin.byRow };
   }
 
   function lassoReset() {
@@ -2380,6 +2412,8 @@
     const a = L.assign, pos = L.pos, R = L.result;
     let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== LASSO_NONE) n++;
     const positions = new Float32Array(2 * n), colors = new Uint8Array(4 * n), rgb = L.shapes.map(lassoRgb);
+    // the same colours by row, for the cell outlines (outlineColors): they fill the cells' own polygons
+    const byRow = new Uint8Array(4 * a.length);
     const lit = lassoLitRows();
     // coloured by cluster in the panel: the same colours on the slide, so the two read as one
     const byCl = lassoByCluster() && R.info.mode === "bins";
@@ -2392,10 +2426,11 @@
       colors[4 * k] = c[0]; colors[4 * k + 1] = c[1]; colors[4 * k + 2] = c[2];
       // see-through by default so the H&E under a shape stays readable
       colors[4 * k + 3] = lit ? (lit(i, a[i]) ? 235 : 12) : (R ? 110 : 80);
+      byRow.set(colors.subarray(4 * k, 4 * k + 4), 4 * i);
       k++;
     }
     L.bin = { n, data: { length: n, attributes: { getPosition: { value: positions, size: 2 }, getFillColor: { value: colors, size: 4, normalized: true } } },
-              key: `${n}|${Date.now()}` };
+              key: `${n}|${++lassoBinSeq}`, byRow };      // a count, not the time: two refreshes in one millisecond differ
     umapDirty();                                   // a picked shape / brush also lights the main UMAP
     if (S.umap) syncUmapUI();                      // the chip names the pick
     lassoSyncSel();
@@ -2442,9 +2477,12 @@
     const e = currentExpr();
     const r = Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale);
     const out = [];
-    if (L.bin && L.bin.n) out.push(new ScatterplotLayer({
+    // with cell outlines on show the cells' own polygons take these colours (outlineColors): the dots hand over
+    // to them as the gene dots do; a highlight the outlines cannot take (rows not lined up) stays dots
+    const k = lassoHl() ? dotK() : 1;
+    if (L.bin && L.bin.n && k > 0) out.push(new ScatterplotLayer({
       id: `lasso-bins-${S.exprKey}`, data: L.bin.data,
-      radiusUnits: "common", getRadius: r, radiusMinPixels: 0.8, stroked: false, filled: true,
+      radiusUnits: "common", getRadius: r, radiusMinPixels: 0.8, stroked: false, filled: true, opacity: k,
       parameters: NORMAL, updateTriggers: { getFillColor: [L.bin.key] },
     }));
     const R = L.result;
@@ -6413,6 +6451,9 @@
       if (on.length) out.push({ title: "Molecules", items: on.map((g) => ({ label: g.name, rgb: g.rgb.slice(0, 3) })) });
     }
     if (!umap) {
+      // the cells drawn as their segmentation outlines (outlines.js), not as dots
+      const cs = outlines ? outlines.legend() : [];
+      if (cs.length) out.push({ title: "Cell shapes", items: cs });
       const ov = S.overlays.filter((o) => o.on && o.data);
       if (ov.length) out.push({ title: "Outlines", items: ov.map((o) => ({ label: o.label, outline: [255, 220, 80] })) });
       if (measure) out.push(...measure.legend());

@@ -535,7 +535,11 @@ outlines. An export without `shapes` is drawn as dots, as before.
 The viewer draws dots while the median cell (`spotDiameterPx`) is under 5 screen pixels across,
 outlines alone from 9, both cross-faded in between, and stays on dots when more than 120,000
 outlines (20,000 on a touch device) would be in view (`config.js` `outlineFromPx`,
-`outlineFullPx`, `outlineBudget`).
+`outlineFullPx`, `outlineBudget`). Colour never rebuilds a polygon: whatever colours or picks out
+cells (genes, clusters, cell sets, Colour by a value, Draw a region's shapes, a region picked with a
+click, the quality filter) is one RGBA per row that the outline layers read. A link to the view
+carries the Outlines / Dots choice as the view block's `cs` entry (`{"m": "outlines" | "dots", "n": 1}`
+with nucleus outlines on); a link without it leaves the viewer's own choice.
 
 In the prepare cache the same files are in `<cache>/<id>/shapes/<layer key>/<set>/`.
 
@@ -607,6 +611,11 @@ Written by `prepare.py cosmx` / `prepare.py merscope` (`cosmx.py`, `merscope.py`
     `instrumentPixelUm` is the µm per instrument pixel used.
   - MERSCOPE: from `global_x, global_y` (µm): the first two rows of
     `micron_to_mosaic_pixel_transform.csv`. `zPlane` is the mosaic z-plane imported.
+  - Xenium without stain images (`kind: "xenium"`, written by `prepare.py xenium`): from
+    Xenium's `x, y` (µm), `a = e = 1 / pixelSizeUm`, no shift (Xenium's origin is kept).
+    `xeniumPixelSizeUm` is the morphology pixel size, and `pixelSizeUm` a whole multiple of it
+    (5 × 0.2125 = 1.0625 µm by default). A Xenium dataset with its stain images has no `frame`:
+    its positions are µm ÷ the image's pixel size.
 - `image.background` is present only when the dataset had no images: `"transcript density"`
   or `"cell density"`. The single channel ("Transcript density (no image)") is then the
   number of transcripts (cells) per pixel of `pixelSizeUm` (1 µm unless `--background-um`),

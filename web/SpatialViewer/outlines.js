@@ -180,17 +180,36 @@
     }
 
     // ---- colours: one RGBA per row for the fill, one for the line ---------------------------------
+    // ctx.colors() may also hand over
+    //   only  a mask per row (1 = keep): the gene colouring is drawn only where it is 1 (a region picked
+    //         with a click: the density map is cut to that region's bins the same way)
+    //   hl    { key, rgba } one RGBA per row (alpha 0 = none): a highlight drawn over the colouring, as the
+    //         dots of Draw a region are drawn over the gene dots. Mixed in here ("over", straight alpha),
+    //         so a highlight is a colour update of the layers there are, never another layer of polygons.
+    //         The gene opacity then goes into the fill's alpha (the highlight is not faded by it, as its
+    //         dots are not), and the layer's opacity is only the fade between dots and outlines.
+    //   mix.alpha  one fill alpha for every coloured row, instead of one from its strength (Colour by a
+    //         value: its dots are all drawn at that alpha, the colour alone says how much)
     function colours(N) {
       const C = ctx.colors();
-      const key = C ? `${C.key}|${N}` : `none|${N}`;
-      if (O.col && O.col.key === key) return O.col;
+      const hl = C && C.hl && C.hl.rgba && C.hl.rgba.length === 4 * N ? C.hl : null;
+      const op = C ? C.opacity : 1;
+      const key = C ? `${C.key}|${N}${hl ? `|hl${hl.key}|${op}` : ""}` : `none|${N}`;
+      if (O.col && O.col.key === key) {
+        // the opacity and dot size sliders change no colour: they are read every frame, not built in
+        if (C) { O.col.radius = C.radius; if (!hl) O.col.opacity = op; }
+        return O.col;
+      }
       const fill = new Uint8Array(4 * N), line = new Uint8Array(4 * N);
       const mix = C && C.mix, cat = C && C.cat, lit = C && C.lit, keep = C && C.keep, sel = (C && C.sel) || [255, 214, 64];
+      const only = C && C.only && C.only.length === N ? C.only : null, mixA = mix && mix.alpha > 0 ? mix.alpha : 0;
+      const H = hl ? hl.rgba : null;
       let anyFill = false;
       for (let r = 0; r < N; r++) {
         const k = 4 * r;
         let c = null, fa = 0, lc = LINE, la = 150;
-        if (keep && !keep[r]) { c = GREY; fa = 200; lc = GREY; la = 235; }           // removed by the quality filter
+        const kept = !(keep && !keep[r]);
+        if (!kept) { c = GREY; fa = 200; lc = GREY; la = 235; }                    // removed by the quality filter
         else {
           const isLit = lit ? !!lit(r) : false;
           let t = 1;
@@ -198,15 +217,28 @@
             const v = cat(r);
             if (v === null) { la = 0; }                                             // a hidden cluster: not drawn
             else if (v) c = v;
-          } else if (mix && mix.t[r] >= 0) { c = [mix.rgb[3 * r], mix.rgb[3 * r + 1], mix.rgb[3 * r + 2]]; t = mix.t[r]; }
+          } else if (mix && mix.t[r] >= 0 && (!only || only[r])) { c = [mix.rgb[3 * r], mix.rgb[3 * r + 1], mix.rgb[3 * r + 2]]; t = mix.t[r]; }
           if (lit && !isLit) { c = null; if (la) { lc = DIM; la = 55; } }            // something else is lit: a faint line
-          else if (c) { fa = lit ? 235 : cat ? 175 : Math.round(70 + 170 * t); lc = [c[0] + (255 - c[0]) * 0.35, c[1] + (255 - c[1]) * 0.35, c[2] + (255 - c[2]) * 0.35]; la = 255; }
+          else if (c) { fa = lit ? 235 : cat ? 175 : mixA || Math.round(70 + 170 * t); lc = [c[0] + (255 - c[0]) * 0.35, c[1] + (255 - c[1]) * 0.35, c[2] + (255 - c[2]) * 0.35]; la = 255; }
           else if (isLit) { c = sel; fa = 200; lc = sel; la = 255; }
+        }
+        if (!c || !fa) { c = null; fa = 0; }
+        if (H) {
+          if (fa) fa = Math.round(fa * op);
+          const ha = H[k + 3];
+          // the highlight over the colouring; a cell removed by the quality filter stays grey (its grey dot is drawn last)
+          if (ha && kept) {
+            const h = [H[k], H[k + 1], H[k + 2]], A = ha / 255, B = (fa / 255) * (1 - A), out = A + B;
+            c = c ? [0, 1, 2].map((i) => Math.round((h[i] * A + c[i] * B) / out)) : h;
+            fa = Math.round(255 * out);
+            // a highlight that shows (not one dimmed because another shape is picked) also draws the line
+            if (ha >= 64 && la) { lc = [h[0] + (255 - h[0]) * 0.35, h[1] + (255 - h[1]) * 0.35, h[2] + (255 - h[2]) * 0.35]; la = 255; }
+          }
         }
         if (c && fa) { fill[k] = c[0]; fill[k + 1] = c[1]; fill[k + 2] = c[2]; fill[k + 3] = fa; anyFill = true; }
         line[k] = lc[0]; line[k + 1] = lc[1]; line[k + 2] = lc[2]; line[k + 3] = la;
       }
-      O.col = { key, fill, line, anyFill, over: !!lit, pos: C ? C.pos : null, opacity: C ? C.opacity : 1, radius: C ? C.radius : 4,
+      O.col = { key, fill, line, anyFill, over: !!lit, pos: C ? C.pos : null, opacity: H ? 1 : op, radius: C ? C.radius : 4,
                 pick: !!(C && C.pick) };
       return O.col;
     }
@@ -344,6 +376,26 @@
       };
       if (nb) nb.onchange = () => { nuclei = nb.checked; ctx.requestRender(); };
       syncUI();
+      // a link to the view and Save JSON carry the choice (viewlink.js extend()): { m: "outlines" | "dots", n: 1 = nuclei }.
+      // Only for a layer with outlines. A link or file without it leaves the viewer's own choice as it is; putting a
+      // link's choice back does not change what this browser remembers (that is the menu's alone).
+      if (window.SodaViewLink && window.SodaViewLink.extend) window.SodaViewLink.extend({
+        key: "cs",
+        capture: () => (available() ? { m: mode, ...(nuclei && setOf("nucleus") ? { n: 1 } : {}) } : null),
+        clean: (x, h) => {
+          if (!h.isObj(x)) return null;
+          const o = {};
+          h.put(o, "m", h.oneOf(x.m, ["outlines", "dots"])); h.put(o, "n", h.bool(x.n));
+          return o.m || o.n !== undefined ? o : null;
+        },
+        apply: async (v) => {
+          if (!v) return [];
+          if (v.m) mode = v.m;
+          if (v.n !== undefined) nuclei = !!v.n && !!setOf("nucleus");
+          syncUI(); ctx.requestRender();
+          return [];
+        },
+      });
     }
     init();
 
@@ -352,6 +404,14 @@
       // how much of the dots to draw this frame: 1 = as always, 0 = the outlines have taken over
       dotAlpha: () => O.dot,
       mode: () => mode,
+      // Save image's legend: what the outlines on show are (none while the cells are dots)
+      legend: () => {
+        if (!(O.alpha > 0) || !primary()) return [];
+        const items = [{ label: (primary().meta && primary().meta.label) || "Cell outlines", outline: LINE }];
+        const N = nuclei ? setOf("nucleus") : null;
+        if (N && N.tiles.size) items.push({ label: (N.meta && N.meta.label) || "Nucleus outlines", outline: NUCLEUS });
+        return items;
+      },
       setMode: (m) => { mode = m === "dots" ? "dots" : "outlines"; syncUI(); ctx.requestRender(); },
       setNuclei: (on) => { nuclei = !!on && !!setOf("nucleus"); syncUI(); ctx.requestRender(); },
       // for tests and the console: what is loaded and what it cost

@@ -48,7 +48,7 @@ verdict is **certain**. Options of that command (`--label`, `--pixel-size`, `--b
 |---|---|---|
 | certain | one kind fits and every file it requires is there | runs it |
 | ambiguous | more than one kind fits, or a choice is open: several TIFFs next to a Visium `outs/`, two segmentation runs, several datasets in one folder | stops (exit code 3) and prints each choice with the option to add, e.g. `--kind visium --image "path/to/he.tif"` |
-| incomplete | a kind is recognised but a required file is missing, or the data is still zipped | stops (4) and names the file |
+| incomplete | a kind is recognised but a required file is missing, or the data is still zipped (any kind but Xenium, whose zip is read as it is) | stops (4) and names the file |
 | unknown | nothing recognised, an empty folder, a path that is not there | stops (5) |
 
 **It does not guess.** When it is not certain it shows what it found and you choose:
@@ -62,7 +62,7 @@ How each kind is recognised (from what its reader needs, see the sections below)
 | Kind | Recognised by |
 |---|---|
 | `visium` | a Space Ranger folder: `binned_outputs/square_NNNum/` (Visium HD) or `filtered_feature_bc_matrix.h5` + `spatial/tissue_positions*` (classic). **The full-resolution image is not in that folder:** a TIFF next to `outs/` (or in a folder next to it) is taken when it is the only one, or the only one whose pixel size is the one Space Ranger recorded (`tissue_hires_image.png` ÷ `tissue_hires_scalef`). Several that fit: ambiguous, listed with their sizes. None: incomplete. |
-| `xenium` | `morphology_focus/*.ome.tif` (required); `experiment.xenium`, cells and transcripts are optional and their absence is listed. Other TIFFs in the folder are reported as not used. |
+| `xenium` | `morphology_focus/*.ome.tif`; `experiment.xenium`, cells and transcripts are optional and their absence is listed. Without the stain images, a folder that is surely Xenium's (`experiment.xenium`, a `transcripts.zarr(.zip)`, the cell-feature matrix) and has cells or transcripts is certain too: drawn on a density background. A Xenium 1.x `morphology.ome.tif` without `morphology_focus/` stays incomplete. A zip of a Xenium output folder is certain as it is (`--src` is the zip). Other TIFFs in the folder are reported as not used. |
 | `cosmx` | `*_exprMat_file`, `*_metadata_file`, `*_fov_positions_file`, `*_tx_file` (up to two folders down) and the FOV image folders. Two slides' tables in one folder: ambiguous. |
 | `merscope` | `detected_transcripts`, `cell_by_gene` + `cell_metadata` (also one or two folders down, e.g. `vpt-run/`), `images/mosaic_*.tif`. Mosaics without `micron_to_mosaic_pixel_transform.csv`: incomplete. Several segmentation runs and none in the region folder itself: ambiguous (`--cells-dir`). |
 | `stereoseq` | `<SN>_<stain>_regist.tif` (required) with `<SN>.tissue.gef`, else `.raw.gef`, else a `.gem(.gz)`; `<SN>.cellbin.gef`. With several, the order is H&E before ssDNA before DAPI and tissue before raw; the ones not used are listed. |
@@ -77,7 +77,9 @@ How each kind is recognised (from what its reader needs, see the sections below)
 A folder that holds several datasets is reported dataset by dataset and never merged; run
 `auto` once per dataset, or `prepare.py batch` for all of them with one log
 ([ADVANCED.md, section 8](ADVANCED.md#8-many-datasets-at-once-without-the-notebook)). Zipped instrument output is recognised from the zip's file list
-(nothing is unpacked) and must be unzipped first. `python web/SpatialViewer/prepare.py detect path --json`
+(nothing is unpacked). A zipped Xenium output is prepared as it is ([Xenium](#xenium), *A zipped output*), each zip a
+dataset of its own (unless its unzipped folder is beside it: then the folder is used and the zip noted); every other
+kind must be unzipped first. `python web/SpatialViewer/prepare.py detect path --json`
 prints the full report for scripts. The notebook (`notebooks/SODA_pipeline.ipynb`) uses the
 same check: put each dataset in its own folder under `inputs/`, with any name.
 
@@ -153,8 +155,8 @@ python web/SpatialViewer/prepare.py xenium --src path/to/xenium_output_folder --
 ```
 
 `--src` is the Xenium Onboard Analysis output folder (the one holding `morphology_focus/`;
-if you unpacked an archive with a `data/` folder inside, either folder works). What is read,
-when present:
+if you unpacked an archive with a `data/` folder inside, either folder works), or a zip of it
+(see *A zipped output* below). What is read, when present:
 
 | File | Becomes |
 |---|---|
@@ -192,6 +194,36 @@ when present:
 - `--crop` and `--flip` are not available for `xenium`.
 - Positions need no alignment: Xenium's µm coordinates start at the top-left corner of the
   morphology image, so pixel = µm ÷ pixel size.
+
+**Without the stain images** (no `morphology_focus/`, e.g. a folder that holds only
+`transcripts.zarr.zip`, or the cell files and the matrix): the cells and the molecules are
+prepared as usual and drawn on a neutral grey background, the density of the transcripts (of
+the cells when there are no transcripts), as for CosMx and MERSCOPE without images. The
+background keeps Xenium's frame: its origin is Xenium's (0, 0) and one background pixel is a
+whole number of morphology pixels, about 1 µm (5 × 0.2125 µm = 1.0625 µm; `--background-um`
+for another size). The morphology pixel size comes from `experiment.xenium`; without it,
+0.2125 µm (Xenium's) is taken and the log says so (`--pixel-size` sets it). The background's
+extent comes from the transcripts' chunk grid (at most 250 µm more than the data) and the
+cells. No protein grid is built on it. Example: a whole hemisphere's `transcripts.zarr.zip`
+(1.7 GB, 84 million transcripts, no cells, no images) prepared in 70 s and exported in 14 s
+(300 MB, mostly the molecules).
+
+**A zipped output.** `--src` may be a `.zip` of the output folder: Xenium's own output
+bundle (files at the top of the zip) or a zip of the whole folder (the dataset folder a few
+folders down, e.g. `<run>/data/`). Nothing is unzipped by hand and the zip is never changed.
+Each file is read the cheapest way that works: the tables, the matrix and `experiment.xenium`
+straight from the zip (a stored member in place, a compressed `.parquet` / `.h5` /
+`transcripts.zarr.zip` in memory up to 256 MB, `SODA_ZIP_MEMORY_MB`); what needs random
+access and is bigger, the stain images always and a compressed `transcripts.zarr.zip`, is
+copied out into a work folder beside the cache, `<out>/_unzipped/<id>/` (`--unzip-to <folder>`
+for another place; never next to the zip), and the log says so. Before copying, the free
+space there is checked (the files' size plus 2 GB, `SODA_UNZIP_RESERVE_GB`). After a
+successful prepare the copies are removed (`--keep-unzipped` keeps them); after a failure they
+stay and the next run reuses them. A zip is refused as a whole, before anything is read, when
+a name inside is absolute or has a `..` part (zip slip), when the sizes it declares are above
+2 TB in all (`SODA_ZIP_MAX_GB`), above 1100:1 for one file, or overlap, and while reading when
+a file holds more or less than it declares; copying more than 1 TB out is refused too
+(`SODA_UNZIP_MAX_GB`). `prepare.py outlines` reads a zipped source the same way.
 
 For scale: a whole coronal mouse brain section (morphology_focus 54,002 × 40,815 px, 4 stains;
 155,754 cells; 480 genes; 209 million transcripts) took 43 min to prepare on a loaded
@@ -566,7 +598,11 @@ For Xenium, MERSCOPE, CosMx and Stereo-seq cell bins, SODA loads the outline of 
 the instrument or its software wrote (it does not segment anything itself) and the viewer draws
 those outlines, filled with the colour of the gene, cluster or selection on show, once you zoom
 in far enough for a cell to be about 5 screen pixels across (dots when zoomed out; "Cell
-shapes: Outlines / Dots" in the View tab; nucleus outlines under More options). Nothing needs
+shapes: Outlines / Dots" in the View tab; nucleus outlines under More options). What picks out
+some of the cells fills their outlines too, in the colours its dots have: Draw a region's shapes
+(and a picked shape, lit), a region picked with a click, Colour by a value (one value, two genes,
+a gene set score), cell sets, the quality filter. Save image draws the outlines as on screen and
+names them in its legend, and a link to the view keeps the Outlines / Dots choice. Nothing needs
 to be asked for: `prepare.py xenium | merscope | cosmx | stereoseq` picks the files up when they
 are in the folder, and says so in a line starting `[outlines]`:
 

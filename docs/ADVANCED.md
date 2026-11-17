@@ -231,7 +231,12 @@ python web/SpatialViewer/prepare.py batch --src D:/SODA_work/inputs --out D:/SOD
   SpatialData) directly in `--src`: its id is the name without `.h5ad`, `.zarr` or `.ome.zarr`.
   A choice the file leaves open (which library, table or coordinate system) makes it
   skipped, with the option to add (`library`, `table`, `region`, `coordinate_system`,
-  `image_element`) for `options.json`.
+  `image_element`) for `options.json`. A zipped Xenium output (`.zip`) works the same way: its
+  id is the name without `.zip`, and it is read as it is (the stain images are copied out into
+  `<out>/_unzipped/<id>/` while it is prepared, then removed; see
+  [PREPARING_DATA.md, Xenium](PREPARING_DATA.md#xenium)). A zip next to a dataset folder of the
+  same name (`run1.zip` beside `run1/`, its unzipped copy) is left out with a warning; a zip that
+  fails the zip-slip / zip-bomb checks is skipped with the reason.
 
   ```json
   {"nerve_section1": {"label": "Normal nerve"},
