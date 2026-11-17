@@ -3,6 +3,7 @@ message: "If you use SODA, please cite it as below. A paper is in preparation; t
 type: software
 title: "SODA: Spatial Omics Data Annex"
 version: 0.9.0
+license: AGPL-3.0-or-later
 authors:
   - family-names: Helms
     given-names: Jessica

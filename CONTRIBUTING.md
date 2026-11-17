@@ -37,5 +37,6 @@ Keep the docs' style: plain words, short sentences, and say what was tested and 
 
 ## Licence
 
-The licence is to be decided before public release (see the [README](README.md#licence)).
-Until then, ask before you send a large change.
+SODA is licensed under the GNU Affero General Public License, version 3 or later
+(AGPL-3.0-or-later; see [LICENSE](LICENSE)). By sending a change, you agree that it is
+licensed the same way.

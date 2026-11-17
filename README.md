@@ -5,7 +5,7 @@ in a web browser. You run it once on your own computer, from a Python notebook; 
 plain files that you upload to your own storage, and anyone with the link can look, with
 nothing to install.
 
-**Licence: to be decided before public release.** See [Licence](#licence).
+**Licence:** GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later), the same licence as SiDoLa-NS. See [Licence](#licence).
 
 <!-- SCREENSHOT PLACEHOLDER: docs/img/overview.png
      Whole-slide multiplex IF view with the channel panel open. Lead adds the image. -->
@@ -519,8 +519,12 @@ Manuscript in preparation. Until it is published, please cite this repository: G
 
 ## Licence
 
-**Licence: to be decided before public release.** The [LICENSE](LICENSE) file holds the
-current Washington University terms (©2026 Washington University; non-commercial,
-non-clinical research use). They may change before the repository is made public. For a
-commercial licence under the current terms, contact Washington University's Office of
-Technology Management at otm@wustl.edu.
+SODA is free software: you can redistribute it and/or modify it under the terms of the
+GNU Affero General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version. See [LICENSE](LICENSE).
+Copyright (C) 2026 Washington University.
+
+In short: you may use, change and share SODA, including for commercial work. If you share
+a changed version, or run a changed version as a website that other people use, you must
+make your changed source code available under the same licence. The licence covers SODA's
+code, including the viewer page copied into each export; it does not cover your data.
