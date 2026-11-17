@@ -3,8 +3,9 @@
 # The same shape as FIVE Atlas's build-windows.yml (docs/DESKTOP_APP.md): it runs the very same
 # app/build_release.ps1 a laptop runs, smoke-tests the built SODA.exe headless (tests/app_test.py
 # against the exe: selftest, prepare the demo data through the app, the ID check, the viewer
-# server, the home page), uploads the zip as a build artifact and, on a tag, attaches it to the
-# GitHub Release the macOS job publishes, so one link serves both.
+# server, the home page), builds the per-user installer (Inno Setup) and tests it silently
+# (install, start, uninstall), uploads the zip and the setup.exe as build artifacts and, on a tag,
+# attaches them to the GitHub Release the macOS job publishes, so one link serves both.
 #
 # Guard: like pages.yml, this does nothing on its own in the FIVE-MGI repositories. There it only
 # runs when started by hand (Actions tab -> "Build SODA app (Windows)" -> Run workflow), and a
@@ -62,6 +63,27 @@ jobs:
           fi
           echo "value=$v" >> "$GITHUB_OUTPUT"
 
+      # deck.gl and umap-js inside the app, so its viewer works with no internet: vendor.py fetches the
+      # versions pinned in libs.js and writes a file only if its size and SHA-384 match (exit 1 otherwise,
+      # which fails the job); the build script then checks vendor/ again (--require-vendor).
+      - name: deck.gl and umap-js for offline use (prepare.py vendor)
+        run: python web/SpatialViewer/prepare.py vendor
+
+      # Inno Setup 6 for the installer. GitHub's windows-2025 image (windows-latest) has it
+      # (InnoSetup 6.7.1 in its tool list, in Program Files (x86)); install it with Chocolatey only
+      # if a future image drops it. The build then fails rather than quietly shipping no installer.
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup not on this image: installing it with Chocolatey"
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+          "ISCC=$iscc" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
       - name: Build
         run: >
           powershell -ExecutionPolicy Bypass -File app\build_release.ps1
@@ -69,6 +91,8 @@ jobs:
           -OutRoot "${{ runner.temp }}\build"
           -Python "python"
           -UpdateRepo "${{ github.repository }}"
+          -RequireInstaller
+          -RequireVendor
 
       # The built exe on a clean Windows box, headless: a missing hidden import or DLL, or a broken
       # prepare / ID check / viewer path, fails here rather than on a colleague's laptop.
@@ -83,13 +107,43 @@ jobs:
           [ -f "$EXE" ] || { echo "::error title=build::SODA.exe not found"; exit 1; }
           got="$("$EXE" version | tr -d '\r')"
           [ "$got" = "SODA ${{ steps.ver.outputs.value }}" ] || { echo "::error title=version::exe says '$got'"; exit 1; }
-          python tests/app_test.py --exe "$EXE" --full-selftest --work "${RUNNER_TEMP}/app-test" 2>&1 | tee "${RUNNER_TEMP}/app-test.txt"
+          python tests/app_test.py --exe "$EXE" --full-selftest --expect-vendor --work "${RUNNER_TEMP}/app-test" 2>&1 | tee "${RUNNER_TEMP}/app-test.txt"
           rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then
             body=$(grep -E "FAIL|Traceback|Error" "${RUNNER_TEMP}/app-test.txt" | head -c 3500 | python -c "import sys;print(sys.stdin.read().replace('%','%25').replace('\r','%0D').replace('\n','%0A'))")
             echo "::error title=app-test::${body}"
           fi
           exit $rc
+
+      # The installer, silently: per-user install into a scratch folder (no Start-menu entry), the
+      # installed SODA.exe starts (version, selftest), then the silent uninstall removes the program
+      # folder and leaves the app's data folder alone. The files themselves were tested above.
+      - name: Test the installer
+        id: installer
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $v = "${{ steps.ver.outputs.value }}"
+          $setup = Join-Path $env:RUNNER_TEMP "build\release\SODA-$v-setup.exe"
+          $dir = Join-Path $env:RUNNER_TEMP "soda-installed"
+          $data = Join-Path $env:RUNNER_TEMP "soda-installer-appdata"
+          New-Item -ItemType Directory -Force $data | Out-Null
+          Set-Content -Path (Join-Path $data "keep.txt") -Value "user data"
+          $env:SODA_WORKDIR = $data; $env:SODA_NO_BROWSER = "1"; $env:SODA_NO_UPDATE_CHECK = "1"
+          $p = Start-Process $setup -Wait -PassThru -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER", "/NOICONS", "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\soda-install.log`""
+          if ($p.ExitCode -ne 0) { throw "setup exit $($p.ExitCode)" }
+          $exe = Join-Path $dir "SODA.exe"
+          $got = (& $exe version) -join ""
+          if ($got -ne "SODA $v") { throw "installed SODA.exe says '$got'" }
+          & $exe selftest --quick | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "installed SODA.exe selftest --quick failed" }
+          $p = Start-Process (Join-Path $dir "unins000.exe") -Wait -PassThru -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          if ($p.ExitCode -ne 0) { throw "uninstall exit $($p.ExitCode)" }
+          for ($i = 0; $i -lt 60 -and (Test-Path $dir); $i++) { Start-Sleep 1 }
+          if (Test-Path $dir) { throw "the install folder is still there after uninstall: $((Get-ChildItem -Recurse $dir | Select-Object -First 10) -join ', ')" }
+          if (-not (Test-Path (Join-Path $data "keep.txt"))) { throw "the uninstall touched the app's data folder" }
+          Write-Host "installer: install, start, uninstall OK"
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: always()
@@ -102,12 +156,13 @@ jobs:
             ${{ runner.temp }}/requirements-built.txt
             ${{ runner.temp }}/app-test.txt
             ${{ runner.temp }}/app-test/app_test.log
+            ${{ runner.temp }}/soda-install.log
           if-no-files-found: warn
 
       # Attach to the SAME release the macOS job publishes (one link for both). Waits for it, and
       # creates it only if the Mac build never showed up.
       - name: Attach to release
-        if: github.ref_type == 'tag' && steps.smoke.outcome == 'success'
+        if: github.ref_type == 'tag' && steps.smoke.outcome == 'success' && steps.installer.outcome == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -115,6 +170,8 @@ jobs:
           R="${RUNNER_TEMP}/build/release"
           ZIP=$(ls "$R"/SODA-*-win64.zip | head -1)
           [ -f "$ZIP" ] || { echo "::error::no win64 zip to upload"; exit 1; }
+          SETUP=$(ls "$R"/SODA-*-setup.exe | head -1)
+          [ -f "$SETUP" ] || { echo "::error::no setup.exe to upload"; exit 1; }
           for i in $(seq 1 80); do
             gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
             [ "$i" = 1 ] && echo "waiting for the release to be created..."
@@ -124,7 +181,7 @@ jobs:
             echo "::warning title=release::no release yet (macOS build slow or failed): creating it for the Windows download"
             gh release create "$GITHUB_REF_NAME" --title "SODA $GITHUB_REF_NAME" --notes "SODA desktop app $GITHUB_REF_NAME. See docs/DESKTOP_APP.md." || true
           fi
-          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$R/SHA256SUMS-windows.txt" --clobber
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$SETUP" "$R/SHA256SUMS-windows.txt" --clobber
 
       - name: Job summary
         if: always()
@@ -137,12 +194,13 @@ jobs:
             echo "|---|---|"
             echo "| build | ${{ job.status }} |"
             echo "| app test (selftest, prepare + ID check, viewer, home page) | ${{ steps.smoke.outcome }} |"
+            echo "| installer (silent per-user install, start, silent uninstall) | ${{ steps.installer.outcome }} |"
             echo
             ls -l "${RUNNER_TEMP}/build/release" 2>/dev/null | sed 's/^/    /'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail if the app test failed
-        if: steps.smoke.outcome != 'success'
+        if: steps.smoke.outcome != 'success' || steps.installer.outcome != 'success'
         run: |
-          echo "The app was built and uploaded as an artifact, but tests/app_test.py failed."
+          echo "The app was built and uploaded as an artifact, but tests/app_test.py (${{ steps.smoke.outcome }}) or the installer test (${{ steps.installer.outcome }}) failed."
           exit 1

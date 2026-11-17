@@ -62,6 +62,7 @@ window.SpatialViewerConfig = {
   // default, off when tokenEndpoint is set. false also deletes what earlier visits kept.
   // offline: true,
   // offlineMaxMB: 500,   // the most one kept dataset may hold
+  // offlineKeep: false,  // no "Keep this dataset" button (the page still keeps itself), e.g. data on local disk
 
   // ---- data access ----------------------------------------------------------------
   // The managed function that checks the shared password and returns a short-lived,
