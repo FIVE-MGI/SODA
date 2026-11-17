@@ -269,6 +269,16 @@
       }
       if (s.layer && s.resolution !== undefined) o.sectionClusters = s;
     }
+    // clusters of a Draw a region run merged into sets (cellsets.js), with the run's cluster sizes they were made on:
+    // viewer.js applies them to the next run whose clusters match (runSetsPending)
+    if (isObj(j.runSets)) {
+      const sizes = list(j.runSets.sizes, 2000, (k) => int(k, 0, 2147483647));
+      const sets = list(j.runSets.sets, 500, (x) => {
+        const ids = isObj(x) ? list(x.ids, 2000, (k) => int(k, 0, 65534)) : null;
+        return ids && ids.length >= 2 ? { ids, prev: str(x.prev, 60), name: str(x.name, 60) } : null;
+      });
+      if (sizes && sizes.length && sets && sets.length) o.runSets = { sizes, sets };
+    }
     if (isObj(j.qcFilter) && isObj(j.qcFilter.thresholds)) {
       const th = {};
       for (const k of Object.keys(j.qcFilter.thresholds).slice(0, 20)) {
@@ -297,6 +307,7 @@
     const sc = st.sectionClusters;
     if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [], ...(sc.sets ? { sets: sc.sets } : {}) };
     if (st.qcFilter && st.qcFilter.thresholds) o.qcFilter = { layer: st.qcFilter.layer, thresholds: st.qcFilter.thresholds };
+    if (st.runSets) o.runSets = st.runSets;
     if (st.view) o.view = st.view;
     return o;
   }
@@ -317,9 +328,10 @@
       // a combined shape (no rows in a link: its recipe, def) is thinned like a drawn outline
       return [{ ...s, shapes: drawn.map((x) => ({ ...x, points: thin(x.points || [], THIN_POINTS), ...(x.def ? { def: thinDef(x.def) } : {}) })) }, left];
     },
-    (s) => { const o = { ...s }; delete o.shapes; return [o, (s.shapes || []).length ? ["the drawn shapes"] : []]; },
+    // without the shapes there is no run for merged clusters to go with: they go too
+    (s) => { const o = { ...s }; delete o.shapes; delete o.runSets; return [o, (s.shapes || []).length ? ["the drawn shapes"] : []]; },
     (s) => {
-      const o = { ...s }; delete o.shapes;
+      const o = { ...s }; delete o.shapes; delete o.runSets;
       const named = !!(o.sectionClusters && Object.keys(o.sectionClusters.names || {}).length);
       if (named) o.sectionClusters = { ...o.sectionClusters, names: {} };
       return [o, named ? [...((s.shapes || []).length ? ["the drawn shapes"] : []), "the names given to clusters"] : []];

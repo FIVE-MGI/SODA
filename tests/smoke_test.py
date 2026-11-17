@@ -223,11 +223,12 @@ def demo_commands(root: Path) -> list[list[str]]:
         [prep, "export", "--id", TL, "--out", cache, "--dest", export, "--fmt", "jpg",
          "--markers", "examples/demo_protein_markers.json", "--no-umap", "--seam-correct"],
         [prep, "export", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user", "--markers", "examples/demo_markers.json",
-         "--user-layer", "008um", "--user-obs", f"{r}/user/clusters.csv", "--user-umap", f"{r}/user/umap.csv"],
+         "--user-layer", "008um", "--user-obs", f"{r}/user/clusters.csv", "--user-umap", f"{r}/user/umap.csv", "--no-ids"],
         # the old layout, one file per gene, for hosts without Range requests (check_packs compares it with the packs)
         [prep, "export", "--id", VIS, "--out", cache, "--dest", f"{r}/export_loose", "--markers", "examples/demo_markers.json",
-         "--no-umap", "--no-hvg", "--gene-files", "loose"],
-        # the optional barcode lists (layerids.py): added to an existing export here, written by export --ids below
+         "--no-umap", "--no-hvg", "--gene-files", "loose", "--no-ids"],
+        # the barcode lists (layerids.py): written by every export by default; added here to export_user's Visium HD
+        # (exported with --no-ids above); asked for explicitly with --ids (the old flag) on export_user's Xenium below
         [prep, "ids", "--id", VIS, "--out", cache, "--dest", f"{r}/export_user"],
         ["examples/make_xenium_demo.py", "--out", raw],
         [prep, "xenium", "--id", XE, "--src", f"{raw}/xenium", "--out", cache, "--label", "Synthetic Xenium"],
@@ -933,14 +934,29 @@ def check_user(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict
 
 
 def check_ids(c: Checker, root: Path) -> dict:
-    """The optional barcode / cell id lists (layerids.py): none in a default export; `prepare.py ids` on the
-    Visium HD export_user copy and `export --ids` on the Xenium one write expr/<key>/ids.txt.gz with one id per
-    positions.bin row in that order (= the cache's barcodes / the matrix's cell ids), named in the manifest."""
+    """The barcode / cell id lists (layerids.py): in every default export (one per layer with barcodes, named in
+    the manifest, the same as `prepare.py ids` writes), none with --no-ids; `prepare.py ids` on the Visium HD
+    export_user copy (exported with --no-ids) and `export --ids` (the old flag, now asking explicitly) on the
+    Xenium one write expr/<key>/ids.txt.gz with one id per positions.bin row in that order (= the cache's
+    barcodes / the matrix's cell ids)."""
     out = {}
     for ds in (VIS, XE):
         m = read_json(root / "export" / ds / "manifest.json")
-        c.ok(not any("ids" in L for L in m.get("expr", [])) and not list((root / "export" / ds).rglob("ids.txt*")),
-             f"{ds}: a default export has no id list")
+        rna = [L for L in m.get("expr", []) if L.get("kind") not in ("protein", "rois")]
+        ok = bool(rna)
+        for L in rna:
+            f, e = root / "export" / ds / "expr" / L["key"] / "ids.txt.gz", L.get("ids") or {}
+            pos = root / "export" / ds / "expr" / L["key"] / "positions.bin"
+            n = len(gzip.decompress(f.read_bytes()).decode("utf-8").split("\n")) - 1 if f.exists() else -1
+            ok = ok and e.get("file") == "ids.txt.gz" and n == e.get("n") == pos.stat().st_size // 8 and e.get("bytes") == f.stat().st_size
+        c.ok(ok, f"{ds}: a default export has an id list for every layer ({[L['key'] for L in rna]}), one id per positions.bin row")
+    # the same ids as prepare.py ids writes, byte for byte
+    for key in ("008um", "016um"):
+        a, b = root / "export" / VIS / "expr" / key / "ids.txt.gz", root / "export_user" / VIS / "expr" / key / "ids.txt.gz"
+        c.ok(a.exists() and b.exists() and a.read_bytes() == b.read_bytes(), f"{VIS} {key}: the default export's id list = prepare.py ids's")
+    lo = root / "export_loose" / VIS
+    c.ok(not any("ids" in L for L in read_json(lo / "manifest.json").get("expr", [])) and not list(lo.rglob("ids.txt*")),
+         f"{VIS} --no-ids: no id list and no manifest ids entry")
     # Xenium: the cell ids of the matrix, in its (= positions) order
     xo = root / "export_user" / XE
     L = next((x for x in read_json(xo / "manifest.json").get("expr", []) if x["key"] == "cells"), {})
@@ -1048,6 +1064,41 @@ def check_ids_gates(c: Checker, root: Path):
          "the refusal prints no id (neither the bad ones nor the good ones)")
     c.ok(not list(exp.rglob("ids.txt*")) and (exp / "manifest.json").read_bytes() == before,
          "a refusal writes nothing: no id list for any layer (the good 008um included), manifest unchanged")
+    # (3) the same cache exported by default (no flag): 016um's list is left out with a *** line that names the layer,
+    # the reason and the count but no id; 008um keeps its list; the export goes on (exit 0)
+    full = work / "cache_full" / VIS
+    shutil.copytree(root / "cache" / VIS, full)
+    shutil.rmtree(full / "expr" / "016um.zarr")
+    shutil.copytree(cache / "expr" / "016um.zarr", full / "expr" / "016um.zarr")
+    p = subprocess.run([sys.executable, "web/SpatialViewer/prepare.py", "export", "--id", VIS, "--out", str(work / "cache_full"),
+                        "--dest", str(work / "export_default"), "--no-umap", "--no-hvg"], cwd=str(REPO), stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    ed = work / "export_default" / VIS
+    skip = [ln for ln in p.stdout.splitlines() if "LEFT OUT" in ln]
+    c.ok(p.returncode == 0 and len(skip) == 1 and "*** 016um" in skip[0] and "5 of" in skip[0] and "visium_hd id format" in skip[0],
+         f"a default export leaves out the failing layer's list with a *** line naming it, the reason and the count (exit {p.returncode}): {skip[:1]}")
+    c.ok(FAKE_SAMPLE not in p.stdout and "S1_" not in p.stdout and not any(b in p.stdout for b in bcs[:50]),
+         "the default export's message prints no id")
+    m2 = read_json(ed / "manifest.json") if (ed / "manifest.json").exists() else {}
+    got = {L["key"]: bool(L.get("ids")) for L in m2.get("expr", [])}
+    c.ok(got.get("008um") is True and got.get("016um") is False and (ed / "expr" / "008um" / "ids.txt.gz").exists()
+         and not (ed / "expr" / "016um" / "ids.txt.gz").exists(),
+         f"a default export goes on: 008um keeps its list, 016um has none ({got})")
+    # (4) a platform without an id format (AnnData / SpatialData obs names): any list passes unless it holds a sample ID
+    # or a line break; the reason never names an id
+    code = ("import sys, json; sys.path.insert(0, 'web/SpatialViewer'); import layerids as L; "
+            "ok = ['cell_' + str(i) for i in range(50)] + ['AAACCCAAGG-1', 'my cell #3']; "
+            f"print(json.dumps([L.problem(ok, None), L.problem(ok + ['{FAKE_SAMPLE}_cell'], None), L.problem(ok + ['a' + chr(10) + 'b'], 'anndata'), "
+            "L.platform_of('anndata', {'key': 'cells'}), L.platform_of('spatialdata', {'key': 'cells'})]))")
+    p = subprocess.run([sys.executable, "-c", code], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                       encoding="utf-8", errors="replace")
+    try:
+        r = json.loads(p.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        r = None
+    c.ok(r is not None and r[0] is None and r[1] and r[1][0] == "sample" and r[2] and r[2][0] == "shape" and r[3] is None and r[4] is None
+         and FAKE_SAMPLE not in p.stdout,
+         f"ids of a platform with no format (AnnData, SpatialData): pass unless a sample ID or a line break is in them ({r})")
     shutil.rmtree(work)
 
 
@@ -1869,7 +1920,7 @@ def check_xenium_user(c: Checker, root: Path, clustering: bool) -> dict:
     sg = read_json(ud / "celltypes.json").get("clusterings", {}).get(ct.get("id"), [])
     c.eq([(s.get("top"), s.get("confidence")) for s in sg], [("TypeA", "high"), ("TypeB", "high"), ("TypeC", "high")],
          f"{XE} user: suggested names per group")
-    # no cell id in any text file of this export (they are the user's row keys; only the opt-in ids.txt.gz holds them)
+    # no cell id in any text file of this export (they are the user's row keys; only ids.txt.gz holds them)
     ids_set = set(ids)
     tok = re.compile(r"[a-p]{8}-1")
     leaked = [p.name for p in out.rglob("*") if p.is_file() and p.suffix in (".json", ".geojson", ".txt")
@@ -2882,9 +2933,14 @@ def check_stdformats(c: Checker, root: Path, clustering: bool, log_path: Path) -
     m2 = read_json(never / "lib2" / "manifest.json") if (never / "lib2" / "manifest.json").exists() else {}
     c.ok(rc == 0 and ((m2.get("expr") or [{}])[0]).get("nBins") == 120 and STD_FAKE not in txt,
          f"prepare.py anndata --library 2: that section's 120 rows, no sample ID in the log (exit {rc})")
+    # the cell ids of a SpatialData table: no id format to hold them to, so they are written when no sample ID is in them
+    sx = export / SA_SX / "expr"
+    lists = sorted(sx.rglob("ids.txt.gz"))
+    before = {f: f.read_bytes() for f in lists}
     rc, txt = cli("ids", "--id", SA_SX, "--out", str(cache), "--dest", str(export))
-    c.ok(rc != 0 and "REFUSING" in txt and not list((export / SA_SX / "expr").rglob("ids.txt.gz")),
-         f"prepare.py ids on a SpatialData export: refused (no allow-listed id format for its cell ids), nothing written (exit {rc})")
+    c.ok(lists and rc == 0 and "REFUSING" not in txt and all(f.read_bytes() == b for f, b in before.items())
+         and not any(STD_FAKE in gzip.decompress(f.read_bytes()).decode("utf-8") for f in lists),
+         f"SpatialData cell ids: in the default export (no id format, no sample ID in them), prepare.py ids writes the same (exit {rc}, {[f.parent.name for f in lists]})")
     lt = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
     nl = chr(10)
     ours = [blk for blk in lt.split(nl + "$ ") if any(k in blk.split(nl, 1)[0] for k in STD_DS + (STD_CASES, "make_stdformats_demo"))]
@@ -3355,7 +3411,7 @@ def run_batch(root: Path, log_path: Path) -> dict:
     for name, extra in (("first", ["--jobs", "2", "--markers-genes", "examples/demo_xenium_markers.json",
                                    "--title", "Batch test"]),
                         ("again", []),
-                        ("dry", ["--only", "bx_cosmx", "--rebuild", "--dry-run"])):
+                        ("dry", ["--only", "bx_cosmx", "--rebuild", "--dry-run", "--no-ids"])):
         args = batch_args(root, *extra)
         before = {p.name for p in (root / "batch" / "logs").glob("batch_*.json")} if (root / "batch" / "logs").exists() else set()
         print(f"$ python {' '.join(args)}", flush=True)
@@ -3467,6 +3523,10 @@ def check_batch(c: Checker, root: Path, log_path: Path) -> dict:
     # the dry run
     c.ok(dry["exit"] == 0 and "would run" in dry["stdout"] and "prepare.py auto --src" in dry["stdout"]
          and dry["newReports"] == 0, f"batch --dry-run --only --rebuild: says what would run, writes no report (exit {dry['exit']})")
+    ex = [ln for ln in dry["stdout"].splitlines() if "prepare.py export" in ln]
+    c.ok(ex and all("--no-ids" in ln for ln in ex), f"batch --no-ids: passed on to prepare.py export ({ex[:1]})")
+    withids = sorted(ds for ds in BATCH_OK if list((b / "export" / ds / "expr").rglob("ids.txt.gz")))
+    c.ok(BATCH_STD in withids, f"batch: the exports hold their id lists by default (SpatialData cells; with lists: {withids})")
     print(f"    batch: {len(BATCH_OK)} exported, 1 failed, 2 skipped; first run {first['seconds']}s, again {again['seconds']}s")
     return {"exported": len(BATCH_OK), "firstSec": first["seconds"], "againSec": again["seconds"]}
 
@@ -4198,8 +4258,9 @@ def check_layout(c: Checker):
     c.ok("SodaLayout.adopt(block)" in js["volcano.js"], "volcano.js: its block is handed to the layout")
     c.ok('sec.dataset.tab = "save"' in js["snapshot.js"] and "SodaLayout.adopt(sec)" in js["snapshot.js"],
          "snapshot.js: its Save image section names its tab and is handed to the layout")
-    c.ok('sec.dataset.tab = "clusters"' in js["cellsets.js"] and "SodaLayout.adopt(sec)" in js["cellsets.js"],
-         "cellsets.js: its Cell sets section names its tab and is handed to the layout")
+    c.ok("sec.dataset.tab = cfg.tab" in js["cellsets.js"] and "SodaLayout.adopt(sec)" in js["cellsets.js"]
+         and 'id: "panelSets", tab: "clusters"' in js["cellsets.js"] and 'id: "panelRunSets", tab: "analyze"' in js["cellsets.js"],
+         "cellsets.js: its Cell sets (Clusters) and Merge clusters of the run (Analyze) sections name their tab and are handed to the layout")
     c.ok('sec.dataset.tab = "view"' in js["binpaint.js"] and "SodaLayout.adopt(sec)" in js["binpaint.js"],
          "binpaint.js: its Colour by a value section names its tab and is handed to the layout")
     c.ok("binpaint.js" in names and not re.search(r"\bInt(8|16|32)Array\b", js["binpaint.js"]),
@@ -4219,7 +4280,7 @@ def check_layout(c: Checker):
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
-    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint", "panelShapes", "panelMeasure",
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelRunSets", "panelPaint", "panelShapes", "panelMeasure",
                                                                "panelOffline"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),

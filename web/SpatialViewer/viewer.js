@@ -2588,6 +2588,7 @@
     $("lassoCompare").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoSaveCsv").disabled = !R;
     buildRoiTable();
+    runSetsSync();                                 // merges a file or link carried, the Merge clusters of the run section
     if (window.SodaVolcano) window.SodaVolcano.refresh();
     if (window.SodaPlots) window.SodaPlots.refresh();
     if (window.SodaShapes) window.SodaShapes.refresh();
@@ -3096,14 +3097,17 @@
     const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     if (byCl) {
       // one row per cluster with its top markers; click lights its bins on the slide
-      const sizes = I.clusterSizes || (() => { const z = new Array(I.nClusters).fill(0); for (const c of R.cluster) if (c < z.length) z[c]++; return z; })();
+      // merged clusters (Merge clusters of the run): a set in its lowest member's row, the other members left out
+      const sizes = R.setSizes || I.clusterSizes || (() => { const z = new Array(I.nClusters).fill(0); for (const c of R.cluster) if (c < z.length) z[c]++; return z; })();
+      const gone = R.setGone, heads = gone ? new Set(R.sets.map((s) => s.ids[0])) : null, mkOf = R.setMarkers || I;
       const ct = I.celltypes && Array.isArray(I.celltypes.clusters) ? I.celltypes : null;
-      const sug = (c) => (ct && ct.clusters[c]) || null;
+      const sug = (c) => (ct && !(heads && heads.has(c)) && ct.clusters[c]) || null;      // a set: no one cluster's suggestion
       const vsSlide = !!I.markersVsSlide && L.mkVs !== "shapes";
       $("lpMkVs").hidden = !I.markersVsSlide;
       $("lpMkVs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === (vsSlide ? "slide" : "shapes")));
       clusterLegend($("lpLegend"), {
-        n: I.nClusters, sizes, markers: (vsSlide ? I.markersVsSlide : I.markers) || [], picked: L.selCluster,
+        n: I.nClusters, sizes, markers: (vsSlide ? mkOf.markersVsSlide : mkOf.markers) || [], picked: L.selCluster,
+        skip: gone ? (c) => gone.has(c) : null,
         markerTitle: L.prot ? (vsSlide
           ? "Top markers against the whole slide (the cluster's mean, in the slide's standard deviations; share of its squares above the marker's typical level):\n"
           : "Top markers against the other squares drawn (how much higher than in the rest of the shapes, in their standard deviations; share of its squares above the marker's typical level):\n") : null,
@@ -3119,7 +3123,7 @@
         onAccept: (c, t) => { L.clNames[c] = t; renderLassoPanel(); },
         acceptAll: (count) => {
           const todo = [];
-          for (let c = 0; c < I.nClusters; c++) { const s = sug(c); if (s && s.confidence === "high" && !L.clNames[c]) todo.push([c, s.suggest]); }
+          for (let c = 0; c < I.nClusters; c++) { const s = sug(c); if (s && s.confidence === "high" && !L.clNames[c] && !(gone && gone.has(c))) todo.push([c, s.suggest]); }
           if (!count) { todo.forEach(([c, t]) => (L.clNames[c] = t)); renderLassoPanel(); }
           return todo.length;
         },
@@ -3136,6 +3140,99 @@
         `${I.stability != null ? `, stability ${I.stability.toFixed(2)}` : ""}` : ""}. ` +
       `Drag ${L.lpTool === "free" ? "a loop" : "a box"} to select (Shift or + adds) · click a point to pick its ${byCl ? "cluster" : "shape"} · ` +
       `Show on slide frames the picked squares · scroll to zoom.`;
+    if (window.SodaSets && window.SodaSets.region) window.SodaSets.region.refresh();   // a name given in the legend
+  }
+
+  // ---- merged clusters of a Draw a region run (cellsets.js: SodaSets.region, the Merge clusters of the run section) ----
+  // As the whole section's cell sets: a set takes the number, colour and name entry of its lowest member. R.sets holds
+  // the sets, R.clRaw the run's own codes (kept from the first merge on) and R.cluster the codes with the sets applied,
+  // so the run's panel, the slide, the volcano and plot groups and Save CSV follow; R.setsVer marks a volcano or plot
+  // made before a merge as out of date. A new run starts without sets. Works on whatever codes the run produced.
+  function runSetsApply(R) {
+    const sets = R.sets || [];
+    if (!R.clRaw) { if (!sets.length) return; R.clRaw = R.cluster; }
+    const raw = R.clRaw;
+    let arr = raw;
+    if (sets.length) {
+      const to = new Map();
+      for (const s of sets) for (const c of s.ids) to.set(c, s.ids[0]);
+      arr = new raw.constructor(raw.length);
+      for (let j = 0; j < raw.length; j++) { const h = to.get(raw[j]); arr[j] = h === undefined ? raw[j] : h; }
+    }
+    R.cluster = arr;
+    const K = R.info.nClusters || 0, z = new Array(K).fill(0);
+    for (let j = 0; j < arr.length; j++) if (arr[j] < K) z[arr[j]]++;
+    R.setSizes = sets.length ? z : null;
+    R.setGone = sets.length ? new Set(sets.flatMap((s) => s.ids.slice(1))) : null;
+    // a set's top markers: its members' in turn, names only (their numbers belong to the members alone)
+    const mix = (mk) => {
+      if (!sets.length || !Array.isArray(mk)) return mk;
+      const out = mk.slice();
+      for (const s of sets) {
+        const lists = s.ids.map((k) => mk[k] || []), seen = new Set(), m = [];
+        for (let i = 0; m.length < 20 && lists.some((l) => i < l.length); i++) for (const l of lists) {
+          const g = l[i] && (typeof l[i] === "string" ? l[i] : l[i].gene);
+          if (g != null && !seen.has(g)) { seen.add(g); m.push({ gene: g }); }
+        }
+        out[s.ids[0]] = m;
+      }
+      return out;
+    };
+    R.setMarkers = sets.length ? { markers: mix(R.info.markers), markersVsSlide: mix(R.info.markersVsSlide) } : null;
+  }
+  // what cellsets.js works on: the run's codes as one "clustering" (key "run")
+  function runSetsU(R) {
+    if (!R.setsU) {
+      R.sets = R.sets || []; R.setsVer = R.setsVer || 0;
+      R.setsU = {
+        sets: { run: R.sets }, hidden: new Set(), pos: null,
+        get names() { return { run: S.lasso.clNames }; },
+        get cl() { return R.cluster; },
+        get clRaw() { return new Map([["run", R.clRaw || R.cluster]]); },
+        get setsVer() { return R.setsVer; },
+        get pick() { return S.lasso.selCluster; }, set pick(v) { S.lasso.selCluster = v; },
+      };
+    }
+    return R.setsU;
+  }
+  const runSetsOk = () => { const L = S.lasso, R = L && L.result; return !!(R && R.cluster && R.info.mode === "bins" && R.layer === S.exprKey && !$("panelLasso").hidden); };
+  function runSetsChanged() {
+    const L = S.lasso, R = L.result; if (!R || !R.setsU) return;
+    R.sets = (R.setsU.sets.run || []).map((s) => s);
+    R.setsU.sets.run = R.sets;
+    R.setsVer++;
+    runSetsApply(R);
+    lassoRefresh(); buildLassoUI();
+  }
+  // a file or a link carried merges of a run: kept until a run whose own cluster sizes match those saved
+  // (the same shapes, seed and resolution give the same clusters), then applied once; otherwise said and dropped
+  function runSetsSave(R) {
+    if (!R || !R.cluster || !R.sets || !R.sets.length) return null;
+    const raw = R.clRaw || R.cluster, K = R.info.nClusters || 0, z = new Array(K).fill(0);
+    for (let j = 0; j < raw.length; j++) if (raw[j] < K) z[raw[j]]++;
+    return { sizes: z, sets: R.sets.map((s) => ({ ids: s.ids.slice(), prev: s.prev == null ? null : s.prev, name: S.lasso.clNames[s.ids[0]] || null })) };
+  }
+  function runSetsPending() {
+    const L = S.lasso, R = L.result, p = L.pendingRunSets;
+    if (!p || !R || !R.cluster || R.id <= p.at || R.sets && R.sets.length) return;
+    L.pendingRunSets = null;
+    const K = R.info.nClusters || 0, z = new Array(K).fill(0);
+    for (let j = 0; j < R.cluster.length; j++) if (R.cluster[j] < K) z[R.cluster[j]]++;
+    const sets = window.SodaSets && window.SodaSets.region ? window.SodaSets.region.cleanList(p.sets).filter((s) => s.ids.every((k) => k < K)) : [];
+    const same = Array.isArray(p.sizes) && p.sizes.length === K && p.sizes.every((n, k) => n === z[k]);
+    if (!same || !sets.length) {
+      $("lassoMsg").textContent += `\nThe merged clusters saved with this view were not applied: this run's clusters are not the ones they were made from.`;
+      return;
+    }
+    runSetsU(R);
+    for (const s of sets) { const x = p.sets.find((y) => Array.isArray(y.ids) && y.ids.length && Math.min(...y.ids) === s.ids[0]); if (x && typeof x.name === "string" && x.name) L.clNames[s.ids[0]] = x.name.slice(0, 60); }
+    R.setsU.sets.run = sets;
+    runSetsChanged();
+    $("lassoMsg").textContent += `\nMerged clusters from the saved view: ${sets.length} ${sets.length === 1 ? "set" : "sets"}.`;
+  }
+  function runSetsSync() {
+    runSetsPending();
+    if (window.SodaSets && window.SodaSets.region) window.SodaSets.region.refresh();
   }
 
   function lassoPickCluster(c) {
@@ -3186,7 +3283,10 @@
                                       markers: R.info.markers || null,
                                       markersVsSlide: R.info.markersVsSlide || null,
                                       // bin row (positions.bin order, never a barcode) and its cluster
-                                      rows: Array.from(R.rows), cluster: Array.from(R.cluster) } : {}) } : null,
+                                      // the run's own clusters; merges are in runSets
+                                      rows: Array.from(R.rows), cluster: Array.from(R.clRaw || R.cluster) } : {}) } : null,
+      // clusters of the run merged into sets (Merge clusters of the run), with the run's cluster sizes they were made on
+      ...(runSetsSave(R) ? { runSets: runSetsSave(R) } : {}),
       // the whole-section clustering, if one is shown: its resolution and any names given to clusters
       sectionClusters: umapSaveState(),
       // the per-bin QC thresholds the result was computed with (null = no filter)
@@ -3209,12 +3309,17 @@
     const q = (x) => `"${String(x).replace(/"/g, '""')}"`;
     const lines = [];
     if (R.info.mode === "bins") {
-      const cl = R.cluster;
-      lines.push("bin_row,x_px,y_px,shape,umap_x,umap_y" + (cl ? ",cluster,cluster_name,leiden_resolution" : ""));
+      // merged clusters (Merge clusters of the run): cluster and cluster_name are the run's own, set and set_name the
+      // set each one is in (a set: its lowest member's number and the name given to it); without merges as before
+      const merged = !!(R.sets && R.sets.length && R.clRaw), cl = merged ? R.clRaw : R.cluster;
+      const prev = merged ? new Map(R.sets.map((s) => [s.ids[0], s.prev])) : null;
+      const own = (c) => (prev && prev.has(c) ? prev.get(c) || `Cluster ${c}` : L.clNames[c] || `Cluster ${c}`);
+      lines.push("bin_row,x_px,y_px,shape,umap_x,umap_y" + (cl ? ",cluster,cluster_name,leiden_resolution" : "") + (merged ? ",set,set_name" : ""));
       for (let j = 0; j < R.rows.length; j++) {
-        const r = R.rows[j];
+        const r = R.rows[j], none = cl && cl[j] === LASSO_NONE;
         lines.push(`${r},${L.pos[2 * r].toFixed(2)},${L.pos[2 * r + 1].toFixed(2)},${q(L.shapes[R.shape[j]].name)},${R.emb[2 * j]},${R.emb[2 * j + 1]}` +
-          (cl ? `,${cl[j] === LASSO_NONE ? "" : cl[j]},${cl[j] === LASSO_NONE ? "" : q(L.clNames[cl[j]] || `Cluster ${cl[j]}`)},${R.resolution}` : ""));
+          (cl ? `,${none ? "" : cl[j]},${none ? "" : q(own(cl[j]))},${R.resolution}` : "") +
+          (merged ? `,${none ? "" : R.cluster[j]},${none ? "" : q(L.clNames[R.cluster[j]] || `Cluster ${R.cluster[j]}`)}` : ""));
       }
     } else {
       lines.push("shape,bins,x,y");
@@ -3250,6 +3355,8 @@
     if (Number.isInteger(j.seed)) $("lassoSeed").value = j.seed;
     if (Number.isFinite(j.resolution) || j.resolution === "auto") $("lassoRes").value = j.resolution;
     umapLoadState(j.sectionClusters);
+    // merged clusters of the run: applied to the next run whose clusters are the ones they were made on (runSetsPending)
+    L.pendingRunSets = j.runSets && Array.isArray(j.runSets.sets) && j.runSets.sets.length ? { ...j.runSets, at: Date.now() } : null;
     L.qcNote = binQc ? binQc.setState(j.qcFilter || null) : null;   // a file without qcFilter = no filter
     if (j.mode === "bins" || j.mode === "shapes") $("lassoMode").value = j.mode;
     if (canDraw && Array.isArray(j.shapes)) lassoShapesChanged();
@@ -3258,7 +3365,8 @@
       if (seq !== openSeq) return null;
     }
     if (run) lassoRun();
-    else if (canDraw && L.shapes.length) notes.push("The drawn shapes are back: press Run UMAP (Analyze tab) for their UMAP.");
+    else if (canDraw && L.shapes.length) notes.push("The drawn shapes are back: press Run UMAP (Analyze tab) for their UMAP" +
+      (L.pendingRunSets ? " (its merged clusters come back with it)." : "."));
     return notes;
   }
 
@@ -6532,6 +6640,16 @@
       changed: clSetsChanged,
       showClusters: () => { const sel = $("colorBy"); sel.value = "cluster"; sel.dispatchEvent(new Event("change")); },
       dsId: () => S.dsId, layer: () => S.exprKey,
+    });
+    // the same tool for the clusters of the last Draw a region run (Analyze tab)
+    if (window.SodaSets.region) window.SodaSets.region.init({
+      touch: TOUCH, NONE: LASSO_NONE, words: wd, available: runSetsOk,
+      current: () => { if (!runSetsOk()) return null; const R = S.lasso.result; return { U: runSetsU(R), ck: "run", c: R }; },
+      label: (R) => `Draw a region run (Leiden resolution ${R.resolution})`,
+      name: (c) => S.lasso.clNames[c] || `Cluster ${c}`, baseName: (c) => `Cluster ${c}`, rgb: clusterRgb,
+      changed: runSetsChanged,
+      showClusters: () => {},
+      exportCsv: lassoSaveCsv,                       // the run's Save CSV, which follows the merges
     });
   }
 
