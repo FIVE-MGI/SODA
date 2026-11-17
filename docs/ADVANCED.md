@@ -354,6 +354,7 @@ Settings in `config.js`:
 | `offline: false` | no service worker on this site, and what earlier visits kept is deleted |
 | `offline: true` | on also on a password-protected site (the page only; its data is still never kept) |
 | `offlineMaxMB: 500` | the most one kept dataset may hold |
+| `offlineKeep: false` | no "Keep this dataset for offline use" (the page still keeps itself): for a page whose data is already on the reader's computer. The desktop app serves this |
 
 By default offline use is on, except on a password-protected site (`tokenEndpoint`), where no
 dataset opens without the password service anyway.

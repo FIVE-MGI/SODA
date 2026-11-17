@@ -20,6 +20,8 @@
 # Usage:
 #     ./app/build_release_mac.sh
 #     ./app/build_release_mac.sh --version 0.2.0 --out-root /Volumes/Scratch/soda --python .venv/bin/python
+#     ... --require-vendor    fail unless web/SpatialViewer/vendor/ (deck.gl, umap-js) is there and checks out
+#                             (release builds: python web/SpatialViewer/prepare.py vendor first)
 #
 set -euo pipefail
 
@@ -30,6 +32,7 @@ VERSION="${VERSION:-0.0.0-dev}"
 OUT_ROOT="${HOME}/Library/Caches/SODA_build"
 PY=""
 UPDATE_REPO="${SODA_UPDATE_REPO:-}"
+REQUIRE_VENDOR=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -37,6 +40,7 @@ while [[ $# -gt 0 ]]; do
         --out-root)    OUT_ROOT="$2"; shift 2 ;;
         --python)      PY="$2"; shift 2 ;;
         --update-repo) UPDATE_REPO="$2"; shift 2 ;;
+        --require-vendor) REQUIRE_VENDOR=1; shift ;;
         -h|--help)     sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
@@ -48,7 +52,7 @@ if [[ -z "$PY" ]]; then
 fi
 [[ -n "$PY" ]] || { echo "no python found: run install.sh first, or pass --python" >&2; exit 1; }
 ARCH="$(uname -m)"
-MIN_MACOS="${SODA_MIN_MACOS:-12.0}"
+MIN_MACOS="${SODA_MIN_MACOS:-14.0}"      # SciPy's arm64 wheels need macOS 14 Sonoma (check_min_os.py checks every binary)
 
 WORK="$OUT_ROOT/work"; DIST_DIR="$OUT_ROOT/dist"; RELEASE="$OUT_ROOT/release"; SCRATCH="$OUT_ROOT/temp"
 mkdir -p "$WORK" "$DIST_DIR" "$RELEASE" "$SCRATCH"
@@ -67,6 +71,8 @@ echo "[1/6] checking the build environment..."
 if [[ -d "$REPO/web/SpatialViewer/vendor" ]]; then
     "$PY" "$REPO/web/SpatialViewer/vendor.py" --check || { echo "web/SpatialViewer/vendor/ is incomplete or not the pinned files: run python web/SpatialViewer/prepare.py vendor again" >&2; exit 1; }
     echo "   vendor/: deck.gl and umap-js included (the viewer works with no internet)"
+elif [[ "$REQUIRE_VENDOR" == 1 ]]; then
+    echo "no web/SpatialViewer/vendor/ and --require-vendor: run python web/SpatialViewer/prepare.py vendor first" >&2; exit 1
 else
     echo "   no web/SpatialViewer/vendor/: the viewer will load deck.gl from the CDN (prepare.py vendor includes it)"
 fi

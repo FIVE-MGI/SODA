@@ -66,6 +66,11 @@ TEXT_TYPES = {
     ".gz": "application/gzip", ".wasm": "application/wasm", ".csv": "text/csv; charset=utf-8",
     ".txt": "text/plain; charset=utf-8", ".woff2": "font/woff2",
 }
+# The viewer's config.js in the app (no site config is shipped): the export is a folder on this computer, so
+# the Save tab offers no "Keep this dataset for offline use" (offlineKeep, offline.js). Everything else is
+# the page's default, its own offline copy included.
+APP_CONFIG_JS = (b"window.SpatialViewerConfig = window.SpatialViewerConfig || {};\n"
+                 b"window.SpatialViewerConfig.offlineKeep = false;\n")
 # Files next to the page that are never served (as server.py): the tools, not the page.
 _BLOCKED_SUFFIXES = (".py", ".pyc", ".ps1", ".sh", ".txt", ".md", ".password", ".csv")
 _BLOCKED_PARTS = ("__pycache__", ".venv", ".password")
@@ -519,9 +524,10 @@ class App:
                         since = int(urllib.parse.parse_qs(url.query).get("since", ["0"])[0] or 0)
                         return self._json(app.job.view(since))
                     if path == "/viewer/config.js" and not (SODA_DIR / "config.js").is_file():
-                        # config.js is each site's own file and is not shipped; local viewing needs none
-                        return self._send(200, b"window.SpatialViewerConfig = window.SpatialViewerConfig || {};\n",
-                                          TEXT_TYPES[".js"], head=head)
+                        # config.js is each site's own file and is not shipped; local viewing needs only this:
+                        # no "Keep this dataset for offline use" (the export is already on this computer; the
+                        # page still keeps itself, offline.js)
+                        return self._send(200, APP_CONFIG_JS, TEXT_TYPES[".js"], head=head)
                     if path.startswith("/viewer/"):
                         return self._file(SODA_DIR, path[len("/viewer/"):], head, blocked=True)
                     m = re.match(r"^/data/(\d+)/(.*)$", path)

@@ -1,15 +1,26 @@
 SODA {VERSION}  (Windows 10 / 11, 64-bit)
 
-TO RUN
-  Copy this SODA folder to your own computer's hard drive first (not a network
-  drive: the app is a few thousand files, and from a network drive it takes
-  minutes to start instead of seconds). Then double-click SODA.exe.
+INSTALLER OR ZIP
+  SODA comes two ways; both are the same app (about 450 MB once unpacked):
+  - SODA-{VERSION}-setup.exe, the installer: double-click it. It installs for
+    you only, into %LOCALAPPDATA%\Programs\SODA, and needs no administrator
+    rights. Then start SODA from the Start menu. To remove it: Settings ->
+    Apps -> SODA -> Uninstall (or Start menu -> Uninstall SODA). A newer
+    setup.exe installs over the old version.
+  - SODA-{VERSION}-win64.zip, no installer: unzip it and copy this SODA folder
+    to your own computer's hard drive first (not a network drive: the app is a
+    few thousand files, and from a network drive it takes minutes to start
+    instead of seconds). Then double-click SODA.exe. To remove it, delete the
+    folder.
 
+  The first time, Windows may say "Windows protected your PC" (for the
+  setup.exe, or for SODA.exe from the zip) because SODA is not code-signed.
+  Click "More info", then "Run anyway". Your browser may also warn that the
+  download is not commonly downloaded: choose Keep.
+
+TO RUN
   A black console window opens with the address, and your browser opens the
   SODA home page. Keep that window open while you work; closing it stops SODA.
-
-  The first time, Windows may say "Windows protected your PC" because the app
-  is not code-signed. Click "More info", then "Run anyway".
 
 WHAT IT DOES
   1. Prepare a folder of datasets: pick the folder that holds one folder per
@@ -44,4 +55,15 @@ WHERE THINGS GO
   The log of the home page (SODA.log, prepare.log) and a compiled-code cache:
      %LOCALAPPDATA%\SODA
   If SODA will not start, that folder and the console window's text are what
-  to send.
+  to send. Uninstalling SODA leaves that folder, and every folder you prepared,
+  as it is.
+
+FOR IT (silent install)
+  SODA-{VERSION}-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+     /DIR="<folder>"          install somewhere else
+     /ALLUSERS                for every user, into Program Files (run elevated)
+     /NOICONS                 no Start-menu entry
+     /MERGETASKS=desktopicon  also a desktop shortcut
+     /LOG="<file>"            write a log
+  Silent uninstall:
+     "<install folder>\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
