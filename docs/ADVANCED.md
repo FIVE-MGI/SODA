@@ -108,6 +108,7 @@ Section 0. Run that cell even if you change nothing.
 | `VISIUM_BINS` | `"008um,016um"` | the Visium HD bin sizes to keep. Add `002um` for the 2 µm layer (very large) |
 | `WORKERS` | `8` | how many tile writers run at once during the export |
 | `MARKERS` | `{"visium": "", "proteomics": ""}` | marker lists for suggested cluster names (see [section 6](#6-marker-lists-for-suggested-names)); empty uses the general list. `"visium"` is the gene list (Visium, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx), `"proteomics"` the protein list (multichannel protein images) |
+| `INCLUDE_IDS` | `True` | the barcode / cell id lists (`expr/<layer>/ids.txt.gz`) in the export, checked for sample IDs; `False` passes `--no-ids` and writes none (see [below](#barcode-and-cell-id-lists)) |
 | `REBUILD` | `False` | `True` prepares datasets again even when `cache/<id>/` has them; also delete `export/<id>/`, or old tiles stay |
 
 Two more, outside Section 0:
@@ -124,6 +125,32 @@ Two more, outside Section 0:
 The same steps without the notebook, one command each:
 [PREPARING_DATA.md](PREPARING_DATA.md). All of them for a whole folder in one command:
 [section 8](#8-many-datasets-at-once-without-the-notebook).
+
+### Barcode and cell id lists
+
+**Included by default**, as Loupe Browser, Xenium Explorer and Vitessce keep them: every export
+holds each layer's barcodes or cell ids in `expr/<layer>/ids.txt.gz` (one per bin or cell, in
+row order), which the viewer's *Save barcodes (CSV)* reads. This holds for `prepare.py export`,
+`prepare.py batch`, the notebook and the desktop app.
+
+- **They are checked for sample IDs.** Before a list is written, `deid.py`'s sample-ID patterns run
+  over every id; for Visium / Visium HD, Xenium, CosMx, MERSCOPE and Stereo-seq each id must also
+  match the instrument's own id format in full (so a merge prefix such as `S1_`, or a sample name
+  glued to a barcode, fails). A layer that fails gets no list, a `***` line in the export log says
+  why (the layer, the reason and how many ids, never an id), and the export goes on. AnnData and
+  SpatialData ids (obs names) have no format check: only the sample-ID patterns guard them.
+- **You are responsible for what you publish.** The checks know only the ID patterns in
+  `deid.py` (edit `_ID` there for your lab, [DEIDENTIFICATION.md](DEIDENTIFICATION.md)) and the
+  formats above. Read your ids before you share a public link.
+- **To turn them off:** `prepare.py export ... --no-ids`, `prepare.py batch ... --no-ids` (also
+  `SODA prepare ... --no-ids`), `INCLUDE_IDS = False` in the notebook's advanced settings, or untick
+  *Include barcode / cell id lists* under More options in the desktop app. An export made without
+  them can get them later with `prepare.py ids --id <id> --out <cache> --dest <export folder>`.
+- `--ids` is still accepted (old commands work). It asks for the lists explicitly: then a failed
+  check stops the export and nothing is written, instead of leaving one list out.
+- To hold another platform's ids to a format, add a regular expression that matches the whole id
+  to `FORMATS` in `web/SpatialViewer/layerids.py` (and its name to `platform_of` if the cache
+  calls it something else).
 
 ## 5. Your own clusters and UMAP
 

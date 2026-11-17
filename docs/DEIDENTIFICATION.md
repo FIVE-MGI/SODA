@@ -52,14 +52,18 @@ A letter suffix is kept: an ID ending in `b` becomes `3b`.
   written.
 - **`prepare.py export`** refuses to write the highly variable gene list or the UMAP
   index if they contain an ID or a Space Ranger barcode, and drops the local file paths
-  from the manifest. Barcodes and cell ids are written only when asked for (`--ids`, or
-  `prepare.py ids` later: `expr/<key>/ids.txt.gz`; the notebook never asks). Before any
-  list is written, every id must fully match its platform's instrument id format (an
-  allow-list: Visium / Visium HD barcodes, Xenium, CosMx, MERSCOPE and Stereo-seq cell and
-  bin ids, see `ids.txt.gz` in [DATA_FORMAT.md](DATA_FORMAT.md)) and none may match the
-  sample-ID patterns. One failing id stops it: no list is written for any layer, and the
-  message gives the layer and the count but never the ids, so a log of a refused run holds
-  none. Ids are never stripped or rewritten to make them pass.
+  from the manifest. **Barcodes and cell ids are written by default** (`expr/<key>/ids.txt.gz`,
+  as Loupe Browser and Xenium Explorer keep them); `--no-ids` (the notebook's
+  `INCLUDE_IDS = False`, the desktop app's "Include barcode / cell id lists" box) leaves them
+  out. Before a list is written, no id may match the sample-ID patterns and, for the platforms
+  with a known format (Visium / Visium HD barcodes, Xenium, CosMx, MERSCOPE and Stereo-seq cell
+  and bin ids, see `ids.txt.gz` in [DATA_FORMAT.md](DATA_FORMAT.md)), every id must fully match
+  the instrument's id format. AnnData and SpatialData ids have no format check, only the
+  sample-ID one. By default a failing layer gets no list (a `***` line in the export log) and
+  the export goes on; with `--ids` (or `prepare.py ids`) one failing id stops the dataset and no
+  list is written for any layer. Either way the message gives the layer and the count but never
+  the ids, so a log holds none. Ids are never stripped or rewritten to make them pass. The
+  checks know only the patterns in `deid.py`: you are responsible for what you publish.
 
 It does **not** rewrite the labels, channel names or overlay names of image datasets.
 For those, `deid.py check` is the gate.
