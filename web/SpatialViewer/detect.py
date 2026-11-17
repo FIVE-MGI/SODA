@@ -518,6 +518,10 @@ def find_xenium(cx: Ctx) -> list[dict]:
             c["notes"].append("no experiment.xenium: the pixel size comes from the image's own OME metadata")
         if has_cells:
             _ev(c, "cells layer", rel, f"{cells} + {matrix}")
+            ol = _first(f, "cell_boundaries.parquet", "cell_boundaries.csv.gz", "cell_boundaries.csv", "cells.zarr.zip")
+            if ol:                                                # cellshapes.xenium_sets
+                nuc = _first(f, "nucleus_boundaries.parquet", "nucleus_boundaries.csv.gz", "nucleus_boundaries.csv")
+                _ev(c, "cell outlines", _join(rel, ol), f"+ {nuc}" if nuc and ol != "cells.zarr.zip" else "")
         else:
             lack = [n for n, v in (("cells.parquet / cells.csv.gz", cells), ("cell_feature_matrix", matrix)) if not v]
             c["notes"].append("no " + " and no ".join(lack) + ": no cells layer")
@@ -871,6 +875,10 @@ def find_merscope(cx: Ctx) -> list[dict]:
             c["notes"].append("no detected_transcripts file: no molecules layer")
         if cells_dir is not None and cells_dir != "given":
             _ev(c, "cells layer", cells_dir or ".", " + ".join(cell_at[cells_dir]))
+            ol = next((n for n in sorted(t.f(cells_dir)) if re.match(r"(cell_boundaries|.*micron_space)\.parquet$", n, re.I)),
+                      "cell_boundaries/" if "cell_boundaries" in t.d(cells_dir) else None)
+            if ol:                                                # cellshapes.merscope_find
+                _ev(c, "cell outlines", _join(cells_dir, ol))
         elif not c["choices"] and "cells_dir" not in cx.ov:
             half = [cd for cd in mine if any(cell_at[cd])]
             c["notes"].append(("only one of cell_by_gene / cell_metadata is here" if half else "no cell_by_gene + cell_metadata")
@@ -953,6 +961,11 @@ def find_cosmx(cx: Ctx) -> list[dict]:
                         [{"path": t.path(*x), "size": t.f(x[0])[x[1]], "sizeText": _mb(t.f(x[0])[x[1]])} for x in roles[k]])
         if kinds:
             _ev(c, "FOV images", base or ".", ", ".join(f"{k} ({n} FOVs)" for k, n in sorted(kinds.items())))
+        pol = next((n for n in sorted(t.f(base)) if re.search(r"[-_]polygons\.(parquet|csv\.gz|csv)$", n, re.I)), None)
+        if has_cells and pol:                                     # cellshapes.cosmx_sets
+            _ev(c, "cell outlines", _join(base, pol))
+        elif has_cells and "labels" in kinds:
+            _ev(c, "cell outlines", base or ".", "traced from the CellLabels images")
         for r in t.below(base, 5):
             if t.name(r).lower() in tuple(_CX_IMG) + _CX_OTHER and r != base:
                 c["_claim_dirs"].append(r)

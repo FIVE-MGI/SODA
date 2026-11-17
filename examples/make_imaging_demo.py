@@ -17,7 +17,8 @@ writes
         Demo_fov_positions_file.csv     fov, x_px, y_px
         Demo_tx_file.csv                fov, cell_ID, x/y_global_px, x/y_local_px, z, target, CellComp
         CellComposite/CellComposite_F001..F004.jpg   800 x 600 RGB per FOV (nuclei in blue)
-        CellLabels/CellLabels_F001..F004.tif         uint16 labels = cell_ID
+        CellLabels/CellLabels_F001..F004.tif         uint16 labels = cell_ID (a disk of 7 µm per cell, cut at
+                                                     its own FOV's edge): the outlines are traced from these
                             four FOVs on a 2 x 2 grid, 2 px (x) and 3 px (y) apart, global y pointing
                             UP and y_local measured from the BOTTOM edge of each FOV image
     <out>/cosmx_new/        the newer names and containers, no cell labels:
@@ -26,6 +27,7 @@ writes
         Demo_fov_positions_file.csv.gz  FOV, x_global_px, y_global_px, x_global_mm, y_global_mm
         Demo_tx_file.csv.gz             the same molecules, plus a cell column
         Morphology2D/20260101_000000_S1_C902_P99_N99_F001..F004.TIF   two uint16 pages (membrane, DAPI)
+        Demo-polygons.csv.gz            fov, cellID, cell, x/y_local_px, x/y_global_px: a 12-gon of 7 µm per cell
     <out>/cosmx_tx/         Demo_tx_file.parquet + Demo_fov_positions_file.csv only (no images, no cells)
 
     <out>/merscope/         everything prepare.py merscope reads, older layout:
@@ -35,9 +37,15 @@ writes
         cell_metadata.csv               (unnamed id), fov, volume, center_x, center_y, min_x, max_x, min_y, max_y
         detected_transcripts.csv        (unnamed index), barcode_id, global_x, global_y, global_z, x, y, fov,
                                         gene, transcript_id
+        cell_boundaries/feature_data_7.hdf5   featuredata/<id>/zIndex_<0..2>/p_0/coordinates (µm): a 16-gon of
+                                        the cell's radius in z1, 0.8 x that in z0 and z2; cell 3 only in z0,
+                                        cell 4 not at all
     <out>/merscope_noimg/   no images; the cell tables one folder down with the newer names
                             (vpt/cell_by_gene.csv, vpt/cell_metadata.csv with EntityID) and
-                            detected_transcripts.csv.gz re-saved with a second index column and cell_id
+                            detected_transcripts.csv.gz re-saved with a second index column and cell_id;
+                            vpt/cellpose_micron_space.parquet (EntityID, ZIndex, WKB Geometry: the same
+                            outlines; cell 0 in two parts, cell 1 with a hole, cell 2 with a crumb, cell 3
+                            empty in z1, cell 4 missing) and a cellpose_mosaic_space.parquet that must not be used
     <out>/merscope_pq/      images + detected_transcripts.parquet only (no cell tables)
     <out>/truth_imaging.json, truth_imaging.npz   what the test checks against
 
@@ -180,7 +188,10 @@ def make_cosmx(out: Path, L: dict, seed: int) -> dict:
     lab = np.zeros((COSMX_H, COSMX_W), np.uint16)
     yy, xx = np.mgrid[0:COSMX_H, 0:COSMX_W]
     for i, (x, y) in enumerate(cell_m):
-        x0, x1, y0, y1 = int(max(0, x - 16)), int(min(COSMX_W, x + 17)), int(max(0, y - 16)), int(min(COSMX_H, y + 17))
+        # a cell is segmented inside its own FOV only (its id means nothing in the next FOV's image)
+        bx, by = ((cell_fov[i] - 1) % 2) * (FOV_W + GAP_X), (1 - (cell_fov[i] - 1) // 2) * (FOV_H + GAP_Y)
+        x0, x1 = int(max(bx, x - 16)), int(min(bx + FOV_W, x + 17))
+        y0, y1 = int(max(by, y - 16)), int(min(by + FOV_H, y + 17))
         dd = np.hypot(xx[y0:y1, x0:x1] - x, yy[y0:y1, x0:x1] - y)
         lab[y0:y1, x0:x1][dd <= 7.0 / PX_UM] = cid[i]
     blue = np.clip(dapi / 6300.0 * 255, 0, 255).astype(np.uint8)
@@ -247,6 +258,18 @@ def make_cosmx(out: Path, L: dict, seed: int) -> dict:
     (old / "CellComposite").mkdir()
     (old / "CellLabels").mkdir()
     tables(new, True)
+    # the newer exports' polygons file: a 12-gon of 7 µm round every cell, in local and global pixels
+    ang = 2 * np.pi * np.arange(12) / 12
+    poly_m = cell_m[:, None, :] + (7.0 / PX_UM) * np.stack([np.cos(ang), np.sin(ang)], 1)[None]     # mosaic pixels
+    rows = []
+    for i in range(n):
+        f, c = cell_fov[i], cid[i]
+        col, row = (f - 1) % 2, 1 - (f - 1) // 2
+        for mx, my in poly_m[i]:
+            rows.append([f, c, f"c_1_{f}_{c}", f"{mx - col * (FOV_W + GAP_X):.3f}", f"{row * (FOV_H + GAP_Y) + FOV_H - my:.3f}",
+                         f"{COSMX_GX0 + mx:.4f}", f"{COSMX_GY0 + (COSMX_H - my):.4f}"])
+    write_csv(new / "Demo-polygons.csv.gz", ["fov", "cellID", "cell", "x_local_px", "y_local_px", "x_global_px", "y_global_px"],
+              rows, True)
     (new / "Morphology2D").mkdir()
     for f in range(1, 5):
         ys, xs = fov_box(f)
@@ -267,7 +290,8 @@ def make_cosmx(out: Path, L: dict, seed: int) -> dict:
                   "CellComp": pa.array(comp.tolist())}).replace_schema_metadata({"note": "SYNTHETIC"})
     pq.write_table(t, str(txo / "Demo_tx_file.parquet"), row_group_size=5000)
 
-    return {"cells_px": cell_m, "fov": cell_fov, "cell_ID": cid, "counts": cnt[:, :Gg], "mol_px": mol_m,
+    return {"cells_px": cell_m, "fov": cell_fov, "cell_ID": cid, "counts": cnt[:, :Gg], "mol_px": mol_m, "poly_px": poly_m,
+            "labels": lab,
             "mol_global": np.column_stack([mgx, mgy]), "control": mg >= Gg,
             "areaPx2": area_px, "nBackgroundRows": 4}
 
@@ -323,14 +347,81 @@ def make_merscope(out: Path, L: dict, seed: int) -> dict:
             {"bbox_microns": [MER_X0, MER_Y0, MER_X0 + W0 * PX_UM, MER_Y0 + H0 * PX_UM], "mosaic_width_pixels": W0,
              "mosaic_height_pixels": H0, "note": "SYNTHETIC"}, indent=1), encoding="utf-8")
 
+    # outlines: a 16-gon of the cell's radius in the middle z-plane, 0.8 x that in the two others
+    ang = 2 * np.pi * np.arange(16) / 16
+    poly_um = xy_um[:, None, :] + r[:, None, None] * np.stack([np.cos(ang), np.sin(ang)], 1)[None]
+
+    def at_z(i, z):
+        return xy_um[i] + (poly_um[i] - xy_um[i]) * (1.0 if z == 1 else 0.8)
+
+    def boundaries_hdf5(folder: Path):
+        import h5py
+        d = folder / "cell_boundaries"
+        d.mkdir(parents=True)
+        with h5py.File(d / "feature_data_7.hdf5", "w") as f:
+            f.attrs["note"] = "SYNTHETIC"
+            fd = f.create_group("featuredata")
+            for i in range(n):
+                if i == 4:
+                    continue
+                g = fd.create_group(ids_old[i])
+                for z in ((0,) if i == 3 else (0, 1, 2)):
+                    p = at_z(i, z)
+                    g.create_group(f"zIndex_{z}").create_group("p_0").create_dataset("coordinates", data=np.vstack([p, p[:1]])[None])
+
+    def wkb(parts):
+        """MultiPolygon; a part is a list of rings (the first the outline, the rest holes)."""
+        import struct
+        b = struct.pack("<BII", 1, 6, len(parts))
+        for rings in parts:
+            b += struct.pack("<BII", 1, 3, len(rings))
+            for rg in rings:
+                rg = np.vstack([rg, rg[:1]])
+                b += struct.pack("<I", len(rg)) + rg.astype("<f8").tobytes()
+        return b
+
+    def boundaries_parquet(folder: Path):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        small = np.stack([np.cos(ang[::2]), np.sin(ang[::2])], 1)
+        rows = []
+        for i in range(n):
+            if i == 4:
+                continue
+            for z in (0, 1, 2):
+                p = at_z(i, z)
+                parts = [[p]]
+                if i == 0:
+                    parts.append([xy_um[i] + [1.6 * r[i], 0] + 0.5 * r[i] * small])       # a second part, a quarter of the area
+                elif i == 1:
+                    parts = [[p, (xy_um[i] + 0.25 * r[i] * small)[::-1]]]                 # a hole
+                elif i == 2:
+                    parts.append([xy_um[i] + [1.6 * r[i], 0] + 0.08 * r[i] * small])      # a crumb: dropped
+                elif i == 3 and z == 1:
+                    parts = []                                                            # nothing in the middle plane
+                rows.append((int(ids_new[i]), z, wkb(parts)))
+        order = np.random.default_rng([seed, 6]).permutation(len(rows))
+        for name, scale in (("cellpose_micron_space.parquet", 1.0), ("cellpose_mosaic_space.parquet", None)):
+            geo = [rows[j][2] for j in order]
+            if scale is None:                                    # the same table in mosaic pixels: not the one to read
+                geo = [wkb([[np.array([[0, 0], [9, 0], [9, 9], [0, 9]], float) + 37.0 * (j % 11)]]) for j in order]
+            t = pa.table({"ID": pa.array(np.arange(len(rows), dtype=np.int64)),
+                          "EntityID": pa.array(np.array([rows[j][0] for j in order], np.int64)),
+                          "ZIndex": pa.array(np.array([rows[j][1] for j in order], np.int64)),
+                          "Geometry": pa.array(geo, pa.binary()), "Type": pa.array(["cell"] * len(rows)),
+                          "ZLevel": pa.array(np.array([1.5 * (rows[j][1] + 1) for j in order]))})
+            pq.write_table(t.replace_schema_metadata({"note": "SYNTHETIC"}), str(folder / name))
+
     full, noimg, pqd = out / "merscope", out / "merscope_noimg", out / "merscope_pq"
     for d in (full, noimg, pqd):
         if d.exists():
             shutil.rmtree(d)
     cell_tables(full, ids_old, False)
+    boundaries_hdf5(full)
     transcripts(full / "detected_transcripts.csv", False)
     images(full)
     cell_tables(noimg / "vpt", ids_new, True)
+    boundaries_parquet(noimg / "vpt")
     transcripts(noimg / "detected_transcripts.csv.gz", True)
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -341,7 +432,7 @@ def make_merscope(out: Path, L: dict, seed: int) -> dict:
                   "fov": pa.array(np.full(len(mg), 7)), "gene": pa.array([names[g] for g in mg]),
                   "transcript_id": pa.array([f"SYNT{g:011d}" for g in mg])}).replace_schema_metadata({"note": "SYNTHETIC"})
     pq.write_table(t, str(pqd / "detected_transcripts.parquet"), row_group_size=5000)
-    return {"cells_um": xy_um, "counts": cnt[:, :Gg], "mol_um": mol_um, "mol_gene": mg, "ids_old": ids_old,
+    return {"cells_um": xy_um, "counts": cnt[:, :Gg], "mol_um": mol_um, "mol_gene": mg, "ids_old": ids_old, "poly_um": poly_um,
             "ids_new": ids_new, "radius_um": r}
 
 
@@ -359,7 +450,8 @@ def main(argv=None):
     np.savez_compressed(out / "truth_imaging.npz", ctype=L["ctype"], mol_gene=L["mol_gene"],
                         cosmx_cells_px=c["cells_px"], cosmx_fov=c["fov"], cosmx_cell_id=c["cell_ID"],
                         cosmx_counts=c["counts"], cosmx_mol_px=c["mol_px"], cosmx_mol_global=c["mol_global"],
-                        cosmx_area_px2=c["areaPx2"],
+                        cosmx_area_px2=c["areaPx2"], cosmx_poly_px=c["poly_px"], cosmx_labels=c["labels"],
+                        merscope_poly_um=m["poly_um"],
                         merscope_cells_um=m["cells_um"], merscope_counts=m["counts"], merscope_mol_um=m["mol_um"],
                         merscope_mol_gene=m["mol_gene"], merscope_radius_um=m["radius_um"])
     truth = {"pixelSizeUm": PX_UM, "genes": GENES, "nCells": int(L["n"]),

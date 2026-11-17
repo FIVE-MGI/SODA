@@ -31,6 +31,8 @@ the server just scans <out> for manifest.json files.
     python prepare.py export --id sample1 --out <cache folder> --dest <static folder> [--fmt jpg]
            [--user-layer 008um --user-umap umap.csv --user-obs clusters.csv | --user-h5ad analysis.h5ad]
     python prepare.py userclusters --id sample1 --out <cache folder> --dest <static folder> --user-layer 008um ...
+    python prepare.py outlines --id x1 --out <cache folder> [--dest <static folder>] [--boundaries cells.geojson --nuclei nuclei.geojson]
+           (cell outlines for a dataset that is already prepared: from the platform's own files, or your own; cellshapes.py)
 
 writes the static tree. For an image dataset (akoya / tiff / xenium) it also adds a 16 µm grid
 of marker means (from full-resolution pixels) as a "protein" expression layer with a QC report,
@@ -55,6 +57,7 @@ from pathlib import Path
 import threadcap                                   # first: caps the BLAS / OpenMP threads before numpy loads
 threadcap.apply(threadcap.from_argv(sys.argv))     # --threads N, else SODA_THREADS, else min(8, usable CPUs)
 
+import cellshapes
 import pyramid
 import stereoseq
 import userclusters
@@ -302,6 +305,9 @@ def main(argv=None):
     uc.add_argument("--markers", help="marker list for the suggested names (default: the one the export used)")
     uc.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     userclusters.add_args(uc)
+    ol = sub.add_parser("outlines", help="add cell outlines (segmentation boundaries) to a dataset that is already prepared, "
+                                         "and to its export: from the platform's own files or from your own (cellshapes.py)")
+    cellshapes.add_args(ol)
     r = sub.add_parser("rnaseq", help="single-cell / nucleus RNA-seq -> static UMAP dataset (written straight to --dest)")
     r.add_argument("--id", required=True)
     r.add_argument("--label")
@@ -372,6 +378,8 @@ def main(argv=None):
                                           "(square-bin layers) + cell bin GEF (a 'cells' layer)")
     stereoseq.add_args(ss)
     common(ss)
+    for p_ in (x, cx, mc, ss):
+        cellshapes.add_prepare_args(p_)                 # --no-outlines, --outline-tolerance-um
     for p in sub.choices.values():
         p.add_argument("--threads", type=int,
                        help="BLAS / OpenMP threads for numpy and scipy (default: min(8, CPUs this process may use); "
@@ -419,6 +427,10 @@ def main(argv=None):
         userclusters.apply_to_export(Path(args.out) / args.id, Path(args.dest), specs,
                                      markers=Path(args.markers) if args.markers else None,
                                      celltypes=not args.no_celltypes, log=log)
+        return
+
+    if args.kind == "outlines":
+        cellshapes.run(args, log=log)
         return
 
     if args.kind == "inspect":
@@ -553,6 +565,8 @@ def main(argv=None):
                     meta = build_cell_layer(ds_dir, cells["xy_um"], um, cells["X"], cells["genes"], key="cells",
                                             label="Cells", cell_diameter_um=diam, log=log,
                                             extra={"platform": "xenium"}, barcodes=cells["barcodes"])
+                    if not args.no_outlines:
+                        cellshapes.attach(ds_dir, meta, cellshapes.xenium_sets(folder, um, log=log), um, args=args, log=log)
                     manifest["expr"].append(meta)
             if not args.no_transcripts:
                 mol = _xen.write_transcripts(inp, ds_dir, size, um, qv_min=args.qv_min, log=log)
