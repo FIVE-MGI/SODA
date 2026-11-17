@@ -1,0 +1,148 @@
+# Build the SODA desktop app for Windows on GitHub's Windows runners.
+#
+# The same shape as FIVE Atlas's build-windows.yml (docs/DESKTOP_APP.md): it runs the very same
+# app/build_release.ps1 a laptop runs, smoke-tests the built SODA.exe headless (tests/app_test.py
+# against the exe: selftest, prepare the demo data through the app, the ID check, the viewer
+# server, the home page), uploads the zip as a build artifact and, on a tag, attaches it to the
+# GitHub Release the macOS job publishes, so one link serves both.
+#
+# Guard: like pages.yml, this does nothing on its own in the FIVE-MGI repositories. There it only
+# runs when started by hand (Actions tab -> "Build SODA app (Windows)" -> Run workflow), and a
+# manual run only produces a downloadable artifact, never a Release. In a copy of SODA a v* tag
+# builds and publishes.
+name: Build SODA app (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string baked into the app and filenames"
+        required: false
+        default: "0.0.0-dev"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write        # attach the .zip to a Release on a tag push
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || (github.repository != 'FIVE-MGI/SODA' && github.repository != 'FIVE-MGI/spatial-viewer-v2')
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      # pinned to commit SHAs (the same reviewed set as FIVE Atlas's workflows)
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # 3.13: requirements-lock.txt is the tested set for 3.12 / 3.13, all binary wheels.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      - name: Install the locked packages and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install --only-binary=:all: -r web/SpatialViewer/requirements-lock.txt
+          pip install "pyinstaller==6.21.0"
+          pip freeze > "${{ runner.temp }}/requirements-built.txt"
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        env:
+          VER_IN: ${{ inputs.version }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="${VER_IN:-0.0.0-dev}"; fi
+          if ! printf '%s' "$v" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then
+            echo "::error::version '$v' is not a plain version string"; exit 1
+          fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: >
+          powershell -ExecutionPolicy Bypass -File app\build_release.ps1
+          -Version "${{ steps.ver.outputs.value }}"
+          -OutRoot "${{ runner.temp }}\build"
+          -Python "python"
+          -UpdateRepo "${{ github.repository }}"
+
+      # The built exe on a clean Windows box, headless: a missing hidden import or DLL, or a broken
+      # prepare / ID check / viewer path, fails here rather than on a colleague's laptop.
+      # continue-on-error: the zip exists by now; the job is failed at the end instead.
+      - name: Smoke-test the built app
+        id: smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e     # GitHub's bash runs with -e -o pipefail: the exit code is captured below instead
+          EXE="${RUNNER_TEMP}/build/release/SODA/SODA.exe"
+          [ -f "$EXE" ] || { echo "::error title=build::SODA.exe not found"; exit 1; }
+          got="$("$EXE" version | tr -d '\r')"
+          [ "$got" = "SODA ${{ steps.ver.outputs.value }}" ] || { echo "::error title=version::exe says '$got'"; exit 1; }
+          python tests/app_test.py --exe "$EXE" --full-selftest --work "${RUNNER_TEMP}/app-test" 2>&1 | tee "${RUNNER_TEMP}/app-test.txt"
+          rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then
+            body=$(grep -E "FAIL|Traceback|Error" "${RUNNER_TEMP}/app-test.txt" | head -c 3500 | python -c "import sys;print(sys.stdin.read().replace('%','%25').replace('\r','%0D').replace('\n','%0A'))")
+            echo "::error title=app-test::${body}"
+          fi
+          exit $rc
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: SODA-windows-x64
+          path: |
+            ${{ runner.temp }}/build/release/*.zip
+            ${{ runner.temp }}/build/release/*.exe
+            ${{ runner.temp }}/build/release/SHA256SUMS-windows.txt
+            ${{ runner.temp }}/requirements-built.txt
+            ${{ runner.temp }}/app-test.txt
+            ${{ runner.temp }}/app-test/app_test.log
+          if-no-files-found: warn
+
+      # Attach to the SAME release the macOS job publishes (one link for both). Waits for it, and
+      # creates it only if the Mac build never showed up.
+      - name: Attach to release
+        if: github.ref_type == 'tag' && steps.smoke.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="${RUNNER_TEMP}/build/release"
+          ZIP=$(ls "$R"/SODA-*-win64.zip | head -1)
+          [ -f "$ZIP" ] || { echo "::error::no win64 zip to upload"; exit 1; }
+          for i in $(seq 1 80); do
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && break
+            [ "$i" = 1 ] && echo "waiting for the release to be created..."
+            sleep 15
+          done
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::warning title=release::no release yet (macOS build slow or failed): creating it for the Windows download"
+            gh release create "$GITHUB_REF_NAME" --title "SODA $GITHUB_REF_NAME" --notes "SODA desktop app $GITHUB_REF_NAME. See docs/DESKTOP_APP.md." || true
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$ZIP" "$R/SHA256SUMS-windows.txt" --clobber
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## SODA Windows build"
+            echo
+            echo "| check | result |"
+            echo "|---|---|"
+            echo "| build | ${{ job.status }} |"
+            echo "| app test (selftest, prepare + ID check, viewer, home page) | ${{ steps.smoke.outcome }} |"
+            echo
+            ls -l "${RUNNER_TEMP}/build/release" 2>/dev/null | sed 's/^/    /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if the app test failed
+        if: steps.smoke.outcome != 'success'
+        run: |
+          echo "The app was built and uploaded as an artifact, but tests/app_test.py failed."
+          exit 1
