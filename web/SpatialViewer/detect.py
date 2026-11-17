@@ -19,7 +19,8 @@ stereoseq.py, geomx.py, rnaseq.py, expr.find_visium_layers):
     xenium     morphology_focus/*.ome.tif; experiment.xenium, cells + cell_feature_matrix,
                transcripts.parquet / .zarr.zip (each optional; without the stain images, cells or
                transcripts are drawn on a density background). Also a zip of the output folder: read as
-               it is (xenium.py, zipinput.py)
+               it is (xenium.py, zipinput.py); and a transcripts store on its own (<name>_transcripts.zarr.zip,
+               not in an output folder): its molecules on a transcript-density background
     cosmx      *_exprMat_file, *_metadata_file, *_fov_positions_file, *_tx_file (csv / csv.gz /
                parquet) and the FOV image folders (Morphology2D, CellComposite ...)
     merscope   detected_transcripts, cell_by_gene + cell_metadata, images/mosaic_<stain>_z<k>.tif
@@ -508,9 +509,54 @@ def _is_tiff(name: str) -> bool:
 
 
 # ----------------------------------------------------------------------------- xenium
+def is_transcripts_store(name: str) -> bool:
+    """A Xenium transcripts store by its name: transcripts.zarr.zip, or <name>_transcripts.zarr.zip on its own."""
+    return str(name).lower().endswith("transcripts.zarr.zip")
+
+
+def _store_check(path) -> str | None:
+    """Why a lone *_transcripts.zarr.zip is not Xenium's transcripts store (from its file list), or None."""
+    try:
+        with zipfile.ZipFile(str(path)) as z:
+            names = [n.replace("\\", "/") for n in z.namelist()[:MAX_ENTRIES]]
+    except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError):
+        return "it is not a readable zip"
+    if not any(n.rstrip("/").endswith(".zgroup") for n in names) or not any(n.startswith("grids/") for n in names):
+        return "it does not hold a zarr store with grids/ (the layout of Xenium's transcripts.zarr.zip)"
+    return None
+
+
+def _xenium_stores(cx: Ctx, folders: set) -> list[dict]:
+    """Loose Xenium transcripts stores: a <name>_transcripts.zarr.zip not inside a Xenium output folder (or any
+    transcripts store given as the file itself) is a dataset of its own, its molecules drawn on a transcript-density
+    background (xenium.plan: --src is the file). Not inside a zip's file list: there it is part of the zip."""
+    t, out = cx.t, []
+    if not t.real:
+        return out
+    for rel, f in t.files.items():
+        if rel in folders:                    # in a Xenium output folder: part of it (noted in detect())
+            continue
+        for n in sorted(f):
+            if not is_transcripts_store(n) or (n == "transcripts.zarr.zip" and not t.single):
+                continue
+            c = _cand("xenium", "molecules", "Xenium (molecules, no stain images)", _join(rel, n), is_file=True)
+            _ev(c, "molecules layer", _join(rel, n), "a Xenium transcripts store on its own, " + _mb(f[n]))
+            why = _store_check(t.path(rel, n))
+            if why:
+                _miss(c, f"{n}: {why}", None, "point at the Xenium output folder it came from instead")
+            c["notes"].append("no stain images (morphology_focus/*.ome.tif): drawn on a transcript density background instead")
+            c["notes"].append("no experiment.xenium: Xenium's usual pixel size (0.2125 µm) is taken for the background's grid")
+            c["notes"].append("no cells.parquet / cells.csv.gz and no cell_feature_matrix: no cells layer")
+            c["args"]["src"] = t.path(rel, n)
+            out.append(c)
+    return out
+
+
 def find_xenium(cx: Ctx) -> list[dict]:
     t, out = cx.t, []
     for rel, f in t.files.items():
+        if t.single:                          # one file given: it is not an output folder (a lone store: below)
+            break
         d = t.d(rel)
         stains = sorted(n for n in t.f(_join(rel, "morphology_focus")) if ".ome.tif" in n.lower()) \
             if "morphology_focus" in d else []
@@ -573,7 +619,7 @@ def find_xenium(cx: Ctx) -> list[dict]:
             _ev(c, "overlay", _join(rel, "Custom_annotation.geojson"))
         c["args"]["src"] = t.path(rel)
         out.append(c)
-    return out
+    return out + _xenium_stores(cx, {c["root"] for c in out})
 
 
 # ------------------------------------------------------------------------------ visium
@@ -1990,11 +2036,11 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
     if other_archives:
         notes.append(f"{len(other_archives)} archive(s) were not looked into (only .zip file lists are read): "
                      + ", ".join(other_archives[:4]) + (" ..." if len(other_archives) > 4 else ""))
-    lone = sorted(n for f in t.files.values() for n in f if n.lower().endswith("transcripts.zarr.zip") and n != "transcripts.zarr.zip")
-    if lone:
-        notes.append(f"{len(lone)} file(s) named like {lone[0]} look like a Xenium transcripts store on its own: the Xenium "
-                     f"reader needs it named transcripts.zarr.zip, in the output folder or in a folder of its own (then its "
-                     f"molecules are drawn on a transcript-density background)")
+    xen_dirs = {c["root"] for c in cands if c["kind"] == "xenium" and not c["_file"]}
+    lone = sorted(n for rel in xen_dirs for n in t.f(rel) if is_transcripts_store(n) and n != "transcripts.zarr.zip")
+    if lone:                                             # a loose one elsewhere is a dataset of its own (_xenium_stores)
+        notes.append(f"{len(lone)} file(s) named like {lone[0]} sit in a Xenium output folder: not prepared on their own, "
+                     f"as the folder is (to prepare one by itself, on a transcript-density background: --src <that file>)")
     n_zip = sum(1 for f in t.files.values() for n in f if n.lower().endswith(".zip") and not n.lower().endswith(".zarr.zip"))
     if n_zip > len(zips):
         notes.append(f"{n_zip - len(zips)} zip file(s) were not looked into (the first {MAX_ZIPS} are)")

@@ -78,8 +78,11 @@ A folder that holds several datasets is reported dataset by dataset and never me
 `auto` once per dataset, or `prepare.py batch` for all of them with one log
 ([ADVANCED.md, section 8](ADVANCED.md#8-many-datasets-at-once-without-the-notebook)). Zipped instrument output is recognised from the zip's file list
 (nothing is unpacked). A zipped Xenium output is prepared as it is ([Xenium](#xenium), *A zipped output*), each zip a
-dataset of its own (unless its unzipped folder is beside it: then the folder is used and the zip noted); every other
-kind must be unzipped first. `python web/SpatialViewer/prepare.py detect path --json`
+dataset of its own (when its unzipped folder is beside it in one dataset folder, the folder is used and the zip
+noted; `prepare.py batch`, the notebook and the app prepare `run1.zip` next to a dataset folder `run1/` as a second
+dataset, `run1_zip`, and say they may be the same data); every other kind must be unzipped first. A Xenium transcripts
+store on its own, `<name>_transcripts.zarr.zip` (not in a Xenium output folder), is a dataset of its own too: its
+molecules on a transcript-density background ([Xenium](#xenium), *Without the stain images*). `python web/SpatialViewer/prepare.py detect path --json`
 prints the full report for scripts. The notebook (`notebooks/SODA_pipeline.ipynb`) uses the
 same check: put each dataset in its own folder under `inputs/`, with any name.
 
@@ -203,7 +206,8 @@ if you unpacked an archive with a `data/` folder inside, either folder works), o
   morphology image, so pixel = µm ÷ pixel size.
 
 **Without the stain images** (no `morphology_focus/`, e.g. a folder that holds only
-`transcripts.zarr.zip`, or the cell files and the matrix): the cells and the molecules are
+`transcripts.zarr.zip`, or the cell files and the matrix; or `--src` a transcripts store on its own,
+`<name>_transcripts.zarr.zip`, which detection and batch take as a dataset of its own): the cells and the molecules are
 prepared as usual and drawn on a neutral grey background, the density of the transcripts (of
 the cells when there are no transcripts), as for CosMx and MERSCOPE without images. The
 background keeps Xenium's frame: its origin is Xenium's (0, 0) and one background pixel is a

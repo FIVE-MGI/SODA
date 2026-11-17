@@ -3028,6 +3028,7 @@ DETECT_WANT = {
     "image_v3.ome.zarr": ("omezarr", "zarr-v3"), "anndata_cells_v3.zarr": ("anndata", "zarr-v3"),
 }
 # `prepare.py auto` runs whose cache must equal the explicit subcommand's: (id, source under raw/, options passed through)
+LONE_STORE, XST = "demo_transcripts.zarr.zip", "demo_xenium_store"   # a Xenium transcripts store on its own
 AUTO_SAME = ((VIS, "visiumhd", []), (XE, "xenium", ["--label", "Synthetic Xenium"]), (MX, "multiplex.ome.tif", []),
              (XZ, "xenium_output.zip", ["--label", "Synthetic Xenium"]),
              (CXT, "cosmx_tx", ["--pixel-size", "0.5"]), (MSN, "merscope_noimg", []),
@@ -3092,6 +3093,16 @@ def make_detect_cases(root: Path) -> Path:
     (neg / "zip_and_folder").mkdir()                                 # run1.zip with its unzipped copy run1/ beside it
     shutil.copyfile(neg / "zipped" / "run1.zip", neg / "zip_and_folder" / "run1.zip")
     xenium(neg / "zip_and_folder" / "run1")
+    store = raw / "xenium" / "transcripts.zarr.zip"                 # Xenium transcripts stores on their own
+    (neg / "xenium_lone_store").mkdir()
+    shutil.copyfile(store, neg / "xenium_lone_store" / LONE_STORE)
+    _touch(neg / "xenium_store_bad" / "bad_transcripts.zarr.zip", b"not a zip")
+    xenium(neg / "xenium_extra_store")                               # one inside a Xenium folder: part of the folder
+    shutil.copyfile(store, neg / "xenium_extra_store" / "copy_transcripts.zarr.zip")
+    (neg / "zip_and_folder_merscope").mkdir()                        # a zip that must be unzipped, beside its folder
+    shutil.copyfile(neg / "zipped_merscope" / "region0.zip", neg / "zip_and_folder_merscope" / "region0.zip")
+    for n in ("detected_transcripts.csv", "cell_by_gene.csv", "cell_metadata.csv"):
+        _touch(neg / "zip_and_folder_merscope" / "region0" / n, b"a,b\n")
     (neg / "zipped_slip").mkdir()                                     # a Xenium zip with a name that climbs out (zip slip)
     shutil.copyfile(neg / "zipped" / "run1.zip", neg / "zipped_slip" / "slip.zip")
     with zipfile.ZipFile(neg / "zipped_slip" / "slip.zip", "a") as z:
@@ -3153,6 +3164,8 @@ def detect_commands(root: Path) -> list[list[str]]:
     two = f"{r}/detect/cases/visium_two_images"
     cmds.append([prep, "auto", "--id", VIS, "--src", two, "--out", f"{r}/detect/cache_kind", "--kind", "visium",
                  "--image", f"{two}/image.tif"])
+    cmds.append([prep, "auto", "--id", XST, "--src", f"{r}/detect/cases/xenium_lone_store/{LONE_STORE}", "--out",
+                 f"{r}/detect/cache"])
     return cmds
 
 
@@ -3298,8 +3311,26 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
     finally:
         sys.path.pop(0)
     rows, warn = batch.find_datasets(neg / "zip_and_folder", {}, None)
-    c.ok([r["id"] for r in rows] == ["run1"] and any("run1.zip is not prepared" in w for w in warn),
-         f"batch zip_and_folder: run1/ is the dataset, run1.zip beside it is left out with a warning: {[r['id'] for r in rows]} {warn}")
+    c.ok([(r["id"], r["verdict"]) for r in rows] == [("run1", "certain"), ("run1_zip", "certain")]
+         and Path(rows[1]["src"]).name == "run1.zip" and any("may be the same data" in w and "run1_zip" in w for w in warn),
+         f"batch zip_and_folder: run1/ and run1.zip beside it are two datasets, run1 and run1_zip, with a warning that "
+         f"they may be the same data: {[r['id'] for r in rows]} {warn}")
+    rows, warn = batch.find_datasets(neg / "zip_and_folder_merscope", {}, None)
+    c.ok([r["id"] for r in rows] == ["region0"] and any("region0.zip is not prepared" in w for w in warn),
+         f"batch zip_and_folder_merscope: a zip that must be unzipped, beside its folder, is left out with a warning: "
+         f"{[r['id'] for r in rows]} {warn}")
+    rows, warn = batch.find_datasets(neg / "xenium_lone_store", {}, None)
+    c.ok([(r["id"], r["kind"], r["variant"], r["verdict"]) for r in rows] == [("demo_transcripts", "xenium", "molecules", "certain")],
+         f"batch: a loose *_transcripts.zarr.zip is a Xenium dataset of its own: {[(r['id'], r['kind'], r['verdict']) for r in rows]}")
+    for where in (f"xenium_lone_store/{LONE_STORE}", "xenium_lone_store"):
+        r = case(where, "certain", "one-kind", "xenium", say=["density background", "0.2125", "no cells layer"])
+        c.ok(r["variant"] == "molecules" and r["candidates"] and r["candidates"][0]["argv"][:2] == ["xenium", "--src"]
+             and Path(r["candidates"][0]["args"].get("src", "")).name == LONE_STORE,
+             f"detect {where}: a transcripts store on its own is --src itself, molecules only")
+    case("xenium_store_bad/bad_transcripts.zarr.zip", "incomplete", "missing-files", "xenium", say=["not a readable zip"])
+    r = case("xenium_extra_store", "certain", "one-kind", "xenium", say=["copy_transcripts.zarr.zip", "not prepared on their own"])
+    c.ok(r["candidates"] and Path(r["candidates"][0]["args"].get("src", "")).name == "xenium_extra_store",
+         "detect xenium_extra_store: a *_transcripts.zarr.zip inside a Xenium folder stays part of it (noted)")
     case("zipped_slip/slip.zip", "incomplete", "zipped", "xenium", say=["not read as it is", "'..'", "refused"])
     r = case("two_zips", "ambiguous", "several-datasets", say=["a.zip", "b.zip"])
     c.ok(len(r["datasets"]) == 2 and all(x["verdict"] == "certain" for x in r["datasets"]),
@@ -3404,6 +3435,18 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
         c.ok("[auto] running: python prepare.py xenium --src" in log_txt and "(detected)" in log_txt and "(--kind visium)" in log_txt,
              "prepare.py auto: the log names what was detected and the command that ran")
     out["autoSame"] = len(AUTO_SAME) + 1
+    ms = root / "detect" / "cache" / XST / "manifest.json"
+    if c.ok(ms.exists(), f"prepare.py auto on a lone {LONE_STORE}: prepared ({ms})"):
+        m, ref = read_json(ms), read_json(root / "cache" / XNI / "manifest.json") if (root / "cache" / XNI / "manifest.json").exists() else {}
+        mol, rmol = m.get("molecules") or {}, ref.get("molecules") or {}
+        c.ok(m.get("kind") == "xenium" and (m.get("image") or {}).get("background") == "transcript density"
+             and not m.get("expr") and abs((m.get("pixelSizeUm") or 0) - 5 * 0.2125) < 1e-9
+             and (m.get("frame") or {}).get("xeniumPixelSizeUm") == 0.2125,
+             f"lone transcripts store: Xenium, a transcript-density background of 5 x 0.2125 um pixels (no experiment.xenium), "
+             f"no cells layer (kind {m.get('kind')}, background {(m.get('image') or {}).get('background')}, {m.get('pixelSizeUm')} um)")
+        c.ok(mol.get("n") and mol.get("n") == rmol.get("n") and mol.get("nGenes") == rmol.get("nGenes"),
+             f"lone transcripts store: the same molecules as the Xenium folder without images ({mol.get('n')} / {rmol.get('n')}, "
+             f"{mol.get('nGenes')} genes)")
     print(f"    {out['certain']} of {len(DETECT_WANT)} synthetic folders certain, listing {out['seconds']:.2f}s; "
           f"auto = explicit for {out['autoSame']} datasets")
     return out
@@ -3419,7 +3462,8 @@ BATCH_BROKEN = "bx_broken"          # a Xenium folder whose stain file is not a 
 BATCH_AMBIG = "bx_two_runs"         # MERSCOPE with two segmentation runs: skipped, with the --cells-dir to add
 BATCH_IDLIKE = "INT" + "9961_scan"  # a folder name that looks like a sample ID (made up; deid:ok): skipped, never written
 BATCH_STD = "bx_sdata"              # sdata_xenium.zarr copied as bx_sdata.zarr: the id drops .zarr, pixel_size from the options
-BATCH_OK = sorted(list(BATCH_GOOD) + [BATCH_MIXED, BATCH_STD])
+BATCH_STORE = "bx_store_transcripts"  # bx_store_transcripts.zarr.zip: a Xenium transcripts store on its own (molecules)
+BATCH_OK = sorted(list(BATCH_GOOD) + [BATCH_MIXED, BATCH_STD, BATCH_STORE])
 
 
 def make_batch_inputs(root: Path) -> tuple[Path, Path]:
@@ -3443,6 +3487,8 @@ def make_batch_inputs(root: Path) -> tuple[Path, Path]:
         for n in ("cell_by_gene.csv", "cell_metadata.csv"):
             _touch(inp / BATCH_AMBIG / run_ / n, b"a,b\n")
     _touch(inp / "notes.txt", b"not a dataset\n")
+    shutil.copyfile(root / "raw" / "xenium" / "transcripts.zarr.zip", inp / f"{BATCH_STORE}.zarr.zip")
+    shutil.copytree(root / "raw" / "xenium_pq", inp / "_parked_copy")   # a name starting with _: left out
     opts = b / "options.json"
     opts.write_text(json.dumps({"_comment": "the notebook's OPTIONS as JSON",
                                 "bx_cosmx": {"pixel_size": 0.5, "label": "Batch CosMx"},
@@ -3525,6 +3571,11 @@ def check_batch(c: Checker, root: Path, log_path: Path) -> dict:
          f"batch: {BATCH_AMBIG} skipped, with the options-file entry and the flag that settle it ({am.get('reason')}; {hint[:300]!r})")
     c.ok(not (b / "export" / BATCH_AMBIG).exists() and not (b / "cache" / BATCH_AMBIG).exists(),
          f"batch: nothing written for {BATCH_AMBIG}")
+    st = read_json(b / "export" / BATCH_STORE / "manifest.json") if (b / "export" / BATCH_STORE / "manifest.json").exists() else {}
+    c.ok(st.get("kind") == "xenium" and (st.get("image") or {}).get("background") == "transcript density" and st.get("molecules"),
+         f"batch: {BATCH_STORE}.zarr.zip prepared on its own, molecules on a transcript-density background")
+    c.ok("1 name(s) under the inputs folder start with _" in first["stdout"] and "_parked_copy" not in rows,
+         "batch: a folder whose name starts with _ is left out, and the log says so")
     mixed = read_json(b / "export" / BATCH_MIXED / "manifest.json") if (b / "export" / BATCH_MIXED / "manifest.json").exists() else {}
     c.eq(mixed.get("kind"), "xenium", f"batch: {BATCH_MIXED} (two kinds) prepared as the options file's kind")
     cx = read_json(b / "export" / "bx_cosmx" / "manifest.json") if (b / "export" / "bx_cosmx" / "manifest.json").exists() else {}
@@ -3584,8 +3635,49 @@ def check_batch(c: Checker, root: Path, log_path: Path) -> dict:
     return {"exported": len(BATCH_OK), "firstSec": first["seconds"], "againSec": again["seconds"]}
 
 
+def check_notebook_finder(c: Checker, root: Path):
+    """The notebook's Section 2 cell, run on the batch inputs (as inputs/) and on detect/cases/zip_and_folder: the
+    same datasets as batch.find_datasets, in the notebook's words, and the zip beside its folder noted."""
+    import contextlib
+    import io
+    nb = json.loads((REPO / "notebooks" / "SODA_pipeline.ipynb").read_text(encoding="utf-8"))
+    cell = next(("".join(x["source"]) for x in nb["cells"] if x["cell_type"] == "code" and "DATASETS = find_datasets()" in "".join(x["source"])), "")
+    sys.path.insert(0, str(APP))
+    try:
+        import batch
+    finally:
+        sys.path.pop(0)
+    for inputs, opts_file in ((root / "batch" / "inputs", root / "batch" / "options.json"),
+                              (root / "detect" / "cases" / "zip_and_folder", None)):
+        if not c.ok(cell and inputs.exists(), f"notebook Section 2 on {inputs.name}: the cell and the folder are there"):
+            continue
+        opts = batch.load_options(opts_file)[0] if opts_file else {}
+        g = {"__name__": "nb_section2", "Path": Path, "sys": sys, "importlib": importlib, "SV": APP, "INPUTS": inputs,
+             "VISIUM_BINS": "008um,016um"}
+        g["_OPTS"] = opts                       # the options file stands in for the cell's OPTIONS
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                exec(compile(cell.replace("OPTIONS = {", "OPTIONS = _OPTS or {", 1), "notebook Section 2", "exec"), g)
+        except Exception as e:  # noqa: BLE001
+            c.ok(False, f"notebook Section 2 on {inputs.name}: runs ({type(e).__name__}: {e})")
+            continue
+        rows, _ = batch.find_datasets(inputs, opts, "008um,016um")
+        nbrows = g.get("DATASETS") or []
+        c.eq([(d["id"], d["report"]["verdict"], bool(d["problems"])) for d in nbrows],
+             [(r["id"], r["verdict"], bool(r["problems"])) for r in rows],
+             f"notebook Section 2 on {inputs.name}: the same datasets, verdicts and ready / not ready as batch.find_datasets")
+        out = buf.getvalue()
+        if inputs.name == "zip_and_folder":
+            c.ok("Note:" in out and "may be the same data" in out and "run1_zip" in out and "READY" in out,
+                 f"notebook Section 2: run1.zip beside run1/ is a second dataset, run1_zip, with a note ({out[-300:]!r})")
+        else:
+            c.ok("OPTIONS" in out and "the options file" not in out and BATCH_STORE in out,
+                 "notebook Section 2 on the batch inputs: batch's messages in the notebook's words (OPTIONS), the lone store found")
+
+
 def check_notebook(c: Checker):
-    """notebooks/SODA_pipeline.ipynb: valid, no saved outputs, code that compiles, and its dataset finding is detect.py's."""
+    """notebooks/SODA_pipeline.ipynb: valid, no saved outputs, code that compiles, and its dataset finding is batch.py's."""
     p = REPO / "notebooks" / "SODA_pipeline.ipynb"
     try:
         nb = json.loads(p.read_text(encoding="utf-8"))
@@ -3603,7 +3695,9 @@ def check_notebook(c: Checker):
             bad.append(f"{x.get('id')}: {e}")
     c.ok(not bad, f"notebook: every code cell compiles {bad}")
     src = "\n".join("".join(x["source"]) for x in code)
-    c.ok("import detect" in src and "detect.detect(" in src and "OPTIONS = {" in src, "notebook: Section 2 uses detect.py and has the OPTIONS dictionary")
+    c.ok("import detect" in src and "import batch" in src and "batch.find_datasets(" in src and "OPTIONS = {" in src
+         and "def check_dataset" not in src and "is_kind_folder" not in src,
+         "notebook: Section 2 finds the datasets with batch.find_datasets (no copy of its own) and has the OPTIONS dictionary")
     c.ok("cell_by_gene" not in src and 'glob("*.qptiff' not in src and "morphology_focus" not in src and "_regist" not in src,
          "notebook: no per-kind file finding of its own (detect.py has it)")
     text = "\n".join("".join(x["source"]) for x in nb["cells"] if x["cell_type"] == "markdown")
@@ -4473,6 +4567,23 @@ def check_sharing(c: Checker, log_path: Path):
     c.ok(bool(re.search(r"viewlink_test: \d+ checks passed", p.stdout)), "tests/viewlink_test.js: every check passed")
 
 
+def check_link_files(c: Checker):
+    """Encrypted link files (links.py, linkPath): marked deprecated in the docs, and still working."""
+    url = "https://example.org/data/demo_visiumhd/"
+    try:
+        sys.path.insert(0, str(APP))
+        import links as _links
+        payload = _links.encrypt("a long test password", url)
+        c.eq(_links.decrypt("a long test password", payload), url, "links.py: encrypt / decrypt still round-trip")
+    except ImportError as e:
+        print(f"    links.py round trip skipped ({e})")
+    finally:
+        sys.path.pop(0)
+    for doc, text in (("docs/HOSTING.md", "Encrypted link files are deprecated"), ("docs/ADVANCED.md", "(no server; **deprecated**)"),
+                      ("README.md", "deprecated: they will be removed"), ("deploy/azure/README.md", "> **Deprecated.**")):
+        c.ok(text in (REPO / doc).read_text(encoding="utf-8"), f"{doc}: encrypted link files marked deprecated ({text!r})")
+
+
 def check_offline(c: Checker, root: Path, log_path: Path):
     """Offline use: the pinned libraries agree everywhere, nothing widens the page's Content-Security-Policy, the
     service worker can find every file it must keep, and tests/offline_test.js passes in Chromium and WebKit."""
@@ -4904,6 +5015,11 @@ def main(argv=None) -> int:
     ap.add_argument("--reuse", action="store_true", help="keep earlier outputs (export skips existing files)")
     ap.add_argument("--checks-only", action="store_true", help="do not run the commands, only check the outputs")
     args = ap.parse_args(argv)
+    for k, v in (("NODE_PATH", r"D:\SpatialVizBench\iphone\pw\node_modules"),
+                 ("PLAYWRIGHT_BROWSERS_PATH", r"D:\SpatialVizBench\iphone\browsers")):
+        if not os.environ.get(k) and Path(v).is_dir():   # unset: use this machine's bench Playwright, so no browser test skips
+            os.environ[k] = v
+            print(f"{k} was not set: using {v}")
     root = Path(args.root)
     root.mkdir(parents=True, exist_ok=True)
     log_path = root / "smoke_test.log"
@@ -4988,6 +5104,7 @@ def main(argv=None) -> int:
     summary["batch"] = check_batch(c, root, log_path)
     print("checks: the notebook")
     check_notebook(c)
+    check_notebook_finder(c, root)
     print("checks: cell outlines (every platform's boundaries, traced label masks, a lab's own file)")
     summary["outlines"] = check_outlines(c, root, log_path)
     print("checks: gene packs (genepack.py): every export, loose / both, Range over HTTP, repack, deid")
@@ -5006,6 +5123,8 @@ def main(argv=None) -> int:
     check_sharing(c, log_path)
     print("checks: your own results (ownres.js: a reader's CSV / TSV matched in the browser)")
     check_ownres(c, root, log_path)
+    print("checks: encrypted link files (links.py, linkPath): deprecated, still working")
+    check_link_files(c)
     print("checks: offline use (libs.js, vendor.py, sw.js, offline.js)")
     check_offline(c, root, log_path)
     print("checks: publishable")
