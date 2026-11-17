@@ -61,6 +61,9 @@ GROUP_BY_KIND = {
     "rnaseq": "Single-cell RNA-seq",
     "tiff": "Images",
     "akoya": "Images",
+    "anndata": "Spatial transcriptomics",
+    "spatialdata": "Spatial transcriptomics",
+    "omezarr": "Images",
 }
 
 # Files that must never be uploaded. Finding one inside the export folder stops the
@@ -70,7 +73,7 @@ NEVER_UPLOAD = {"sample_id_key.csv"}
 
 def group_for(manifest):
     kind = manifest.get("kind", "")
-    if kind in ("tiff", "akoya") and any(e.get("kind") == "protein" for e in manifest.get("expr") or []):
+    if kind in ("tiff", "akoya", "omezarr") and any(e.get("kind") == "protein" for e in manifest.get("expr") or []):
         return "Protein images"
     return GROUP_BY_KIND.get(kind, "Other")
 
