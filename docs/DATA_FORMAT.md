@@ -274,6 +274,47 @@ in the JSON that Save JSON writes as
 `?qc=<layer>:<metric>=<min>-<max>,...`, e.g. `?qc=008um:total=20-,pctMt=-25`. Exports made
 before 11 November 2026 have no `binQc` block; the panel is then hidden and nothing is filtered.
 
+### The saved view: Save JSON's `view` block and the link after `#`
+
+Not part of an export: this is what the page itself writes. **Save JSON** and **Copy link to
+this view** come from one function (`sessionState` in `viewer.js`); the link is the file's
+state without the UMAP run's parameters and result. Both carry a `view` block (made and read
+by `viewlink.js`):
+
+```json
+"view": {"v": 1, "mode": "sbs", "cam": [5120.5, 3890.25, -1.25], "scam": [5000, 3900, -2], "win": [1366, 722],
+         "tab": "clusters", "img": {"on": true, "op": 0.8},
+         "ch": [{"n": "DAPI", "on": true, "c": "#0000ff", "w": [10, 180]}],
+         "genes": [{"n": "MARKER_FASC1", "c": "#ff3355", "r": [0, 12]}, {"n": "MARKER_EPI2", "c": "#33ddff", "r": [1, 7.5], "on": false}],
+         "blend": "heatmap", "palette": "viridis", "gop": 0.9, "ps": 1.5, "tb": true,
+         "mol": {"genes": [{"n": "GENE_A", "c": "#ffffff"}], "size": 1.5, "op": 0.8},
+         "ov": ["regions"], "colorBy": "cluster", "pick": 3, "qcOutline": true}
+```
+
+- `mode`: `tissue`, `sbs` (side by side), `umap`, or `rna` (a single-cell dataset, whose settings
+  are in a `rna` block: `colorBy`, `genes`, `view`, `palette`, `bin`, `ps`, `labels`, `cam`).
+- `cam` = centre x, y in image pixels and deck.gl zoom (log2 of screen px per image px) of the
+  tissue; `ucam` / `scam` the same for the full UMAP view and the UMAP half of side by side;
+  `win` = the map's size in CSS px when saved. On opening, the zoom is corrected by
+  log2(min(w'/w, h'/h)) so the area that was in view is in view again in a window of another size.
+- `ch` lists the stains that are on or whose colour (`c`) or display range (`w`, 0–255) was
+  changed; every other stain is off with its default. `genes[].r` is the range drawn, `on:
+  false` a gene that is listed but switched off. `ov` = the keys of the outlines switched on.
+- The layer, drawn shapes, the clustering on show with cluster names, cell sets and hidden
+  clusters (`sectionClusters`) and the quality thresholds (`qcFilter`) are where Save JSON always had
+  them, one level up. A file without `view` (saved before 16 November 2026) loads as it did.
+
+The link is `<page>?ds=<dataset>[&data=…|&static=…][&qc=…]#v=<payload>`. The payload is
+`1d.` + base64url(deflate-raw(UTF-8 JSON)), or `1j.` + base64url(UTF-8 JSON) from a browser
+without `CompressionStream`; the leading digit is the format version. The JSON is the state
+above with defaults left out (`seed` 42, `mode` "bins", `resolution` "auto", no shapes). The
+page aims at 2,000 characters for the whole link: outlines are first thinned to 40 points
+(and shapes made from a selection dropped), then shapes are left out, then cluster names;
+what was left out is said under the button. A reader accepts payloads up to 16,000 characters
+that unpack to at most 512 kB, keeps only known keys of the right type and range, looks names
+up in the open dataset's own lists (it never fetches by a name from a link) and reads no
+address from the payload; a payload it cannot read leaves the default view and a message.
+
 ### What the heatmap, dot plot and violin plots read
 
 The **Heatmap and violin** section (heatmap, dot plot and violins; `plots.js`, numbers from `plots_worker.js`) computes
