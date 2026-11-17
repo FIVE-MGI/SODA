@@ -6632,9 +6632,9 @@
         else out.push({ title: on.length > 1 ? `${W.Genes}, averaged (low to high)` : `${W.Gene} (low to high)`, items: [{ label: on.map((g) => g.name).join(", "), stops: lutStops(S.genePalette) }] });
       }
     }
-    // Draw a region's result on the slide: its clusters (or shapes), and in fast mode that the layout was of a sample
+    // Draw a region's result on the slide in fast mode: its clusters (or shapes), and that the layout was of a sample
     const LR = S.lasso && S.lasso.result;
-    if (!umap && LR && S.lasso.bin) {
+    if (!umap && LR && S.lasso.bin && LR.info.fast) {
       const byCl = lassoByCluster() && LR.info.mode === "bins";
       const items = byCl
         ? Array.from({ length: LR.info.nClusters || 0 }, (_, c) => ({ label: S.lasso.clNames[c] || `Cluster ${c}`, rgb: clusterRgb(c) }))
