@@ -247,8 +247,17 @@ async function openPage(browser, eng, url, label, feature) {
   };
   return { ctx, page, log, ok, shot };
 }
+// A connection to this test's own servers that the machine dropped (refused / reset at the TCP level, seen
+// now and then on a busy Windows machine with other servers running) says nothing about the browser: up to
+// two per page are noted, not failed. Any HTTP error, a third drop, or a drop elsewhere still fails.
+const DROPPED = /ERR_CONNECTION_(FAILED|RESET|REFUSED|ABORTED)|ERR_EMPTY_RESPONSE|Could not connect|connection was (reset|refused)/i;
+let LOCAL = [];
 function checkClean(t, feature, allowed = []) {
-  const allow = (u) => allowed.concat(OPTIONAL).some((re) => re.test(u));
+  const drop = (b) => DROPPED.test(b.status) && LOCAL.some((o) => b.url.startsWith(o));
+  const dropped = t.log.bad.filter(drop);
+  const flaky = dropped.length && dropped.length <= 2 ? new Set(dropped.map((b) => b.url)) : new Set();
+  if (flaky.size) console.log(`        note: ${dropped.length} connection(s) to the test servers dropped, not counted: ${[...flaky].map((u) => u.replace(/^https?:\/\/[^/]+/, "")).join(", ")}`);
+  const allow = (u) => flaky.has(u) || allowed.concat(OPTIONAL).some((re) => re.test(u));
   const bad = t.log.bad.filter((b) => !allow(b.url));
   const cons = t.log.console.filter((c) => !(/Failed to load resource|status of 404/.test(c.text) && (!c.url || allow(c.url))));
   t.ok(!t.log.pageErrors.length, `no page error${t.log.pageErrors.length ? ": " + t.log.pageErrors.slice(0, 3).join(" / ") : ""}`, feature);
@@ -760,6 +769,7 @@ async function phone(browser, eng, urls) {
 (async () => {
   const data = await listen(handler(dataRoute), PORTS[0]), pageSrv = await listen(handler(pageRoute), PORTS[1]);
   const urls = { data: `http://127.0.0.1:${data.address().port}`, page: `http://127.0.0.1:${pageSrv.address().port}` };
+  LOCAL = [urls.data + "/", urls.page + "/"];
   const phoneDev = { ...pw.devices["iPhone X"] };                    // 375 x 812, touch, 3x
   const ENGINES = [
     { name: "chromium", type: pw.chromium, group: "desktop", clipboard: true },

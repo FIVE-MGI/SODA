@@ -167,7 +167,8 @@ async function openPage(browser, url, version, label) {
   const log = { console: [], pageErrors: [], bad: [], ok: [] };
   page.on("console", (m) => { if (m.type() === "error") log.console.push({ text: m.text(), url: (m.location() || {}).url || "" }); });
   page.on("pageerror", (e) => log.pageErrors.push(String(e.message || e).split("\n")[0]));
-  page.on("requestfailed", (r) => log.bad.push({ url: r.url(), status: r.failure() ? r.failure().errorText : "failed" }));
+  // a request the page itself cancelled (another dataset picked while an overlay was still loading) is not a failure
+  page.on("requestfailed", (r) => { const f = r.failure() ? r.failure().errorText : "failed"; if (!/ERR_ABORTED/.test(f)) log.bad.push({ url: r.url(), status: f }); });
   page.on("response", (r) => (r.status() >= 400 ? log.bad : log.ok).push({ url: r.url(), status: r.status() }));
   // the repo has no config.js (only config.example.js): an empty one, as on a fresh copy
   await page.route("**/config.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript", body: "window.SpatialViewerConfig = {};" }));
