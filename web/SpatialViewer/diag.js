@@ -353,7 +353,7 @@
               let asked = 0, loaded = 0, pic = 0;
               for (const l of layers) for (const t of l.state.tileset.tiles) { asked++; if (t.isLoaded) loaded++; if (t.content) pic++; }
               const on = S.channels.filter((c) => c.visible).length;
-              add("Stains on", `${on} of ${S.channels.length}; image ${S.imgOn ? "on" : "OFF (the Image button)"}, opacity ${S.imgOpacity}`, on && S.imgOn ? "" : "bad");
+              add("Stains on", `${on} of ${S.channels.length}; image ${S.imgOn ? "on" : "OFF (Image opacity at 0)"}, opacity ${S.imgOpacity}`, on && S.imgOn ? "" : "bad");
               add("Tiles", `${asked} asked, ${loaded} finished, ${pic} with a picture`, asked && pic === asked ? "good" : pic ? "" : "bad");
               if (!lost) {
                 deckgl.redraw("diag");

@@ -95,8 +95,9 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
-  (box or freehand) and the same bins light up in the other. **Show on slide** takes any
-  selection, picked cluster or cell type back to the tissue and frames it there.
+  (box or freehand) and the same bins light up in the other. What is selected is named above
+  the picture with **Show on slide**, which takes any selection, picked cluster or cell type
+  back to the tissue and frames it there, and **Clear selection** (or Esc).
 - **Suggested cluster names.** Each cluster gets a suggested cell type from editable
   marker lists, with a confidence and the runner-up shown; accept it, accept all
   high-confidence ones, or type your own. General lists for any tissue (genes and protein

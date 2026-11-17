@@ -1644,11 +1644,12 @@
   }
 
   // ---- UI: channels ---------------------------------------------------------------
+  // The image's one control is Image opacity: at 0 the image is off (not drawn, not in Save image's legend), the
+  // stains' settings kept. (An "Image off" button beside it did the same; links made with it say on: false, viewlink.js.)
   function syncImageButton() {
-    const btn = $("btnImage"); if (!btn) return;
-    btn.textContent = S.imgOn ? "Image off" : "Image on";
-    btn.title = S.imgOn ? "Hide the image, keeping your channel settings" : "Show the image again";
-    $("imgOpacity").disabled = !S.imgOn;
+    const el = $("imgOpacity"); if (!el) return;
+    S.imgOn = S.imgOpacity > 0;
+    if (Math.abs(+el.value - S.imgOpacity) > 1e-6) el.value = S.imgOpacity;
   }
 
   function filterChannelUI() {
@@ -4777,8 +4778,6 @@
         `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`;
     const ctLit = umapCtLit(), phLit = umapPhLit(), has = !!(U.sel || U.pick !== null || ctLit || phLit);
     const lpTxt = !has ? lassoPickTxt() : "";
-    $("selClear").disabled = !has && !lpTxt;
-    $("selShow").hidden = !has && !lpTxt;
     $("selToShape").hidden = !U.sel || $("panelLasso").hidden;
     const selTxt = U.sel ? `${U.selN.toLocaleString()} ${U.selN === 1 ? W.bin : W.bins} selected` : U.pick !== null ? `${umapName(U.pick)} highlighted`
       : ctLit ? `${ctName(U.ctPick)} highlighted` : phLit ? `${gatePhName(U.phPick)} highlighted` : "";
@@ -4844,10 +4843,8 @@
     $("clShowAll").onclick = () => { S.umap.hidden = new Set(); umapDirty(); syncUmapUI(); render(); };
     $("selBox").onclick = () => umapStartTool("box");
     $("selFree").onclick = () => umapStartTool("free");
-    $("selClear").onclick = umapClearSel;
     $("selChipClear").onclick = umapClearSel;
     $("selChipShow").onclick = showLitOnSlide;
-    $("selShow").onclick = showLitOnSlide;
     $("selToShape").onclick = umapSelToShape;
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || !S.umap) return;
@@ -5967,7 +5964,7 @@
   async function openRna() {
     S.mode = "rna";
     const m = S.m;
-    for (const id of ["panelChannels", "panelGenes", "panelOverlays", "btnAllOn", "btnAllOff", "btnImage", "hud", "scalebar", "densityKey"]) $(id).hidden = true;
+    for (const id of ["panelChannels", "panelGenes", "panelOverlays", "btnAllOn", "btnAllOff", "hud", "scalebar", "densityKey"]) $(id).hidden = true;
     $("panelRna").hidden = false; $("umapLabels").hidden = false;
     $("dsInfo").textContent = `${m.nCells.toLocaleString()} cells · ${m.nGenes.toLocaleString()} genes · ${m.valueLabel}`;
     status("Loading UMAP…");
@@ -6464,7 +6461,6 @@
     // Only where there is something underneath to see. On a Visium slide the image
     // is an H&E the transcripts are drawn over, so hiding it is useful; on a marker
     // panel the image IS the data, and the button only ever blanked the view.
-    $("btnImage").hidden = !isVisium;
     if (!isVisium) S.imgOn = true;
     $("chanTitle").textContent = isVisium ? "Image" : "Markers / stains";
     if (isVisium) S.channels.forEach((c) => (c.visible = true));
@@ -6882,8 +6878,9 @@
     };
     $("btnAllOn").onclick = () => setAllChannels(true);
     $("btnAllOff").onclick = () => setAllChannels(false);
-    $("imgOpacity").oninput = (e) => { S.imgOpacity = +e.target.value; requestRender(); };
-    $("btnImage").onclick = () => { S.imgOn = !S.imgOn; syncImageButton(); render(); };
+    $("imgOpacity").oninput = (e) => { S.imgOpacity = +e.target.value; syncImageButton(); requestRender(); };
+    // 0 hides the image (S.imgOn): drawn again, and listed again in Save image's legend, from the first step up
+    $("imgOpacity").onchange = () => render();
     $("geneOpacity").oninput = (e) => { S.geneOpacity = +e.target.value; requestRender(); };
     $("exprSelect").onchange = (e) => setExprKey(e.target.value);
     $("geneSearch").oninput = (e) => showGeneResults(e.target.value);

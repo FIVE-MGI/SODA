@@ -65,7 +65,7 @@
       <label class="row slim"><span title="More genes by name, comma or space separated">Genes</span>
         <input id="plGenes" type="text" placeholder="e.g. GAPDH, ACTB" autocomplete="off" /></label>
       <div class="btnrow"><button id="plRun">Draw plots</button><button id="plShown" title="Add the genes now shown on the picture to the list">+ shown genes</button>
-        <button id="plCancel" hidden>Cancel</button><button id="plShow" hidden title="Show the last plots again">Show</button></div>
+        <button id="plCancel" hidden>Cancel</button></div>
       <div id="plMsg" class="meta pl-msg"></div>`;
     const before = $("panelOverlays") || null, side = $("sidebar") || document.body;
     if (before && before.parentElement === side) side.insertBefore(sec, before); else side.appendChild(sec);
@@ -93,9 +93,8 @@
       <div id="plFoot" class="lp-foot"></div>`;
     (document.querySelector(".main") || document.body).appendChild(panel);
 
-    $("plRun").onclick = () => runPlot();
+    $("plRun").onclick = runOrShow;
     $("plCancel").onclick = () => { cancel(); msg("Cancelled."); };
-    $("plShow").onclick = () => { if (R) { $("plotsPanel").hidden = false; syncButtons(); draw(); } };
     $("plShown").onclick = () => {
       const S = api.state(), shown = (modeNow() === "rna" ? (S.rna && S.rna.genes) || [] : S.genes || []).map((g) => g.name);
       const have = new Set($("plGenes").value.split(/[\s,;]+/).filter(Boolean).map((x) => x.toUpperCase()));
@@ -104,9 +103,10 @@
       $("plGenes").value = [$("plGenes").value.trim().replace(/[,;\s]+$/, ""), ...add].filter(Boolean).join(", ");
     };
     $("plGroup").addEventListener("pointerdown", refresh);       // clusterings can change without telling this panel
-    $("plGroup").onchange = syncTopRow;
+    $("plGroup").onchange = () => { syncTopRow(); syncButtons(); };
+    for (const id of ["plTop", "plGenes"]) $(id).addEventListener("input", syncButtons);
     if (window.SodaRoi && $("plNorm")) { window.SodaRoi.bindNorm("plNorm"); $("plNorm").addEventListener("change", () => { if (R && !$("plotsPanel").hidden) syncWarn(); }); }
-    $("plGenes").addEventListener("keydown", (e) => { if (e.key === "Enter") runPlot(); });
+    $("plGenes").addEventListener("keydown", (e) => { if (e.key === "Enter") runOrShow(); });
     $("plClose").onclick = () => { $("plotsPanel").hidden = true; syncButtons(); };
     $("plTabs").onclick = (e) => { const v = e.target.dataset && e.target.dataset.v; if (v) setView(v); };
     $("plScale").onchange = () => { V.scale = $("plScale").value; draw(); };
@@ -131,11 +131,18 @@
   }
 
   const msg = (t, err) => { const el = $("plMsg"); if (!el) return; el.textContent = t; el.style.color = err ? "#ff8f8f" : ""; };
+  // what plots are made from: the grouping (and its content), the markers per group, the genes typed
+  const inputsNow = () => [sigOf($("plGroup").value), $("plTop").disabled ? "0" : $("plTop").value.trim(), $("plGenes").value.trim(), modeNow()].join("|");
+  const canShow = () => !!R && !running && $("plotsPanel").hidden && R.inputs === inputsNow();
+  // one button: plots of exactly these inputs are there but closed, so it shows them again; anything changed, it draws new ones
+  function runOrShow() { if (canShow()) { $("plotsPanel").hidden = false; syncButtons(); draw(); } else runPlot(); }
   function syncButtons() {
     if (!$("plRun")) return;
-    $("plRun").disabled = running || !$("plGroup").value;
+    const show = canShow();
+    $("plRun").disabled = running || (!show && !$("plGroup").value);
+    $("plRun").textContent = show ? "Show plots" : "Draw plots";
+    $("plRun").title = show ? "Show the last plots again (nothing has changed since they were drawn)" : "Draw the genes across the groups";
     $("plCancel").hidden = !running;
-    $("plShow").hidden = !R || !$("plotsPanel").hidden;
   }
   function syncTopRow() {
     const v = $("plGroup").value, has = v.startsWith("sec:") || v === "run";
@@ -390,7 +397,7 @@
 
   async function runPlot() {
     if (running || !api) return;
-    const S = api.state(), mode = modeNow(), gv = $("plGroup").value, W = words();
+    const S = api.state(), mode = modeNow(), gv = $("plGroup").value, W = words(), inputs = inputsNow();
     if (!mode || !gv) { msg("Pick what to group by.", true); return; }
     const topN = $("plTop").disabled ? 0 : Number($("plTop").value);
     if (!Number.isInteger(topN) || topN < 0 || topN > D.maxTop) { msg(`Markers per group must be a whole number from 0 to ${D.maxTop}.`, true); return; }
@@ -444,7 +451,7 @@
       const cols = []; for (let k = 0; k < G.K; k++) if (res.n[k] > 0) cols.push(k);
       if (!cols.length) throw new Error(`No ${W.bins} are left in any group` + (keep ? " after the QC filter" : "") + (norm === "cp10k" ? ` (${W.bins} under ${D.minUmi} UMI are left out).` : norm === "q3" ? ` (${W.bins} without a Q3 factor are left out).` : "."));
       const sum = (a) => a.reduce((s, x) => s + x, 0);
-      R = { ...res, sig, input, dataset: S.dsId, layer: mode === "rna" ? "cells" : S.exprKey, mode, grouping: { id: G.id, kind: G.kind, label: G.label }, K: G.K, names: G.names, colors: G.colors, cols,
+      R = { ...res, sig, inputs, input, dataset: S.dsId, layer: mode === "rna" ? "cells" : S.exprKey, mode, grouping: { id: G.id, kind: G.kind, label: G.label }, K: G.K, names: G.names, colors: G.colors, cols,
             genes, from: gl.from, noCounts: genes.filter((n) => got.bufs.get(n) === null), unit: unitOf(norm, S), norm, totalsFrom, qcState, qcTxt, words: W,
             detail: new Map(), nLow: sum(Array.from(res.low)), nQc: sum(Array.from(res.qcOut)), empty: G.names.filter((_, k) => res.found[k] > 0 && res.n[k] === 0),
             bytes: { genes: got.fetched.bytes, files: got.fetched.files, cached: got.cached, totals: totBytes, estimate: est }, secs: (performance.now() - t0) / 1000, ms: { ...T, workerInner: res.info.ms } };
