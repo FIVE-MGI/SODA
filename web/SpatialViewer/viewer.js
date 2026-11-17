@@ -1919,6 +1919,7 @@
     if (binQc) { await binQc.onLayer(S.dsId, S.exprKey, currentExpr(), S.src); if (stale()) return false; }
     if (outlines) outlines.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
     if (paint) paint.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
+    if (own) own.onLayer();
     if (S.tissue.on) { await loadTissue(); if (stale()) return false; }
     await lassoOnLayer(); if (stale()) return false;
     await umapOnLayer(); if (stale()) return false;
@@ -3199,6 +3200,8 @@
     }
     // the camera, mode, stains, genes, molecules, outlines, colour-by and the open tab
     if (window.SodaViewLink) out.view = window.SodaViewLink.capture();
+    // your own results (ownres.js), when asked for: the matched table per bin row (a file only; a link carries a fingerprint)
+    if (full && own) { const b = own.saveBlock(); if (b) out.ownResults = b; }
     return out;
   }
   function lassoSaveJson() {
@@ -3239,6 +3242,8 @@
       $("exprSelect").value = j.layer;
       if (!(await setExprKey(j.layer))) return null;   // another layer or dataset was picked while it loaded
     }
+    const ownNotes = own && j.ownResults ? await own.restore(j.ownResults) : [];   // a Save JSON with your own results in it
+    if (seq !== openSeq) return null;
     const L = S.lasso, canDraw = !$("panelLasso").hidden;
     if (canDraw && Array.isArray(j.shapes)) {
       L.shapes = j.shapes.map((s, i) => ({ id: i + 1, name: s.name || `Shape ${i + 1}`, kind: s.kind || "free", pts: s.points || [],
@@ -3257,6 +3262,7 @@
       notes = await window.SodaViewLink.apply(j.view, j);
       if (seq !== openSeq) return null;
     }
+    if (ownNotes.length) notes = [...ownNotes, ...(notes || [])];
     if (run) lassoRun();
     else if (canDraw && L.shapes.length) notes.push("The drawn shapes are back: press Run UMAP (Analyze tab) for their UMAP.");
     return notes;
@@ -3369,13 +3375,15 @@
     phPick: null });
   const inUmap = () => !!(S.umap && S.umap.view === "umap" && S.mode !== "rna");
   const umapSbs = () => !!(S.umap && S.umap.view === "sbs" && S.mode !== "rna");
-  const umapMeta = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return e && e.umap ? e.umap : null; };
+  const umapMeta = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; if (!e) return null; if (e.umap) return e.umap; const R = ownCur(); return R ? R.meta : null; };
   const umapAvail = () => !!(umapMeta() && S.src && S.src.json && S.src.buf);
   const umapByCluster = () => !!(S.umap && S.umap.colorBy === "cluster" && S.umap.cl);
   const umapClusterings = () => {
     const U = S.umap, m = umapMeta();
-    return clWithSets((U && U.index && U.index.clusterings) || (m && m.clusterings) || []);
+    return clWithSets(ownWith((U && U.index && U.index.clusterings) || (m && m.clusterings) || []));
   };
+  // no embedding to switch to (GeoMx groupings; your own groupings without a UMAP on a layer without SODA's)
+  const umapNoEmb = () => { const m = umapMeta(), R = ownCur(); return !m || (m.embedding === "none" && !(R && R.emb)); };
   // a clustering is known by its "id" (the lab's own, userclusters.py) or its Leiden resolution
   const clKey = (c) => (c ? (c.id != null ? c.id : c.resolution) : null);
   const clUser = (c) => !!(c && c.source === "user");
@@ -3463,7 +3471,7 @@
     if (!U || !U.key || U.key !== S.exprKey) return null;
     if (U.clusters.has(ck)) return U.clusters.get(ck);
     if (!U.clRaw.has(ck)) {
-      const raw = new Uint16Array(await S.src.buf(`expr/${U.key}/umap/${c.file || `clusters_r${c.resolution}.bin`}`));
+      const raw = c.own ? c.codes : new Uint16Array(await S.src.buf(`expr/${U.key}/umap/${c.file || `clusters_r${c.resolution}.bin`}`));
       if (S.umap !== U) return null;
       if (U.pos && raw.length !== U.pos.length / 2) throw new Error(`clusters file has ${raw.length} rows, positions.bin ${U.pos.length / 2}`);
       U.clRaw.set(ck, raw);
@@ -3538,11 +3546,15 @@
     U.busy = (async () => {
       status("Loading the UMAP…");
       try {
+        // your own results (ownres.js): their UMAP in place of SODA's when picked, or on a layer without one
+        const e = currentExpr(), real = !!(e && e.umap), R = ownCur();
+        const mine = !!(R && R.emb && (R.useEmb || !real || e.umap.embedding === "none"));
         const [index, buf, pos] = await Promise.all([
-          S.src.json(`expr/${U.key}/umap/index.json`),
-          S.src.buf(`expr/${U.key}/umap/coords.bin`),
+          real ? S.src.json(`expr/${U.key}/umap/index.json`) : { clusterings: [], embedding: { source: mine ? "own" : "none" } },
+          real && !mine ? S.src.buf(`expr/${U.key}/umap/coords.bin`) : null,
           U.pos ? U.pos : umapPositions()]);
-        const xy = new Float32Array(buf), N = pos.length / 2;
+        const N = pos.length / 2, xy = mine ? R.emb : buf ? new Float32Array(buf) : new Float32Array(2 * N).fill(NaN);
+        U.embOwn = mine;
         if (xy.length !== 2 * N) throw new Error(`coords.bin has ${xy.length / 2} rows, positions.bin ${N}`);
         let nEmb = 0;
         let tx0 = Infinity, ty0 = Infinity, tx1 = -Infinity, ty1 = -Infinity;
@@ -3685,7 +3697,7 @@
   // force: the person asked to watch the flight (Play), so it runs even with reduced motion
   async function umapSetView(v, force) {
     const U = S.umap;
-    if (!U || U.anim || v === U.view || (v !== "tissue" && (!U.key || !umapAvail() || umapMeta().embedding === "none"))) return;
+    if (!U || U.anim || v === U.view || (v !== "tissue" && (!U.key || !umapAvail() || umapNoEmb()))) return;
     if (v !== "tissue") {
       try {
         await umapLoad();
@@ -4621,7 +4633,7 @@
     $("lassoFree").title = um ? why : `Hold and draw around the ${wd().bins} (Esc to stop)`;
     $("sbsCaps").hidden = !ok || !umapSbs();
     // groupings without an embedding (GeoMx ROIs): the Tissue / UMAP switch has nothing to switch to
-    const noEmb = ok && umapMeta().embedding === "none";
+    const noEmb = ok && umapNoEmb();
     for (const el of $("viewSwitch").querySelectorAll(".seg, .fly-play, .fly-speed")) el.hidden = noEmb;
     if (!ok) { syncGateColourOpt(); gateCountsRefresh(); if (window.SodaSets) window.SodaSets.refresh(); return; }
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === U.view));
@@ -4644,10 +4656,13 @@
     const m = umapMeta(), e = currentExpr(), W = wd(), prot = isProt();
     const nEmb = U.nEmb || m.nEmbedded;
     $("sbsCapUmap").textContent = `UMAP · whole section${nEmb ? ` · ${nEmb.toLocaleString()} ${W.bins}` : ""}`;
-    $("umapNote").textContent = noEmb && window.SodaRoi ? window.SodaRoi.umapNote(e, list.length) : prot
+    $("umapNote").textContent = noEmb && window.SodaRoi && (isRois() || !m.own) ? window.SodaRoi.umapNote(e, list.length)
+      : noEmb ? `Your own results have no UMAP: their groups colour the ${W.bins} on the tissue.` : prot
       ? (nEmb ? (nEmb >= e.nBins ? `All ${e.nBins.toLocaleString()} tissue squares` : `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} tissue squares`) +
                 ` (${e.binSizeUm ? `${e.binSizeUm} µm` : "each"} across) are in the UMAP, placed by how alike their markers are. ` : "") +
         `Switch between Tissue, Side by side and UMAP in the bar above the picture; markers, clusters and selections stay.`
+      : U.embOwn ? (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} are in the UMAP, which is the one in your file (Your own results, below). ` : "") +
+        `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`
       : m.embedding === "user" ? (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} are in the UMAP, which came with the data (the lab's own analysis). ` : "") +
         `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`
       : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} (those with at least 10 ${countUnit()}${m.minHvgDetected ? ` and ${m.minHvgDetected} variable genes` : ""}) are in the UMAP. ` : "") +
@@ -6238,6 +6253,7 @@
     if (binQc) binQc.reset();
     if (outlines) outlines.reset();
     if (paint) paint.onLayer(null, null, null, null);
+    if (own) own.reset();
     if (measure) measure.reset();
     umapReset();
     S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
@@ -6499,9 +6515,82 @@
       // gene set scores: the layer's manifest entry, the source (its own marker list) and the page's list
       expr: currentExpr, src: () => S.src, isRois,
       markerFile: () => (isProt() ? "markers/protein_generic.json" : cfg.markerSet || "markers/rna_generic.json"),
+      // your own results' number columns (ownres.js)
+      extraCols: (key) => (own && S.dsId ? own.paintCols(S.dsId, key) : []),
     });
     paint = window.SodaPaint;
     if (window.__spatialViewer) window.__spatialViewer.paint = paint;   // for testing from the console
+  }
+
+  // ---- Your own results (ownres.js): a table loaded in this browser, matched to the layer's bins ----------------
+  // Its clusterings join the layer's (first in the list), its UMAP can stand in for SODA's (umapLoad), its numbers
+  // join Colour by a value. On a layer the export gave no umap/, the results alone make the Clusters panel (umapMeta).
+  let own = null, ownMemo = { base: null, R: null, out: null };
+  const ownCur = () => (own && S.m && S.mode !== "rna" && S.exprKey ? own.current(S.dsId, S.exprKey) : null);
+  function ownWith(base) {
+    const R = ownCur();
+    if (!R || !R.clusterings.length) return base;
+    if (ownMemo.base !== base || ownMemo.R !== R) ownMemo = { base, R, out: [...R.clusterings, ...base] };
+    return ownMemo.out;
+  }
+  // the results changed (loaded, roles changed, the UMAP picked, removed): the section UMAP and clusters again, as
+  // for a new layer, keeping the names and cell sets given so far and the clustering on show (o.show: show this one).
+  // One at a time: each starts from what the one before it left.
+  let ownChain = Promise.resolve();
+  function ownChanged(o) {
+    S.ownBusy = (S.ownBusy || 0) + 1;                       // tests wait for 0
+    const run = ownChain.then(() => ownChangedNow(o)).finally(() => { S.ownBusy--; });
+    ownChain = run.catch(() => {});
+    return run;
+  }
+  async function ownChangedNow(o) {
+    o = o || {};
+    if (!S.m || S.mode === "rna" || !S.exprKey || !S.umap) return;
+    const old = S.umap, keep = { key: old.key, names: old.names, sets: old.sets, res: old.clRes, colorBy: old.colorBy };
+    ownMemo = { base: null, R: null, out: null }; secLut = { key: null, lut: null };    // the same keys may now mean other groups and colours
+    await umapOnLayer();
+    const U = S.umap;
+    if (U.key && keep.key === U.key) {
+      U.names = keep.names; U.sets = keep.sets;
+      for (const ck of U.clRaw.keys()) clSetsApply(U, ck);
+      U.setsVer++;
+    }
+    const has = (k) => k != null && umapClusterings().some((c) => clKey(c) === k);
+    const want = has(o.show) ? o.show : has(keep.res) ? keep.res : null;
+    try {
+      if (o.show != null && has(o.show)) U.colorBy = "cluster";
+      if (want != null && (U.colorBy === "cluster" || U.cl)) await umapSetRes(want);
+      else if (U.colorBy === "cluster" && umapClusterings().length) await umapSetRes(U.res);
+      else if (U.colorBy === "cluster") U.colorBy = "gene";
+    } catch (e) { status(`Could not show the clusters: ${e.message}`, true); setTimeout(() => status(null), 5000); }
+    if (S.umap !== U) return;
+    if (S.gate) S.gate.clT = null;
+    if (paint) paint.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
+    if (o.emb && U.view === "sbs") fitView();
+    umapDirty(); syncUmapUI(); render();
+    if (window.SodaVolcano) window.SodaVolcano.refresh();
+    if (window.SodaPlots) window.SodaPlots.refresh();
+  }
+  function ownInit() {
+    if (!window.SodaOwn) return;
+    window.SodaOwn.init({
+      // the layer results are matched to: null while none is open (or a single-cell dataset is)
+      ctx: () => {
+        const e = S.m && S.mode !== "rna" && S.exprKey ? currentExpr() : null;
+        return e && S.src ? { ds: S.dsId, key: S.exprKey, e, nBins: e.nBins, label: e.label || S.exprKey, src: S.src } : null;
+      },
+      words: wd, status, changed: ownChanged,
+      sodaUmap: () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.umap && e.umap.embedding !== "none"); },
+      clusterKey: () => (S.umap ? S.umap.clRes : null), colorBy: () => (S.umap ? S.umap.colorBy : null),
+      showClustering: async (k, colour) => {
+        const U = S.umap; if (!U) return;
+        if (colour) U.colorBy = "cluster";
+        try { await umapSetRes(k); } catch (e) { status(`Could not show the clusters: ${e.message}`, true); setTimeout(() => status(null), 5000); }
+        umapDirty(); syncUmapUI(); render();
+      },
+    });
+    own = window.SodaOwn;
+    if (window.__spatialViewer) window.__spatialViewer.own = own;     // for testing from the console
   }
 
   // ---- Measure (measure.js): a ruler and areas on the tissue ------------------------------------------
@@ -6562,6 +6651,7 @@
     touchInit();
     snapshotInit();
     cellSetsInit();
+    ownInit();                                      // before paintInit: a link puts the file's results back before their colouring
     paintInit();
     shapesInit();
     // a link to a view (viewlink.js) and linked windows (compare.js): handed only what they need from here
