@@ -220,7 +220,8 @@ async function openPage(browser, url, version, label, config) {
 // which the page does not ship; no list = no suggested names, as for a current export made that way).
 const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/];
 function checkClean(t, allowed) {
-  const allow = (u) => allowed.concat(OPTIONAL).some((re) => re.test(u));
+  // a data link's read pass (?sv=...&sig=...) follows every file name: match the path without it too
+  const allow = (u) => allowed.concat(OPTIONAL).some((re) => re.test(u) || re.test(String(u).split("?")[0]));
   const bad = t.log.bad.filter((b) => !allow(b.url));
   const cons = t.log.console.filter((c) => !(/Failed to load resource/.test(c.text) && c.url && allow(c.url)));
   t.ok(!t.log.pageErrors.length, `no page error${t.log.pageErrors.length ? ": " + t.log.pageErrors.slice(0, 3).join(" / ") : ""}`);
