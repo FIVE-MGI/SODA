@@ -39,6 +39,8 @@
       help: "The picture under everything else. Stains: tick one to show it, click its colour to change it, and drag the two handles under its histogram to set the darkest and the brightest value shown. The γ button opens two more settings for that stain: Gamma (below 1 brightens faint signal, above 1 darkens it; 1 changes nothing, a double-click puts it back) and Colours (its own colour, or grey, viridis or magma from dark to bright, best for one stain on its own). reset puts all of these back. Type in the filter to shorten a long list. An H&E image has no stains to pick: Image off hides it. Image opacity is under More options." },
     panelGenes: { more: ["geneOpacity", "pointScale", "tissueBins", "cellNuclei"],
       help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. Cell shapes (segmented cells that came with their boundaries): Outlines draws every cell's own outline once you zoom in, Dots keeps the dots. More options: opacity, point size, an outline of every bin in the tissue, and the nucleus outlines." },
+    panelPaint: {
+      help: "Colours every bin by one number instead of by the genes: pick A value per bin, then the value (total counts, genes detected, % mitochondrial and whatever else the export measured per bin, such as a GeoMx ROI's Q3 normalisation factor). The colours run along viridis from the From value (dark) to the to value (yellow); Auto sets them to the 1st and 99th percentile, and Log spreads out values that pile up at the low end. Hover or tap a bin to read its value. The legend on the map and in Save image says what the colours mean. Colour bins by cluster (Clusters tab) wins over this while it is on." },
     panelMolecules: { more: ["molSize", "molOpacity"],
       help: "Every decoded molecule of the genes picked here, one dot each, one colour per gene. Zoomed out only a share of the dots is drawn; zoom in to see them all. More options: dot size and opacity." },
     panelOverlays: { help: "Outlines that came with the dataset (regions, cells, ROIs), drawn over the picture. Tick one to show it; hover an outline to read its name." },
@@ -66,7 +68,7 @@
     panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
   };
   const ORDER = {
-    view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
+    view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelRna"],
     clusters: ["panelUmap", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelVolcano", "panelPlots"],
     save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
@@ -505,6 +507,7 @@
       return b && /on\s*$/i.test(b.textContent) ? "image off" : "image on";
     },
     panelGenes: () => names("geneList", "none picked"),
+    panelPaint: () => (window.SodaPaint ? window.SodaPaint.summary() : ""),
     panelMolecules: () => names("molList", "none picked"),
     panelOverlays() { const n = $("overlayList") ? $("overlayList").querySelectorAll("input[type=checkbox]:checked").length : 0; return n ? `${n} on` : "off"; },
     panelRna: () => names("rnaGeneList", "clusters, no gene picked"),

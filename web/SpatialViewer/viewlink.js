@@ -28,6 +28,10 @@
   const MAX_JSON = 512 * 1024;    // bytes of JSON a payload may unpack to
   const THIN_POINTS = 40;         // a freehand outline in a link that is too long keeps this many points
   const TABS = ["view", "clusters", "analyze", "save"];
+  // more of the view, from other scripts (binpaint.js ...): { key, capture() -> value or null,
+  // clean(value, helpers) -> value or null, apply(value or null) -> Promise of notes }. Each is one more
+  // key of the view block: a file or link without it opens as before, and apply(null) puts it back to off.
+  const EXT = [];
 
   // ---- base64url ------------------------------------------------------------------------------
   function toB64u(u8) {
@@ -168,6 +172,7 @@
     put(o, "pick", int(v.pick, 0, 65534));
     put(o, "qcOutline", bool(v.qcOutline));
     put(o, "tab", oneOf(v.tab, TABS));
+    for (const x of EXT) { if (o[x.key] !== undefined || UNSAFE_KEY.test(x.key)) continue; try { put(o, x.key, x.clean(v[x.key], HELP_FNS)); } catch (e) { /* that part is dropped */ } }
     if (isObj(v.rna)) {
       const r = {}, x = v.rna;
       put(r, "colorBy", str(x.colorBy, 80)); put(r, "genes", list(x.genes, 24, gene));
@@ -177,6 +182,7 @@
     }
     return o;
   }
+  const HELP_FNS = { isObj, str, num, int, hex, oneOf, bool, list, put };
   function cleanShape(s) {
     if (!isObj(s)) return null;
     const pts = list(s.points, 5000, (p) => {
@@ -352,6 +358,7 @@
     }
     if (S.mol && S.mol.index) v.mol = { genes: S.mol.genes.map((g) => ({ n: g.name, c: g.hex, ...(g.visible ? {} : { on: false }) })), size: r3(S.mol.size), op: r3(S.mol.opacity) };
     if (S.overlays && S.overlays.length) v.ov = S.overlays.filter((o) => o.on).map((o) => o.key);
+    for (const x of EXT) { try { const c = x.capture(); if (c !== null && c !== undefined) v[x.key] = c; } catch (e) { /* left out */ } }
     return v;
   }
 
@@ -467,6 +474,13 @@
         try { await box.onchange({ target: box }); } catch (e) { notes.push(`The outline ${S.overlays[i].label} could not be loaded.`); }
         if (stale()) return notes;
       }
+    }
+
+    // more of the view from other scripts (extend): each one, also when the view does not have it (back to off)
+    for (const x of EXT) {
+      try { const n = await x.apply(view[x.key] === undefined ? null : view[x.key]); if (n && n.length) notes.push(...n); }
+      catch (e) { notes.push("Part of this view could not be put back."); }
+      if (stale()) return notes;
     }
 
     // the section's clustering, colour-by, the highlighted cluster, the mode
@@ -672,6 +686,7 @@
       window.addEventListener("hashchange", () => { const p = hashPayload(); if (p) { pending = p; opened(H.state().dsId); } });
     },
     capture, apply, make, copy,
+    extend(x) { if (x && typeof x.key === "string" && /^\w{1,20}$/.test(x.key) && !EXT.some((e) => e.key === x.key)) EXT.push(x); },
     // tests: is a link still waiting, and what was said when the last one was applied
     pending: () => !!pending, notes: () => lastNotes,
   };

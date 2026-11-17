@@ -795,6 +795,7 @@
       el.hidden = false;
       return;
     }
+    if (paint && S.mode === "image" && !umapByCat() && paint.active()) { el.innerHTML = paint.keyHtml(); el.hidden = false; return; }
     if (isRois() && S.mode === "image" && on.length && !umapByCat() && !umap) { el.innerHTML = window.SodaRoi.keyHtml(roiCtx()); el.hidden = false; return; }
     if (S.mode !== "image" || (S.geneBlend !== "heatmap" && !umap) || !on.length || umapByCat()) { el.hidden = true; return; }
     const e = currentExpr();
@@ -1130,7 +1131,10 @@
     const tl = tissueLayer(); if (tl) layers.push(tl);
     // Colour by cluster replaces the gene density: one colour per bin, not two on top of each other.
     const gPrev = gatePreviewOn();
-    if (!umapByCat() && !gPrev) {
+    // Colour by a value (binpaint.js) replaces the gene density the same way
+    const pl = paint && !umapByCat() && !gPrev && paint.active() ? paint.layer(dotRadius(), S.geneOpacity * dotK()) : null;
+    if (pl) layers.push(pl);
+    else if (!umapByCat() && !gPrev) {
       if (isRois()) {
         layers.push(...window.SodaRoi.geneLayers(roiCtx()));
       } else if (S.geneBlend === "heatmap") {
@@ -1259,6 +1263,7 @@
   function tooltipFor(info) {
     const orow = outlines ? outlines.rowAt(info) : -1;           // a cell's outline: what its dot would say
     if (orow >= 0) return umapTooltip(orow);
+    if (paint && info.layer && info.layer.id.startsWith("paint-") && info.index >= 0) { const t = paint.tip(info.index); if (t) return { text: t }; }
     if (info.layer && info.layer.id.includes("ucloud") && info.index >= 0) return umapTooltip(umapRowAt(info.layer.id, info.index));
     if (!info.object || !info.object.properties) return null;
     const p = info.object.properties;
@@ -1803,6 +1808,7 @@
     await loadQc(); if (stale()) return false;
     if (binQc) { await binQc.onLayer(S.dsId, S.exprKey, currentExpr(), S.src); if (stale()) return false; }
     if (outlines) outlines.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
+    if (paint) paint.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
     if (S.tissue.on) { await loadTissue(); if (stale()) return false; }
     await lassoOnLayer(); if (stale()) return false;
     await umapOnLayer(); if (stale()) return false;
@@ -3693,6 +3699,8 @@
   // them (inks that multiply, or the average on one ramp). The window's top is the gene's
   // max display value; t = how strong (-1 = none of these genes in this bin).
   function umapGeneMix() {
+    const pm = paint ? paint.mix(S.umap.pos.length / 2) : null;      // Colour by a value (binpaint.js), when on
+    if (pm) return pm;
     const U = S.umap, on = S.genes.filter((g) => g.visible !== false);
     if (!on.length) return null;
     const key = on.map((g) => `${g.name}:${g.hex}:${g.min}:${g.max}`).join("|") + `#${S.genePalette}#${U.key}`;
@@ -6078,6 +6086,7 @@
     molReset();
     if (binQc) binQc.reset();
     if (outlines) outlines.reset();
+    if (paint) paint.onLayer(null, null, null, null);
     umapReset();
     S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
     leaveRna();
@@ -6253,6 +6262,8 @@
       const title = U.colorBy === "celltype" ? "Suggested cell type" : U.colorBy === "phenotype" ? "Cell types (your rules)" : info ? clLabel(info) : "Clusters";
       const items = domLegend($("clusterLegend"), ".cl-row:not(.off)", ".nm");
       if (items.length) out.push({ title, items });
+    } else if (paint && paint.active()) {
+      out.push(...paint.legend());
     } else {
       const on = S.genes.filter((g) => g.visible !== false);
       if (on.length) {
@@ -6296,6 +6307,21 @@
     });
   }
 
+  // ---- Colour by a value (binpaint.js): what it needs from here ---------------------------------------
+  let paint = null;
+  const dotRadius = () => { const e = currentExpr(); return Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale); };
+  function paintInit() {
+    if (!window.SodaPaint) return;
+    window.SodaPaint.init({
+      state: () => S, words: wd, layerKey: () => S.exprKey, positions: umapPositions,
+      ScatterplotLayer, NORMAL, render: requestRender,
+      lut: () => PALETTES.viridis, rampCss: () => rampCss("viridis"),
+      overridden: () => umapByCat() || gatePreviewOn(),
+    });
+    paint = window.SodaPaint;
+    if (window.__spatialViewer) window.__spatialViewer.paint = paint;   // for testing from the console
+  }
+
   // ---- Cell sets (cellsets.js): what it needs from here -------------------------------------------------
   function cellSetsInit() {
     if (!window.SodaSets) return;
@@ -6322,6 +6348,7 @@
     touchInit();
     snapshotInit();
     cellSetsInit();
+    paintInit();
     // a link to a view (viewlink.js) and linked windows (compare.js): handed only what they need from here
     const share = {
       state: () => S, seq: () => openSeq, status, render, renderRna, setCamera, sessionState, sessionApply,
