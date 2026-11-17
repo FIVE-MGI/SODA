@@ -75,7 +75,9 @@ its cellBorder. Checked (check_outlines): the tile format byte for byte, every o
 it came from (traced ones against their label mask, by IoU), rows (the files are not in matrix order), a
 cell's centre inside its own outline, cells in parts, holes, crumbs, missing outlines, simplification, and
 that outlines in the wrong units or of another run are refused and change nothing, and --no-outlines. The
-browser half of that is tests/outlines_browser_test.js (Playwright).
+browser half of that is tests/outlines_browser_test.js (Playwright, run here when node is installed): the outlines
+in Chromium, and in Chromium and WebKit what draws a subset of the cells with them (Draw a region, the region
+click-filter, Colour by a value, cell sets, Save image and its legend, a link to the view), checked by pixel.
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
@@ -3875,6 +3877,24 @@ def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
     c.ok(not re.search(r"\bInt(8|16|32)Array\b", js), "outlines.js uses a signed typed array (deid.py check reads those names as sample IDs)")
     vj = (APP / "viewer.js").read_text(encoding="utf-8")
     c.ok("SodaOutlines" in vj, "viewer.js: the outlines hooks are missing")
+    # what draws a subset of the cells hands its colours to the outlines (a colour update, never more polygons)
+    for needle, f, what in (("hl = lassoHl()", vj, "viewer.js: Draw a region's colours go to the outlines"),
+                            ("regionOnlyRows(", vj, "viewer.js: the region click-filter cuts the outlines' gene colouring"),
+                            ("outlines.legend()", vj, "viewer.js: Save image's legend names the cell outlines"),
+                            ('key: "cs"', js, "outlines.js: a link to the view carries Cell shapes")):
+        c.ok(needle in f, f"{what} ({needle!r} not found)")
+    # in the browser: tests/outlines_browser_test.js (SKIPPED without Playwright; WebKit skipped when not installed)
+    node = shutil.which("node")
+    if not node:
+        print("    node not found: tests/outlines_browser_test.js skipped")
+        return res
+    p = subprocess.run([node, str(REPO / "tests" / "outlines_browser_test.js"), "--export", str(export),
+                        "--shots", str(root / "outlines_shots"), "--browsers", "chromium,webkit"], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/outlines_browser_test.js: outlines, and what draws a subset of the cells with them, in Chromium and WebKit (exit code)")
     return res
 
 
