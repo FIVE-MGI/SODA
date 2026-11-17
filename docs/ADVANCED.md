@@ -138,6 +138,95 @@ the colours.
 File formats, how barcodes are matched and how to write the files from R or Python:
 [PREPARING_DATA.md, "Your own UMAP and clusters"](PREPARING_DATA.md#your-own-umap-and-clusters-seurat-scanpy).
 
+### Load your own results in the viewer (no new export)
+
+A reader can also bring results to a page that is already shared, with no new export:
+**Clusters tab, Your own results, Load your own results...** (or drop the file anywhere on
+the page). The file is read in the browser and never uploaded.
+
+**The file.** A CSV or TSV, gzipped or not (`.csv`, `.tsv`, `.txt`, `.gz`), one row per bin
+or cell, with:
+
+- a **barcode / cell id** column (or R row names, as `write.csv` writes them);
+- any of: two **UMAP** columns (also tSNE, PCA, PHATE ...: `UMAP_1`/`UMAP_2`, `umap_1`,
+  `X_umap1`, `tSNE_1`, `PC_1` ...), **groupings** (`seurat_clusters`, `leiden`, `louvain`,
+  `cell_type`, `sample` ..., text or whole numbers), **numbers** (scores, QC), and a
+  **colour per group**: a column named `<grouping>_color` (or `_colour`, `.colors`) holding
+  `#rrggbb`.
+
+Each column's use is guessed from its name and values. The section lists every column with a
+drop-down to change it (Not used, Barcode / cell id, Row number, UMAP x, UMAP y, Groups, Value,
+Colours of a grouping). Under a grouping you can paste a colour list in group order, as scanpy
+keeps it in `uns["<grouping>_colors"]`. Groups are ordered numerically, then alphabetically.
+
+**Matching.** Rows are matched to the bins through the export's barcode list
+(`expr/<layer>/ids.txt.gz`; see [DATA_FORMAT.md](DATA_FORMAT.md)). Matching is by exact id, then
+with a `-1` style ending set aside (Seurat, scanpy `concat`), then with a sample prefix set aside
+(`sampleA_` from Seurat `merge`). The section shows how many rows matched, for example "9,812 of
+10,000 rows matched", and counts unmatched rows; it never lists them or any id. Below half
+matched, nothing is applied until you press **Use anyway**. When a merged object holds several
+samples, type the start or ending of the ids to keep ("Ids starting with", "Ids ending with"). An export without a barcode list says so, with the
+command that adds one: `prepare.py ids --id <id> --out <cache> --dest <export root>`.
+
+Without a barcode list there are two other ways. Each needs its own clear statement:
+
+- a column `soda_row` (or `bin_row`) holding each bin's row number in the export (the order of
+  `positions.bin`); or
+- a first line `# soda row order`, then exactly one row per bin, in the export's order. A file
+  with any other number of rows is refused.
+
+Both show a warning, because nothing checks that the rows really belong to those bins.
+
+**What you get.** The groupings appear first under **Clustering**, named `<column> (your
+file)`. The first one is shown with its colours on the tissue and the UMAP, and works with
+names, cell sets and the volcano plot, as SODA's own clusterings do. Numbers
+appear in **View, Colour by a value**. If the file has a UMAP, **UMAP shown** picks between
+yours and SODA's. A layer with no SODA UMAP uses yours. The results belong to one layer; each
+layer can have its own.
+
+**Saving and links.** **Save JSON** can keep the matched table (no ids and no file name, one
+entry per matched bin). Its size is shown before you tick it, and Load JSON brings it back. A
+**view link** never holds the table: it keeps a short fingerprint of the file and the grouping
+or value on show. Whoever opens the link is asked to load the same file, and a different file is
+reported, and the link's view is not applied until the right file is loaded.
+
+**From Seurat (R).** Writes the cell metadata you choose, the UMAP and a colour per cell type:
+
+```r
+library(Seurat)
+obj <- readRDS("my_object.rds")                     # your analysed object
+df  <- obj@meta.data[, c("seurat_clusters", "nCount_Spatial")]   # any columns you want
+df$cell_type <- Idents(obj)                         # or a metadata column of names
+umap <- Embeddings(obj, reduction = "umap")[, 1:2]
+colnames(umap) <- c("UMAP_1", "UMAP_2")
+df <- cbind(df, umap[rownames(df), ])
+# optional: your colours, one per cell type
+pal <- setNames(scales::hue_pal()(nlevels(df$cell_type)), levels(df$cell_type))
+df$cell_type_color <- unname(pal[as.character(df$cell_type)])
+write.csv(df, gzfile("my_results.csv.gz"))          # row names = barcodes
+```
+
+**From scanpy (Python).** Writes `obs` columns, the UMAP and the colours scanpy keeps in `uns`:
+
+```python
+import scanpy as sc
+
+adata = sc.read_h5ad("my_analysis.h5ad")            # your analysed object
+df = adata.obs[["leiden", "total_counts"]].copy()   # any columns you want
+df["X_umap1"] = adata.obsm["X_umap"][:, 0]
+df["X_umap2"] = adata.obsm["X_umap"][:, 1]
+# optional: your colours, one per group
+if "leiden_colors" in adata.uns:
+    pal = dict(zip(adata.obs["leiden"].cat.categories, adata.uns["leiden_colors"]))
+    df["leiden_color"] = adata.obs["leiden"].map(pal).astype(str)
+df.to_csv("my_results.tsv.gz", sep="	")            # index = barcodes; gzipped from the name
+```
+
+An `.h5ad` or `.rds` can't be read in the browser; write the CSV as above, or use
+`--user-h5ad` when you export. Limits: 1 GB per file (512 MB unpacked) and 200 groups per
+grouping. A column of whole numbers with more than 30 different values is taken as a value unless its
+name says it is a grouping (`seurat_clusters`, `leiden` ...).
+
 ## 6. Marker lists for suggested names
 
 Each cluster gets a suggested name from a list of marker genes (or proteins). The lists are
