@@ -8,7 +8,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -37,6 +37,14 @@ jobs:
       - name: Smoke test (synthetic demo -> prepare -> export -> checks)
         run: .venv/bin/python tests/smoke_test.py
 
+      # The desktop app's launcher from source (app/soda_app.py, about 6 minutes): selftest, the python
+      # stand-in, Prepare on the demo data with the sample ID check as a gate, Check, the viewer server
+      # (Range, refused paths and Host headers, the app's config.js) and the home page's API. No browser
+      # opens (the test sets SODA_NO_BROWSER). Runs even if the smoke test failed, so both results show.
+      - name: Desktop app test (tests/app_test.py, from source)
+        if: success() || failure()
+        run: .venv/bin/python tests/app_test.py --work "$RUNNER_TEMP/app-test"
+
       - name: Upload the log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -45,3 +53,4 @@ jobs:
           path: |
             demo/smoke_test.log
             demo/smoke_test_summary.json
+            ${{ runner.temp }}/app-test/app_test.log

@@ -31,7 +31,7 @@ MACOS = sys.platform == "darwin"
 
 VERSION = os.environ.get("SODA_VERSION", "0.0.0-dev")
 UPDATE_REPO = os.environ.get("SODA_UPDATE_REPO", "")
-MIN_MACOS = os.environ.get("SODA_MIN_MACOS", "12.0")
+MIN_MACOS = os.environ.get("SODA_MIN_MACOS", "14.0")   # SciPy's arm64 wheels need macOS 14 (app/check_min_os.py)
 
 # The version baked into a module the frozen app imports, so the number on the zip, in Info.plist
 # and in `SODA version` is one number by construction (FiveAtlas.spec does the same).

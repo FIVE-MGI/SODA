@@ -1,9 +1,11 @@
 SODA {VERSION}  (macOS, {ARCH})
 
 WHAT IT RUNS ON
-  An Apple Silicon Mac (M1, M2, M3, M4 ...) on macOS {MIN_MACOS} or newer.
-  Check: Apple menu -> About This Mac -> "Chip". If it says Intel, this build
-  will not open.
+  An Apple Silicon Mac (M1, M2, M3, M4 ...) on macOS {MIN_MACOS} or newer
+  (macOS 14 is Sonoma; macOS 15 Sequoia and later work too).
+  Check: Apple menu -> About This Mac -> "Chip" and "macOS". Apple Silicon only:
+  there is no Intel build, and on an Intel Mac or an older macOS SODA will not
+  open.
   Download the .dmg ON THE MAC ITSELF. Passing it through a Windows computer or
   a shared drive can strip the parts macOS needs and you will get "damaged".
 

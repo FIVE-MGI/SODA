@@ -5,7 +5,9 @@
     Produces, in <OutRoot>\release\ :
       SODA\                      the app folder (double-click SODA.exe)
       SODA-<ver>-win64.zip       that folder, zipped: this is what you send
-      SODA-<ver>-setup.exe       a per-user installer, only if Inno Setup is installed
+      SODA-<ver>-setup.exe       a per-user installer, only if Inno Setup 6 is installed (ISCC.exe
+                                 found by -Iscc, %ISCC%, PATH, Program Files, the per-user
+                                 %LOCALAPPDATA%\Programs\Inno Setup 6, or Inno Setup's uninstall entry)
       SHA256SUMS-windows.txt     checksums of the above
 
     Everything the build writes goes to OutRoot (about 2 GB of scratch), outside the repository,
@@ -18,13 +20,20 @@
         ... -ExtraSitePath D:\tools\site           a folder put first on PYTHONPATH while building,
                                                    e.g. a PyInstaller copied from another venv
         ... -UpdateRepo owner/name                 where the app looks for newer releases (default: none)
+        ... -Iscc C:\path\to\ISCC.exe              the Inno Setup compiler to use
+        ... -RequireInstaller                      fail if no Inno Setup is found (CI), instead of zip only
+        ... -RequireVendor                         fail unless web\SpatialViewer\vendor\ (deck.gl, umap-js) is there
+                                                   and checks out (release builds: prepare.py vendor first)
 #>
 param(
     [string]$Version = "",
     [string]$OutRoot = "$env:LOCALAPPDATA\SODA_build",
     [string]$Python = "",
     [string]$ExtraSitePath = "",
-    [string]$UpdateRepo = ""
+    [string]$UpdateRepo = "",
+    [string]$Iscc = "",
+    [switch]$RequireInstaller,
+    [switch]$RequireVendor
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,6 +89,8 @@ try {
         & $Py (Join-Path $Repo "web\SpatialViewer\vendor.py") --check
         if ($LASTEXITCODE -ne 0) { throw "web\SpatialViewer\vendor\ is incomplete or not the pinned files: run python web\SpatialViewer\prepare.py vendor again" }
         Write-Host "   vendor\: deck.gl and umap-js included (the viewer works with no internet)" -ForegroundColor DarkGray
+    } elseif ($RequireVendor) {
+        throw "no web\SpatialViewer\vendor\ and -RequireVendor: run python web\SpatialViewer\prepare.py vendor first"
     } else {
         Write-Host "   no web\SpatialViewer\vendor\: the viewer will load deck.gl from the CDN (prepare.py vendor includes it)" -ForegroundColor DarkGray
     }
@@ -132,16 +143,34 @@ try {
 
     # 5. installer (optional, as FIVE Atlas) -----------------------------------------------
     Write-Host "[5/5] installer..." -ForegroundColor Yellow
-    $Iscc = $null
-    foreach ($c in @("ISCC.exe", "C:\Program Files (x86)\Inno Setup 6\ISCC.exe", "C:\Program Files\Inno Setup 6\ISCC.exe")) {
-        $found = if ($c -eq "ISCC.exe") { (Get-Command $c -ErrorAction SilentlyContinue).Source } elseif (Test-Path $c) { $c } else { $null }
-        if ($found) { $Iscc = $found; break }
+    # Where Inno Setup 6 can be: an all-users install (Program Files (x86), as on GitHub's Windows
+    # runners), a per-user one (%LOCALAPPDATA%\Programs, what its installer offers without admin
+    # rights), or anywhere else its uninstall entry in the registry points to.
+    $candidates = @($Iscc, $env:ISCC, (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source)
+    foreach ($pf in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, (Join-Path $env:LOCALAPPDATA "Programs"))) {
+        if ($pf) { $candidates += (Join-Path $pf "Inno Setup 6\ISCC.exe") }
     }
+    foreach ($k in @("HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1",
+                     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1",
+                     "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1")) {
+        $loc = (Get-ItemProperty -Path $k -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
+        if ($loc) { $candidates += (Join-Path $loc "ISCC.exe") }
+    }
+    $IsccExe = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+    if ($Iscc -and $IsccExe -ne $Iscc) { throw "-Iscc $Iscc not found" }
     $sums = @($Zip)
-    if ($Iscc) {
-        & $Iscc "/DMyAppVersion=$Version" "/DStageDir=$Staged" "/DOutDir=$Release" (Join-Path $App "installer.iss")
+    if ($IsccExe) {
+        Write-Host "      $IsccExe" -ForegroundColor DarkGray
+        # Inno's VersionInfoVersion (the setup.exe file properties) takes numbers only: 0.1.0-dev -> 0.1.0
+        $numVersion = if ($Version -match '^(\d+(\.\d+){0,3})') { $Matches[1] } else { "0.0.0" }
+        $Setup = Join-Path $Release "SODA-$Version-setup.exe"
+        if (Test-Path $Setup) { Remove-Item -Force $Setup }
+        & $IsccExe /Q "/DMyAppVersion=$Version" "/DMyAppNumVersion=$numVersion" "/DStageDir=$Staged" "/DOutDir=$Release" (Join-Path $App "installer.iss")
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
-        $sums += (Join-Path $Release "SODA-$Version-setup.exe")
+        if (-not (Test-Path $Setup)) { throw "Inno Setup did not produce $Setup" }
+        $sums += $Setup
+    } elseif ($RequireInstaller) {
+        throw "Inno Setup 6 (ISCC.exe) not found, and -RequireInstaller was given"
     } else {
         Write-Host "      Inno Setup not found: zip only." -ForegroundColor DarkGray
     }

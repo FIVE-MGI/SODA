@@ -18,6 +18,8 @@
 //             offline: true    turns it on even on a password-protected site (the page only; data
 //                              of such a site is still never kept)
 //             offlineMaxMB: n  the most one kept dataset may hold (default 500)
+//             offlineKeep: false  no "Keep this dataset" (the page still keeps itself): for a page whose data
+//                              is already on this computer, as in the desktop app, which serves this setting
 // Default: on, except on a password-protected site (tokenEndpoint), where nothing opens without the
 // password service anyway.
 //
@@ -35,6 +37,7 @@
   const META = "?soda-offline-meta";
   const MAX_MB = Number(cfg.offlineMaxMB) > 0 ? Number(cfg.offlineMaxMB) : 500;
   const WANT = cfg.offline !== undefined ? !!cfg.offline : !cfg.tokenEndpoint;
+  const KEEP = cfg.offlineKeep !== false;      // "Keep this dataset" offered (the page's own copy is unaffected)
   const CAN = typeof navigator !== "undefined" && "serviceWorker" in navigator && window.isSecureContext &&
               /^https?:$/.test(location.protocol) && typeof caches !== "undefined";
   // state: "starting" | "registering" | "ready" | "failed" | "off" | "unsupported"
@@ -271,7 +274,8 @@
     switch (O.state) {
       case "ready": return offline
         ? "You are offline. The page runs from the copy this browser kept; only datasets kept for offline use open."
-        : "This page is kept by this browser (with deck.gl, umap-js and the marker lists), so it opens with no network after this visit. Data is kept only when you ask, one dataset at a time.";
+        : "This page is kept by this browser (with deck.gl, umap-js and the marker lists), so it opens with no network after this visit. " +
+          (KEEP ? "Data is kept only when you ask, one dataset at a time." : "Keeping datasets is turned off here: their files are already on this computer.");
       case "registering": return "Getting the page ready for offline use…";
       case "failed": return `This version of the page could not be kept for offline use (${O.why}). It works as usual while online.`;
       case "off": return cfg.offline === false ? "Offline use is turned off on this site." : "Offline use is off on this password-protected site: its data needs the password service.";
@@ -287,7 +291,7 @@
     const ds = O.ds = api && api.dataset ? api.dataset() : null;
     const kept = O.state === "ready" || O.state === "failed" ? await readKept() : [];
     const box = $("offDsBox");
-    box.hidden = !ds || !(O.state === "ready" || O.state === "failed");
+    box.hidden = !KEEP || !ds || !(O.state === "ready" || O.state === "failed");
     if (!box.hidden) {
       const mine = ds.root ? kept.find((k) => k.root === ds.root) : null;
       const busy = !!O.busy;
@@ -314,7 +318,7 @@
 
   async function askKeep() {
     const ds = O.ds;
-    if (!ds || !ds.root || O.busy) return;
+    if (!KEEP || !ds || !ds.root || O.busy) return;
     O.busy = { stage: "plan", stop: null };
     paint();
     msg("Working out the size…");
@@ -377,7 +381,7 @@
       return O.state === "registering" ? "getting ready" : O.state === "failed" ? "not kept" : "off";
     },
     ready,                                         // resolves with the state once the service worker is settled
-    state: () => ({ state: O.state, why: O.why, app: O.app, scope: SCOPE, busy: O.busy ? O.busy.stage : null, seen: seen.size,
+    state: () => ({ state: O.state, why: O.why, app: O.app, scope: SCOPE, keep: KEEP, busy: O.busy ? O.busy.stage : null, seen: seen.size,
                     kept: O.kept.map((k) => ({ root: k.root, id: k.meta.id, bytes: k.meta.bytes, files: k.meta.files })) }),
     htmlRefs, hashRefs, pageRefs,                  // tests: the same hash as sw.js
   };
