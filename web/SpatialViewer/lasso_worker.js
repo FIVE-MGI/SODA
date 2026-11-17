@@ -200,7 +200,7 @@ function fitUmapStart(scores, N, k, minDist, rand, T) {
 // order (umapfit.js edges / endEpoch), handing this thread back every ~25 ms while the sweep is pending
 // so the helpers' results are taken and their next runs given out. The numbers are those of fitUmap;
 // only the waiting overlaps. side: the sweep's promise (or null: fitUmap's loop, no hand-backs).
-const sideWork = { on: false, step: null, frac: 0 };
+const sideWork = { on: false, pool: false, step: null, frac: 0 };
 const yieldTurn = (() => {
   let ch = null; const q = [];
   return () => new Promise((r) => {
@@ -211,7 +211,8 @@ const yieldTurn = (() => {
 })();
 async function fitUmapEpochs(fit, T, side) {
   const nEpochs = fit.nEpochs, nE = fit.nEdges, SLICE = 4096;
-  let pending = !!side, last = now();
+  // without helpers (a small run, few cores) the sweep has already run, here, before the epochs: no hand-backs
+  let pending = !!side && sideWork.pool, last = now();
   if (side) side.then(() => (pending = false), () => (pending = false));
   const t = now();
   for (let e = 0; e < nEpochs; e++) {
@@ -363,6 +364,7 @@ async function clusterGraph(g, N, resolution, seed, info, fullSweep) {
     return leiden(keeps[j.sub].length, sub.indptr, sub.indices, sub.weights, { resolution: j.res, seed: j.seed, maxIter: SWEEP.iters });
   };
   let pool = leidenPool(g, N, keeps);
+  if (sideWork.on) sideWork.pool = !!pool;
   info.leidenWorkers = pool ? pool.length : 0;
   try {
   for (const [li, res] of list.entries()) {
@@ -1259,7 +1261,7 @@ async function run(msg) {
     const P = msg.params, resolution = wantedResolution(msg, P);
     const startSweep = P.mode === "bins" && resolution ? (csr, n, fast) => {
       const t = now(), sw = {};
-      sideWork.on = true; sideWork.step = null;
+      sideWork.on = true; sideWork.pool = false; sideWork.step = null;
       return clusterGraph(csr, n, resolution, P.seed, sw, fast).then((cluster) => ({ cluster, info: sw, ms: now() - t }));
     } : null;
     try { Lay = await layout(msg, startSweep); }
