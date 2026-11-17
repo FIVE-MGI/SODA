@@ -6319,6 +6319,9 @@
       overridden: () => umapByCat() || gatePreviewOn(),
       // genes: the layer's list and one gene's values, always through the source object
       geneIndex: () => S.geneIndex || [], gene: (name) => S.src.gene(S.exprKey, name), isProt,
+      // gene set scores: the layer's manifest entry, the source (its own marker list) and the page's list
+      expr: currentExpr, src: () => S.src, isRois,
+      markerFile: () => (isProt() ? "markers/protein_generic.json" : cfg.markerSet || "markers/rna_generic.json"),
     });
     paint = window.SodaPaint;
     if (window.__spatialViewer) window.__spatialViewer.paint = paint;   // for testing from the console

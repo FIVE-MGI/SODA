@@ -12,6 +12,19 @@
 //                     red, B only green, both yellow) or as a blend: red for A plus green for B, each
 //                     from its threshold (at least a quarter bright) to its 99th percentile, so a bin
 //                     high in both is yellow. Bins expressing neither are not drawn.
+//   Gene set score    a list of genes typed or pasted, or a cell type's marker genes (the dataset's own
+//                     marker list, then SODA's generic one). Per bin, the MEAN over the listed genes
+//                     found in the layer of the gene's normalised value:
+//                       sequencing bins   log1p(10,000 x count / the bin's total count), the log1p CP10k
+//                                         normalisation Draw a region uses; the total is binqc's total
+//                                         counts (all genes of the layer). Without a total: log1p(count).
+//                       GeoMx ROIs        log1p(count / the AOI's Q3 normalisation factor), the Q3
+//                                         normalisation the ROI plots use; an AOI without one: no score.
+//                       marker squares    the marker's intensity scaled from its 1st (0) to its 99th
+//                                         percentile square (1).
+//                     Not a Seurat module score: no control genes are subtracted, so a score reads as
+//                     "how much of these genes, on the usual log scale". Genes not in the layer are
+//                     left out and named. On the same viridis ramp and range controls as a value.
 //
 // Genes always come through the source object (viewer.js S.src.gene: loose files, a packed file or a
 // tile server alike); their values are put on positions.bin rows by position, as the UMAP does.
@@ -33,7 +46,9 @@
   let api = null;
   const $ = (id) => document.getElementById(id);
   const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const MODES = ["off", "value", "pair"];
+  const MODES = ["off", "value", "pair", "set"];
+  const MAX_SET = 200;                             // genes in one set
+  const SET_PARALLEL = 4;                          // gene files fetched at once for a set
   const PAIR_VIEWS = ["classes", "blend"];
   const ALPHA = 235;                               // as the gene density squares
   // two genes: A only, B only, both (the blend adds A's red to B's green)
@@ -47,7 +62,8 @@
   function blank() {
     return { ds: null, key: null, seq: 0, mode: "off", cols: [], col: null, scale: "lin", lo: null, hi: null,
              auto: true, cur: null, pos: null, rowOf: null, colors: null, t: null, rgb: null, ver: 0, busy: null,
-             genes: new Map(), pair: { a: null, b: null, ta: null, tb: null, view: "classes" }, pd: null };
+             genes: new Map(), pair: { a: null, b: null, ta: null, tb: null, view: "classes" }, pd: null,
+             set: { genes: [], type: "" }, lists: null };
   }
   const W = () => (api && api.words ? api.words() : { bin: "bin", bins: "bins", Bins: "Bins", gene: "gene", Gene: "Gene", genes: "genes" });
   const say = (t) => t.replace(/\bbins\b/g, W().bins).replace(/\bbin\b/g, W().bin);
@@ -65,7 +81,7 @@
     sec.className = "panel"; sec.id = "panelPaint"; sec.dataset.tab = "view"; sec.hidden = true;
     sec.innerHTML = `<h2>Colour by a value</h2>
       <label class="row slim"><span>Colour by</span><select id="paintMode" title="What colours the bins: nothing (the genes as picked above), one value per bin, or where two genes are expressed">
-        <option value="off">Nothing (genes as picked)</option><option value="value">A value per bin</option><option value="pair">Two genes</option></select></label>
+        <option value="off">Nothing (genes as picked)</option><option value="value">A value per bin</option><option value="pair">Two genes</option><option value="set">Gene set score</option></select></label>
       <div id="paintValueBox" hidden>
         <label class="row slim"><span>Value</span><select id="paintCol"></select></label>
       </div>
@@ -77,8 +93,13 @@
           <label><span>above</span><input id="paintThrB" type="number" step="any" inputmode="decimal" title="A bin expresses it when its value is above this" /></label></div>
         <label class="row slim"><span>Show</span><select id="paintPairView"><option value="classes">Both / one only</option><option value="blend">Blend (red + green = yellow)</option></select></label>
       </div>
+      <div id="paintSetBox" class="paint-set" hidden>
+        <label class="row slim"><span>Cell type</span><select id="paintSetType" title="Fill the list with a cell type's marker genes and score it"><option value="">Your own list</option></select></label>
+        <textarea id="paintSetGenes" rows="3" spellcheck="false" autocomplete="off" aria-label="Genes of the set" placeholder="Gene names, separated by spaces, commas or new lines"></textarea>
+        <div class="btnrow"><button id="paintSetRun" type="button" title="Score every bin by this list (Ctrl+Enter in the box)">Score</button></div>
+      </div>
       <div id="paintRangeBox" class="paint-range" hidden>
-        <label class="row slim"><span>Scale</span><select id="paintScale"><option value="lin">Linear</option><option value="log">Log (log10 of 1 + value)</option></select></label>
+        <label class="row slim" id="paintScaleRow"><span>Scale</span><select id="paintScale"><option value="lin">Linear</option><option value="log">Log (log10 of 1 + value)</option></select></label>
         <div class="paint-lohi">
           <label><span>From</span><input id="paintLo" type="number" step="any" inputmode="decimal" /></label>
           <label><span>to</span><input id="paintHi" type="number" step="any" inputmode="decimal" /></label>
@@ -104,6 +125,13 @@
       inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); setPairGene(w.toLowerCase(), inp.value); } };
       $(`paintThr${w}`).onchange = (e) => { P.pair[`t${w.toLowerCase()}`] = num(e.target); pairCompute(); };
     }
+    $("paintSetRun").onclick = () => setScore(parseList($("paintSetGenes").value), $("paintSetType").value);
+    $("paintSetGenes").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("paintSetRun").click(); } };
+    $("paintSetGenes").oninput = () => { if ($("paintSetType").value) $("paintSetType").value = ""; };
+    $("paintSetType").onchange = (e) => {
+      const t = (P.lists || []).find((x) => x.id === e.target.value);
+      if (t) { $("paintSetGenes").value = t.genes.join(", "); setScore(t.genes, t.id); }
+    };
     $("paintPairView").onchange = (e) => { P.pair.view = PAIR_VIEWS.includes(e.target.value) ? e.target.value : "classes"; pairCompute(); };
   }
   const msg = (t, err) => { const el = $("paintMsg"); if (!el) return; el.textContent = t || ""; el.classList.toggle("err", !!err); };
@@ -132,7 +160,7 @@
 
   // a new layer (or dataset): what it offers, and the state carried over when it offers the same
   function onLayer(dsId, key, e, src) {
-    const keep = P.ds === dsId && key ? { mode: P.mode, col: P.col, scale: P.scale, lo: P.lo, hi: P.hi, auto: P.auto, pair: { ...P.pair } } : null;
+    const keep = P.ds === dsId && key ? { mode: P.mode, col: P.col, scale: P.scale, lo: P.lo, hi: P.hi, auto: P.auto, pair: { ...P.pair }, set: { ...P.set } } : null;
     P = { ...blank(), seq: P.seq + 1, ds: dsId, key };
     P.cols = columnsOf(e, key, src);
     const sel = $("paintCol");
@@ -141,9 +169,14 @@
     opt("value").hidden = opt("value").disabled = !P.cols.length;
     opt("pair").hidden = opt("pair").disabled = !hasGenes();
     opt("pair").textContent = `Two ${W().genes}`;
+    opt("set").hidden = opt("set").disabled = !hasGenes();
+    opt("set").textContent = `${W().Gene} set score`;
+    $("paintSetGenes").placeholder = `${W().Gene} names, separated by spaces, commas or new lines`;
+    $("paintSetType").innerHTML = `<option value="">Your own list</option>`;
     $("paintLblA").textContent = `${W().Gene} A`; $("paintLblB").textContent = `${W().Gene} B`;
     $("panelPaint").hidden = !P.cols.length && !hasGenes();
     $("paintGeneA").value = $("paintGeneB").value = ""; $("paintThrA").value = $("paintThrB").value = "";
+    if (!keep || keep.mode !== "set") $("paintSetGenes").value = "";
     msg("");
     if (keep && keep.mode === "value" && P.cols.some((c) => c.id === keep.col)) {
       Object.assign(P, { col: keep.col, scale: keep.scale, lo: keep.lo, hi: keep.hi, auto: keep.auto });
@@ -151,6 +184,9 @@
     } else if (keep && keep.mode === "pair" && hasGenes() && keep.pair.a && keep.pair.b && lookup(keep.pair.a) && lookup(keep.pair.b)) {
       P.pair = { ...keep.pair, ta: null, tb: null };                 // thresholds are per layer: back to the default
       setMode("pair", true);
+    } else if (keep && keep.mode === "set" && hasGenes() && keep.set.genes.length) {
+      P.set = { genes: keep.set.genes, type: "" };           // a cell type's list is per dataset: kept as a plain list
+      setMode("set", true);
     } else { $("paintMode").value = "off"; sync(); }
   }
 
@@ -160,6 +196,11 @@
     $("paintMode").value = P.mode;
     if (P.mode === "value") await setCol(keep && P.cols.some((c) => c.id === P.col) ? P.col : P.cols[0].id, !!keep);
     else if (P.mode === "pair") await pairLoad();
+    else if (P.mode === "set") {
+      loadLists();
+      if (P.set.genes.length) { $("paintSetGenes").value = P.set.genes.join(", "); await setScore(P.set.genes, P.set.type, !!keep); }
+      else { P.cur = null; clearOut(); P.ver++; sync(); api.render(); msg(`Type or paste ${W().genes}, or pick a cell type, then Score.`); }
+    }
     else { P.cur = null; clearOut(); P.ver++; sync(); api.render(); }
   }
   async function setCol(id, keepRange) {
@@ -208,6 +249,15 @@
   function rowOf() {
     if (!P.rowOf) { const m = new Map(), p = P.pos; for (let r = 0; r < p.length / 2; r++) m.set(ukey(p[2 * r], p[2 * r + 1]), r); P.rowOf = m; }
     return P.rowOf;
+  }
+  // one gene's value on every row (0 where its file has no entry), not kept (a set's many genes)
+  async function geneRowsOnce(name) {
+    const hit = P.genes.get(name);
+    if (hit) return hit;
+    const [xyv] = await Promise.all([api.gene(name), ensurePos()]);
+    const m = rowOf(), out = new Float32Array(P.pos.length / 2);
+    for (let i = 0; i + 2 < xyv.length; i += 3) { const r = m.get(ukey(xyv[i], xyv[i + 1])); if (r !== undefined) out[r] = xyv[i + 2]; }
+    return { v: out };
   }
   // one gene's value on every row (0 where its file has no entry): fetched once, a few kept
   function geneRows(name) {
@@ -293,6 +343,101 @@
     api.render();
   }
 
+  // ---- gene set score ------------------------------------------------------------------------------
+  const parseList = (t) => String(t || "").split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+  // the cell types to pick from: the dataset's own marker list (celltypes.json), then SODA's generic one
+  async function loadLists() {
+    if (P.lists) return;
+    const seq = P.seq, out = [], e = api.expr(), src = api.src();
+    const add = (types, group, pre) => {
+      for (const t of Array.isArray(types) ? types : []) {
+        if (!t || !t.name || !Array.isArray(t.genes) || !t.genes.length) continue;
+        out.push({ id: `${pre}:${t.name}`, group, name: String(t.name), genes: t.genes.map(String).slice(0, MAX_SET) });
+      }
+    };
+    if (e && e.umap && e.umap.celltypes && src && src.json) {
+      try {
+        const j = await src.json(`expr/${P.key}/umap/celltypes.json`);
+        add(j && j.types, (j && j.markerSet && j.markerSet.name) || "This dataset's marker list", "own");
+      } catch (err) { /* none of its own */ }
+    }
+    try {
+      const r = await fetch(api.markerFile(), { cache: "no-cache" });
+      const j = r.ok ? await r.json() : null;
+      add(j && j.types, (j && j.name) || "Generic marker list", "soda");
+    } catch (err) { /* the page's lists are optional */ }
+    if (seq !== P.seq) return;
+    P.lists = out;
+    const groups = [...new Set(out.map((t) => t.group))];
+    $("paintSetType").innerHTML = `<option value="">Your own list</option>` + groups.map((g) => `<optgroup label="${esc(g)}">` +
+      out.filter((t) => t.group === g).map((t) => `<option value="${esc(t.id)}">${esc(t.name)} (${t.genes.length})</option>`).join("") + "</optgroup>").join("");
+    $("paintSetType").value = P.set.type && out.some((t) => t.id === P.set.type) ? P.set.type : "";
+  }
+  // which normalisation this layer's genes get (see the top of the file)
+  function setKind() {
+    const e = api.expr();
+    if (api.isProt()) return "prot";
+    if (api.isRois()) return e && e.q3 && Array.isArray(e.q3.normFactors) && e.q3.normFactors.length === P.pos.length / 2 ? "q3" : "log1p";
+    return P.cols.some((c) => c.id === "qc:total") ? "cp10k" : "log1p";
+  }
+  const KIND_TXT = {
+    cp10k: "mean of log1p(10,000 × count / bin total)",
+    q3: "mean of log1p(count / Q3 factor)",
+    log1p: "mean of log1p(count)",
+    prot: "mean of each marker scaled 1st–99th percentile",
+  };
+  async function setScore(list, type, keepRange) {
+    const seq = P.seq, want = [], missing = [];
+    for (const x of list) { const n = lookup(x); if (n) { if (!want.includes(n)) want.push(n); } else if (!missing.includes(x)) missing.push(x); }
+    if (want.length > MAX_SET) want.length = MAX_SET;
+    if (P.mode !== "set") { P.mode = "set"; $("paintMode").value = "set"; }
+    P.set = { genes: want, type: type || "" };
+    const gone = () => (missing.length ? `Not in this layer, left out: ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? ` and ${missing.length - 8} more` : ""}.` : "");
+    if (!want.length) {
+      P.cur = null; recolor();
+      msg(list.length ? `None of these are ${W().genes} of this layer: ${missing.slice(0, 8).join(", ")}${missing.length > 8 ? " …" : ""}.` : `Type or paste ${W().genes}, or pick a cell type, then Score.`, !!list.length);
+      return;
+    }
+    try {
+      await ensurePos();
+      if (seq !== P.seq) return;
+      const kind = setKind(), n = P.pos.length / 2, sum = new Float64Array(n);
+      let div = null;
+      if (kind === "cp10k") div = await P.cols.find((c) => c.id === "qc:total").load();
+      else if (kind === "q3") div = Float32Array.from(api.expr().q3.normFactors, (x) => (typeof x === "number" && x > 0 ? x : NaN));
+      if (div && div.length !== n) throw new Error(`${div.length} totals for ${n} ${W().bins}`);
+      let next = 0, done = 0;
+      const one = async () => {
+        while (next < want.length) {
+          const { v } = await geneRowsOnce(want[next++]);
+          if (seq !== P.seq) return;
+          if (kind === "cp10k") { for (let r = 0; r < n; r++) if (v[r] > 0 && div[r] > 0) sum[r] += Math.log1p((1e4 * v[r]) / div[r]); }
+          else if (kind === "q3") { for (let r = 0; r < n; r++) if (v[r] > 0) sum[r] += Math.log1p(v[r] / div[r]); }
+          else if (kind === "log1p") { for (let r = 0; r < n; r++) if (v[r] > 0) sum[r] += Math.log1p(v[r]); }
+          else {
+            const q = Float32Array.from(v).sort(), lo = q[Math.round((n - 1) * 0.01)], hi = q[Math.round((n - 1) * 0.99)], inv = 1 / Math.max(hi - lo, 1e-6);
+            for (let r = 0; r < n; r++) sum[r] += Math.min(1, Math.max(0, (v[r] - lo) * inv));
+          }
+          done++;
+          if (want.length > 4 && P.set.genes === want) msg(`Scoring: ${done} of ${want.length} ${W().genes}…`);
+        }
+      };
+      msg(`Scoring ${want.length} ${want.length === 1 ? W().gene : W().genes}…`);
+      await Promise.all(Array.from({ length: Math.min(SET_PARALLEL, want.length) }, one));
+      if (seq !== P.seq || P.mode !== "set" || P.set.genes !== want) return;   // another layer, mode or list meanwhile
+      const score = new Float32Array(n);
+      for (let r = 0; r < n; r++) score[r] = sum[r] / want.length;          // a q3 row without a factor stays NaN: no score
+      P.cur = { id: "set", label: want.length <= 3 ? `Score of ${want.join(", ")}` : `Score of ${want.length} ${W().genes}`, unit: "", v: score, kind, genes: want };
+      P.scale = "lin";
+      if (!keepRange || !Number.isFinite(P.lo) || !Number.isFinite(P.hi) || !(P.hi > P.lo)) { P.auto = true; autoRange(); }
+      msg(gone());
+    } catch (err) {
+      if (seq !== P.seq) return;
+      P.cur = null; msg(`Could not score the set: ${err && err.message ? err.message : err}`, true);
+    }
+    recolor();
+  }
+
   // ---- a value per bin ----------------------------------------------------------------------------------
   const tf = (x) => (P.scale === "log" ? Math.log10(1 + Math.max(0, x)) : x);
   function autoRange() {
@@ -309,7 +454,7 @@
   // t per row (0..1, -1 = no value) and the colours
   function recolor() {
     clearOut();
-    if (P.mode === "value" && P.cur && P.pos) {
+    if ((P.mode === "value" || P.mode === "set") && P.cur && P.pos) {
       const v = P.cur.v, n = v.length, lut = api.lut(), t = new Float32Array(n), rgb = new Uint8Array(3 * n), col = new Uint8Array(4 * n);
       const a = tf(P.lo), b = tf(P.hi), inv = 1 / Math.max(b - a, 1e-12);
       for (let r = 0; r < n; r++) {
@@ -329,7 +474,9 @@
     const on = P.mode !== "off";
     $("paintValueBox").hidden = P.mode !== "value";
     $("paintPairBox").hidden = P.mode !== "pair";
-    $("paintRangeBox").hidden = !(P.mode === "value" && P.cur);
+    $("paintRangeBox").hidden = !((P.mode === "value" || P.mode === "set") && P.cur);
+    $("paintSetBox").hidden = P.mode !== "set";
+    $("paintScaleRow").hidden = P.mode === "set";
     $("paintScale").value = P.scale;
     $("paintLo").value = P.lo === null ? "" : String(+P.lo.toPrecision(6));
     $("paintHi").value = P.hi === null ? "" : String(+P.hi.toPrecision(6));
@@ -368,7 +515,7 @@
     return { key: `paint${P.ver}|${P.key}`, t: P.t, rgb: P.rgb };
   }
   function valueAt(r) {
-    return P.mode === "value" && P.cur && r >= 0 && r < P.cur.v.length ? P.cur.v[r] : NaN;
+    return (P.mode === "value" || P.mode === "set") && P.cur && r >= 0 && r < P.cur.v.length ? P.cur.v[r] : NaN;
   }
   const unitTxt = () => (P.cur && P.cur.unit && P.cur.unit !== "genes" ? ` ${P.cur.unit}` : "");
   const CLASS_TXT = ["neither", "A only", "B only", "both"];
@@ -380,6 +527,7 @@
       return `${D.a} ${fmt(D.va[r])} · ${D.b} ${fmt(D.vb[r])}: ${k === 3 ? "both" : k === 1 ? `${D.a} only` : k === 2 ? `${D.b} only` : CLASS_TXT[0]}`;
     }
     const x = valueAt(r);
+    if (P.mode === "set") return `${W().Gene} set score: ${Number.isFinite(x) ? x.toFixed(3) : "no score"}`;
     return `${say(P.cur.label)}: ${Number.isFinite(x) ? fmt(x) + unitTxt() : "no value"}`;
   }
   const pct = (k, n) => (n ? ` (${((100 * k) / n).toFixed(1)}%)` : "");
@@ -398,6 +546,12 @@
       return `<div class="genes">${row(PAIR_RGB.both, `${D.a} and ${D.b}`, c.both)}${row(PAIR_RGB.a, `${D.a} only`, c.a)}${row(PAIR_RGB.b, `${D.b} only`, c.b)}</div>` +
         `<div class="note">${esc(W().Bins)} per class, of ${n.toLocaleString()}. ${thr} ${c.none.toLocaleString()} with neither are not drawn.</div>`;
     }
+    if (P.mode === "set") {
+      const g = P.cur.genes;
+      return `<div class="ramp"><span>${esc(fmt(P.lo))}</span><i style="background:${api.rampCss()}"></i><span>${esc(fmt(P.hi))}</span></div>` +
+        `<div class="note">${esc(W().Gene)} set score per ${esc(W().bin)}: ${esc(say(KIND_TXT[P.cur.kind]))}, over ${g.length} ${esc(g.length === 1 ? W().gene : W().genes)} ` +
+        `(${esc(g.slice(0, 6).join(", "))}${g.length > 6 ? ", …" : ""}).</div>`;
+    }
     const log = P.scale === "log";
     return `<div class="ramp"><span>${esc(fmt(P.lo))}</span><i style="background:${api.rampCss()}"></i><span>${esc(fmt(P.hi))}</span></div>` +
       `<div class="note">${esc(say(P.cur.label))} per ${esc(W().bin)}${esc(unitTxt() ? ` (${unitTxt().trim()})` : "")}${log ? ", log scale" : ""}. ` +
@@ -414,10 +568,16 @@
     }
     const lut = api.lut(), stops = [];
     for (let i = 0; i <= 6; i++) { const k = Math.round((i / 6) * 255) * 3; stops.push([lut[k], lut[k + 1], lut[k + 2]]); }
+    if (P.mode === "set") {
+      const g = P.cur.genes;
+      return [{ title: `${W().Gene} set score: ${g.slice(0, 5).join(", ")}${g.length > 5 ? ` and ${g.length - 5} more` : ""}`,
+        items: [{ label: `${fmt(P.lo)} to ${fmt(P.hi)}, ${say(KIND_TXT[P.cur.kind])}`, stops }] }];
+    }
     return [{ title: `${say(P.cur.label)}${unitTxt() ? ` (${unitTxt().trim()})` : ""}`, items: [{ label: `${fmt(P.lo)} to ${fmt(P.hi)}${P.scale === "log" ? " (log scale)" : ""}`, stops }] }];
   }
   function summary() {
     if (P.mode === "pair" && P.pd) return `${P.pd.a} + ${P.pd.b}`;
+    if (P.mode === "set" && P.cur) return `${W().gene} set (${P.cur.genes.length})`;
     if (P.mode === "off" || !P.cur) return $("panelPaint") && !$("panelPaint").hidden ? "off" : "";
     return say(P.cur.label).toLowerCase();
   }
@@ -429,6 +589,13 @@
       const o = { m: "pair", a: P.pair.a, b: P.pair.b, pv: P.pair.view };
       if (Number.isFinite(P.pair.ta)) o.ta = P.pair.ta;
       if (Number.isFinite(P.pair.tb)) o.tb = P.pair.tb;
+      return o;
+    }
+    if (P.mode === "set") {
+      if (!P.set.genes.length) return null;
+      const o = { m: "set", g: P.set.genes.slice(0, MAX_SET) };
+      if (P.set.type) o.ct = P.set.type;
+      if (!P.auto && Number.isFinite(P.lo) && Number.isFinite(P.hi)) { o.lo = +P.lo.toPrecision(6); o.hi = +P.hi.toPrecision(6); }
       return o;
     }
     if (P.mode === "off" || !P.col) return null;
@@ -444,6 +611,7 @@
     if (lo !== null && hi !== null && hi > lo) { o.lo = lo; o.hi = hi; }
     h.put(o, "a", h.str(x.a, 80)); h.put(o, "b", h.str(x.b, 80)); h.put(o, "pv", h.oneOf(x.pv, PAIR_VIEWS));
     h.put(o, "ta", h.num(x.ta, -1e15, 1e15)); h.put(o, "tb", h.num(x.tb, -1e15, 1e15));
+    h.put(o, "g", h.list(x.g, MAX_SET, (g) => h.str(g, 60))); h.put(o, "ct", h.str(x.ct, 120));
     return o.m ? o : null;
   }
   async function apply(x) {
@@ -455,6 +623,19 @@
       P.pair = { a, b, ta: Number.isFinite(x.ta) ? x.ta : null, tb: Number.isFinite(x.tb) ? x.tb : null, view: PAIR_VIEWS.includes(x.pv) ? x.pv : "classes" };
       P.mode = "pair"; $("paintMode").value = "pair";
       await pairLoad();
+      return notes;
+    }
+    if (x.m === "set") {
+      if (!hasGenes() || !Array.isArray(x.g) || !x.g.length) { notes.push(`This layer has no ${W().genes}: not coloured by a set.`); await setMode("off"); return notes; }
+      P.mode = "set"; $("paintMode").value = "set";
+      if (Number.isFinite(x.lo) && Number.isFinite(x.hi)) { P.lo = x.lo; P.hi = x.hi; P.auto = false; } else { P.auto = true; P.lo = P.hi = null; }
+      $("paintSetGenes").value = x.g.join(", ");
+      await loadLists();
+      const type = x.ct && (P.lists || []).some((t) => t.id === x.ct) ? x.ct : "";
+      $("paintSetType").value = type;
+      await setScore(x.g, type, !P.auto);
+      const out = x.g.filter((g) => !lookup(g));
+      if (out.length) notes.push(`Not in this layer, left out of the ${W().gene} set: ${out.slice(0, 6).join(", ")}${out.length > 6 ? ` and ${out.length - 6} more` : ""}.`);
       return notes;
     }
     if (!P.cols.some((c) => c.id === x.col)) { notes.push("This dataset does not have the value the bins were coloured by: not coloured."); await setMode("off"); return notes; }
