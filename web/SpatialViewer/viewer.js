@@ -6317,6 +6317,8 @@
       ScatterplotLayer, NORMAL, render: requestRender,
       lut: () => PALETTES.viridis, rampCss: () => rampCss("viridis"),
       overridden: () => umapByCat() || gatePreviewOn(),
+      // genes: the layer's list and one gene's values, always through the source object
+      geneIndex: () => S.geneIndex || [], gene: (name) => S.src.gene(S.exprKey, name), isProt,
     });
     paint = window.SodaPaint;
     if (window.__spatialViewer) window.__spatialViewer.paint = paint;   // for testing from the console
