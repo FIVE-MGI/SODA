@@ -373,6 +373,11 @@ or your lab's web server (see [docs/HOSTING.md](../../docs/HOSTING.md)).
 
 ### B. Encrypted link files (a password, no server)
 
+> **Deprecated.** Encrypted link files still work in this version, but they will be removed in a
+> later one. For a password, use the token function above (`/api/token`, steps 1 to 6); without a
+> server, keep the data in a private container and share a link with a read pass (a SAS; see
+> [docs/SHARE_YOUR_DATA.md, Step 5](../../docs/SHARE_YOUR_DATA.md#step-5-make-the-link)).
+
 The data sits in a public-read container under a long random folder name, and the page
 holds that address only in encrypted form. The browser decrypts it with the password
 (PBKDF2-SHA256, 200,000 rounds, then AES-GCM).
