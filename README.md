@@ -61,7 +61,8 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
   once, fetched one gene at a time. Zoomed in, each cell is drawn with its own outline (the
   instrument's cell and nucleus boundaries, also for CosMx, MERSCOPE and Stereo-seq cell bins,
   or a lab's own segmentation file), filled with the colour of the gene or cluster on show;
-  zoomed out, a dot at its centre.
+  zoomed out, a dot at its centre. A zipped Xenium output is read as it is (no unzipping), and
+  an output without its stain images opens on a transcript-density background.
 - **GeoMx DSP.** A study of hand-drawn regions (ROIs) rather than cells or bins: the scans
   (several slides side by side), and each ROI's outline filled with the colour of a gene or
   of its group (a disc per segment where an ROI has several). The columns of the annotation
