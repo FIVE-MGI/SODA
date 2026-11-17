@@ -359,8 +359,8 @@ email wbuchser@wustl.edu with any questions about hosting.
 The viewer needs **WebGL2**. It is developed and tested in **Google Chrome** on desktop.
 Other desktop browsers (Edge, Firefox, Safari) have not been tested; they may work if they
 support WebGL2. On an iPhone every browser runs on Safari's engine (WebKit); what was tested
-there is below. Password-encrypted dataset links need the page to be served over
-`https://` or from `localhost`.
+there is below. Password-encrypted dataset links (`links.py`, deprecated: they will be removed
+in a later version) need the page to be served over `https://` or from `localhost`.
 
 **Copy link to this view** and **Compare** were checked with automated tests in Chromium
 and in Playwright's WebKit build (the engine behind Safari), at desktop size and at

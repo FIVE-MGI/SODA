@@ -41,7 +41,7 @@ Please put `soda` in your site's name, for example `yourlab-soda`.
 |---|---|---|
 | **Password site on Azure** (what runs in production) | The data stays in a private blob container. A small function, `/api/token`, checks one shared password and gives the browser a read-only pass that expires after an hour by default (`TOKEN_HOURS`, at most 24). The storage key stays on the server. In `config.js`: `tokenEndpoint: "/api/token"`. | [HOSTING.md C](HOSTING.md#c-azure-private-data-with-a-password), then [deploy/azure/README.md](../deploy/azure/README.md) |
 | **A link with a read pass** | The folder stays private; the link carries a read-only pass (an Azure SAS, an S3 pre-signed link). In the notebook: `READ_PASS`. Anyone holding the link can read the data until the pass expires, so treat the link like a password. | [SHARE_YOUR_DATA.md Step 5](SHARE_YOUR_DATA.md#step-5-make-the-link) |
-| **Encrypted link files** (no server) | `links.py` encrypts each dataset's address with a password; `linkPath` in `config.js` names the file. Changing the password does not lock anyone out. | [deploy/azure/README.md, "Without a server"](../deploy/azure/README.md#b-encrypted-link-files-a-password-no-server) |
+| **Encrypted link files** (no server; **deprecated**) | `links.py` encrypts each dataset's address with a password; `linkPath` in `config.js` names the file. Changing the password does not lock anyone out. They still work, but will be removed in a later version: use the password site or a link with a read pass instead. | [deploy/azure/README.md, "Without a server"](../deploy/azure/README.md#b-encrypted-link-files-a-password-no-server) |
 | **AWS or another cloud** | Your own token endpoint that behaves like the Azure one. A design, not built or tested. | [HOSTING.md D](HOSTING.md#d-aws-s3--cloudfront-or-another-backend) |
 
 Keep in mind:
@@ -351,8 +351,15 @@ python web/SpatialViewer/prepare.py batch --src D:/SODA_work/inputs --out D:/SOD
   id is the name without `.zip`, and it is read as it is (the stain images are copied out into
   `<out>/_unzipped/<id>/` while it is prepared, then removed; see
   [PREPARING_DATA.md, Xenium](PREPARING_DATA.md#xenium)). A zip next to a dataset folder of the
-  same name (`run1.zip` beside `run1/`, its unzipped copy) is left out with a warning; a zip that
-  fails the zip-slip / zip-bomb checks is skipped with the reason.
+  same name (`run1.zip` beside `run1/`) is prepared too, as a second dataset with the id
+  `run1_zip`, and the log warns that the two may be the same data (keep one); a zip beside its
+  folder that cannot be read as it is (any other kind) is left out with a warning. A zip that
+  fails the zip-slip / zip-bomb checks is skipped with the reason. A Xenium transcripts store on
+  its own, `<name>_transcripts.zarr.zip`, is a dataset too (id `<name>_transcripts`): its
+  molecules on a transcript-density background, no images and no cells.
+- Names starting with `_` or `.` are left out (a place for what is not a dataset), and the log
+  says how many `_` names there were. The notebook's Section 2 and the desktop app find the
+  datasets with this same code (`batch.find_datasets`).
 
   ```json
   {"nerve_section1": {"label": "Normal nerve"},
