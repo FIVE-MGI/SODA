@@ -196,8 +196,9 @@ the manifest entries; nothing else changes). gzip of UTF-8 text, one id per line
 `positions.bin` and in its order, no header. `column` in the manifest entry says what they are: `barcode`
 (Visium spots, Visium HD and Stereo-seq bins) or `cell_id` (cells layers: Xenium `cell_id`, CosMx
 `<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id). GeoMx ROI layers and protein grid layers get none.
-The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes; without it that button says how
-to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
+The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes, and to match a reader's file to
+the bins in "Your own results" (Clusters tab; [ADVANCED.md](ADVANCED.md#load-your-own-results-in-the-viewer-no-new-export));
+without it both say how to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
 
 Before anything is written, every layer's ids pass two gates (layerids.py), and one refused layer means no
 list for any layer of the dataset:
