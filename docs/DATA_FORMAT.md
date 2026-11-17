@@ -701,13 +701,14 @@ and `shapes/<set>/`. What differs:
 | manifest | `image.background` | `"cell density"` when the file had no image: one grey channel (`#b4b4b4`) drawn from the positions |
 | manifest | `anndata` | `source` (`h5ad` or `zarr`), `counts` (`layers/counts`, `raw/X` or `X`), `countsAreIntegers`, `positions` (`obsm <key>`), `libraries`, `pixelSize` (where it came from), `rows`, `rowsTotal` |
 | manifest | `omezarr` | `ngffVersion`, `channels`, `zPlanes`, `zPlane`, `levels`, `dtype` (of the file) |
-| manifest | `spatialdata` | `coordinateSystem` (`global` or `chosen`), `tables`, `imageFrom` (`images` or `density background`), `transforms`, and `layers[]`: `key`, `rows`, `counts`, `countsAreIntegers`, `region` (`circles` or `polygons`) |
+| manifest | `spatialdata` | `coordinateSystem` (`global` or `chosen`), `tables`, `imageFrom` (`images` or `density background`), `transforms`, and `layers[]`: `key`, `rows`, `counts`, `countsAreIntegers`, `region` (`circles` or `polygons`). `pixelSize` = `classic Visium assumed: 55 µm spots` when the pixel size came from the spot size |
 | `expr[]` | `platform` | `visium` for a classic Visium AnnData (its barcodes are Visium barcodes), `anndata` for other AnnData layers, `spatialdata` for SpatialData tables |
 | `molecules` | `platform`, `source` | `spatialdata`, `points` |
 
 - No file, library, table, region, element or coordinate-system name is written to the export:
   the blocks above hold counts and fixed words only.
-- Layer keys: `spots`, `cells`, or a Visium HD bin size (`016um`) as for Space Ranger output.
+- Layer keys: `spots`, `cells`, `nuclei` (a SpatialData table on a `nucle…` region), or a Visium
+  HD bin size (`016um`) as for Space Ranger output.
 - Per-row id lists (`ids.txt.gz`, by default): `platform: "visium"` layers are held to the Visium
   spot barcode format; the `anndata` and `spatialdata` platforms have no id format, so their obs
   names are written when none looks like a sample ID (and none holds a line break).

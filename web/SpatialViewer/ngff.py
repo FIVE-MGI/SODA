@@ -1,4 +1,4 @@
-r"""OME-Zarr (OME-NGFF) images and NGFF coordinate transformations, read with zarr 2.
+r"""OME-Zarr (OME-NGFF) images and NGFF coordinate transformations, read with zarr 2 (zarr v2) or zarrv3.py (zarr v3).
 
 Used by `prepare.py omezarr` (an OME-Zarr image on its own) and `prepare.py spatialdata`
 (the images/ of a SpatialData store, which are OME-Zarr images too) in stdformats.py.
@@ -10,14 +10,15 @@ Used by `prepare.py omezarr` (an OME-Zarr image on its own) and `prepare.py spat
     element_transforms(attrs)   -> {coordinate system: 3x3 affine} of a SpatialData element
     to_affine(t, axes)          -> one NGFF / SpatialData transformation as a 3x3 affine on (x, y)
 
-What is read (NGFF 0.1 to 0.4, the zarr v2 layout):
+What is read (NGFF 0.1 to 0.4 in the zarr v2 layout, read with zarr 2; NGFF 0.5 in the zarr v3 layout,
+read with zarrv3.py, its metadata under attributes["ome"]):
     multiscales[0]: axes (names, types, units; 0.3 strings; none in 0.1 / 0.2 = t, c, z, y, x),
                     datasets (level 0 = the first, its scale gives the pixel size when the x / y axes carry a
                     unit), the multiscale-level coordinateTransformations
     omero.channels: label (channel name) and color (hex); window is not used (SODA sets its own)
     bioformats2raw.layout: the series folders 0, 1, ...; --series picks one (default 0)
-Refused, with the reason: a zarr v3 store (zarr.json: OME-NGFF 0.5; zarr-python 2 cannot read it),
-HCS plates / wells, an image with more than one time point, an axis of an unknown type with more
+Refused, with the reason: a zarr v3 array outside the subset zarrv3.py reads (the codec or data type is
+named), HCS plates / wells, an image with more than one time point, an axis of an unknown type with more
 than one entry, and labels (segmentation masks) given as the image.
 
 Transformations (to_affine): identity, scale, translation, affine and sequence (of those) on the
@@ -49,9 +50,18 @@ class NgffError(SystemExit):
 # zarr store helpers (v2 metadata files are plain JSON)
 # ---------------------------------------------------------------------------------------
 def read_attrs(folder) -> dict:
-    """The .zattrs of a zarr v2 group / array folder ({} when there is none)."""
+    """The attributes of a zarr group / array folder ({} when there are none): the .zattrs of zarr v2, the
+    zarr.json "attributes" of zarr v3, where NGFF 0.5's "ome" block is lifted to the top (so multiscales,
+    omero, bioformats2raw.layout, plate, image-label read as in 0.4; its version becomes "version")."""
     p = Path(folder) / ".zattrs"
     if not p.exists():
+        if (Path(folder) / "zarr.json").exists():
+            import zarrv3
+            a = zarrv3.attrs_of(folder)
+            ome = a.get("ome")
+            if isinstance(ome, dict):
+                a = {**{k: v for k, v in a.items() if k != "ome"}, **ome}
+            return a
         return {}
     try:
         return json.loads(p.read_text(encoding="utf-8"))
@@ -69,13 +79,38 @@ def zarr_version(folder) -> int | None:
     return None
 
 
-def refuse_v3(folder, what: str):
+def open_array(path):
+    """A zarr array folder, either format: zarr 2's Array for v2, zarrv3.Array for v3 (the same reading API:
+    shape, dtype, ndim, chunks, a[...])."""
+    if zarr_version(path) == 3:
+        import zarrv3
+        return zarrv3.open_array(path)
+    import zarr
+    return zarr.open_array(str(path), mode="r")
+
+
+def open_group(path):
+    """A zarr group folder, either format (zarr 2's Group for v2, zarrv3.Group for v3)."""
+    if zarr_version(path) == 3:
+        import zarrv3
+        return zarrv3.open_group(path)
+    import zarr
+    return zarr.open_group(str(path), mode="r")
+
+
+def is_group(n) -> bool:
+    import zarr
+    import zarrv3
+    return isinstance(n, (zarr.hierarchy.Group, zarrv3.Group))
+
+
+def check_v3(folder, what: str):
+    """A zarr v3 store: refused when an array in it is outside what zarrv3.py reads (the codec / data type is named)."""
     if zarr_version(folder) == 3:
-        raise NgffError(f"[{what}] this store is in the zarr v3 format (zarr.json, OME-NGFF 0.5 / newer AnnData and "
-                        f"SpatialData writers). SODA reads zarr v2 only (its zarr is held below 3 for the image "
-                        f"pyramids). Write it again in the zarr v2 format with the tool that made it (anndata: "
-                        f"anndata.settings.zarr_write_format = 2 before write_zarr; images: OME-NGFF 0.4), or give the "
-                        f"data as .h5ad / OME-TIFF.")
+        import zarrv3
+        why = zarrv3.check_store(folder)
+        if why:
+            raise NgffError(f"[{what}] {why.replace('[zarr v3] ', 'zarr v3 store: ', 1)}")
 
 
 def _axis(a) -> dict:
@@ -175,9 +210,8 @@ def find_image_group(path, series=None, what: str = "omezarr") -> tuple[Path, di
     """(folder of the multiscale image, its attrs, a note) for a path given by the user: the image itself,
     or the top of a bioformats2raw layout (series `series`, default 0)."""
     p = Path(path)
-    refuse_v3(p, what)
     if zarr_version(p) is None:
-        raise NgffError(f"[{what}] not a zarr folder (no .zgroup / .zattrs): an OME-Zarr image is a folder")
+        raise NgffError(f"[{what}] not a zarr folder (no .zgroup / .zattrs / zarr.json): an OME-Zarr image is a folder")
     a = read_attrs(p)
     if "plate" in a or "well" in a:
         raise NgffError(f"[{what}] this is an OME-Zarr high-content screening {'plate' if 'plate' in a else 'well'}: "
@@ -211,7 +245,6 @@ class NgffImage:
     """A multiscale image: its axes, level 0 and the coarsest level, channel names / colours, pixel size."""
 
     def __init__(self, folder, attrs: dict, what: str = "omezarr"):
-        import zarr
         self.folder, self.what = Path(folder), what
         ms = (attrs.get("multiscales") or [None])[0]
         if not ms or not ms.get("datasets"):
@@ -220,13 +253,16 @@ class NgffImage:
         ds = ms["datasets"]
         self.level_paths = [str(d["path"]) for d in ds]
         try:
-            self.z0 = zarr.open_array(str(self.folder / self.level_paths[0]), mode="r")
+            self.z0 = open_array(self.folder / self.level_paths[0])
+        except SystemExit as e:                                 # zarrv3: outside the subset read, with the reason
+            raise NgffError(f"[{what}] level 0: {str(e).replace('[zarr v3] ', 'zarr v3: ', 1)}")
         except Exception as e:
             raise NgffError(f"[{what}] level 0 ({self.level_paths[0]}) cannot be opened as a zarr array ({type(e).__name__})")
         try:
-            self.zlow = zarr.open_array(str(self.folder / self.level_paths[-1]), mode="r")
-        except Exception:
+            self.zlow = open_array(self.folder / self.level_paths[-1])
+        except (Exception, SystemExit):
             self.zlow = self.z0
+        self.zarr_format = zarr_version(self.folder / self.level_paths[0])
         axes = ms.get("axes")
         if axes:
             self.axes = [_axis(a) for a in axes]

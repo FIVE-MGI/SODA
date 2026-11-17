@@ -2,7 +2,7 @@ r"""AnnData files read with h5py (.h5ad) or zarr (AnnData-Zarr, also the tables/
 
 No anndata, scanpy or pandas: the on-disk encoding is read directly. Used by stdformats.py.
 
-    AnnFile(path)              an .h5ad file or an AnnData .zarr folder (zarr v2)
+    AnnFile(path)              an .h5ad file or an AnnData .zarr folder (zarr v2 with zarr 2; zarr v3 with zarrv3.py)
       .obs_names / .var_names  the dataframe indexes
       .column(df, name)        one obs / var column: Column(values) or Column(codes, categories)
       .columns(df)             the column names in their stored order
@@ -16,8 +16,9 @@ What is understood (anndata's encoding-type attributes, anndata 0.7 to 0.11):
     nullable-integer / -boolean / -string-array (values + mask: masked entries become NA), csr_matrix,
     csc_matrix (also the older h5sparse_format attributes), dense arrays, dict, numeric-scalar, string;
     the anndata 0.7 categorical (a codes dataset whose "categories" attribute points at obs/__categories/).
+    A zarr v3 store (anndata 0.11+ with zarr-python 3: zarr.json, strings as vlen-utf8) is read the same way.
 Refused, with the reason: an .h5ad of anndata older than 0.7 (obs / var as one compound table), a zarr v3
-store (zarr.json), anything that is not an AnnData file.
+array outside the subset zarrv3.py reads (the codec is named), anything that is not an AnnData file.
 """
 from __future__ import annotations
 
@@ -70,13 +71,16 @@ class AnnFile:
         self.path, self.what = Path(path), what
         self._h5 = None
         if self.path.is_dir():
-            ngff.refuse_v3(self.path, what)
-            import zarr
-            if ngff.zarr_version(self.path) != 2:
-                raise SystemExit(f"[{what}] not a zarr folder (no .zgroup): the AnnData-Zarr store is a folder "
-                                 f"holding .zgroup, obs/, var/ and X")
-            self.root = zarr.open_group(str(self.path), mode="r")
+            ver = ngff.zarr_version(self.path)
+            if ver is None:
+                raise SystemExit(f"[{what}] not a zarr folder (no .zgroup / zarr.json): the AnnData-Zarr store is a "
+                                 f"folder holding .zgroup (or zarr.json), obs/, var/ and X")
+            try:
+                self.root = ngff.open_group(self.path)
+            except SystemExit as e:
+                raise SystemExit(f"[{what}] {str(e).replace('[zarr v3] ', 'zarr v3: ', 1)}")
             self.kind = "zarr"
+            self.zarr_format = ver
         else:
             import h5py
             try:
@@ -109,8 +113,7 @@ class AnnFile:
     # ---- nodes ---------------------------------------------------------------------------
     def is_group(self, n) -> bool:
         if self.kind == "zarr":
-            import zarr
-            return isinstance(n, zarr.hierarchy.Group)
+            return ngff.is_group(n)
         import h5py
         return isinstance(n, h5py.Group)
 

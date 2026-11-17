@@ -71,8 +71,8 @@ How each kind is recognised (from what its reader needs, see the sections below)
 | `tiff` | one image file. The header says which: QPTIFF, multi-channel OME-TIFF, a TIFF stack, an RGB (H&E) image or one grey channel. |
 | `rnaseq` | an `.h5ad` with the embedding in `obsm`, or a 10x matrix folder with `analysis/umap/.../projection.csv` or `umap.csv`. A matrix folder with `spatial/` beside it is Visium, not single-cell. |
 | `anndata` | an `.h5ad` or AnnData `.zarr` folder with `obsm["spatial"]`. Several libraries in `uns["spatial"]`: ambiguous (`--library 1`, `2`, ...). With `--kind anndata` and no `obsm["spatial"]`: incomplete. |
-| `omezarr` | a zarr v2 folder with `multiscales` in its `.zattrs` (or a `bioformats2raw` layout). A zarr v3 store or an HCS plate / well: incomplete, with the reason. |
-| `spatialdata` | a zarr folder with `images/`, `shapes/`, `points/`, `labels/` or `tables/` element groups and at least one table. Without a table: incomplete (its image can be prepared with `--kind omezarr`). |
+| `omezarr` | a zarr folder with `multiscales` in its `.zattrs` (zarr v2, OME-NGFF 0.4) or under `ome` in its `zarr.json` (zarr v3, OME-NGFF 0.5), or a `bioformats2raw` layout. An HCS plate / well, or a zarr v3 array with a codec SODA does not read: incomplete, with the reason (the codec named). |
+| `spatialdata` | a zarr folder (v2 or v3) with `images/`, `shapes/`, `points/`, `labels/` or `tables/` element groups and at least one table. Without a table: incomplete (its image can be prepared with `--kind omezarr`). A table on a labels element (a segmentation mask): incomplete, as `prepare` refuses it. |
 
 A folder that holds several datasets is reported dataset by dataset and never merged; run
 `auto` once per dataset, or `prepare.py batch` for all of them with one log
@@ -147,6 +147,13 @@ python web/SpatialViewer/prepare.py visium --id lymph_node --image path/to/fullr
 
 Give the full-resolution image, not `tissue_hires_image.png` (that one is downscaled; if
 you have nothing else, see `--image-scale` under [Common problems](#common-problems)).
+
+- The matrix may also carry the sample name, as 10x's downloads do
+  (`V1_Adult_Mouse_Brain_filtered_feature_bc_matrix.h5`): one such file in the folder is taken
+  (two or more: name the one to use `filtered_feature_bc_matrix.h5`).
+- The pixel size: `microns_per_pixel` from the scale factors (newer Space Ranger), else the
+  image's own resolution, else **55 µm / `spot_diameter_fullres`** (older Space Ranger records no
+  pixel size; the log says so). `--pixel-size` overrides all three.
 
 ## Xenium
 
@@ -834,11 +841,24 @@ They are read by the browser only after this conversion. Opening an `.h5ad`, OME
 SpatialData store in the page itself, without `prepare.py`, is not done; it is a possible later
 step.
 
-**Only zarr v2 stores are read.** A store written in the zarr v3 format (a `zarr.json` file at
-its top: OME-NGFF 0.5, and AnnData / SpatialData written with zarr-python 3) is recognised and
-refused with that reason, because SODA's zarr is held below version 3 for its image pyramids.
-Write it again as zarr v2 (`anndata.settings.zarr_write_format = 2` before `write_zarr`; OME-NGFF
-0.4 for images), or give the data as `.h5ad` / OME-TIFF.
+**zarr v2 and zarr v3.** zarr v2 stores are read with zarr-python 2. SODA's zarr stays below
+version 3 (its image pyramids are written with it), so stores in the zarr v3 format (a
+`zarr.json` file at the top: OME-NGFF 0.5, and AnnData / SpatialData written with zarr-python 3 or
+spatialdata 0.4 and later) are read by SODA's own small reader, `zarrv3.py`. It reads:
+
+- `zarr.json` metadata of groups and arrays, attributes (OME-NGFF 0.5 keeps its metadata under
+  `attributes.ome`), and the consolidated metadata spatialdata writes inline;
+- the regular chunk grid, with chunk keys `default` (`c/0/1`) and `v2` (`0.1`), either separator;
+- the codecs `bytes` (either byte order), `transpose`, `blosc`, `gzip`, `zstd`, `crc32c`,
+  `sharding_indexed` (index at the end or the start, with its `crc32c` check; a window reads only
+  the inner chunks it needs), and `vlen-utf8` / `vlen-bytes` for strings;
+- the data types `bool`, `int8`-`int64`, `uint8`-`uint64`, `float16`-`float64`, `string`, `bytes`;
+  the fill value of missing chunks (including `NaN`, `Infinity` and hex floats).
+
+An array that uses anything else (another codec, such as `zfp`, or a storage transformer) is
+refused with the codec named; `prepare.py detect` says the same before anything is run. Write
+the store again without it (or as zarr v2: `anndata.settings.zarr_write_format = 2` before
+`write_zarr`; OME-NGFF 0.4 for images), or give the data as `.h5ad` / OME-TIFF.
 
 ### Spatial AnnData (`.h5ad`, or an AnnData `.zarr` folder)
 
@@ -867,8 +887,9 @@ anndata older than 0.7 (`obs` as one table: open and save it again with a curren
 
 ### OME-Zarr images
 
-One multiscale image (OME-NGFF 0.4 or older, zarr v2), handled like an OME-TIFF (`tiff`): the
-channels, then at export the protein grid layer for a multichannel protein image.
+One multiscale image (OME-NGFF 0.4 or older in zarr v2, or OME-NGFF 0.5 in zarr v3), handled like
+an OME-TIFF (`tiff`): the channels, then at export the protein grid layer for a multichannel
+protein image.
 
 - Level 0 of `multiscales[0]`; for a `bioformats2raw` layout, series 0 (`--series` for another).
 - Channel names and colours from `omero.channels` (`--channels` overrides the names); three
@@ -883,13 +904,15 @@ time point, an axis SODA does not know with more than one entry.
 
 ### SpatialData stores
 
-A SpatialData `.zarr` folder (zarr v2, as spatialdata 0.2 - 0.4 writes it by default):
+A SpatialData `.zarr` folder, zarr v2 (spatialdata up to 0.3) or zarr v3 (spatialdata 0.4 and
+later):
 
 | Element | What it becomes |
 |---|---|
-| `tables/<name>` | one expression layer per table whose region is a shapes element (an AnnData: counts, genes and `obs` as above; `uns["spatialdata_attrs"]` names the region, `region_key` and `instance_key`). `--table` reads only one; a table that annotates several regions needs `--region` |
+| `tables/<name>` | one expression layer per table whose region is a shapes element (an AnnData: counts, genes and `obs` as above; `uns["spatialdata_attrs"]`, or the table group's own attributes, names the region, `region_key` and `instance_key`). `--table` reads only one; a table that annotates several regions needs `--region` |
 | `shapes/<region>` | the positions: circle centres (all circles one size: spots, with that diameter; sizes that differ: cells) or polygon centroids (cells, with the polygons as their outlines). Polygons that are all the same axis-aligned square are bins (a Visium HD layer, named by its size when the pixel size is known) |
-| other `shapes/` polygons with the same ids | more outlines of those cells: a name with `nucle` is the nucleus outlines, else the cell outlines |
+| other `shapes/` polygons with the same ids | more outlines of those cells: a name with `nucle` is the nucleus outlines, else the cell outlines. Another shapes element is used only when at least half of its ids are rows of the table **and** at least half of the table's rows are among its ids (so a handful of anatomical regions is never drawn as cell outlines) |
+| a second cells table (a `nucle…` region, Visium HD's `nucleus_segmentations`) | its own layer, named Nuclei |
 | `images/<name>` | the image under it: the largest one in the coordinate system (`--image-element` for another) |
 | `points/<name>` | the molecules (`x`, `y`, the `feature_key` column; `qv` ≥ 20 when there is a `qv` column; control probes left out): the only points element, or the one named `transcripts` (`--points`). Needs the pixel size |
 
@@ -900,9 +923,14 @@ Anything else (`mapAxis`, a rotation by name, a transformation that mixes x / y 
 refused by name, so nothing is placed on a guessed frame.
 
 The pixel size: from the image's axes when they carry a unit (rare in SpatialData); else
-`--pixel-size` (µm per pixel of the image used). Without it the scale bar and the molecules are
-left out. With no image, a cell-density background is drawn (`--coords-um`: µm per unit of the
-coordinate system).
+`--pixel-size` (µm per pixel of the image used); else `--coords-um` (µm per unit of the
+coordinate system: the image's pixel size follows from its transformation); else, for a layer of
+equal circles whose rows are ≥ 95 % classic Visium barcodes (`ACGT…-1`), the 55 µm Visium spot
+(µm per pixel = 55 / the circle diameter in image pixels; the log and the manifest say
+"classic Visium assumed: 55 µm spots"). Without any of these the scale bar is in image pixels and
+the molecules are left out. With no image, a cell-density background is drawn (`--coords-um`:
+µm per unit of the coordinate system). An image whose pixels are not square in the coordinate
+system is drawn as it is, with a warning.
 
 Refused: a table whose region is a **labels** element (a segmentation mask; positions from
 labels are not read yet: save the cells as shapes, e.g. `spatialdata.to_polygons`), a store
