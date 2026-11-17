@@ -205,14 +205,18 @@ async function pageChecks(browser, pageUrl, dataUrl) {
   const page = await ctx.newPage();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e)));
+  const cons = [];
+  page.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") cons.push(m.text().slice(0, 200)); });
+  page.on("requestfailed", (r) => cons.push(`request failed: ${r.url().slice(0, 120)} ${r.failure() ? r.failure().errorText : ""}`));
   page.on("dialog", (d) => d.dismiss().catch(() => {}));
   const ev = (f, a) => page.evaluate(f, a);
-  const until = async (f, ms) => { try { await page.waitForFunction(f, null, { timeout: ms, polling: 250 }); return true; } catch (e) { return false; } };
+  // a function, never a string: the page's CSP has no 'unsafe-eval'
+  const until = async (f, ms, arg) => { try { await page.waitForFunction(f, arg === undefined ? null : arg, { timeout: ms, polling: 250 }); return true; } catch (e) { cons.push(`wait: ${String(e.message).split("\n")[0]}`); return false; } };
   await page.goto(`${pageUrl}/index.html?static=${dataUrl}&ds=${id}`);
-  const ready = await until(() => { const S = window.__spatialViewer && window.__spatialViewer.state; return S && S.m && S.exprKey && S.lasso && S.lasso.pos && S.lasso.hvg !== undefined; }, 60000);
-  if (!check(ready, `${id} opened`)) { await ctx.close(); return; }
-  // the Draw a region panel is built on demand: open the Analyze tab if there is one
-  await ev(() => { const b = document.querySelector('[data-tab="panelLasso"], #tabLasso'); if (b) b.click(); });
+  // Draw a region ready: positions and the hvg/ index loaded (a run started before that is dropped when they land)
+  const ready = await until(() => { const S = window.__spatialViewer && window.__spatialViewer.state, L = S && S.lasso;
+    return S && S.m && S.exprKey && L && L.pos && L.pos.length > 0 && L.hvg && !document.getElementById("panelLasso").hidden; }, 90000);
+  if (!check(ready, `${id} opened, Draw a region ready`)) { await ctx.close(); return; }
   const nPos = await ev(() => window.__spatialViewer.state.lasso.pos.length / 2);
   // a rectangle around every bin, so the region is the whole section
   const box = await ev(() => { const p = window.__spatialViewer.state.lasso.pos; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -221,10 +225,10 @@ async function pageChecks(browser, pageUrl, dataUrl) {
   // thresholds well under the section's bins
   const above = Math.max(100, Math.floor(nPos / 4)), sample = Math.max(60, Math.floor(nPos / 8));
   await ev(([a, s]) => window.__spatialViewer.lassoFast(a, s), [above, sample]);
-  const runDone = (prev) => until(`(() => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running && L.result.id !== ${prev || 0}; })()`, 240000);
+  const runDone = (prev) => until((p) => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running && L.result.id !== p; }, 240000, prev || 0);
   await ev((pts) => window.__spatialViewer.lassoLoad({ shapes: [{ name: "Whole section", kind: "free", points: pts }], seed: 42, resolution: "auto", mode: "bins" }), box);
   if (!check(await runDone(0), `Run UMAP on the whole section (${nPos} bins; fast mode above ${above}, a ${sample}-bin sample)`,
-    await ev(() => document.getElementById("lassoMsg").textContent))) { await ctx.close(); return; }
+    { msg: await ev(() => document.getElementById("lassoMsg").textContent), console: cons.filter((c) => /^wait:|rror/.test(c)).slice(-4) })) { await ctx.close(); return; }
   const A = await ev(() => { const L = window.__spatialViewer.state.lasso, R = L.result;
     return { id: R.id, n: R.rows.length, nIn: R.info.nIn, fast: R.info.fast ? { sample: R.info.fast.sample, of: R.info.fast.of } : null, sampling: L.sampling,
              emb: Array.from(R.emb), cluster: R.cluster ? Array.from(R.cluster) : null, nCl: R.info.nClusters,
