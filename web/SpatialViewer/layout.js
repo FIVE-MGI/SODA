@@ -35,8 +35,8 @@
   //   help   the "?" text, in the sequencing words (bins, genes); viewer.js's wording function
   //          turns them into squares / cells / ROIs and markers, as it does for the labels
   const SECTIONS = {
-    panelChannels: { more: ["imgOpacity"],
-      help: "The picture under everything else. Stains: tick one to show it, click its colour to change it, and drag the two handles under its histogram to set the darkest and the brightest value shown. The γ button opens two more settings for that stain: Gamma (below 1 brightens faint signal, above 1 darkens it; 1 changes nothing, a double-click puts it back) and Colours (its own colour, or grey, viridis or magma from dark to bright, best for one stain on its own). reset puts all of these back. Type in the filter to shorten a long list. An H&E image has no stains to pick: Image off hides it. Image opacity is under More options." },
+    panelChannels: {
+      help: "The picture under everything else. Image opacity: how much of it shows; at 0 the image is off (the stain settings stay). Stains: tick one to show it, click its colour to change it, and drag the two handles under its histogram to set the darkest and the brightest value shown. The γ button opens two more settings for that stain: Gamma (below 1 brightens faint signal, above 1 darkens it; 1 changes nothing, a double-click puts it back) and Colours (its own colour, or grey, viridis or magma from dark to bright, best for one stain on its own). reset puts all of these back. Type in the filter to shorten a long list. An H&E image has no stains to pick: Image opacity is its one control." },
     panelGenes: { more: ["geneOpacity", "pointScale", "tissueBins", "cellNuclei"],
       help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. Cell shapes (segmented cells that came with their boundaries): Outlines draws every cell's own outline once you zoom in, Dots keeps the dots. More options: opacity, point size, an outline of every bin in the tissue, and the nucleus outlines." },
     panelPaint: {
@@ -49,7 +49,7 @@
     panelRna: { more: ["rnaBin", "rnaPointSize"], moreAt: "end",
       help: "Each dot is a cell, placed by the UMAP that came with the data and coloured by its cluster. Add a gene to get one small UMAP per gene, coloured by how much of it each cell has. View: Normal draws the cells, Density a smoothed map. More options: bin size (Density) and point size." },
     panelUmap: { notes: ["umapNote"],
-      help: "Colour the bins by the genes picked in View, by cluster, or by suggested cell type. Click a cluster in the list to light it in every view; the pencil renames it and the tick box hides it. Box and Freehand select bins by drawing around them, on the tissue or on the UMAP." },
+      help: "Colour the bins by the genes picked in View, by cluster, or by suggested cell type. Click a cluster in the list to light it in every view; the pencil renames it and the tick box hides it. Box and Freehand select bins by drawing around them, on the tissue or on the UMAP. What is selected or highlighted is named above the picture, beside Tissue / Side by side / UMAP, with Show on slide (frame it on the tissue) and Clear selection (or press Esc)." },
     panelOwn: {
       help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering above (colours on the tissue and the UMAP, names, cell sets, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
     panelSets: {
@@ -65,9 +65,9 @@
     panelShapes: {
       help: "Tick two or more shapes of Draw a region and press Combine (the bins inside any of them), Overlap (the bins inside all of them) or Subtract (the bins of the first ticked shape, the highest in the list, that are in none of the others). The result is a new shape that Run UMAP, the volcano and the plots use like a drawn one; it counts the bins of every ticked shape, even where a later shape covers them. Remove the shapes used takes the ticked shapes away afterwards. Save GeoJSON writes the shapes (the ticked ones, or all) in the image's full-resolution pixels, with the pixel size in µm: an outline as a polygon, a combined shape or a selection as the centres of its bins. Load GeoJSON adds polygons from such a file; one from QuPath lines up only if QuPath opened the same full-resolution image (same crop, flip and scale). Save barcodes writes one row per bin inside the shapes with its barcode or cell id, its position and its shape; it needs the export's barcode lists, which prepare.py export writes by default (not with --no-ids)." },
     panelVolcano: { more: ["vcTest", "vcMinPct", "vcExtra"],
-      help: "Compares two groups of bins gene by gene: a drawn shape, a cluster, or the rest of the section. Genes to the right are higher in A, to the left higher in B; click a dot to draw that gene on the slide. More options: the test (Wilcoxon rank-sum or Welch's t), the smallest share of bins a gene must be counted in to be tested, and extra genes to test by name." },
+      help: "Compares two groups of bins gene by gene: a drawn shape, a cluster, or the rest of the section. Genes to the right are higher in A, to the left higher in B; click a dot to draw that gene on the slide. × closes the plot; while nothing has changed the button reads Show volcano and brings it back without running again. More options: the test (Wilcoxon rank-sum or Welch's t), the smallest share of bins a gene must be counted in to be tested, and extra genes to test by name." },
     panelPlots: { more: ["plTop"], moreAt: { before: "plRun" },
-      help: "Draws genes across groups (clusters, drawn shapes, regions or annotations) as a heatmap, a dot plot or violins. Pick the grouping, type gene names or let it take each group's top marker genes (how many: More options), then Draw plots. + shown genes adds the genes now on the picture." },
+      help: "Draws genes across groups (clusters, drawn shapes, regions or annotations) as a heatmap, a dot plot or violins. Pick the grouping, type gene names or let it take each group's top marker genes (how many: More options), then Draw plots. + shown genes adds the genes now on the picture. × closes the plots; while nothing has changed the button reads Show plots and brings them back without drawing again." },
     panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link copies this page's address: it opens this dataset, with the quality filter if one is set (not the genes, stains or zoom)." },
     panelImage: { more: ["snapBar", "snapName"], moreAt: "end",
       help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
@@ -156,7 +156,13 @@
     if (fit) topBar.appendChild(fit);
     topBar.hidden = false;
     const chan = $("panelChannels");
-    if (stainBtns && chan && stainBtns.classList.contains("btnrow")) { stainBtns.classList.add("stain-btns"); chan.insertBefore(stainBtns, $("imgOpacity") ? $("imgOpacity").closest("label") : null); }
+    if (stainBtns && chan && stainBtns.classList.contains("btnrow")) {
+      stainBtns.classList.add("stain-btns"); chan.insertBefore(stainBtns, $("imgOpacity") ? $("imgOpacity").closest("label") : null);
+      // an H&E has no stain buttons: no empty row above Image opacity
+      const syncRow = () => hide(stainBtns, [...stainBtns.children].every((b) => b.hidden));
+      new MutationObserver(syncRow).observe(stainBtns, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+      syncRow();
+    }
     const info = $("apiInfo"), dataset = $("panelDataset");
     if (dataset) {
       const ul = el("ul", "ds-layers", "dsLayers");
@@ -512,8 +518,8 @@
     panelChannels() {
       const list = $("chanList");
       if (list && !list.hidden) return list.children.length ? `${plural(list.querySelectorAll(".chan:not(.off)").length, "stain")} on` : "";
-      const b = $("btnImage");                      // the button says what a click would do
-      return b && /on\s*$/i.test(b.textContent) ? "image off" : "image on";
+      const o = $("imgOpacity");                    // Image opacity at 0: the image is off
+      return o && +o.value <= 0 ? "image off" : "image on";
     },
     panelGenes: () => names("geneList", "none picked"),
     panelPaint: () => (window.SodaPaint ? window.SodaPaint.summary() : ""),
@@ -544,12 +550,12 @@
     panelShapes() { const n = $("shPick") ? $("shPick").querySelectorAll("input:checked").length : 0; return n ? `${n} ticked` : ""; },
     panelVolcano() {
       if (up("vcCancel")) return "running…";
-      const t = txt("vcTitle"), has = up("vcShow") || up("volcanoPanel");
+      const t = txt("vcTitle"), has = !!(window.SodaVolcano && window.SodaVolcano.result) || up("volcanoPanel");
       return has && t && t !== "Volcano" ? t : "not run";
     },
     panelPlots() {
       if (up("plCancel")) return "running…";
-      const t = txt("plTitle"), has = up("plShow") || up("plotsPanel");
+      const t = txt("plTitle"), has = !!(window.SodaPlots && window.SodaPlots.result) || up("plotsPanel");
       return has && t && t !== "Plots" ? t : "not drawn";
     },
     panelCompare: () => (window.SodaCompare ? window.SodaCompare.summary() : ""),

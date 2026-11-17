@@ -461,9 +461,10 @@
 
     // the image and its stains
     if (view.img) {
-      if (view.img.on === false && S.imgOn && !$("btnImage").hidden) $("btnImage").onclick();
-      if (view.img.on === true && !S.imgOn) $("btnImage").onclick();
-      if (view.img.op !== undefined) { await fire("imgOpacity", view.img.op); S.imgOpacity = view.img.op; }      // the slider's steps are coarser than the value
+      // Image opacity is the image's one control (0 = off). A link made while the "Image off" button was there says
+      // on: false and keeps the opacity it had: the image is off, as it was then.
+      const op = view.img.on === false ? 0 : view.img.op !== undefined ? view.img.op : view.img.on === true && !S.imgOn ? 1 : undefined;
+      if (op !== undefined) { await fire("imgOpacity", op); S.imgOpacity = op; S.imgOn = op > 0; }      // the slider's steps are coarser than the value
     }
     if (view.ch && !$("chanList").hidden) {
       const want = new Map();

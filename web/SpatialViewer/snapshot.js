@@ -84,10 +84,16 @@
   // the pixels of the map at scale s, and why not, when it is too large
   // On a phone or tablet the limits count the whole picture (the map, the name above it and the legend
   // beside it, with the options as set), so a picture over them is refused before anything is drawn.
+  // the map's device pixel ratio at rest (deck's useDevicePixels), not read from the canvas: just after a 2x or 4x
+  // save, deck puts the canvas back to its own size on its next frame, and until then it still has the larger size
+  function restDpr() {
+    const d = api && api.deck(), u = d ? d.props.useDevicePixels : true;
+    return typeof u === "number" ? u : u === false ? 1 : (window.devicePixelRatio || 1);
+  }
   function sizeAt(s) {
     const c = mapCanvas();
     if (!c || !c.clientWidth) return null;
-    const w = Math.round(c.width * s), h = Math.round(c.height * s);
+    const r = restDpr(), w = Math.round(Math.floor(c.clientWidth * r) * s), h = Math.round(Math.floor(c.clientHeight * r) * s);
     let W = w, H = h;
     if (api.touch) {
       const opts = { legend: !$("snapLegend") || $("snapLegend").checked, name: !$("snapName") || $("snapName").checked };
@@ -153,7 +159,7 @@
     busy = true; sync();
     let restore = null, shot = null;
     try {
-      const cssW = canvas.clientWidth, dpr0 = canvas.width / Math.max(1, cssW);
+      const dpr0 = restDpr();
       if (s > 1) {
         const was = deck.props.useDevicePixels;
         restore = () => { restore = null; try { deck.setProps({ useDevicePixels: was }); api.setTileBoost(0); } catch (e) { /* the page goes on as it was */ } };

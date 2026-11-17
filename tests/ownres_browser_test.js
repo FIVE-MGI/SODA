@@ -191,7 +191,7 @@ async function run(B, browser, URL0, DATA) {
       await page.waitForFunction((k) => { const S = window.__spatialViewer.state; return S.exprKey === k && S.umap && document.getElementById("status").hidden; }, key, { timeout: 60000 });
     }
     await settle(page);
-    await page.evaluate(() => { if (window.__spatialViewer.state.imgOn) document.getElementById("btnImage").click(); });
+    await page.evaluate(() => { if (window.__spatialViewer.state.imgOn) { const o = document.getElementById("imgOpacity"); o.value = 0; o.dispatchEvent(new Event("input")); o.dispatchEvent(new Event("change")); } });
     return page;
   };
   const load = async (page, f) => {
@@ -313,7 +313,7 @@ async function run(B, browser, URL0, DATA) {
   await p3.setInputFiles("#lassoLoad", { name: "view.json", mimeType: "application/json", buffer: Buffer.from(saved, "utf-8") });
   await p3.waitForFunction(() => { const S = window.__spatialViewer.state; return S.exprKey === "016um" && S.umap.clRes === "own:cell_type" && S.umap.cl; }, null, { timeout: 60000 }).catch(() => null);
   await settle(p3);
-  await p3.evaluate(() => { if (window.__spatialViewer.state.imgOn) document.getElementById("btnImage").click(); });
+  await p3.evaluate(() => { if (window.__spatialViewer.state.imgOn) { const o = document.getElementById("imgOpacity"); o.value = 0; o.dispatchEvent(new Event("input")); o.dispatchEvent(new Event("change")); } });
   await settle(p3);
   u = await um(p3);
   b = await bandsBy(p3, "tissue", HUE);

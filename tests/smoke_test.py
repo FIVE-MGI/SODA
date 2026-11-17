@@ -81,6 +81,10 @@ that outlines in the wrong units or of another run are refused and change nothin
 browser half of that is tests/outlines_browser_test.js (Playwright, run here when node is installed): the outlines
 in Chromium, and in Chromium, WebKit and Firefox what draws a subset of the cells with them (Draw a region, the region
 click-filter, Colour by a value, cell sets, Save image and its legend, a link to the view), checked by pixel.
+One control for each job (check_layout; in Chromium, WebKit and Firefox by tests/controls_browser_test.js):
+Show on slide and Clear selection once (the chip above the picture), Image opacity at 0 for the old Image off
+button, one run-or-show button for the volcano and the plots; old links and Save JSON files that had the image
+off open with it off.
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
@@ -4226,6 +4230,16 @@ def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
     print_skipped(p.stdout)
     print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
     c.eq(p.returncode, 0, "node tests/outlines_browser_test.js: outlines, and what draws a subset of the cells with them, in Chromium, WebKit and Firefox (exit code)")
+    # tests/controls_browser_test.js: one control for each job, old links and Save JSON with the image off
+    p = subprocess.run([node, str(REPO / "tests" / "controls_browser_test.js"), "--export", str(export),
+                        "--shots", str(root / "controls_shots"), "--browsers", "chromium,webkit,firefox"], cwd=str(REPO),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(p.stdout)
+    print_skipped(p.stdout)
+    print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
+    c.eq(p.returncode, 0, "node tests/controls_browser_test.js: one control for each job, old links with the image off, "
+                          "in Chromium, WebKit and Firefox (exit code)")
     return res
 
 
@@ -4577,6 +4591,18 @@ def check_layout(c: Checker):
     lines = [ln for ln in js["layout.js"].splitlines() if "localStorage." in ln]
     c.ok(lines and all("try" in ln or "JSON.parse(localStorage" in ln for ln in lines),
          f"layout.js: a localStorage access outside try / catch: {[ln.strip()[:60] for ln in lines]}")
+    # one control for each job (the duplicates are gone; old links that name them still open, viewlink.js)
+    built_all = html + js["volcano.js"] + js["plots.js"]
+    for gone in ("btnImage", "selShow", "selClear", "vcShow", "plShow", "lpSel", "lpSelShow", "lpSelClear"):
+        c.ok(f'id="{gone}"' not in built_all and f'$("{gone}")' not in "".join(js.values()),
+             f"#{gone} is back: Show on slide, Clear selection, the image's opacity and the run buttons are each one control")
+    for label, where in (("Show on slide", "selChipShow"), ("Clear selection", "selChipClear")):
+        c.eq(len(re.findall(rf">{label}</button>", built_all)), 1, f"index.html: one {label} button")
+        c.ok(re.search(rf'id="{where}"[^>]*>{label}</button>', html) is not None, f"index.html: {label} is #{where}, in the chip above the picture")
+    c.ok(not re.search(r">Show</button>", built_all), "index.html / volcano.js / plots.js: no separate Show button (the run button shows the last result)")
+    c.ok("Show volcano" in js["volcano.js"] and "Show plots" in js["plots.js"], "volcano.js / plots.js: the run button reads Show … while nothing has changed")
+    vl = (APP / "viewlink.js").read_text(encoding="utf-8")
+    c.ok("view.img.on === false ? 0" in vl, "viewlink.js: a link made with the image off opens with Image opacity at 0")
     css = (APP / "layout.css").read_text(encoding="utf-8")
     c.ok("@media (max-width: 700px)" in css and ".app.tabbed" in css and ":focus-visible" in css,
          "layout.css: the phone layout, the .tabbed scope and a visible focus ring")

@@ -29,7 +29,7 @@
         <input id="vcMinPct" type="text" inputmode="decimal" value="${DEFAULTS.minPct}" /></label>
       <label class="row slim"><span title="Genes outside the section's variable genes, by name (comma or space separated, up to ${DEFAULTS.maxExtra}); each is one more download">Extra genes</span>
         <input id="vcExtra" type="text" placeholder="e.g. GAPDH, ACTB" autocomplete="off" /></label>
-      <div class="btnrow"><button id="vcRun">Volcano</button><button id="vcCancel" hidden>Cancel</button><button id="vcShow" hidden title="Show the last volcano again">Show</button></div>
+      <div class="btnrow"><button id="vcRun">Volcano</button><button id="vcCancel" hidden>Cancel</button></div>
       <div id="vcMsg" class="meta vc-msg"></div>`;
     const anchor = $("lassoSaveJson") && $("lassoSaveJson").parentElement;
     if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(block, anchor); else $("panelLasso").appendChild(block);
@@ -51,10 +51,13 @@
       <div id="vcFoot" class="lp-foot"></div>`;
     document.querySelector(".main").appendChild(panel);
 
-    $("vcRun").onclick = runVolcano;
+    // one button: a volcano of exactly these groups and settings is there but closed, so it shows it again
+    // (the same inputs give the same volcano); anything changed, it runs a new one
+    $("vcRun").onclick = () => { if (canShow()) { $("volcanoPanel").hidden = false; syncButtons(); draw(); } else runVolcano(); };
     $("vcCancel").onclick = () => { cancel(); msg("Cancelled."); };
-    $("vcShow").onclick = () => { if (R) { $("volcanoPanel").hidden = false; draw(); } };
     $("vcA").onchange = () => fillB();
+    $("vcB").addEventListener("change", syncButtons); $("vcTest").addEventListener("change", syncButtons);
+    for (const id of ["vcMinPct", "vcExtra"]) $(id).addEventListener("input", syncButtons);
     if (window.SodaRoi && $("vcNorm")) { window.SodaRoi.bindNorm("vcNorm"); $("vcNorm").addEventListener("change", refresh); }
     // the section's clustering can change in the Clusters panel without telling the lasso panel
     for (const id of ["vcA", "vcB"]) $(id).addEventListener("pointerdown", refresh);
@@ -77,11 +80,16 @@
   // the layer's own words (roi.js: ROI segments instead of bins), when the viewer hands a wording function over
   const say = (t) => (api && api.say ? api.say(t) : t);
   const msg = (t, err) => { const el = $("vcMsg"); if (!el) return; el.textContent = say(t); el.style.color = err ? "#ff8f8f" : ""; };
+  // what a volcano is made from: the groups (and their content), the test, the smallest share, the extra genes
+  const inputsNow = () => [sigNow($("vcA").value, $("vcB").value), $("vcTest").value, $("vcMinPct").value.trim(), $("vcExtra").value.trim()].join("|");
+  const canShow = () => !!R && !running && $("volcanoPanel").hidden && R.inputs === inputsNow();
   function syncButtons() {
     if (!$("vcRun")) return;
-    $("vcRun").disabled = running || !$("vcA").value || !$("vcB").value;
+    const show = canShow();
+    $("vcRun").disabled = running || (!show && (!$("vcA").value || !$("vcB").value));
+    $("vcRun").textContent = show ? "Show volcano" : "Volcano";
+    $("vcRun").title = show ? "Show the last volcano again (nothing has changed since it was made)" : "Compare group A with group B, gene by gene";
     $("vcCancel").hidden = !running;
-    $("vcShow").hidden = !R || !$("volcanoPanel").hidden;
   }
 
   // ---- the groups on offer ------------------------------------------------------------
@@ -193,7 +201,7 @@
     if (!a || !b) { msg("Pick two groups.", true); return; }
     const minPct = Number($("vcMinPct").value);
     if (!Number.isFinite(minPct) || minPct < 0 || minPct > 50) { msg("Min. % bins must be a number from 0 to 50.", true); return; }
-    const test = $("vcTest").value, nameA = labelOf($("vcA"), a), nameB = labelOf($("vcB"), b), sig = sigNow(a, b);
+    const test = $("vcTest").value, nameA = labelOf($("vcA"), a), nameB = labelOf($("vcB"), b), sig = sigNow(a, b), inputs = inputsNow();
     running = true; syncButtons();
     const t0 = performance.now(), T = {};
     try {
@@ -251,7 +259,7 @@
       });
       if (!running) return;
       T.worker = performance.now() - t0 - T.fetch - T.extra;
-      R = { ...res, genes: genes.concat(extra.map((e) => e.name)), a, b, nameA, nameB, sig, test, layer: S.exprKey, dataset: S.dsId, norm: scale ? "q3" : "cp10k",
+      R = { ...res, genes: genes.concat(extra.map((e) => e.name)), a, b, nameA, nameB, sig, inputs, test, layer: S.exprKey, dataset: S.dsId, norm: scale ? "q3" : "cp10k",
             nHvg: genes.length, both, missingChunks: missing.length, givenGroups: !!((api.sectionClusters() || {}).user), secs: (performance.now() - t0) / 1000, ms: { ...T, ...res.info.ms } };
       window.SodaVolcano.result = R;                // for tests from the console
       pickedJ = -1; hoverJ = -1; tip(null);

@@ -166,7 +166,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
   await page.goto(`${URL0}?static=${encodeURIComponent(DATA)}&ds=${DS}`);
   await ready(page);
   // the image off: the map is black where nothing is drawn, so a coloured pixel is a cell's colour
-  await page.evaluate(() => { if (window.__spatialViewer.state.imgOn) document.getElementById("btnImage").click(); });
+  await page.evaluate(() => { if (window.__spatialViewer.state.imgOn) { const o = document.getElementById("imgOpacity"); o.value = 0; o.dispatchEvent(new Event("input")); o.dispatchEvent(new Event("change")); } });
   const zv = await page.evaluate(() => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey), i = S.m.image; return [i.width / 2, i.height / 2, Math.log2(40 / e.spotDiameterPx)]; });
   await page.evaluate(([x, y, z]) => { const sv = window.__spatialViewer; sv.deck.props.onViewStateChange({ viewState: { ...sv.state.viewState, target: [x, y, 0], zoom: z }, viewId: "ortho" }); }, zv);
   // dots at half size: a point inside a cell's polygon but outside its dot then tells the two apart
@@ -546,7 +546,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
     c = await page.evaluate(() => { const sv = window.__spatialViewer, col = sv.outlines._debug().col, U = sv.state.umap, N = U.pos.length / 2; let f = 0, k = 0; for (let r = 0; r < N; r++) { if (col.fill[4 * r + 3] > 0) f++; if (U.cl[r] === U.pick) k++; } return { lit: f, inCluster: k, over: col.over }; });
     check(c.lit === c.inCluster && c.over, "a highlighted cluster: only its cells are filled, above the dimmed slide", c);
     await shot(page, "outlines_xenium_cluster_picked.png");
-    await page.evaluate(() => { const b = document.getElementById("selClear"); if (!b.disabled) b.click(); });
+    await page.evaluate(() => { const b = document.getElementById("selChipClear"); if (!b.closest("[hidden]")) b.click(); });
     // Cell sets: two clusters merged into one set: the second one's cells take the set's colour, as their dots do
     await page.evaluate(() => { const b = document.getElementById("csShowCl"); if (b && !b.closest("[hidden]")) b.click(); });
     const csReady = await page.waitForFunction(() => document.querySelectorAll("#csPick input[data-c]").length >= 2, null, { timeout: 30000 }).then(() => true, () => false);
