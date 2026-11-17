@@ -8,6 +8,8 @@ Reads, when present (each part is optional), from the folder given as --src:
     cell_by_gene.csv[.gz]                      cell, one column per gene and Blank-* barcode (counts)
     cell_metadata.csv[.gz]                     cell id (EntityID or the unnamed first column), center_x,
                                                center_y, min_x, max_x, min_y, max_y (µm), volume
+    cell_boundaries.parquet | *_micron_space.parquet | cell_boundaries/feature_data_<fov>.hdf5
+                                               the cells' outlines in µm (cellshapes.py)
     detected_transcripts.csv[.gz] | .parquet   barcode_id, global_x, global_y (µm), global_z, x, y, fov,
                                                gene, transcript_id [, cell_id]
 
@@ -209,6 +211,10 @@ class Plan:
             meta = build_cell_layer(ds_dir, np.column_stack([px, py]) * um, um, cells["X"], cells["genes"],
                                     key="cells", label="Cells", cell_diameter_um=cells["diameterUm"], log=log,
                                     extra={"platform": PLATFORM}, barcodes=cells["barcodes"])
+            if not getattr(args, "no_outlines", False):
+                import cellshapes
+                cellshapes.attach(ds_dir, meta, cellshapes.merscope_sets(self.inp, self.frame, self.z, log=log), um,
+                                  args=args, log=log)
             manifest["expr"].append(meta)
         if not args.no_transcripts:
             if self._writer is None and self.inp.get("transcripts"):

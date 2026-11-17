@@ -19,6 +19,7 @@
     <dest>/<id>/molecules/index.json, genepack/   imaging platforms (Xenium): every transcript,
                                                 uint16 x, y per molecule, packed per gene like expr/ (molecules.py;
                                                 gene/<NAME>.bin files with --gene-files loose)
+    <dest>/<id>/expr/<key>/shapes/<set>/...     cell (and nucleus) outlines in spatial tiles (cellshapes.py)
     <dest>/<id>/expr/rois/...                   GeoMx ROI segments (geomx.py): gene files, binqc/ with the GeoMx
                                                 QC values, hvg/ with every target, umap/ with the annotation
                                                 columns as groupings and no embedding
@@ -43,6 +44,7 @@ from urllib.parse import quote
 import numpy as np
 
 import binqc
+import cellshapes
 import celltypes as celltypes_mod
 import genepack
 import hvgchunks
@@ -293,6 +295,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     if m.get("molecules"):
         _, mol_pack = molecules.export_molecules(ds_dir, out, log=log, gene_files=gene_files, shard_mb=shard_mb)
 
+    # ---- cell outlines (cellshapes.py): tiles of polygons, already in their static format ----
+    layer_shapes = cellshapes.export_shapes(ds_dir, out, m, log=log)
+
     # ---- protein grid layer (image datasets): marker means per square ----------
     grid_layer = None
     if grid_um and grid_um > 0 and protgrid.applies_to(m):
@@ -345,6 +350,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                       for layer in sm.get("expr", [])]
     if mol_pack:
         sm["molecules"] = {**sm["molecules"], "genePack": mol_pack}
+    sm["expr"] = cellshapes.manifest_layers(sm.get("expr", []), layer_shapes)
     if grid_layer:
         sm["expr"] = [L for L in sm.get("expr", []) if L.get("key") != grid_layer["key"]] + [grid_layer]
     (out / "manifest.json").write_text(json.dumps(sm, indent=1), encoding="utf-8")

@@ -87,11 +87,16 @@
           <select id="genePalette">
             <option value="genes">Gene colors (overlap darkens)</option>
             <option value="viridis">Viridis</option></select></label>
+        <!-- cell outlines (outlines.js): only for a cells layer whose export has shapes/ -->
+        <label class="row slim" id="rowCellShapes" hidden><span title="Outlines: every cell's own boundary, as the instrument segmented it, once the cells are large enough on screen (dots when zoomed out). Dots: one dot of the median cell size per cell.">Cell shapes</span>
+          <select id="cellShapes"><option value="outlines">Outlines (zoomed in)</option><option value="dots">Dots</option></select></label>
+        <div id="cellShapesNote" class="meta" hidden></div>
         <label class="row slim"><span id="lblGeneOpacity">Opacity</span>
           <input id="geneOpacity" type="range" min="0" max="1" step="0.02" value="1"></label>
         <label class="row slim"><span id="lblPointScale">Point size ×</span>
           <input id="pointScale" type="range" min="0.25" max="4" step="0.05" value="1"></label>
         <label class="row slim check"><input id="tissueBins" type="checkbox" /><span id="lblTissueBins">Show all in-tissue bins</span></label>
+        <label class="row slim check" id="rowCellNuclei" hidden><input id="cellNuclei" type="checkbox" /><span>Nucleus outlines</span></label>
         <div class="btnrow" id="rowGateOpen" hidden>
           <button id="gateOpenPos" title="Pick a marker, set where real staining starts, and get the % of tissue squares above it per region">% positive for a marker…</button>
           <button id="gateOpenCl" title="How many squares each cluster has, per region, under the cluster names you see">Count clusters…</button>
@@ -356,14 +361,15 @@
   <script src="diag.js?v=20261111a"></script>
   <script src="https://cdn.jsdelivr.net/npm/deck.gl@9.1.12/dist.min.js"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="layout.js?v=20261116cs"></script>
-  <script src="qc.js?v=20261116xf"></script>
+  <script src="layout.js?v=20261116z1"></script>
+  <script src="qc.js?v=20261116y1"></script>
   <script src="roi.js?v=20261116q3"></script>
+  <script src="outlines.js?v=20261116y1"></script>
   <script src="volcano.js?v=20261116c3"></script>
   <script src="plots.js?v=20261116p1"></script>
   <script src="snapshot.js?v=20261116si"></script>
   <script src="cellsets.js?v=20261116cs"></script>
   <script src="dspicker.js?v=20261116pf"></script>
-  <script src="viewer.js?v=20261116p1"></script>
+  <script src="viewer.js?v=20261116p2"></script>
 </body>
 </html>

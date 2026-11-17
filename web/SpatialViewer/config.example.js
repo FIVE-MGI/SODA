@@ -125,6 +125,13 @@ window.SpatialViewerConfig = {
   // moleculeBudget: 6e6,
   // moleculesPerPixel: 0.25,
 
+  // Cell outlines (segmented cells with boundaries): drawn from the zoom at which the median cell is
+  // outlineFromPx screen pixels across, alone from outlineFullPx (dots below, both in between), and
+  // only while no more than outlineBudget outlines are in view (20,000 on a phone or tablet).
+  // outlineFromPx: 5,
+  // outlineFullPx: 9,
+  // outlineBudget: 120000,
+
   // Floors for categorical colors, as relative luminance, against a dark background.
   // tab20 was drawn for white paper and several of its entries vanish otherwise.
   catMinLuminance: 0.21,    // the points

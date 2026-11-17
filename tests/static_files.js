@@ -1,5 +1,5 @@
 "use strict";
-// One static file as blob storage would answer it, for the test servers (compat_test.js,
+// One static file as blob storage would answer it, for the test servers (compat_test.js, outlines_browser_test.js,
 // phone_browser_test.js): open CORS, no caching, and HTTP Range requests (206 Partial Content),
 // which the viewer uses to read one gene out of an export's gene packs (web/SpatialViewer/genepack.py).
 //   sendFile(req, res, file, type, { range: false })   a host that ignores Range: always the whole file

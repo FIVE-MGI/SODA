@@ -53,6 +53,14 @@ the generator's own probe collapse, negative probes out of the genes and behind 
 positions inside the ROI outlines, the annotation columns as groupings with no UMAP, the GeoMx
 QC values, the Q3 normalisation factors (= the generator's plain-loop GeomxTools Q3), and no slide
 name or Sample_ID in the export (check_geomx).
+Cell outlines (web/SpatialViewer/cellshapes.py): the Xenium fixture carries cell and nucleus boundaries as
+csv.gz, parquet, cells.zarr.zip (both layouts) and "a lab's own" GeoJSON + vertex table, CosMx CellLabels
+images and a polygons file, MERSCOPE an older cell_boundaries HDF5 and a WKB parquet with z-planes, Stereo-seq
+its cellBorder. Checked (check_outlines): the tile format byte for byte, every outline against the polygon
+it came from (traced ones against their label mask, by IoU), rows (the files are not in matrix order), a
+cell's centre inside its own outline, cells in parts, holes, crumbs, missing outlines, simplification, and
+that outlines in the wrong units or of another run are refused and change nothing, and --no-outlines. The
+browser half of that is tests/outlines_browser_test.js (Playwright).
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
@@ -65,6 +73,13 @@ roles, and every .js of the page parses when node is installed. The tabbed layou
 tab rail, its four tabs and tab panels with their roles and ids, every section.panel named into one of
 the four tabs (those in index.html and those the scripts build), no id twice, the controls layout.js
 moves by id all there, and the hooks the other scripts need.
+Automatic detection (web/SpatialViewer/detect.py): every synthetic folder above must be named with the right
+kind and variant and verdict "certain"; `prepare.py auto` on five of them (and once through --kind / --image)
+must write the same cache as the explicit subcommand, manifest and files; and folders built here from stub
+files (empty, two platforms mixed, Space Ranger output with no / two / one right-sized image, a 10x matrix
+folder with and without spatial/, a zip, missing stains, a missing path ...) must get the planned verdict and
+wording, with `auto` stopping (exit 3 / 4 / 5) and writing nothing. The notebook must be valid, without
+outputs, compile, and find its datasets through detect.py.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
 skips umap/ and so do these checks, with a message saying so. The earlier outputs
@@ -86,6 +101,7 @@ import struct
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -2338,6 +2354,736 @@ def check_stereoseq(c: Checker, root: Path, clustering: bool, log_path: Path) ->
 
 
 
+# ------------------------------------------------------------------ automatic detection (detect.py)
+# every synthetic folder the generators above write: the kind and variant detect.py must name, with verdict "certain"
+DETECT_WANT = {
+    "visiumhd": ("visium", "visium-hd"), "multiplex.ome.tif": ("tiff", "ome-tiff"), "multiplex_tiled.ome.tif": ("tiff", "ome-tiff"),
+    "xenium": ("xenium", "cells+molecules"), "xenium_pq": ("xenium", "molecules"), "xenium_nt": ("xenium", "cells"),
+    "geomx": ("geomx", "scans"), "cosmx": ("cosmx", "images+cells+molecules"), "cosmx_new": ("cosmx", "images+cells+molecules"),
+    "cosmx_tx": ("cosmx", "molecules"), "merscope": ("merscope", "images+cells+molecules"),
+    "merscope_noimg": ("merscope", "cells+molecules"), "merscope_pq": ("merscope", "images+molecules"),
+    "stereoseq": ("stereoseq", "bins+cells"),
+}
+# `prepare.py auto` runs whose cache must equal the explicit subcommand's: (id, source under raw/, options passed through)
+AUTO_SAME = ((VIS, "visiumhd", []), (XE, "xenium", ["--label", "Synthetic Xenium"]), (MX, "multiplex.ome.tif", []),
+             (CXT, "cosmx_tx", ["--pixel-size", "0.5"]), (MSN, "merscope_noimg", []))
+
+
+def _touch(p: Path, data: bytes = b"x") -> Path:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+    return p
+
+
+def make_detect_cases(root: Path) -> Path:
+    """Small folders detection must NOT call certain (and a few it must), built from stub files:
+    detection reads names, sizes and headers, so most files only need to exist."""
+    raw, neg = root / "raw", root / "detect" / "cases"
+    if neg.exists():
+        shutil.rmtree(neg)
+    (neg / "empty").mkdir(parents=True)
+
+    def xenium(d: Path):
+        _touch(d / "experiment.xenium", b"{}")
+        _touch(d / "morphology_focus" / "ch0000_dapi.ome.tif")
+        _touch(d / "transcripts.parquet")
+
+    def spaceranger(d: Path):
+        for b in ("square_008um", "square_016um"):
+            _touch(d / "outs" / "binned_outputs" / b / "filtered_feature_bc_matrix.h5")
+            _touch(d / "outs" / "binned_outputs" / b / "spatial" / "tissue_positions.parquet")
+
+    def matrix(d: Path):
+        for n in ("matrix.mtx.gz", "features.tsv.gz", "barcodes.tsv.gz"):
+            _touch(d / "filtered_feature_bc_matrix" / n)
+
+    xenium(neg / "two_platforms")                                  # Xenium and MERSCOPE files in one folder
+    for n in ("detected_transcripts.csv", "cell_by_gene.csv", "cell_metadata.csv"):
+        _touch(neg / "two_platforms" / n, b"a,b\n")
+    spaceranger(neg / "visium_no_image")
+    shutil.copytree(raw / "visiumhd", neg / "visium_two_images", ignore=shutil.ignore_patterns("truth_*"))
+    shutil.copyfile(raw / "visiumhd" / "image.tif", neg / "visium_two_images" / "image_again.tif")
+    matrix(neg / "tenx_cells")
+    _touch(neg / "tenx_cells" / "umap.csv", b"barcode,UMAP1,UMAP2\n")
+    _touch(neg / "tenx_cells" / "clusters.csv", b"barcode,cluster\n")
+    _touch(neg / "tenx_cells" / "notes.csv", b"gene,comment\n")
+    matrix(neg / "tenx_no_umap")
+    matrix(neg / "tenx_spatial")
+    _touch(neg / "tenx_spatial" / "spatial" / "tissue_positions.csv")
+    _touch(neg / "tenx_spatial" / "spatial" / "scalefactors_json.json", b"{}")
+    (neg / "zipped").mkdir()
+    with zipfile.ZipFile(neg / "zipped" / "run1.zip", "w") as z:
+        for n in ("run1/experiment.xenium", "run1/morphology_focus/ch0000_dapi.ome.tif", "run1/cells.parquet",
+                  "run1/cell_feature_matrix.h5", "run1/transcripts.parquet"):
+            z.writestr(n, "x")
+    _touch(neg / "xenium_no_stains" / "transcripts.zarr.zip")
+    xenium(neg / "xenium_extra_tiffs")
+    for n in ("GeneA.tif", "GeneB.tif"):
+        _touch(neg / "xenium_extra_tiffs" / n)
+    _touch(neg / "stereoseq_no_image" / "CHIP9.tissue.gef")
+    _touch(neg / "merscope_two_runs" / "detected_transcripts.csv", b"a,b\n")
+    for run_ in ("vpt-run-a", "vpt-run-b"):
+        for n in ("cell_by_gene.csv", "cell_metadata.csv"):
+            _touch(neg / "merscope_two_runs" / run_ / n, b"a,b\n")
+    _touch(neg / "not_data" / "notes.docx")
+    shutil.copytree(raw / "geomx", neg / "geomx_two_versions", ignore=shutil.ignore_patterns("*.ome.tiff"))
+    shutil.copyfile(raw / "geomx" / "pkc" / "Demo_Panel_v1.0.pkc", neg / "geomx_two_versions" / "pkc" / "Demo_Panel_v1.1_copy.pkc")
+    try:                                                           # cases that need a real header
+        import tifffile
+        grey = np.zeros((50, 100), np.uint8)
+        for d, names in (("grey_unnamed", ("DAPI.tif", "CD45.tif", "PanCK.tif")),
+                         ("grey_markers", ("01_DAPI_s_gray.tif", "02_CD45_s_gray.tif", "03_PanCK_s_gray.tif"))):
+            (neg / d).mkdir()
+            for n in names:
+                tifffile.imwrite(str(neg / d / n), grey)
+        # Space Ranger recorded a 200 x 100 image (hires 100 x 50 at scale 0.5): of two TIFFs only one is that size
+        d = neg / "visium_size_check"
+        spaceranger(d)
+        sp = d / "outs" / "binned_outputs" / "square_008um" / "spatial"
+        (sp / "scalefactors_json.json").write_text(json.dumps({"tissue_hires_scalef": 0.5}), encoding="utf-8")
+        (sp / "tissue_hires_image.png").write_bytes(b"\x89PNG\r\n\x1a\n" + struct.pack(">I4sII", 13, b"IHDR", 100, 50) + b"\x08\x02\x00\x00\x00")
+        tifffile.imwrite(str(d / "section.tif"), np.zeros((100, 200, 3), np.uint8), photometric="rgb")
+        tifffile.imwrite(str(d / "section_small_copy.tif"), np.zeros((50, 100, 3), np.uint8), photometric="rgb")
+    except ImportError:
+        pass
+    try:
+        import h5py
+        for n, key in (("with_umap.h5ad", "X_umap"), ("no_umap.h5ad", "X_pca")):
+            (neg / "h5ad").mkdir(exist_ok=True)
+            with h5py.File(str(neg / "h5ad" / n), "w") as f:
+                f.create_dataset("X", data=np.zeros((3, 2), np.float32))
+                f.create_group("obs")
+                f.create_group("obsm").create_dataset(key, data=np.zeros((3, 2), np.float32))
+    except ImportError:
+        pass
+    return neg
+
+
+def detect_commands(root: Path) -> list[list[str]]:
+    """`prepare.py auto` on five of the synthetic folders (into detect/cache, same ids as the explicit runs), and
+    once through --kind / --image on the folder with two candidate images."""
+    try:
+        r = root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        r = root.resolve().as_posix()
+    prep = "web/SpatialViewer/prepare.py"
+    cmds = [[prep, "auto", "--id", ds, "--src", f"{r}/raw/{src}", "--out", f"{r}/detect/cache", *extra] for ds, src, extra in AUTO_SAME]
+    two = f"{r}/detect/cases/visium_two_images"
+    cmds.append([prep, "auto", "--id", VIS, "--src", two, "--out", f"{r}/detect/cache_kind", "--kind", "visium",
+                 "--image", f"{two}/image.tif"])
+    return cmds
+
+
+def clean_detect(root: Path):
+    for p in (root / "detect" / "cache", root / "detect" / "cache_kind"):
+        if p.exists():
+            print(f"  removing earlier output {p}", flush=True)
+            shutil.rmtree(p)
+
+
+def _same_cache(c: Checker, a: Path, b: Path, what: str, source_differs: bool = False):
+    """Two cache folders of one dataset hold the same thing: manifests equal (creation time and the spelling of
+    source paths aside), the same files, and the same values in every array."""
+    if not c.ok((a / "manifest.json").exists() and (b / "manifest.json").exists(), f"{what}: both caches have a manifest"):
+        return
+
+    def norm(v):
+        if isinstance(v, dict):
+            return {k: norm(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [norm(x) for x in v]
+        if isinstance(v, str) and v and ("/" in v or "\\" in v):
+            q = Path(v) if Path(v).is_absolute() else REPO / v
+            if q.exists():
+                return os.path.normcase(str(q.resolve()))
+        return v
+    ma, mb = read_json(a / "manifest.json"), read_json(b / "manifest.json")
+    for m in (ma, mb):
+        m.pop("created", None)
+        if source_differs:
+            m.pop("source", None)
+    c.ok(norm(ma) == norm(mb), f"{what}: the manifest is the explicit subcommand's (kind {ma.get('kind')!r} / {mb.get('kind')!r})")
+    fa = sorted(q.relative_to(a).as_posix() for q in a.rglob("*") if q.is_file() and q.name != "manifest.json")
+    fb = sorted(q.relative_to(b).as_posix() for q in b.rglob("*") if q.is_file() and q.name != "manifest.json")
+    if not c.ok(fa == fb and len(fa) > 3, f"{what}: the same {len(fa)} cache files ({len(fb)} from the explicit subcommand)"):
+        return
+    # Blosc does not pack a chunk into the same bytes on every run, so array chunks are compared by their
+    # values; everything else (array metadata, attributes, molecule files, overlays) byte for byte
+    arrays = sorted(q.parent.relative_to(a).as_posix() for q in a.rglob(".zarray"))
+    chunks = {n for n in fa for d in arrays if n.startswith(d + "/") and not n.rsplit("/", 1)[1].startswith(".z")}
+    diff = [n for n in fa if n not in chunks and (a / n).read_bytes() != (b / n).read_bytes()]
+    c.ok(not diff, f"{what}: array metadata, attributes and the other files are byte-identical to the explicit subcommand's (differ: {diff[:5]})")
+    try:
+        import zarr
+    except ImportError:
+        print(f"    ({what}: zarr not importable here, array values not compared)")
+        return
+    bad = [d for d in arrays if not np.array_equal(zarr.open(str(a / d), mode="r")[:], zarr.open(str(b / d), mode="r")[:])]
+    c.ok(len(arrays) > 0 and not bad, f"{what}: all {len(arrays)} arrays (image levels, counts, positions, barcodes) hold the explicit subcommand's values (differ: {bad[:5]})")
+
+
+def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
+    """detect.py on every synthetic folder, on folders it must not call certain, and `prepare.py auto`."""
+    sys.path.insert(0, str(APP))
+    try:
+        import detect
+    finally:
+        sys.path.pop(0)
+    raw = root / "raw"
+    out = {"certain": 0, "seconds": 0.0}
+    for name, (kind, variant) in DETECT_WANT.items():
+        r = detect.detect(raw / name)
+        out["seconds"] += r["scan"]["seconds"]
+        if c.ok(r["verdict"] == "certain" and r["kind"] == kind and r["variant"] == variant,
+                f"detect raw/{name}: certain {kind} / {variant} (got {r['verdict']} {r['kind']} / {r['variant']}: {r['message']})"):
+            out["certain"] += 1
+        c.ok(len(r["candidates"]) == 1 and r["candidates"][0]["argv"][:1] == [kind] and r["candidates"][0]["evidence"]
+             and not r["candidates"][0]["missing"], f"detect raw/{name}: one candidate with evidence and the {kind} command")
+    argv = {n: detect.detect(raw / n)["candidates"][0]["args"] for n in ("visiumhd", "stereoseq", "geomx", "merscope_noimg")}
+    c.ok(Path(argv["visiumhd"].get("image", "")) == raw / "visiumhd" / "image.tif" and Path(argv["visiumhd"].get("outs", "")) == raw / "visiumhd" / "outs",
+         f"detect visiumhd: --image is the TIFF next to outs/, --outs the Space Ranger folder: {argv['visiumhd']}")
+    st = {k: Path(v).name for k, v in argv["stereoseq"].items()}
+    c.eq(st, {"image": "SYNCHIP_HE_regist.tif", "gef": "SYNCHIP.tissue.gef", "cellbin": "SYNCHIP.cellbin.gef",
+              "tissue_mask": "SYNCHIP_HE_tissue_cut.tif"}, "detect stereoseq: H&E before ssDNA, tissue.gef before raw.gef, the GEF before a GEM")
+    c.ok(Path(argv["geomx"].get("dcc", "")).name == "dcc" and len(argv["geomx"].get("pkc", [])) == 2 and len(argv["geomx"].get("image", [])) == 2
+         and {Path(a).name for a in argv["geomx"].get("annotation", [])} >= {"annotations.xlsx", "Demo_LabWorksheet.txt"},
+         f"detect geomx: dcc folder, both PKC files, the sheets with Sample_ID, both scans: {argv['geomx']}")
+    c.eq(list(argv["merscope_noimg"]), ["src"], "detect merscope_noimg: one segmentation run one folder down needs no --cells-dir")
+    try:                                                 # the layer list is the reader's own
+        sys.path.insert(0, str(APP))
+        from expr import find_visium_layers
+        want = [layer["key"] for layer in find_visium_layers(raw / "visiumhd" / "outs")]
+        c.eq(detect.detect(raw / "visiumhd")["candidates"][0]["info"]["layers"], want, "detect visiumhd: layers = expr.find_visium_layers")
+    except ImportError:
+        print("    (expr.py not importable here: layer list not compared)")
+    finally:
+        sys.path.pop(0)
+    r = detect.detect(raw)                               # the folder of all of them: each reported, none merged
+    got = sorted(Path(d["path"]).name for d in r["datasets"])
+    c.ok(r["verdict"] == "ambiguous" and r["reason"] == "several-datasets" and got == sorted(DETECT_WANT),
+         f"detect raw/: {len(DETECT_WANT)} datasets reported one by one (got {r['reason']}: {got})")
+    c.ok(all(d["verdict"] == "certain" and (d["kind"], d["variant"]) == DETECT_WANT[Path(d["path"]).name] for d in r["datasets"]
+             if Path(d["path"]).name in DETECT_WANT), "detect raw/: every dataset of the folder is certain, with its own kind")
+
+    # ---- folders that must not be called certain
+    neg = root / "detect" / "cases"
+    if not neg.exists():
+        make_detect_cases(root)
+
+    def case(name, verdict, reason, want=None, say=(), **kw):
+        r = detect.detect(neg / name, **kw)
+        text = (r["message"] + " | " + " | ".join(r["suggestions"]) + " | " + detect.format_report(r)).lower()
+        c.ok(r["verdict"] == verdict and r["reason"] == reason and (want is None or r["kind"] == want)
+             and all(w.lower() in text for w in say),
+             f"detect {name}{' ' + str(kw) if kw else ''}: {verdict} / {reason}" + (f" / {want}" if want else "")
+             + (f", saying {list(say)}" if say else "") + f" (got {r['verdict']} / {r['reason']} / {r['kind']}: {r['message'][:160]})")
+        return r
+    case("empty", "unknown", "empty", say=["empty"])
+    case("no_such_folder", "unknown", "not-found", say=["does not exist"])
+    case("not_data", "unknown", "nothing-recognised", say=["--kind"])
+    case("two_platforms", "ambiguous", "two-kinds", say=["--kind xenium", "--kind merscope"])
+    case("two_platforms", "certain", "one-kind", "xenium", kind="xenium")
+    case("two_platforms", "ambiguous", "kind-mismatch", hint="visium")
+    case("two_platforms", "incomplete", "kind-not-found", "visium", say=["outs"], kind="visium")
+    case("visium_no_image", "incomplete", "missing-files", "visium", say=["full-resolution image", "--image"])
+    case("visium_no_image", "certain", "one-kind", "visium", overrides={"image": str(raw / "visiumhd" / "image.tif")})
+    r = case("visium_two_images", "ambiguous", "open-choice", "visium", say=["--kind visium --image", "image.tif", "image_again.tif", "mb"])
+    opts = [o for ch in (r["candidates"][0]["choices"] if r["candidates"] else []) for o in ch["options"]]
+    c.ok(len(opts) == 2 and all(o["size"] > 1000 for o in opts), "detect visium_two_images: both candidate images listed with their sizes")
+    case("tenx_no_umap", "incomplete", "missing-files", "rnaseq", say=["umap"])
+    r = case("tenx_cells", "certain", "one-kind", "rnaseq")
+    a = r["candidates"][0]["args"] if r["candidates"] else {}
+    c.ok(Path(a.get("mtx", "")).name == "filtered_feature_bc_matrix" and Path(a.get("umap", "")).name == "umap.csv"
+         and [Path(o).name for o in a.get("obs", [])] == ["clusters.csv"],
+         f"detect tenx_cells: --mtx, --umap and the barcode CSV as --obs (not the CSV without a barcode column): {a}")
+    case("tenx_spatial", "incomplete", "missing-files", "visium", say=["filtered_feature_bc_matrix.h5", "full-resolution image"])
+    case("zipped", "incomplete", "zipped", "xenium", say=["unzip", "run1.zip"])
+    case("zipped/run1.zip", "incomplete", "zipped", "xenium", say=["unzip"])
+    case("xenium_no_stains", "incomplete", "missing-files", "xenium", say=["morphology_focus"])
+    r = case("xenium_extra_tiffs", "certain", "one-kind", "xenium", say=["2 other tiff", "not used"])
+    c.ok(r["variant"] == "molecules" and any("cells layer" in n for n in (r["candidates"][0]["notes"] if r["candidates"] else [])),
+         "detect xenium_extra_tiffs: stains + transcripts without cells is certain, and says there is no cells layer")
+    case("stereoseq_no_image", "incomplete", "missing-files", "stereoseq", say=["regist", "--image"])
+    case("merscope_two_runs", "ambiguous", "open-choice", "merscope", say=["--cells-dir", "vpt-run-a", "vpt-run-b"])
+    case("geomx_two_versions", "ambiguous", "open-choice", "geomx", say=["demo panel", "--kind geomx --pkc", "Demo_Panel_v1.1_copy.pkc"])
+    if (neg / "grey_unnamed").exists():
+        case("grey_unnamed", "ambiguous", "two-kinds", say=["--kind akoya", "--src"])
+        case("grey_unnamed", "certain", "one-kind", "akoya", kind="akoya")
+        case("grey_markers", "certain", "one-kind", "akoya")
+        r = case("grey_unnamed/DAPI.tif", "certain", "one-kind", "tiff")
+        c.eq(r["variant"], "single-channel", "detect a lone grey TIFF: variant")
+        c.eq(detect.detect(raw / "visiumhd" / "image.tif")["variant"], "he", "detect a lone RGB TIFF: variant he")
+        r = case("visium_size_check", "certain", "one-kind", "visium", say=["space ranger recorded"])
+        c.eq(Path((r["candidates"][0]["args"] if r["candidates"] else {}).get("image", "")).name, "section.tif",
+             "detect visium_size_check: of two TIFFs, the one whose size Space Ranger recorded is the image")
+    else:
+        print("    (tifffile not importable here: the cases that need a TIFF header are skipped)")
+    if (neg / "h5ad").exists():
+        case("h5ad/with_umap.h5ad", "certain", "one-kind", "rnaseq")
+        case("h5ad/no_umap.h5ad", "incomplete", "missing-files", "rnaseq", say=["x_umap", "x_pca", "--embedding"])
+        case("h5ad/no_umap.h5ad", "certain", "one-kind", "rnaseq", overrides={"embedding": "X_pca"})
+        case("h5ad", "ambiguous", "several-datasets")
+    out["cases"] = c.n
+
+    # ---- the command line
+    def cli(*argv):
+        p = subprocess.run([sys.executable, str(APP / "prepare.py"), *argv], cwd=str(REPO), stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                           env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        return p.returncode, p.stdout
+    rc, txt = cli("detect", str(raw / "xenium"), "--json")
+    try:
+        j = json.loads(txt)
+    except ValueError:
+        j = {}
+    c.ok(rc == 0 and j.get("verdict") == "certain" and j.get("kind") == "xenium" and j.get("candidates", [{}])[0].get("argv", [])[:2] == ["xenium", "--src"],
+         f"prepare.py detect --json: a report a script can read (exit {rc})")
+    rc, txt = cli("detect", str(raw / "visiumhd"))
+    c.ok(rc == 0 and "CERTAIN" in txt and "prepare.py auto --src" in txt and "prepare.py visium --image" in txt,
+         "prepare.py detect: plain words, the auto command and the command it would run")
+    before = sorted(q.name for q in (root / "detect").iterdir())
+    for name, code, say, extra in (("visium_two_images", 3, ["--kind visium --image", "ambiguous", "Nothing was written"], []),
+                                   ("visium_no_image", 4, ["MISSING", "--image"], []),
+                                   ("empty", 5, ["empty"], []),
+                                   ("two_platforms", 3, ["--kind xenium", "--kind merscope"], []),
+                                   ("two_platforms", 4, ["Visium", "outs"], ["--kind", "visium"]),
+                                   ("zipped", 4, ["unzip"], [])):
+        rc, txt = cli("auto", "--src", str(neg / name), "--id", "never_written", "--out", str(root / "detect" / "never"), *extra)
+        c.ok(rc == code and all(w in txt for w in say),
+             f"prepare.py auto {name} {' '.join(extra)}: stops with exit {code} and says {say} (exit {rc}: {txt[-300:]!r})")
+    c.ok(sorted(q.name for q in (root / "detect").iterdir()) == before and not (root / "detect" / "never").exists(),
+         "prepare.py auto: nothing is written when it stops")
+    rc, txt = cli("auto", "--src", str(neg / "empty"), "--id", "x", "--out", str(root / "detect" / "never"), "--kind", "nonsense")
+    c.ok(rc != 0 and "unknown kind" in txt, "prepare.py auto --kind nonsense: refused with the list of kinds")
+    rc, txt = cli("xenium", "--src", str(raw / "xenium"), "--id", "x", "--out", str(root / "detect" / "never"), "--not-an-option")
+    c.ok(rc == 2 and "unrecognized arguments" in txt and not (root / "detect" / "never").exists(),
+         "prepare.py <kind>: an unknown option is still refused (only auto passes options through)")
+
+    # ---- auto = the explicit subcommand
+    log_txt = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+    for ds, src, _extra in AUTO_SAME:
+        _same_cache(c, root / "detect" / "cache" / ds, root / "cache" / ds, f"auto {src} -> {ds}")
+    _same_cache(c, root / "detect" / "cache_kind" / VIS, root / "cache" / VIS, "auto --kind visium --image (two candidate images)",
+                source_differs=True)
+    if "prepare.py auto" in log_txt:
+        c.ok("[auto] running: python prepare.py xenium --src" in log_txt and "(detected)" in log_txt and "(--kind visium)" in log_txt,
+             "prepare.py auto: the log names what was detected and the command that ran")
+    out["autoSame"] = len(AUTO_SAME) + 1
+    print(f"    {out['certain']} of {len(DETECT_WANT)} synthetic folders certain, listing {out['seconds']:.2f}s; "
+          f"auto = explicit for {out['autoSame']} datasets")
+    return out
+
+
+def check_notebook(c: Checker):
+    """notebooks/SODA_pipeline.ipynb: valid, no saved outputs, code that compiles, and its dataset finding is detect.py's."""
+    p = REPO / "notebooks" / "SODA_pipeline.ipynb"
+    try:
+        nb = json.loads(p.read_text(encoding="utf-8"))
+    except ValueError as e:
+        c.ok(False, f"notebook: valid JSON ({e})")
+        return
+    code = [x for x in nb["cells"] if x["cell_type"] == "code"]
+    c.ok(len(code) >= 10 and all(not x.get("outputs") and x.get("execution_count") is None for x in code),
+         "notebook: no saved outputs or execution counts")
+    bad = []
+    for x in code:
+        try:
+            compile("".join(x["source"]), x.get("id", "cell"), "exec")
+        except SyntaxError as e:
+            bad.append(f"{x.get('id')}: {e}")
+    c.ok(not bad, f"notebook: every code cell compiles {bad}")
+    src = "\n".join("".join(x["source"]) for x in code)
+    c.ok("import detect" in src and "detect.detect(" in src and "OPTIONS = {" in src, "notebook: Section 2 uses detect.py and has the OPTIONS dictionary")
+    c.ok("cell_by_gene" not in src and 'glob("*.qptiff' not in src and "morphology_focus" not in src and "_regist" not in src,
+         "notebook: no per-kind file finding of its own (detect.py has it)")
+    text = "\n".join("".join(x["source"]) for x in nb["cells"] if x["cell_type"] == "markdown")
+    c.ok("own folder under `inputs/`" in text and "How sure" not in src.split("HOW_SURE", 1)[0] and "`kind`" in text,
+         "notebook: Section 1 says one folder per dataset, Section 2 documents the kind override")
+
+
+# ------------------------------------------------------------------ cell outlines (web/SpatialViewer/cellshapes.py)
+# The fixtures above carry the cells' outlines in every form a platform writes them; two more exports of
+# demo_xenium_nt take them from cells.zarr.zip and from "a lab's own" files (prepare.py outlines).
+OL_ZARR, OL_OWN, OL_NONE, OL_NONE_CACHE = "export_zarr", "export_own", "export_none", "cache_none"
+
+
+def outline_commands(root: Path) -> list[list[str]]:
+    try:
+        r = root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        r = root.resolve().as_posix()
+    raw, cache, own = f"{r}/raw", f"{r}/cache", f"{r}/outline_files"
+    prep, small = "web/SpatialViewer/prepare.py", ["--no-umap", "--no-hvg", "--grid-um", "0"]
+    return [
+        [prep, "outlines", "--id", XN, "--out", cache, "--src", f"{own}/xenium_zarr"],
+        [prep, "export", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_ZARR}", *small],
+        [prep, "export", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_OWN}", *small],
+        [prep, "outlines", "--id", XN, "--out", cache, "--dest", f"{r}/{OL_OWN}", "--boundaries", f"{own}/xenium_own/cells.geojson",
+         "--nuclei", f"{own}/xenium_own/nuclei.csv", "--boundary-units", "um"],
+        # the same folder prepared with --no-outlines: the export must be what it was before outlines existed
+        [prep, "xenium", "--id", XN, "--src", f"{raw}/xenium_nt", "--out", f"{r}/{OL_NONE_CACHE}", "--no-outlines"],
+        [prep, "export", "--id", XN, "--out", f"{r}/{OL_NONE_CACHE}", "--dest", f"{r}/{OL_NONE}", *small],
+    ]
+
+
+def clean_outlines(root: Path):
+    for p in [root / sub / XN for sub in (OL_ZARR, OL_OWN, OL_NONE, OL_NONE_CACHE)]:
+        if p.exists():
+            print(f"  removing earlier output {p}", flush=True)
+            shutil.rmtree(p)
+
+
+def _ol_area(r: np.ndarray) -> float:
+    """Shoelace area; positive = clockwise on screen (x right, y down)."""
+    x, y = r[:, 0] - r[0, 0], r[:, 1] - r[0, 1]
+    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _ol_inside(r: np.ndarray, x, y) -> np.ndarray:
+    """Points inside a ring (even-odd)."""
+    x, y = np.atleast_1d(np.asarray(x, float)), np.atleast_1d(np.asarray(y, float))
+    x1, y1 = r[:, 0][:, None], r[:, 1][:, None]
+    x2, y2 = np.roll(r[:, 0], -1)[:, None], np.roll(r[:, 1], -1)[:, None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        hit = ((y1 > y) != (y2 > y)) & (x < x1 + (y - y1) * (x2 - x1) / (y2 - y1))
+    return hit.sum(0) % 2 == 1
+
+
+def _ol_dist(p: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """Distance from each point of p to the outline of ring r."""
+    a, b = r[None, :, :], np.roll(r, -1, axis=0)[None, :, :]
+    q = p[:, None, :]
+    ab = b - a
+    L2 = (ab ** 2).sum(-1)
+    t = np.clip(((q - a) * ab).sum(-1) / np.where(L2 > 0, L2, 1), 0, 1)
+    return np.sqrt(((q - (a + t[..., None] * ab)) ** 2).sum(-1)).min(1)
+
+
+def _ol_same(stored: np.ndarray, truth: np.ndarray, tol: float = 0.0) -> bool:
+    """A stored ring against the ring it was made from: every stored vertex is one of the truth's
+    (to the vertex step), and no truth vertex lies farther than `tol` px from the stored outline;
+    tol = 0: the very same vertices."""
+    d = np.hypot(stored[:, None, 0] - truth[None, :, 0], stored[:, None, 1] - truth[None, :, 1]).min(1)
+    if d.max() > 0.05 or (tol == 0 and len(stored) != len(truth)):
+        return False
+    return bool(_ol_dist(truth, stored).max() <= tol + 0.05)
+
+
+def _ol_read(c: Checker, out: Path, what: str, key: str = "cells") -> dict:
+    """Every outline set of a layer, decoded and checked against the format (docs/DATA_FORMAT.md):
+    {set: {"index", "rings": {row: [ring, ...]}, "empty": rows listed without an outline, "pos"}}."""
+    m = read_json(out / "manifest.json")
+    L = next((x for x in m.get("expr", []) if x.get("key") == key), {})
+    blk = L.get("shapes")
+    if not c.ok(isinstance(blk, dict) and blk.get("sets"), f"{what}: the {key} layer has no shapes block in the manifest"):
+        return {}
+    c.eq((blk.get("version"), blk.get("format"), blk.get("dir")), (1, "poly-u16-tiles", "shapes"), f"{what}: shapes version / format / dir")
+    pos = f32(out / "expr" / key / "positions.bin", 2)
+    N = len(pos)
+    if L.get("hvg"):
+        c.eq(blk.get("chunkPx"), L["hvg"]["chunkPx"], f"{what}: outlines use the same tile grid as hvg/")
+    res = {}
+    for si, s in enumerate(blk["sets"]):
+        tag = f"{what} {s.get('key')}"
+        d = out / "expr" / key / "shapes" / s["key"]
+        if not c.ok((d / "index.json").exists(), f"{tag}: index.json missing"):
+            continue
+        idx = read_json(d / "index.json")
+        cp, step = idx["chunkPx"], idx["step"]
+        c.eq((idx.get("format"), idx.get("version"), idx.get("set"), idx.get("nRows"), cp),
+             ("poly-u16-tiles", 1, s["key"], N, blk.get("chunkPx")), f"{tag}: index format / version / set / nRows / chunkPx")
+        c.ok(step >= 1 / 16 and math.log2(step) == int(math.log2(step)), f"{tag}: vertex step {step} is a power of two, 1/16 px at the finest")
+        c.eq(sorted(p.name for p in d.glob("*.bin")), sorted(f"{k['tx']}_{k['ty']}.bin" for k in idx["chunks"]),
+             f"{tag}: the tile files are those index.json lists")
+        rings, empty, bad, nP, nV, total, over = {}, set(), [], 0, 0, 0, 0.0
+        for k in idx["chunks"]:
+            buf = (d / f"{k['tx']}_{k['ty']}.bin").read_bytes()
+            n, nv = (int(v) for v in np.frombuffer(buf, "<u4", 2))
+            if len(buf) != 16 + 6 * n + 4 * nv or (n, nv, len(buf)) != (k["n"], k["nv"], k["bytes"]):
+                bad.append(f"{k['tx']}_{k['ty']}: {len(buf)} bytes for n {n}, nv {nv} (index: {k})")
+                continue
+            origin = np.frombuffer(buf, "<f4", 2, 8).astype(np.float64)
+            rows = np.frombuffer(buf, "<u4", n, 16).astype(np.int64)
+            cnt = np.frombuffer(buf, "<u2", n, 16 + 4 * n).astype(np.int64)
+            xy = origin + np.frombuffer(buf, "<u2", 2 * nv, 16 + 6 * n).reshape(-1, 2).astype(np.float64) * step
+            if int(cnt.sum()) != nv or (n and int(rows.max()) >= N):
+                bad.append(f"{k['tx']}_{k['ty']}: vertex counts or rows out of range")
+                continue
+            t = np.floor(pos[rows].astype(np.float64) / cp).astype(np.int64)
+            if not ((t[:, 0] == k["tx"]) & (t[:, 1] == k["ty"])).all():
+                bad.append(f"{k['tx']}_{k['ty']}: a polygon is not in the tile of its cell's position")
+            if nv:
+                over = max(over, k["tx"] * cp - xy[:, 0].min(), k["ty"] * cp - xy[:, 1].min(),
+                           xy[:, 0].max() - (k["tx"] + 1) * cp, xy[:, 1].max() - (k["ty"] + 1) * cp)
+            o = 0
+            for r, k_ in zip(rows.tolist(), cnt.tolist()):
+                if k_:
+                    rings.setdefault(r, []).append(xy[o:o + k_])
+                else:
+                    empty.add(r)
+                o += k_
+            nP, nV, total = nP + int((cnt > 0).sum()), nV + nv, total + len(buf)
+        c.ok(not bad, f"{tag}: tile files: {bad[:3]}")
+        c.eq((nP, nV, total, len(rings)), (idx.get("nPolygons"), idx.get("nVertices"), idx.get("bytes"), idx.get("nRowsWithShape")),
+             f"{tag}: polygons / vertices / bytes / cells with an outline as index.json says")
+        c.eq((s.get("nPolygons"), s.get("nVertices"), s.get("bytes"), s.get("chunks"), s.get("nRowsWithShape")),
+             (nP, nV, total, len(idx["chunks"]), len(rings)), f"{tag}: the manifest's numbers")
+        c.ok(over <= idx.get("overhangPx", -1) + 1e-6, f"{tag}: a vertex reaches {over:.2f} px outside its tile, index.json says {idx.get('overhangPx')}")
+        if si == 0:
+            c.ok(idx.get("complete") is True and (set(rings) | empty) == set(range(N)) and not (set(rings) & empty),
+                 f"{tag}: the first set lists every row (with or without an outline)")
+        else:
+            c.ok(not empty and idx.get("complete") is False, f"{tag}: a further set lists only cells with an outline")
+        flat = [r for rs in rings.values() for r in rs]
+        c.ok(all(3 <= len(r) <= 64 for r in flat), f"{tag}: every ring has 3 to 64 vertices")
+        c.ok(all(_ol_area(r) > 0 for r in flat), f"{tag}: every ring is clockwise on screen")
+        c.ok(all((r[0] != r[-1]).any() for r in flat), f"{tag}: rings are stored open (the first vertex is not repeated)")
+        txt = (d / "index.json").read_text(encoding="utf-8")
+        c.ok(not BARCODE.search(txt) and not LOCAL_PATH.search(txt), f"{tag}: index.json holds a barcode or a local path")
+        res[s["key"]] = {"index": idx, "rings": rings, "empty": empty, "pos": pos}
+    return res
+
+
+def _ol_centres(c: Checker, S: dict, what: str, want: float = 1.0):
+    """Each cell's own centre lies inside (one of) its own outline(s)."""
+    pos, rings = S["pos"], S["rings"]
+    ok = sum(any(_ol_inside(r, pos[i, 0], pos[i, 1])[0] for r in rs) for i, rs in rings.items())
+    c.ok(ok >= want * len(rings), f"{what}: {ok} of {len(rings)} cell centres lie inside their own outline")
+    c.ok(abs(S["index"]["stats"]["centreInside"] - ok / max(1, len(rings))) < 1e-4, f"{what}: index.json centreInside is the share counted here")
+
+
+def _ol_xenium(c: Checker, out: Path, what: str, tr: dict, tz, own: bool = False, not_in_matrix: int = 0) -> dict:
+    """The Xenium fixture's outlines in an export against the generator's truth."""
+    px, sp = tr["pixelSizeUm"], tr["outlines"]
+    R = _ol_read(c, out, what)
+    if "cell" not in R or "nucleus" not in R:
+        c.ok(False, f"{what}: expected a cell and a nucleus set, got {sorted(R)}")
+        return {}
+    C, Nu = R["cell"], R["nucleus"]
+    n = len(C["pos"])
+    cell, nuc, dense = tz["cell_poly_um"] / px, tz["nucleus_poly_um"] / px, tz["dense_poly_um"] / px
+    none = set() if own else set(sp["noBoundary"])
+    c.eq(C["empty"], none, f"{what}: the cells without a boundary are listed without an outline (they stay dots)")
+    multi = {sp["ownMulti"]} if own else set()
+    bad = [i for i in range(n) if i not in none and i not in multi and (own or i != sp["dense"])
+           and not (len(C["rings"].get(i, [])) == 1 and _ol_same(C["rings"][i][0], cell[i]))]
+    c.ok(not bad, f"{what}: cell outlines differ from the fixture's polygons (matrix order; the file is in another order): rows {bad[:5]}")
+    st = C["index"]["stats"]
+    if own:
+        rs = C["rings"].get(sp["ownMulti"], [])
+        c.ok(len(rs) == 2 and sorted(len(r) for r in rs) == [8, 12], f"{what}: a cell in two parts keeps both ({[len(r) for r in rs]})")
+        c.eq((st["rowsInSeveralParts"], st["dropped"]["holes"], st["dropped"]["smallParts"]), (1, 1, 1),
+             f"{what}: one cell in parts, one hole left out, one crumb (1 % of its cell) dropped")
+        c.ok(len(C["rings"].get(sp["ownCrumb"], [])) == 1 and len(C["rings"].get(sp["ownHole"], [])) == 1, f"{what}: the crumb and the hole are gone")
+    else:
+        d = C["rings"].get(sp["dense"], [np.zeros((0, 2))])[0]
+        c.ok(8 <= len(d) < sp["denseN"] and _ol_same(d, dense, tol=0.1 / px),
+             f"{what}: the {sp['denseN']}-vertex outline is simplified ({len(d)} left) and no vertex moved by more than 0.1 um")
+        c.eq(st["polygonsNotInMatrix"], not_in_matrix, f"{what}: polygons of cells that are not in the matrix are counted and left out")
+    _ol_centres(c, C, f"{what} cell")
+    area = tz["cell_area_um2"]
+    ratio = np.array([_ol_area(C["rings"][i][0]) * px * px / area[i] for i in range(n) if i in C["rings"] and i not in multi
+                      and (own or i != sp["dense"])])
+    c.ok(0.94 < float(np.median(ratio)) < 0.97 and ratio.min() > 0.93 and ratio.max() < 0.98,
+         f"{what}: polygon area / cell_area {np.median(ratio):.3f} ({ratio.min():.3f}-{ratio.max():.3f}); a 12-gon holds 95.5 % of its circle")
+    twins = {} if own else {i: tz["twin_poly_um"][k] / px for k, i in enumerate(sp["binucleate"])}
+    no_nuc = set() if own else set(sp["noNucleus"])
+    c.eq(set(range(n)) - set(Nu["rings"]), no_nuc, f"{what}: cells without a nucleus have no entry in the nucleus set")
+    bad = [i for i in range(n) if i not in no_nuc and i not in twins
+           and not (len(Nu["rings"].get(i, [])) == 1 and _ol_same(Nu["rings"][i][0], nuc[i]))]
+    c.ok(not bad, f"{what}: nucleus outlines differ from the fixture's: rows {bad[:5]}")
+    for i, tw in twins.items():
+        rs = Nu["rings"].get(i, [])
+        c.ok(len(rs) == 2 and all(any(_ol_same(r, t) for t in tw) for r in rs), f"{what}: a cell with two nuclei keeps both (row {i})")
+    return {"cells": len(C["rings"]), "nuclei": sum(len(v) for v in Nu["rings"].values()), "bytesPerCell": round(C["index"]["bytes"] / n, 1)}
+
+
+def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
+    """Cell outlines of every fixture (cellshapes.py): the tile format, each outline against the
+    polygon or label mask it came from, rows, the special cases, and what is refused."""
+    raw, export = root / "raw", root / "export"
+    res = {}
+    tr, tz = read_json(raw / "truth_xenium.json"), np.load(raw / "truth_xenium.npz")
+    px = tr["pixelSizeUm"]
+    print("  xenium: cell_boundaries / nucleus_boundaries .csv.gz, .parquet, cells.zarr.zip, a lab's own files")
+    res["csv"] = _ol_xenium(c, export / XE, f"{XE} (csv.gz)", tr, tz, not_in_matrix=tr["outlines"]["notInMatrix"])
+    _ol_xenium(c, export / XN, f"{XN} (parquet)", tr, tz, not_in_matrix=tr["outlines"]["notInMatrix"])
+    _ol_xenium(c, root / OL_ZARR / XN, f"{XN} (cells.zarr.zip)", tr, tz)
+    _ol_xenium(c, root / OL_OWN / XN, f"{XN} (own GeoJSON + vertex table)", tr, tz, own=True)
+    for ds in (XE, XN):
+        ix = read_json(export / ds / "expr" / "cells" / "shapes" / "cell" / "index.json")
+        c.eq(ix.get("source"), "cell_boundaries.csv.gz" if ds == XE else "cell_boundaries.parquet", f"{ds}: outlines source")
+    c.eq(read_json(root / OL_ZARR / XN / "expr" / "cells" / "shapes" / "cell" / "index.json").get("source"), "cells.zarr.zip", "zarr export: source")
+    try:
+        import gzip
+        ids = gzip.open(raw / "xenium" / "cell_feature_matrix" / "barcodes.tsv.gz", "rt").read().split()
+        blob = b"".join(p.read_bytes() for p in (export / XE / "expr" / "cells" / "shapes").rglob("*") if p.is_file())
+        c.ok(not any(i.encode() in blob for i in ids), f"{XE}: a cell id is written in the outline files")
+    except OSError as e:
+        c.ok(False, f"{XE}: cannot read the outline files ({e})")
+    c.ok("shapes" not in json.dumps(read_json(export / XP / "manifest.json")), f"{XP}: no cells, so no outlines")
+    try:                                               # the older cells.zarr.zip layout, read in-process
+        sys.path.insert(0, str(APP))
+        import cellshapes
+        got = cellshapes.read_xenium_zarr(root / "outline_files" / "xenium_zarr_v1" / "cells.zarr.zip")
+        ids1, st1, xy1 = got["cell"]
+        want_ids = [b for i, b in enumerate(ids) if i not in tr["outlines"]["noBoundary"]]
+        keep = np.flatnonzero(np.diff(st1) > 0)
+        c.eq([ids1[i] for i in keep], want_ids, "cells.zarr.zip, older layout: cell ids from (prefix, suffix), cells without a polygon skipped")
+        k0 = int(keep[0])
+        r0 = xy1[st1[k0]:st1[k0 + 1]]
+        c.ok(len(r0) == 13 and np.allclose(r0[:12], tz["cell_poly_um"][0], atol=1e-3), "cells.zarr.zip, older layout: polygon_vertices read as x, y pairs")
+        c.eq(len(got["nucleus"][0]), len(ids), "cells.zarr.zip, older layout: one nucleus slot per cell")
+        t = cellshapes.trace_labels(np.array([[0, 1, 1, 0], [0, 1, 0, 2], [3, 0, 2, 2]], np.uint8))
+        c.eq((t[0].tolist(), np.diff(t[1]).tolist(), t[3]), ([1, 2, 3], [6, 6, 4], 0), "trace_labels: three labels, corners only, no holes")
+    except ImportError as e:
+        print(f"    SKIP in-process reader checks ({e})")
+
+    # ---- CosMx: traced from the CellLabels images / the polygons file
+    ti, tzi = read_json(raw / "truth_imaging.json"), np.load(raw / "truth_imaging.npz")
+    order = np.concatenate([np.flatnonzero(tzi["cosmx_fov"] == f) for f in range(1, 5)])
+    print("  cosmx: traced CellLabels, polygons file")
+    R = _ol_read(c, export / CX, CX)
+    if "cell" in R:
+        S, lab = R["cell"], tzi["cosmx_labels"]
+        fw, fh = ti["cosmx"]["fovSize"]
+        gx, gy = ti["cosmx"]["width"] - 2 * fw, ti["cosmx"]["height"] - 2 * fh
+        c.eq(S["index"].get("source"), "CellLabels images (traced)", f"{CX}: outlines source")
+        c.ok(not S["empty"] and S["index"]["stats"].get("traced") is True, f"{CX}: every cell has a traced outline")
+        iou = []
+        for row, ti_ in enumerate(order.tolist()):
+            f, cid = int(tzi["cosmx_fov"][ti_]), int(tzi["cosmx_cell_id"][ti_])
+            x0, y0 = ((f - 1) % 2) * (fw + gx), (1 - (f - 1) // 2) * (fh + gy)
+            mask = lab[y0:y0 + fh, x0:x0 + fw] == cid
+            ys, xs = np.nonzero(mask)
+            a0, a1, b0, b1 = xs.min() - 2, xs.max() + 3, ys.min() - 2, ys.max() + 3
+            qx, qy = np.meshgrid(np.arange(a0, a1) + 0.5 + x0, np.arange(b0, b1) + 0.5 + y0)
+            got = np.zeros(qx.shape, bool)
+            for r in S["rings"].get(row, []):
+                got |= _ol_inside(r, qx.ravel(), qy.ravel()).reshape(qx.shape)
+            want = np.zeros(qx.shape, bool)
+            want[ys - b0, xs - a0] = True
+            iou.append((got & want).sum() / max(1, (got | want).sum()))
+        iou = np.array(iou)
+        c.ok(float(np.median(iou)) > 0.93 and float(iou.min()) > 0.85,
+             f"{CX}: traced outlines against the label masks: IoU median {np.median(iou):.3f}, worst {iou.min():.3f}")
+        _ol_centres(c, S, CX)
+        mv = float(np.mean([len(r) for rs in S["rings"].values() for r in rs]))
+        c.ok(6 <= mv <= 24, f"{CX}: {mv:.1f} vertices a traced outline (a 28 px disk; the pixel staircase is simplified away)")
+        res["cosmxTraced"] = {"iouMedian": round(float(np.median(iou)), 4), "iouMin": round(float(iou.min()), 4), "meanVertices": round(mv, 1)}
+        print(f"    traced outlines: IoU with the label mask median {np.median(iou):.3f}, worst {iou.min():.3f}; {mv:.1f} vertices each")
+    R = _ol_read(c, export / CXN, CXN)
+    if "cell" in R:
+        S, want = R["cell"], tzi["cosmx_poly_px"][order]
+        c.eq(S["index"].get("source"), "polygons file", f"{CXN}: the polygons file is used when the export has one")
+        bad = [i for i in range(len(want)) if not (len(S["rings"].get(i, [])) == 1 and _ol_same(S["rings"][i][0], want[i]))]
+        c.ok(not bad, f"{CXN}: outlines differ from the polygons file put through the frame (y turned over): rows {bad[:5]}")
+        c.ok(all(_ol_area(r) > 0 for rs in S["rings"].values() for r in rs), f"{CXN}: rings turned clockwise after the y flip")
+    c.ok("shapes" not in json.dumps(read_json(export / CXT / "manifest.json")), f"{CXT}: no cells, so no outlines")
+
+    # ---- MERSCOPE: cell_boundaries/*.hdf5 (with images) / *_micron_space.parquet (WKB, no images)
+    print("  merscope: cell_boundaries hdf5, micron_space parquet (WKB)")
+    t = ti["merscope"]
+    org = np.array(t["origin"], np.float64)
+    pu = tzi["merscope_poly_um"]
+    cen = tzi["merscope_cells_um"]
+    um_all = np.vstack([tzi["merscope_mol_um"], cen])
+    for ds, to_px, src in ((MS, lambda u: (u - org) / ti["pixelSizeUm"], "cell_boundaries/*.hdf5"),
+                           (MSN, lambda u: u - um_all.min(0) + 10.0, "micron_space.parquet")):
+        R = _ol_read(c, export / ds, ds)
+        if "cell" not in R:
+            continue
+        S = R["cell"]
+        st = S["index"]["stats"]
+        c.eq(S["index"].get("source"), src, f"{ds}: outlines source")
+        c.eq(S["empty"], {4}, f"{ds}: the cell without a boundary stays a dot")
+        c.eq((st.get("zPlane"), st.get("otherPlane")), (1, 1), f"{ds}: the middle z-plane, and the nearest one for the cell that has none there")
+        other = to_px(cen[3] + 0.8 * (pu[3] - cen[3]))
+        c.ok(len(S["rings"].get(3, [])) == 1 and _ol_same(S["rings"][3][0], other), f"{ds}: that cell's outline is the one of its nearest plane")
+        skip = {3, 4} | ({0} if ds == MSN else set())
+        bad = [i for i in range(len(pu)) if i not in skip and not (len(S["rings"].get(i, [])) == 1 and _ol_same(S["rings"][i][0], to_px(pu[i])))]
+        c.ok(not bad, f"{ds}: outlines differ from the fixture's (the middle plane, through the micron -> pixel transform): rows {bad[:5]}")
+        if ds == MSN:
+            rs = S["rings"].get(0, [])
+            c.ok(len(rs) == 2 and any(_ol_same(r, to_px(pu[0])) for r in rs), f"{ds}: a MultiPolygon cell keeps both parts")
+            c.eq((st["rowsInSeveralParts"], st["dropped"]["holes"], st["dropped"]["smallParts"]), (1, 1, 1),
+                 f"{ds}: one cell in parts, one hole left out, one crumb dropped")
+        _ol_centres(c, S, ds)
+    c.ok("shapes" not in json.dumps(read_json(export / MSP / "manifest.json")), f"{MSP}: no cells, so no outlines")
+
+    # ---- Stereo-seq: cellBin/cellBorder, whole chip and cut (file offset)
+    print("  stereoseq: cellBin/cellBorder")
+    tzs = np.load(raw / "truth_stereoseq.npz")
+    R = _ol_read(c, export / ST, ST)
+    if "cell" in R:
+        S, cxy = R["cell"], tzs["cell_xy"].astype(np.float64)
+        ang = np.linspace(0, 2 * np.pi, 16, endpoint=False)
+        rr = read_json(raw / "truth_stereoseq.json")["cellRadiusDnb"]
+        off = np.column_stack([np.rint(rr * np.cos(ang)), np.rint(rr * np.sin(ang))])
+        bad = [i for i in range(len(cxy)) if not (len(S["rings"].get(i, [])) == 1 and _ol_same(S["rings"][i][0], cxy[i] + 0.5 + off, tol=0.2))]
+        c.ok(not bad and not S["empty"], f"{ST}: outlines = cell x, y + the border offsets + half a DNB: rows {bad[:5]}")
+        c.eq(S["index"].get("source"), "cellBin/cellBorder", f"{ST}: outlines source")
+        _ol_centres(c, S, ST)
+        ratio = np.array([_ol_area(S["rings"][i][0]) for i in range(len(cxy))]) / tzs["cell_area"]
+        c.ok(0.8 < float(np.median(ratio)) < 1.0, f"{ST}: outline area / the cell's DNB count {np.median(ratio):.3f} (the border runs through the outermost DNBs)")
+        a, b = export / ST / "expr" / "cells" / "shapes" / "cell", export / STL / "expr" / "cells" / "shapes" / "cell"
+        c.ok(b.is_dir() and all((b / p.name).exists() and (b / p.name).read_bytes() == p.read_bytes() for p in a.glob("*.bin")),
+             f"{STL}: a cut cell bin GEF (offsetX) gives the same outline tiles")
+    c.ok("shapes" not in json.dumps(read_json(export / STG / "manifest.json")), f"{STG}: no cell bin GEF, so no outlines")
+
+    # ---- what is refused (and then changes nothing); a dataset without outlines exports as it did before
+    print("  refusals: wrong units, another run's ids, a folder without boundaries")
+    def ol(*extra):
+        args = ["web/SpatialViewer/prepare.py", "outlines", "--id", XN, "--out", str(root / "cache"), *extra]
+        print(f"$ python {' '.join(args)}", flush=True)
+        p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, encoding="utf-8", errors="replace")
+        with open(log_path, "a", encoding="utf-8") as lg:
+            lg.write(p.stdout)
+        return p
+    def cached():
+        return next((L for L in read_json(root / "cache" / XN / "manifest.json")["expr"] if L["key"] == "cells"), {}).get("shapes")
+    def files():
+        d = root / "cache" / XN / "shapes" / "cells"
+        return {p.relative_to(d).as_posix(): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file()}
+    gj = str(root / "outline_files" / "xenium_own" / "cells.geojson")
+    had, held = cached(), files()
+    c.ok(bool(had) and had["sets"][0]["source"] == "GeoJSON polygons (own file)" and len(held) > 4, "the cache holds the own-file outlines before the refusals")
+    p = ol("--boundaries", gj, "--boundary-units", "px")
+    c.ok(p.returncode == 0 and "do not sit on the cells" in p.stdout and "nothing written" in p.stdout,
+         "outlines in the wrong units (um read as pixels) are refused: the centres are not inside them")
+    p = ol("--boundaries", gj, "--boundary-units", "um", "--boundary-id", "other_run")
+    c.ok(p.returncode == 0 and "not this dataset's outlines" in p.stdout and "nothing written" in p.stdout,
+         "outlines whose ids are not this dataset's cells are refused")
+    p = ol("--src", str(raw / "xenium_pq"))
+    c.ok(p.returncode == 0 and "no cell outlines" in p.stdout and "nothing written" in p.stdout, "a folder without boundary files: a message, nothing written")
+    c.ok(cached() == had and files() == held, "a refused import changes nothing: the outlines the dataset already had are kept, byte for byte")
+    none = root / OL_NONE / XN
+    c.ok((none / "manifest.json").exists() and "shapes" not in (none / "manifest.json").read_text(encoding="utf-8")
+         and not (none / "expr" / "cells" / "shapes").exists() and not (root / OL_NONE_CACHE / XN / "shapes").exists(),
+         "--no-outlines: no shapes in the cache, in the manifest or in the export")
+    same = [f for f in ("positions.bin", "genes.json") if (none / "expr" / "cells" / f).read_bytes() != (export / XN / "expr" / "cells" / f).read_bytes()]
+    c.ok(not same, f"--no-outlines: the cells layer itself is the same as with outlines ({same})")
+    args = ["web/SpatialViewer/deid.py", "check"] + [str(p_) for p_ in (root / OL_ZARR / XN, root / OL_OWN / XN, none)] + \
+           [str(export / ds / "expr" / "cells" / "shapes") for ds in (CX, CXN, MS, MSN, ST, STL)]
+    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, encoding="utf-8", errors="replace")
+    c.eq(p.returncode, 0, "deid.py check on the outline exports (exit code)")
+
+    # ---- the page
+    html = (APP / "index.html").read_text(encoding="utf-8")
+    js = (APP / "outlines.js").read_text(encoding="utf-8") if (APP / "outlines.js").exists() else ""
+    c.ok(re.search(r'<script src="outlines\.js\?v=[\w.-]+"></script>', html) is not None and html.find("outlines.js") < html.find("viewer.js?"),
+         "index.html loads outlines.js (with a ?v= string) before viewer.js")
+    for i in ("rowCellShapes", "cellShapes", "rowCellNuclei", "cellNuclei"):
+        c.ok(f'id="{i}"' in html, f"index.html: the cell shapes control #{i} is missing")
+    c.ok("window.SodaOutlines" in js and "poly-u16-tiles" in js, "outlines.js: SodaOutlines and the format name")
+    c.ok(not re.search(r"\bInt(8|16|32)Array\b", js), "outlines.js uses a signed typed array (deid.py check reads those names as sample IDs)")
+    vj = (APP / "viewer.js").read_text(encoding="utf-8")
+    c.ok("SodaOutlines" in vj, "viewer.js: the outlines hooks are missing")
+    return res
+
+
 def check_marker_lists(c: Checker):
     """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
     sys.path.insert(0, str(APP))
@@ -2741,22 +3487,29 @@ def check_packs(c: Checker, root: Path, log_path: Path, rna_demo: dict) -> dict:
     export = root / "export"
     res = {"rnaseqDemo": rna_demo}
     # ---- every current export: packed, consistent ----------------------------------------------
-    ids = [ds for ds in (VIS, MX, TL, RNA) + XEN_DS + GEOMX_DS + ST_DS + IMG_DS if (export / ds / "manifest.json").exists()]
-    n_groups = n_shards = n_genes = 0
-    for ds in ids:
-        m = read_json(export / ds / "manifest.json")
+    # (the cell-outline exports too: their shapes/ tiles sit beside the packs, unpacked and untouched)
+    ids = [(export, ds) for ds in (VIS, MX, TL, RNA) + XEN_DS + GEOMX_DS + ST_DS + IMG_DS if (export / ds / "manifest.json").exists()]
+    ids += [(root / r, ds) for r in (OL_ZARR, OL_OWN, OL_NONE) for ds in XEN_DS if (root / r / ds / "manifest.json").exists()]
+    n_groups = n_shards = n_genes = n_shapes = 0
+    for base, ds in ids:
+        m = read_json(base / ds / "manifest.json")
+        for L in m.get("expr", []):
+            if L.get("shapes"):
+                n_shapes += 1
+                sd = base / ds / "expr" / L["key"] / "shapes"
+                c.ok(sd.is_dir() and not any(sd.rglob("*.pack")), f"{base.name}/{ds} {L['key']}: shapes/ present, nothing packed in it")
         for g in gp.groups(m):
-            gdir = export / ds / g["dir"] if g["dir"] else export / ds
-            c.ok(bool(g["pack"]), f"{ds} {g['what']}: not packed by default")
-            c.ok(not (gdir / "gene").exists(), f"{ds} {g['what']}: a gene/ folder in a packed export")
-            probs = gp.check_group(export / ds, g, verify_hash=True)
-            c.ok(not probs, f"{ds} {g['what']}: pack vs listing: {probs[:3]}")
+            gdir = base / ds / g["dir"] if g["dir"] else base / ds
+            c.ok(bool(g["pack"]), f"{base.name}/{ds} {g['what']}: not packed by default")
+            c.ok(not (gdir / "gene").exists(), f"{base.name}/{ds} {g['what']}: a gene/ folder in a packed export")
+            probs = gp.check_group(base / ds, g, verify_hash=True)
+            c.ok(not probs, f"{base.name}/{ds} {g['what']}: pack vs listing: {probs[:3]}")
             if g["pack"]:
                 n_groups += 1
                 n_shards += len(g["pack"]["shards"])
                 n_genes += g["pack"]["genes"]
-    res["current"] = {"datasets": len(ids), "groups": n_groups, "shards": n_shards, "genes": n_genes}
-    print(f"    {len(ids)} exports: {n_groups} packed groups, {n_genes:,} genes in {n_shards} shards")
+    res["current"] = {"datasets": len(ids), "groups": n_groups, "shards": n_shards, "genes": n_genes, "layersWithShapes": n_shapes}
+    print(f"    {len(ids)} exports: {n_groups} packed groups, {n_genes:,} genes in {n_shards} shards; {n_shapes} layer(s) with outlines")
 
     # ---- --gene-files loose: the old layout, equal to the packs byte for byte ------------------
     lo, pk = root / "export_loose" / VIS, export / VIS
@@ -2989,6 +3742,14 @@ def main(argv=None) -> int:
             clean_imaging(root)
         for cmd in imaging_commands(root):               # CosMx / MERSCOPE fixtures
             timings[Path(cmd[0]).stem if cmd[1].startswith("--") else f"{cmd[1]} {cmd[3]}"] = run(cmd, log_path)
+        if not args.reuse:
+            clean_outlines(root)
+        for i, cmd in enumerate(outline_commands(root)):  # outlines from cells.zarr.zip and from a lab's own files
+            timings[f"{cmd[1]} {cmd[3]} (outlines {i + 1})"] = run(cmd, log_path)
+        clean_detect(root)                               # prepare.py auto: always fresh, never skipped by --reuse
+        make_detect_cases(root)
+        for i, cmd in enumerate(detect_commands(root)):
+            timings[f"auto {cmd[3]}" + (" (--kind)" if "--kind" in cmd else "")] = run(cmd, log_path)
         t1 = time.time()
         rna_demo = write_rnaseq_demo(root, log_path)
         timings["rnaseq demo"] = time.time() - t1
@@ -3015,6 +3776,12 @@ def main(argv=None) -> int:
     summary["imaging"] = check_imaging(c, root, clustering, log_path)
     print("checks: demo_stereoseq (bin layers + cells), _gem, _lv, _mask")
     summary["stereoseq"] = check_stereoseq(c, root, clustering, log_path)
+    print("checks: automatic detection (detect.py, prepare.py detect / auto)")
+    summary["detect"] = check_detect(c, root, log_path)
+    print("checks: the notebook")
+    check_notebook(c)
+    print("checks: cell outlines (every platform's boundaries, traced label masks, a lab's own file)")
+    summary["outlines"] = check_outlines(c, root, log_path)
     print("checks: gene packs (genepack.py): every export, loose / both, Range over HTTP, repack, deid")
     summary["genePacks"] = check_packs(c, root, log_path, rna_demo)
     print("checks: marker lists and name cleanup")
