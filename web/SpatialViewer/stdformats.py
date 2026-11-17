@@ -7,8 +7,8 @@ r"""Standard formats as pipeline input: OME-Zarr images, spatial AnnData (.h5ad 
 
 Each one is turned into an ordinary SODA cache (image.zarr, expr/<key>.zarr, shapes/, molecules/, manifest.json),
 exactly what the instrument readers write, so `prepare.py export` and the viewer need nothing new. The files
-are read with h5py / zarr 2 / pyarrow (annstore.py, ngff.py): anndata, scanpy, spatialdata and pandas are not
-needed. Reading these formats in the browser itself is not done (a possible later step).
+are read with h5py / zarr 2 / pyarrow (annstore.py, ngff.py), and zarr v3 stores with zarrv3.py: anndata,
+scanpy, spatialdata, zarr-python 3 and pandas are not needed. Reading these formats in the browser itself is not done (a possible later step).
 
 OME-Zarr (kind omezarr): the image (level 0 of multiscales; a bioformats2raw layout's series 0 or --series),
 channel names and colours from omero, the pixel size from the level-0 scale when the x / y axes carry a unit,
@@ -26,10 +26,11 @@ Spatial AnnData (kind anndata), the Scanpy / Squidpy layout:
                              -> "your own clusters / UMAP" on the layer (userclusters.py, at export)
     --image <TIFF / OME-Zarr>  the full-resolution image instead (positions as they are, x --image-scale)
     no image at all          a neutral cell-density background; --coords-um says how many µm one unit is
-SpatialData (kind spatialdata), a SpatialData .zarr (zarr v2):
-    tables/<name>            an AnnData each (X, obs, var, obsm as above); uns/spatialdata_attrs names the
-                             region element, region_key and instance_key. Every table whose region is a shapes
-                             element becomes one layer (--table picks one, --region one region of a table)
+SpatialData (kind spatialdata), a SpatialData .zarr (zarr v2, or zarr v3 as spatialdata 0.4+ writes it):
+    tables/<name>            an AnnData each (X, obs, var, obsm as above); uns/spatialdata_attrs (or the table's
+                             own attributes) names the region element, region_key and instance_key. Every table
+                             whose region is a shapes element becomes one layer (--table picks one, --region one
+                             region of a table)
     shapes/<region>          positions: circle centres (spot / dot size from radius) or polygon centroids
                              (polygons become the cell outlines; equal axis-aligned squares are bins)
     shapes/<other>           polygons with the same ids -> more outlines ("nucle..." = nucleus outlines)
@@ -39,10 +40,10 @@ SpatialData (kind spatialdata), a SpatialData .zarr (zarr v2):
     coordinate systems       --coordinate-system, else "global" when every element has it, else the one they
                              share. Each element -> that system -> the image's pixels: identity, scale,
                              translation, affine, sequence (ngff.to_affine); anything else is refused
-Refused, each with its reason and never with a sample id, barcode or file name in the message: zarr v3 stores,
-an AnnData with several image libraries (save one section per file), a SpatialData table whose region is a
-labels element, regions / tables / coordinate systems that leave a choice open (the message names the option),
-time series, HCS plates.
+Refused, each with its reason and never with a sample id, barcode or file name in the message: a zarr v3
+array outside the subset zarrv3.py reads (the codec / data type is named), an AnnData with several image
+libraries (save one section per file), a SpatialData table whose region is a labels element, regions /
+tables / coordinate systems that leave a choice open (the message names the option), time series, HCS plates.
 
 Privacy: obs names, instance ids and library / element names stay in the cache. Category values and column
 names go through deid.py at export (userclusters.py); the manifest carries no file or element name. Messages
@@ -363,7 +364,8 @@ def _is_photo(src) -> bool:
 # omezarr
 # ---------------------------------------------------------------------------------------
 def add_args_omezarr(p):
-    p.add_argument("--src", required=True, help="the OME-Zarr image (a .zarr / .ome.zarr folder, NGFF 0.4 or older, zarr v2)")
+    p.add_argument("--src", required=True, help="the OME-Zarr image (a .zarr / .ome.zarr folder: NGFF 0.4 or older in "
+                                                "zarr v2, or NGFF 0.5 in zarr v3)")
     p.add_argument("--series", help="bioformats2raw layout: the series to read (default 0)")
     p.add_argument("--z", type=int, help="z-stack: the plane to read (default the middle one)")
     p.add_argument("--channels", help="comma-separated channel names (override the omero labels)")
@@ -394,7 +396,7 @@ def plan_omezarr(args, log=print) -> Plan:
 # anndata
 # ---------------------------------------------------------------------------------------
 def add_args_anndata(p):
-    p.add_argument("--src", required=True, help="the AnnData file: .h5ad, or an AnnData .zarr folder (zarr v2)")
+    p.add_argument("--src", required=True, help="the AnnData file: .h5ad, or an AnnData .zarr folder (zarr v2 or v3)")
     p.add_argument("--image", help="the full-resolution image the positions are in (TIFF / OME-TIFF / OME-Zarr); "
                                    "default: the image in uns['spatial'], else a cell-density background")
     p.add_argument("--image-scale", type=float, default=1.0, help="with --image: multiply the positions by this")
@@ -589,7 +591,7 @@ ELEMENT_KINDS = ("images", "labels", "shapes", "points", "tables")
 
 
 def add_args_spatialdata(p):
-    p.add_argument("--src", required=True, help="the SpatialData store (a .zarr folder, zarr v2)")
+    p.add_argument("--src", required=True, help="the SpatialData store (a .zarr folder, zarr v2 or v3)")
     p.add_argument("--table", help="the table to read (default: every table that annotates shapes, one layer each)")
     p.add_argument("--region", help="a table that annotates several regions: the one to read")
     p.add_argument("--coordinate-system", help="the coordinate system to draw in (default global, else the one the "
@@ -603,8 +605,9 @@ def add_args_spatialdata(p):
     p.add_argument("--no-user-clusters", action="store_true",
                    help="do not keep the tables' obs columns / X_umap as your own clusterings / UMAP")
     p.add_argument("--coords-um", type=float,
-                   help="no image: µm per unit of the coordinate system (sets the scale bar and lets the molecules "
-                        "be drawn); with an image its own pixel size (or --pixel-size) is used")
+                   help="µm per unit of the coordinate system (sets the scale bar and lets the molecules be drawn): "
+                        "with no image, the background's scale; with an image that has no pixel size, its pixel size "
+                        "follows from its transformation (--pixel-size, or a unit on the image's axes, wins)")
     p.add_argument("--background-um", type=float, help="no image, --coords-um given: µm per pixel of the background (default 1)")
 
 
@@ -644,6 +647,9 @@ def is_spatialdata(path) -> bool:
 def table_attrs(ad: annstore.AnnFile) -> dict:
     """uns/spatialdata_attrs of a table: {"region": [names], "region_key", "instance_key"}."""
     a = ad.dict("uns/spatialdata_attrs") or {}
+    if not a.get("region"):                       # spatialdata 0.7 also writes them on the table group itself
+        top = ad.attrs(ad.root)
+        a = {k: top.get(k) for k in ("region", "region_key", "instance_key")}
     reg = a.get("region")
     if isinstance(reg, str):
         reg = [reg]
@@ -801,7 +807,6 @@ def _pick_cs(want: str | None, systems: list[dict], tag: str) -> str:
 def plan_spatialdata(args, log=print) -> Plan:
     tag = "spatialdata"
     root = Path(args.src)
-    ngff.refuse_v3(root, tag)
     if not is_spatialdata(root):
         raise SystemExit(f"[{tag}] not a SpatialData store (a zarr folder with images/, shapes/, points/ or tables/)")
     el = sd_elements(root)
@@ -868,8 +873,10 @@ def plan_spatialdata(args, log=print) -> Plan:
                 u = ad.obsm("X_umap")
                 if u is not None and u.ndim == 2 and u.shape[1] >= 2 and len(u) == ad.n_obs:
                     umap = u[rows, :2]
+            names = [ad.obs_names[i] for i in rows[:2000].tolist()]
+            visium_bc = bool(names) and sum(1 for b in names if _VISIUM_BC.match(b)) >= 0.95 * len(names)
             layers.append({"table": tn, "region": reg, "ids": inst, "X": X, "genes": genes, "where": where, "counts": counts,
-                           "cols": cols, "colors": colors, "umap": umap})
+                           "cols": cols, "colors": colors, "umap": umap, "visium_bc": visium_bc})
         finally:
             ad.close()
     if not layers:
@@ -930,12 +937,20 @@ def plan_spatialdata(args, log=print) -> Plan:
         P.colors = None if img.is_rgb else img.colors
         P.imaging = not img.is_rgb
         P.pixel_size_um = img.pixel_size_um
+        sx, sy = float(np.hypot(*M_img[:2, 0])), float(np.hypot(*M_img[:2, 1]))
+        if abs(sx - sy) > 0.01 * max(sx, sy):
+            log(f"[{tag}] WARNING the image's pixels are not square in {log_name(cs)} ({sx:.4g} x {sy:.4g} units): the "
+                f"positions are placed exactly, the scale bar uses the mean pixel size")
+        if not P.pixel_size_um and args.coords_um and not getattr(args, "pixel_size", None):
+            P.pixel_size_um = float(args.coords_um) * ngff.scale_of(M_img)
+            log(f"[{tag}] pixel size {P.pixel_size_um:.4f} µm = --coords-um x the image's scale to {log_name(cs)}")
         P.manifest_source["image"] = str(el["images"][image])
         log(f"[{tag}] image {log_name(image)}: {img.width} x {img.height} px, {img.nC} channel(s)"
             + (f", z-plane {P.source.z} of {img.nZ}" if img.nZ > 1 else "")
             + (f"; pixel size {img.pixel_size_um:.4f} µm from its axes" if img.pixel_size_um else
                "; no pixel size in it" + (", --pixel-size used" if getattr(args, "pixel_size", None) else
-                                          " (give --pixel-size for the scale bar and the molecules)")))
+                                          ", --coords-um used" if args.coords_um else
+                                          " (give --pixel-size, or --coords-um, for the scale bar and the molecules)")))
     else:
         to_img = None
         log(f"[{tag}] no image in {log_name(cs)}: a cell-density background is drawn")
@@ -993,12 +1008,19 @@ def plan_spatialdata(args, log=print) -> Plan:
             spot_px = float(np.median(2 * np.sqrt(a / np.pi))) if a.size else median_spacing(xy_px)
             kind = "cells"
         if kind == "cells":
-            key, label, bin_um = "cells", "Cells", None
+            key, label, bin_um = ("nuclei", "Nuclei", None) if "nucle" in L["region"].lower() else ("cells", "Cells", None)
         elif side is not None:
             bin_um = side * um if um else None
             key, label = (f"{int(round(bin_um)):03d}um", f"{round(bin_um):g} µm bins") if bin_um else ("bins", "Bins")
         else:
             key, label, bin_um = "spots", "Spots", None
+            if L["visium_bc"] and sh["kind"] == "circles":
+                label = "Visium spots (55 µm)"
+                if not um:                          # as for a classic Visium AnnData: the spots are 55 µm across
+                    um = P.pixel_size_um = VISIUM_SPOT_UM / spot_px
+                    P.block["pixelSize"] = "classic Visium assumed: 55 µm spots"
+                    log(f"[{tag}] pixel size {um:.4f} µm: classic Visium assumed (Visium barcodes, circles of one size "
+                        f"{spot_px:.2f} px across = 55 µm spots); --pixel-size overrides")
         k0, i = key, 2
         while key in used_keys:
             key = f"{k0}{i}"
@@ -1071,13 +1093,14 @@ def _outline_sets(L, sh, shapes, el, tr, cs, to_img, tag, log) -> list:
         except SystemExit as e:
             log(f"[{tag}] shapes {log_name(name)} not read for outlines: {e}")
             continue
-        if s["kind"] != "polygons":
+        if s["kind"] != "polygons" or not len(s["ids"]):
             continue
         t = ngff.element_transforms(s["attrs"], f"shapes {log_name(name)}")
         if cs not in t:
             continue
         ids = {_norm_id(i) for i in s["ids"]}
-        if len(ids & want) < 0.5 * min(len(want), len(ids)):
+        both = len(ids & want)
+        if both < 0.5 * len(want) or both < 0.5 * len(ids):     # most cells have one, most polygons are cells
             continue
         key = "nucleus" if "nucle" in name.lower() else "cell"
         if any(x.key == key for x in sets):

@@ -40,6 +40,7 @@ const DATASETS = [
   { id: "demo_omezarr", what: "OME-Zarr image", photo: false, layer: null, channels: ["DAPI", "CD45", "PanCK", "CD3"] },
   { id: "demo_sdata_xenium", what: "SpatialData (Xenium-like)", photo: false, layer: "cells", outlines: true, molecules: true, user: "cell_type" },
   { id: "demo_sdata_visiumhd", what: "SpatialData (Visium HD-like)", photo: true, layer: "016um" },
+  { id: "demo_omezarr_v3", what: "OME-Zarr image, OME-NGFF 0.5 (zarr v3, sharded)", photo: false, layer: null, channels: ["DAPI", "CD45", "PanCK", "CD3"] },
 ];
 
 let pw = null;

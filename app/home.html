@@ -73,7 +73,8 @@
     <h2>1. Prepare a folder of datasets</h2>
     <p class="hint">Put each dataset in its own folder inside one data folder (a Visium HD
       <code>outs</code> folder with its image, a Xenium output folder, a CosMx or MERSCOPE folder, a
-      GeoMx folder, or one OME-TIFF / QPTIFF / .h5ad file). SODA works out what each one is, prepares
+      GeoMx folder, or one OME-TIFF / QPTIFF / .h5ad file, a zipped Xenium output or a Xenium
+      <code>*_transcripts.zarr.zip</code>; names starting with <code>_</code> are left out). SODA works out what each one is, prepares
       and exports it, then checks the export for sample IDs. Your data folder is only read, never changed.</p>
     <label for="src">Data folder</label>
     <div class="row"><input type="text" id="src" placeholder="the folder that holds one folder per dataset" spellcheck="false">
