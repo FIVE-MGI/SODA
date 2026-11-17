@@ -16,11 +16,13 @@ General rules:
   of the image the pyramid was built from (after any `--crop` and `--flip`): x to the
   right, y down, origin at the top-left corner of the image.
 - A **row** means a position in `expr/<key>/positions.bin`. `region.bin`, `binqc/`, `hvg/`
-  and `umap/` all refer to bins by row. No file contains a barcode, except the optional
-  `ids.txt.gz` written only when asked for (`prepare.py export --ids`, see below). It is written
-  only when every id fully matches its platform's instrument id format (an allow-list) and none
-  looks like a sample ID; otherwise the export stops, writes no list, and says which layer and how
-  many ids failed without printing any of them.
+  and `umap/` all refer to bins by row. No file contains a barcode, except `ids.txt.gz`, which
+  `prepare.py export` writes **by default** (`--no-ids` leaves it out, see below), as Loupe Browser,
+  Xenium Explorer and Vitessce keep barcodes. A layer's list is written only when no id looks like a
+  sample ID and, for the platforms with a known id format, every id matches it in full; otherwise
+  that layer's list is left out with a message that names the layer and how many ids failed
+  without printing any of them, and the export goes on. The data owner is responsible for what is
+  published.
 - File names made from gene names use JavaScript's `encodeURIComponent` (Python:
   `urllib.parse.quote(name, safe="-_.!~*'()")`). Known issue: for a name that actually
   changes under encoding (a space, `/`, `|`, `+` ...), the file on disk contains a literal
@@ -124,7 +126,7 @@ The prepare cache's own manifest also has a `source` block with local file paths
 | `binQc` | only if `binqc/` was written (RNA layers of 8 µm or more, and classic spots; exports from 11 November 2026): the files and ranges of the per-bin QC values, see below |
 | `hvg` | only if `hvg/` was written: `{"nGenes", "chunkPx", "chunks", "bytes"}` |
 | `mat` | protein grid layers (`"kind": "protein"`) only, if `mat/` was written: `{"nChannels", "chunkPx", "chunks", "bytes"}` |
-| `ids` | only with `prepare.py export --ids` or `prepare.py ids`: `{"file": "ids.txt.gz", "n": rows, "bytes": file size, "column": "barcode" \| "cell_id"}`, see `ids.txt.gz` below |
+| `ids` | by default (not with `--no-ids`, nor for a layer whose ids failed the checks): `{"file": "ids.txt.gz", "n": rows, "bytes": file size, "column": "barcode" \| "cell_id"}`, see `ids.txt.gz` below |
 | `shapes` | cells layers only, if the platform's cell outlines were imported: `{"version": 1, "format": "poly-u16-tiles", "dir": "shapes", "chunkPx", "sets": [{"key", "label", "nPolygons", "nRowsWithShape", "nVertices", "chunks", "bytes", "source"}]}`, see [Cell outlines](#cell-outlines-shapesset-cells-layers) |
 | `umap` | only if `umap/` was written: `{"nEmbedded", "clusterings": [{"resolution", "name", "source", "n"}], "default"}`; with the lab's own results also `id` per clustering and `"embedding": "user"` (see umap/ below) |
 
@@ -188,23 +190,29 @@ length in the layer's pack (`{"n": "Gapdh", "t": 123456.0, "s": 0, "o": 4128, "b
 float32 pairs `x, y`, one per bin that has a position, in count-matrix barcode order.
 Number of rows = file size / 8. This order defines **row** numbers.
 
-### `ids.txt.gz` (optional): barcode / cell id per row
+### `ids.txt.gz` (by default): barcode / cell id per row
 
-Only when the export was made with `prepare.py export --ids`, or `prepare.py ids --id <id> --out <cache>
---dest <export root>` was run on it later (it reads the barcodes from the prepare cache and adds the files and
-the manifest entries; nothing else changes). gzip of UTF-8 text, one id per line, one line per row of
+Written by `prepare.py export` by default (also through `prepare.py batch`, the notebook and the desktop
+app); `--no-ids` (the notebook's `INCLUDE_IDS = False`, the app's "Include barcode / cell id lists" box)
+leaves every list out. `prepare.py ids --id <id> --out <cache> --dest <export root>` adds the lists to an
+export made without them (it reads the barcodes from the prepare cache and adds the files and the manifest
+entries; nothing else changes). `--ids` is still accepted: it asks for the lists explicitly, so a failed
+check stops the export (below) instead of leaving one list out. gzip of UTF-8 text, one id per line, one line per row of
 `positions.bin` and in its order, no header. `column` in the manifest entry says what they are: `barcode`
-(Visium spots, Visium HD and Stereo-seq bins) or `cell_id` (cells layers: Xenium `cell_id`, CosMx
-`<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id). GeoMx ROI layers and protein grid layers get none.
+(Visium spots, Visium HD and Stereo-seq bins, AnnData / SpatialData spot or bin tables) or `cell_id` (cells
+layers: Xenium `cell_id`, CosMx `<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id, the obs names of
+an AnnData / SpatialData cell table). GeoMx ROI layers and protein grid layers get none.
 The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes, and to match a reader's file to
 the bins in "Your own results" (Clusters tab; [ADVANCED.md](ADVANCED.md#load-your-own-results-in-the-viewer-no-new-export));
 without it both say how to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
 
-Before anything is written, every layer's ids pass two gates (layerids.py), and one refused layer means no
-list for any layer of the dataset:
+Before anything is written, every layer's ids pass two gates (layerids.py). By default a layer that fails
+gets no list (a `***` line in the export log says why) and the other layers keep theirs; with `--ids` or
+`prepare.py ids` one failed layer means no list for any layer of the dataset and the command stops. The
+checks catch the usual mistakes; **the data owner is responsible for what they publish.**
 
-1. **Allow-list.** Each id must match, in full, the instrument id format of its platform, as the readers put it
-   in the cache:
+1. **Id format** (the platforms below). Each id must match, in full, the instrument id format of its
+   platform, as the readers put it in the cache:
 
    | Platform | Accepted ids |
    |---|---|
@@ -217,10 +225,13 @@ list for any layer of the dataset:
 
    A CosMx id keeps its slide number: it is the instrument's slide index, an integer, and the form AtoMx and
    Seurat use. Anything else, such as a merge prefix (`S1_`), a sample or run name glued to a barcode, or a
-   GeoMx Sample_ID, is refused, never stripped or rewritten. Other platforms get no list.
-2. **Sample-ID patterns.** `deid.find_ids` over the whole list, as for every other file.
+   GeoMx Sample_ID, fails, and is never stripped or rewritten. Platforms with no format here (the obs
+   names of an AnnData or SpatialData table, ...) have no format check: their ids only must not hold a line
+   break or another control character (one id per line must stay one row). To hold such ids to a format,
+   add one to `FORMATS` in `layerids.py` ([ADVANCED.md](ADVANCED.md#barcode-and-cell-id-lists)).
+2. **Sample-ID patterns.** `deid.find_ids` over the whole list, for every platform, as for every other file.
 
-A refusal prints the layer, the platform, the format and the count of failing ids, never an id. `deid.py
+A message prints the layer, the platform, the format and the count of failing ids, never an id. `deid.py
 check` also reads `ids.txt.gz` (any `.gz` that unpacks to text) and reports a hit there as file and line
 only.
 
@@ -347,6 +358,15 @@ by `viewlink.js`):
 - The layer, drawn shapes, the clustering on show with cluster names, cell sets and hidden
   clusters (`sectionClusters`) and the quality thresholds (`qcFilter`) are where Save JSON always had
   them, one level up. A file without `view` (saved before 16 November 2026) loads as it did.
+- `runSets` (from 17 November 2026): clusters of a Draw a region run merged into sets (Merge clusters of
+  the run), `{"sizes": [bins per cluster of the run], "sets": [{"ids": [2, 5], "prev": null, "name": "T cells"}]}`.
+  A set takes its lowest member's number and colour; `name` is the set's name, `prev` what that member was
+  called before. Saved in the file and the link; on opening they wait for the next run and are applied only
+  when its clusters have exactly these sizes (the same shapes, seed and resolution), else left out with a
+  note. The file's `result.cluster` keeps the run's own clusters.
+- `paint` (Colour by a value): two genes carry `pc`, the colours the reader chose: `"mg"` (magenta / green,
+  both light grey; the default, and what a file or link without `pc` opens with) or `"rg"` (red / green,
+  both yellow).
 - A shape made by Combine / Overlap / Subtract (selections.js) is a list of bins (`rows`, as
   before) and, when it was made from outlines only (Circle, Freehand, imported polygons), also
   carries its recipe `def`: `{"points": [[x, y], ...]}`, `{"geo": [[ring, hole, ...], ...]}` or
@@ -684,9 +704,9 @@ and `shapes/<set>/`. What differs:
 - No file, library, table, region, element or coordinate-system name is written to the export:
   the blocks above hold counts and fixed words only.
 - Layer keys: `spots`, `cells`, or a Visium HD bin size (`016um`) as for Space Ranger output.
-- Only `platform: "visium"` layers can get per-row id lists (`export --ids`, Visium spot
-  barcodes); the `anndata` and `spatialdata` platforms are not on the allow-list, so their ids
-  are refused there.
+- Per-row id lists (`ids.txt.gz`, by default): `platform: "visium"` layers are held to the Visium
+  spot barcode format; the `anndata` and `spatialdata` platforms have no id format, so their obs
+  names are written when none looks like a sample ID (and none holds a line break).
 - The file's own `obs` clusterings and `X_umap` are kept in the cache (`userobs/<key>/obs.csv`,
   `umap.csv`, and the manifest's `userObs` list) and attached at export as your own clusters
   (`source: "user"` in `umap/index.json`). `userObs` and `userobs/` stay in the cache: the

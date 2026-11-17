@@ -9,10 +9,13 @@
 //                     extraCols). On the viridis ramp the gene density uses, from a From to a to value.
 //   Two genes         where gene A, gene B or both are expressed: a bin counts as expressing a gene when
 //                     its value is above that gene's threshold (default: above 0, i.e. detected; on
-//                     marker squares, above the marker's median square). Shown as three classes (A only
-//                     red, B only green, both yellow) or as a blend: red for A plus green for B, each
-//                     from its threshold (at least a quarter bright) to its 99th percentile, so a bin
-//                     high in both is yellow. Bins expressing neither are not drawn.
+//                     marker squares, above the marker's median square). Shown as three classes (A only,
+//                     B only, both) or as a blend: A's colour plus B's, each from its threshold (at least
+//                     a quarter bright) to its 99th percentile. Bins expressing neither are not drawn.
+//                     The reader picks the colours ("Colours"): magenta / green, the default, which
+//                     people with red-green colour blindness tell apart too (A magenta, B green, both
+//                     light grey; the blend adds up to white), or the older red / green (both yellow).
+//                     On the page's dark background each class colour has a contrast of at least 6:1.
 //   Gene set score    a list of genes typed or pasted, or a cell type's marker genes (the dataset's own
 //                     marker list, then SODA's generic one). Per bin, the MEAN over the listed genes
 //                     found in the layer of the gene's normalised value:
@@ -52,9 +55,20 @@
   const SET_PARALLEL = 4;                          // gene files fetched at once for a set
   const PAIR_VIEWS = ["classes", "blend"];
   const ALPHA = 235;                               // as the gene density squares
-  // two genes: A only, B only, both (the blend adds A's red to B's green)
-  const PAIR_RGB = { a: [255, 51, 85], b: [51, 221, 102], both: [255, 221, 51] };
-  const BLEND_A = [255, 0, 0], BLEND_B = [0, 221, 0];       // the blend: the two add up to yellow
+  // two genes: the colours of A only, B only and both, and the blend's (a bin's colour = sa x blendA + sb x blendB
+  // + min(sa, sb) x blendX, each s from 0 to 1). The reader's choice; a saved view without one gets magenta / green.
+  // Contrast on the page's background (#0e1117): magenta 6.2:1, green 8.5:1, grey 15.9:1. Told apart under a
+  // simulated deuteranopia (Machado 2009): magenta / green ΔE 84 (red / green: 14).
+  const PAIR_PALS = ["mg", "rg"];
+  const PAL = {
+    mg: { a: [240, 70, 240], b: [40, 200, 90], both: [235, 235, 235], blendA: [255, 0, 255], blendB: [0, 255, 0], blendX: [0, 0, 0],
+          nameA: "magenta", nameB: "green", nameBoth: "white", label: "magenta/green" },
+    rg: { a: [255, 51, 85], b: [51, 221, 102], both: [255, 221, 51], blendA: [255, 0, 0], blendB: [0, 221, 0], blendX: [0, 0, 51],
+          nameA: "red", nameB: "green", nameBoth: "yellow", label: "red/green" },
+  };
+  let pairPal = "mg";                              // kept across layers and datasets; a link or Save JSON sets it
+  const pal = () => PAL[pairPal] || PAL.mg;
+  const blendRgb = (p, sa, sb) => [0, 1, 2].map((i) => Math.min(255, Math.round(sa * p.blendA[i] + sb * p.blendB[i] + Math.min(sa, sb) * p.blendX[i])));
   const BLEND_FLOOR = 0.25;                        // a bin just above a threshold is a quarter bright, not black
   const GENE_CACHE = 4;                            // gene rows kept per layer
 
@@ -92,7 +106,8 @@
           <label><span>above</span><input id="paintThrA" type="number" step="any" inputmode="decimal" title="A bin expresses it when its value is above this" /></label></div>
         <div class="paint-gene"><label><span id="paintLblB">Gene B</span><input id="paintGeneB" type="text" list="paintGeneList" autocomplete="off" spellcheck="false" placeholder="name, then Enter" /></label>
           <label><span>above</span><input id="paintThrB" type="number" step="any" inputmode="decimal" title="A bin expresses it when its value is above this" /></label></div>
-        <label class="row slim"><span>Show</span><select id="paintPairView"><option value="classes">Both / one only</option><option value="blend">Blend (red + green = yellow)</option></select></label>
+        <label class="row slim"><span>Show</span><select id="paintPairView"><option value="classes">Both / one only</option><option value="blend">Blend (magenta + green = white)</option></select></label>
+        <label class="row slim"><span>Colours</span><select id="paintPairPal" title="Magenta / green: told apart with red-green colour blindness too (both: light grey). Red / green: the older colours (both: yellow)."><option value="mg">magenta/green</option><option value="rg">red/green</option></select></label>
       </div>
       <div id="paintSetBox" class="paint-set" hidden>
         <label class="row slim"><span>Cell type</span><select id="paintSetType" title="Fill the list with a cell type's marker genes and score it"><option value="">Your own list</option></select></label>
@@ -134,6 +149,7 @@
       if (t) { $("paintSetGenes").value = t.genes.join(", "); setScore(t.genes, t.id); }
     };
     $("paintPairView").onchange = (e) => { P.pair.view = PAIR_VIEWS.includes(e.target.value) ? e.target.value : "classes"; pairCompute(); };
+    $("paintPairPal").onchange = (e) => { pairPal = PAIR_PALS.includes(e.target.value) ? e.target.value : "mg"; pairCompute(); };
   }
   const msg = (t, err) => { const el = $("paintMsg"); if (!el) return; el.textContent = t || ""; el.classList.toggle("err", !!err); };
 
@@ -322,6 +338,7 @@
       const top = (v, th) => { const s = []; for (let r = 0; r < n; r++) if (v[r] > th) s.push(v[r]); s.sort((x, y) => x - y); return s.length ? Math.max(s[Math.floor((s.length - 1) * 0.99)], th + 1e-6) : th + 1; };
       const hiA = view === "blend" ? top(D.va, ta) : 0, hiB = view === "blend" ? top(D.vb, tb) : 0;
       const sOf = (v, th, hi) => (v > th ? BLEND_FLOOR + (1 - BLEND_FLOOR) * Math.min(1, (v - th) / Math.max(hi - th, 1e-6)) : 0);
+      const p = pal();
       for (let r = 0; r < n; r++) {
         const ea = D.va[r] > ta, eb = D.vb[r] > tb;
         const k = ea && eb ? "both" : ea ? "a" : eb ? "b" : "none";
@@ -331,13 +348,13 @@
         let c;
         if (view === "blend") {
           const sa = sOf(D.va[r], ta, hiA), sb = sOf(D.vb[r], tb, hiB);
-          c = [Math.round(255 * sa), Math.round(221 * sb), Math.round(51 * Math.min(sa, sb))];
+          c = blendRgb(p, sa, sb);
           t[r] = Math.max(sa, sb);
-        } else { c = PAIR_RGB[k]; t[r] = k === "both" ? 1 : 0.6; }
+        } else { c = p[k]; t[r] = k === "both" ? 1 : 0.6; }
         rgb[3 * r] = c[0]; rgb[3 * r + 1] = c[1]; rgb[3 * r + 2] = c[2];
         col[4 * r] = c[0]; col[4 * r + 1] = c[1]; col[4 * r + 2] = c[2]; col[4 * r + 3] = ALPHA;
       }
-      Object.assign(D, { ta, tb, view, counts, cls, hiA, hiB });
+      Object.assign(D, { ta, tb, view, counts, cls, hiA, hiB, pal: pairPal });
       P.t = t; P.rgb = rgb; P.colors = col;
     }
     P.ver++;
@@ -486,6 +503,9 @@
       if (P.pair.a && document.activeElement !== $("paintGeneA")) $("paintGeneA").value = P.pair.a;
       if (P.pair.b && document.activeElement !== $("paintGeneB")) $("paintGeneB").value = P.pair.b;
       $("paintPairView").value = P.pair.view;
+      const p = pal(), bo = $("paintPairView").querySelector("option[value=blend]");
+      bo.textContent = `Blend (${p.nameA} + ${p.nameB} = ${p.nameBoth})`;
+      $("paintPairPal").value = pairPal;
       const D = P.pd;
       for (const w of ["a", "b"]) {
         const el = $(`paintThr${w.toUpperCase()}`);
@@ -539,14 +559,15 @@
     if (!active()) return "";
     if (P.mode === "pair") {
       const D = P.pd, n = D.va.length, c = D.counts, thr = `${W().Gene}s count above ${fmt(D.ta)} (${esc(D.a)}) and ${fmt(D.tb)} (${esc(D.b)}).`;
+      const p = PAL[D.pal] || PAL.mg, up = (t) => t.charAt(0).toUpperCase() + t.slice(1);
       if (D.view === "blend") {
-        return `<div class="genes"><span class="g"><i style="background:linear-gradient(90deg,#000,${rgbCss(BLEND_A)})"></i>${esc(D.a)}</span>` +
-          `<span class="g"><i style="background:linear-gradient(90deg,#000,${rgbCss(BLEND_B)})"></i>${esc(D.b)}</span>` +
-          `<span class="g"><i style="background:${rgbCss(PAIR_RGB.both)}"></i>both high</span></div>` +
-          `<div class="note">Red for ${esc(D.a)} plus green for ${esc(D.b)}: yellow where both are high. ${thr} ${c.both.toLocaleString()} ${esc(W().bins)} have both. ${esc(W().Bins)} with neither are not drawn.</div>`;
+        return `<div class="genes"><span class="g"><i style="background:linear-gradient(90deg,#000,${rgbCss(p.blendA)})"></i>${esc(D.a)}</span>` +
+          `<span class="g"><i style="background:linear-gradient(90deg,#000,${rgbCss(p.blendB)})"></i>${esc(D.b)}</span>` +
+          `<span class="g"><i style="background:${rgbCss(blendRgb(p, 1, 1))}"></i>both high</span></div>` +
+          `<div class="note">${up(p.nameA)} for ${esc(D.a)} plus ${p.nameB} for ${esc(D.b)}: ${p.nameBoth} where both are high. ${thr} ${c.both.toLocaleString()} ${esc(W().bins)} have both. ${esc(W().Bins)} with neither are not drawn.</div>`;
       }
       const row = (rgb, label, k) => `<span class="g"><i style="background:${rgbCss(rgb)}"></i>${esc(label)} · ${k.toLocaleString()}${pct(k, n)}</span>`;
-      return `<div class="genes">${row(PAIR_RGB.both, `${D.a} and ${D.b}`, c.both)}${row(PAIR_RGB.a, `${D.a} only`, c.a)}${row(PAIR_RGB.b, `${D.b} only`, c.b)}</div>` +
+      return `<div class="genes">${row(p.both, `${D.a} and ${D.b}`, c.both)}${row(p.a, `${D.a} only`, c.a)}${row(p.b, `${D.b} only`, c.b)}</div>` +
         `<div class="note">${esc(W().Bins)} per class, of ${n.toLocaleString()}. ${thr} ${c.none.toLocaleString()} with neither are not drawn.</div>`;
     }
     if (P.mode === "set") {
@@ -564,10 +585,10 @@
   function legend() {
     if (!active()) return [];
     if (P.mode === "pair") {
-      const D = P.pd, c = D.counts, n = D.va.length, title = `${D.a} and ${D.b} (above ${fmt(D.ta)} / ${fmt(D.tb)})`;
-      if (D.view === "blend") return [{ title, items: [{ label: D.a, stops: [[0, 0, 0], BLEND_A] }, { label: D.b, stops: [[0, 0, 0], BLEND_B] }, { label: `both high (${c.both.toLocaleString()} ${W().bins})`, rgb: PAIR_RGB.both }] }];
-      return [{ title, items: [{ label: `both · ${c.both.toLocaleString()}${pct(c.both, n)}`, rgb: PAIR_RGB.both },
-        { label: `${D.a} only · ${c.a.toLocaleString()}${pct(c.a, n)}`, rgb: PAIR_RGB.a }, { label: `${D.b} only · ${c.b.toLocaleString()}${pct(c.b, n)}`, rgb: PAIR_RGB.b }] }];
+      const D = P.pd, c = D.counts, n = D.va.length, title = `${D.a} and ${D.b} (above ${fmt(D.ta)} / ${fmt(D.tb)})`, p = PAL[D.pal] || PAL.mg;
+      if (D.view === "blend") return [{ title, items: [{ label: D.a, stops: [[0, 0, 0], p.blendA] }, { label: D.b, stops: [[0, 0, 0], p.blendB] }, { label: `both high (${c.both.toLocaleString()} ${W().bins})`, rgb: blendRgb(p, 1, 1) }] }];
+      return [{ title, items: [{ label: `both · ${c.both.toLocaleString()}${pct(c.both, n)}`, rgb: p.both },
+        { label: `${D.a} only · ${c.a.toLocaleString()}${pct(c.a, n)}`, rgb: p.a }, { label: `${D.b} only · ${c.b.toLocaleString()}${pct(c.b, n)}`, rgb: p.b }] }];
     }
     const lut = api.lut(), stops = [];
     for (let i = 0; i <= 6; i++) { const k = Math.round((i / 6) * 255) * 3; stops.push([lut[k], lut[k + 1], lut[k + 2]]); }
@@ -589,7 +610,7 @@
   function capture() {
     if (P.mode === "pair") {
       if (!P.pair.a || !P.pair.b) return null;
-      const o = { m: "pair", a: P.pair.a, b: P.pair.b, pv: P.pair.view };
+      const o = { m: "pair", a: P.pair.a, b: P.pair.b, pv: P.pair.view, pc: pairPal };
       if (Number.isFinite(P.pair.ta)) o.ta = P.pair.ta;
       if (Number.isFinite(P.pair.tb)) o.tb = P.pair.tb;
       return o;
@@ -612,7 +633,7 @@
     h.put(o, "m", h.oneOf(x.m, MODES)); h.put(o, "col", h.str(x.col, 80)); h.put(o, "sc", h.oneOf(x.sc, ["lin", "log"]));
     const lo = h.num(x.lo, -1e15, 1e15), hi = h.num(x.hi, -1e15, 1e15);
     if (lo !== null && hi !== null && hi > lo) { o.lo = lo; o.hi = hi; }
-    h.put(o, "a", h.str(x.a, 80)); h.put(o, "b", h.str(x.b, 80)); h.put(o, "pv", h.oneOf(x.pv, PAIR_VIEWS));
+    h.put(o, "a", h.str(x.a, 80)); h.put(o, "b", h.str(x.b, 80)); h.put(o, "pv", h.oneOf(x.pv, PAIR_VIEWS)); h.put(o, "pc", h.oneOf(x.pc, PAIR_PALS));
     h.put(o, "ta", h.num(x.ta, -1e15, 1e15)); h.put(o, "tb", h.num(x.tb, -1e15, 1e15));
     h.put(o, "g", h.list(x.g, MAX_SET, (g) => h.str(g, 60))); h.put(o, "ct", h.str(x.ct, 120));
     return o.m ? o : null;
@@ -624,6 +645,7 @@
       const a = lookup(x.a), b = lookup(x.b);
       if (!a || !b || !hasGenes()) { notes.push(`Not in this layer: ${[!a ? x.a : null, !b ? x.b : null].filter(Boolean).join(", ") || "its genes"}: not coloured by two genes.`); await setMode("off"); return notes; }
       P.pair = { a, b, ta: Number.isFinite(x.ta) ? x.ta : null, tb: Number.isFinite(x.tb) ? x.tb : null, view: PAIR_VIEWS.includes(x.pv) ? x.pv : "classes" };
+      pairPal = PAIR_PALS.includes(x.pc) ? x.pc : "mg";             // a link or file from before the choice: the default
       P.mode = "pair"; $("paintMode").value = "pair";
       await pairLoad();
       return notes;
@@ -659,5 +681,6 @@
     onLayer, active, layer, mix, tip, keyHtml, legend, summary, valueAt,
     // tests
     _state: () => P,
+    _pal: () => ({ id: pairPal, ...PAL[pairPal] }),
   };
 })();

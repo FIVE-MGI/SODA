@@ -13,7 +13,7 @@
 //              Roles are guessed from the names and the values, and can be corrected in a table of drop-downs.
 //              A colour list in the order of the groups (scanpy's uns["<column>_colors"]) can be pasted there.
 //
-//   Matching   rows are matched to the layer's bins by barcode / cell id, through the export's optional id list
+//   Matching   rows are matched to the layer's bins by barcode / cell id, through the export's id list (on by default)
 //              (expr/<key>/ids.txt.gz, docs/DATA_FORMAT.md; `prepare.py ids` adds it to an export). Exact first,
 //              then the Seurat / scanpy variants userclusters.py also accepts: a different or missing "-1"-style
 //              ending ("-1", "_1", "-1-0", ".1") and a sample prefix ("S1_", "slice1_", "S1:"). A merged object
@@ -568,7 +568,7 @@
   function matchText() {
     const m = D.m, w = W(), lay = D.label || D.key;
     if (m.mode === "noids") return { kind: "err", t: `This export has no id list for the ${lay} layer, so the rows cannot be matched by barcode or cell id. ` +
-      `Ask whoever made the export to add it: prepare.py ids --id ${D.ds} --out <cache folder> --dest <export folder> (or export with --ids). ` +
+      `Ask whoever made the export to add it: prepare.py ids --id ${D.ds} --out <cache folder> --dest <export folder> (an export holds one by default, unless it was made with --no-ids or the list failed its sample-ID check). ` +
       `Or give the file a soda_row column (each row's ${w.bin} number in this export, as SODA's own CSVs write it), or a first line "# soda row order" ` +
       `and exactly ${n2(D.nBins)} rows in the export's order.${D.idErr ? ` (${D.idErr})` : ""}` };
     if (m.mode === "badorder") return { kind: "err", t: `The file says it is in SODA's row order ("# soda row order") but has ${n2(m.nFile)} rows; the ${lay} layer has ${n2(D.nBins)} ${w.bins}. Row order only works with exactly one row per ${w.bin}: not used.` };

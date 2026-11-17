@@ -58,8 +58,11 @@ arrays are written as a few packs of about 64 MB that the viewer reads with HTTP
 (genepack.py): a Visium HD layer is a handful of files instead of ~16,000. --gene-files loose
 writes one file per gene as before (for a host that ignores Range requests); --gene-files both
 writes the two side by side (a viewer older than the packs reads that too).
---ids also writes each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, for the viewer's "Save barcodes";
-off by default: an export holds no barcode otherwise); `ids` adds them to an existing export (layerids.py).
+Barcodes / cell ids: export writes each layer's barcodes / cell ids by default (expr/<key>/ids.txt.gz, for the
+viewer's "Save barcodes"), as Loupe Browser and Xenium Explorer keep them. Each list must hold no sample ID (and
+fit its platform's id format where layerids.py knows one), else that layer's list is left out with a message and the export goes on. --no-ids
+writes none; --ids asks for them explicitly, so a failed check stops the export instead. You decide what you
+publish. `ids` adds the lists to an existing export (layerids.py).
 """
 from __future__ import annotations
 
@@ -336,11 +339,16 @@ def main(argv=None):
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
     gene_file_args(e)
-    e.add_argument("--ids", action="store_true",
-                   help="also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz) so the viewer can save the "
-                        "bins or cells inside drawn shapes with them. Off by default: without it no barcode is written. "
-                        "Every id must fully match its platform's id format and none may look like a sample ID, "
-                        "else nothing is written and the export stops (layerids.py)")
+    idg = e.add_mutually_exclusive_group()
+    idg.add_argument("--no-ids", action="store_true",
+                     help="write no barcode / cell id list. By default each layer's ids go to expr/<key>/ids.txt.gz so the "
+                          "viewer can save the bins or cells inside drawn shapes with them; a layer whose ids look like "
+                          "sample IDs, or do not fit a known platform's id format, is left out with a message (layerids.py). "
+                          "You decide what you publish")
+    idg.add_argument("--ids", action="store_true",
+                     help="ask for the barcode / cell id lists explicitly (they are written anyway): then no id may look like a "
+                          "sample ID (and each must fully match a known platform's id format), else nothing is "
+                          "written and the export stops (layerids.py)")
     userclusters.add_args(e)
     uc = sub.add_parser("userclusters", help="add your own UMAP / clusters (Seurat, scanpy) to a layer of an existing export")
     uc.add_argument("--id", required=True)
@@ -349,7 +357,8 @@ def main(argv=None):
     uc.add_argument("--markers", help="marker list for the suggested names (default: the one the export used)")
     uc.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     userclusters.add_args(uc)
-    ids = sub.add_parser("ids", help="add each layer's barcodes / cell ids to an existing export (as export --ids)")
+    ids = sub.add_parser("ids", help="add each layer's barcodes / cell ids to an existing export (as export --ids: "
+                                     "a failed check writes nothing)")
     ids.add_argument("--id", required=True)
     ids.add_argument("--out", required=True, help="cache root that prepare wrote into")
     ids.add_argument("--dest", required=True, help="export root holding <dest>/<id>/")
@@ -472,7 +481,8 @@ def main(argv=None):
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
                       grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample,
                       seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args),
-                      gene_files=args.gene_files, shard_mb=args.shard_mb, write_ids=args.ids)
+                      gene_files=args.gene_files, shard_mb=args.shard_mb,
+                      write_ids=not args.no_ids, ids_strict=args.ids)
 
         return
 
