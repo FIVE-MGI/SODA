@@ -106,6 +106,8 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
   optional Leiden clusters, of just the bins inside, computed in the browser. Drag a box or
   a loop over dots in its UMAP (Shift or **+** adds more) to light those bins on the slide,
   and **Show on slide** to frame them. Save the shapes and every parameter to redo it later.
+  **Merge clusters of the run** (under it) merges the run's clusters into named sets, as Cell sets does
+  for the whole section; the panel, the slide, the volcano and plot groups and Save CSV follow.
 - **Quality filter (per-bin QC).** Histograms of total counts, genes detected and % mitochondrial per bin,
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
   slide and left out of Draw a region, and the thresholds are saved with the shapes and in
@@ -164,7 +166,8 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
   for private data on Azure, or a small live tile server for a lab network.
 - **De-identification tools.** Sample IDs are replaced by numbers through a private key,
   and a check command gates uploads. They know only our lab's ID formats: edit `_ID` in
-  `deid.py` for yours first (see [DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md)).
+  `deid.py` for yours first (see [DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md)). Barcode and
+  cell id lists are in an export by default and are checked for sample IDs; `--no-ids` leaves them out.
 
 ![The synthetic demo section in Side by side mode: tissue on the left, its UMAP on the right, both coloured by Leiden cluster](docs/img/demo_side_by_side.jpg)
 
@@ -273,6 +276,16 @@ It runs the same steps and then checks every output file.
    When it is not certain it does not guess: it lists what it found and the `--kind ...` to add.
    Every kind also has its own command with all its options, and
    `notebooks/SODA_pipeline.ipynb` does the same for a folder of datasets.
+
+   **Barcode and cell id lists are included by default.** The export holds each layer's barcodes or
+   cell ids (`expr/<layer>/ids.txt.gz`), as Loupe Browser, Xenium Explorer and Vitessce keep them, so
+   people can save the bins inside a shape they draw with their barcodes. Every list is checked for
+   sample IDs first (and, for the instruments SODA knows, against the instrument's id format); a list
+   that fails is left out with a message, never printing the ids. The check catches the usual
+   mistakes: **you, the data owner, are responsible for what you publish.** To leave every list out,
+   add `--no-ids` to `prepare.py export` (or `prepare.py batch`, `SODA prepare`), set
+   `INCLUDE_IDS = False` in the notebook, or untick "Include barcode / cell id lists" in the desktop
+   app ([ADVANCED.md](docs/ADVANCED.md#barcode-and-cell-id-lists)).
 2. **[De-identify and check](docs/DEIDENTIFICATION.md)** before anything leaves your
    computer.
 3. **[Share it](docs/SHARE_YOUR_DATA.md), one of two ways:**

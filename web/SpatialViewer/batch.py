@@ -3,7 +3,7 @@ r"""Prepare and export a whole folder of datasets in one go, with a log of any t
     python prepare.py batch --src <folder of dataset folders> --out <cache folder> --dest <export folder>
            [--options options.json] [--jobs 1] [--rebuild] [--only id1,id2] [--dry-run]
            [--fmt jpg] [--workers 8] [--bins 008um,016um] [--markers-genes x.json] [--markers-proteins y.json]
-           [--title "Our atlas"] [--key <key file>] [--check-ids] [--logs <folder>] [--threads N]
+           [--title "Our atlas"] [--key <key file>] [--check-ids] [--no-ids] [--logs <folder>] [--threads N]
 
     (python batch.py ... is the same)
 
@@ -36,6 +36,11 @@ same keys (kind, label, src, image, pixel_size, crop, flip, user_layer, no_trans
 
 Relative paths in it are taken from the folder the options file is in (user_umap, user_obs and
 user_h5ad from the dataset's folder, as in the notebook).
+
+Barcodes / cell ids: each export holds every layer's barcodes / cell ids (expr/<key>/ids.txt.gz) by
+default, as `prepare.py export` writes them: a layer whose ids look like sample IDs, or do not fit a
+known platform's id format, is left out with a *** line in its export log (layerids.py). --no-ids leaves every
+list out. You decide what you publish; the sample ID check below reads the lists too.
 
 Exit code: 0 every dataset that ran is fine (skipped ones are listed, not errors); 1 a dataset or
 catalog.py failed; 2 nothing to do or a wrong option; 3 the sample ID check is a gate and found
@@ -490,11 +495,13 @@ def prepare_argv(d: dict, a) -> list[str]:
 
 
 def export_argv(d: dict, a) -> list[str]:
-    """The export command. It never asks for per-row barcodes / cell ids in the export (an opt-in of
-    `prepare.py export` on its own); the options file cannot add it either (only KNOWN_OPTIONS pass)."""
+    """The export command. Per-row barcodes / cell ids are written by `prepare.py export` by default (a
+    layer that fails layerids.py's checks is left out with a message, the export goes on); --no-ids passes
+    on to leave them all out. It never passes --ids (which would stop a dataset at a failed check); the
+    options file cannot add either (only KNOWN_OPTIONS pass)."""
     o = d["opts"]
     argv = ["export", "--id", d["id"], "--out", str(a.out), "--dest", str(a.dest), "--fmt", a.fmt,
-            "--workers", str(a.workers)] + gene_file_argv(a)
+            "--workers", str(a.workers)] + gene_file_argv(a) + (["--no-ids"] if getattr(a, "no_ids", False) else [])
     markers = o.get("markers") or (a.markers_proteins if d["kind"] in PROTEIN_KINDS else a.markers_genes)
     if markers:
         argv += ["--markers", str(markers)]
@@ -720,6 +727,9 @@ def build_parser() -> argparse.ArgumentParser:
                                   "sample ID check is a gate")
     ap.add_argument("--check-ids", action="store_true",
                     help="make the sample ID check a gate even without a key file (the notebook's ALWAYS_CHECK_IDS)")
+    ap.add_argument("--no-ids", action="store_true",
+                    help="write no barcode / cell id lists (expr/<key>/ids.txt.gz). By default each export holds them; "
+                         "a layer whose ids fail the id-format or sample-ID check is left out with a message")
     ap.add_argument("--logs", help="folder for the logs (default: 'logs' next to the export folder)")
     ap.add_argument("--threads", type=int,
                     help="BLAS / OpenMP threads per dataset (default: as prepare.py, split between --jobs)")

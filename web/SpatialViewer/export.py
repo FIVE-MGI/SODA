@@ -13,7 +13,7 @@
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
     <dest>/<id>/expr/<key>/umap/celltype*       suggested cell type per bin / cluster from marker lists (celltypes.py)
     <dest>/<id>/expr/<key>/umap/clusters_user*  the lab's own clusterings / UMAP, matched by barcode (userclusters.py)
-    <dest>/<id>/expr/<key>/ids.txt.gz           only with write_ids=True (--ids): the barcode / cell id of each row, allow-listed (layerids.py)
+    <dest>/<id>/expr/<key>/ids.txt.gz           by default (--no-ids leaves it out): the barcode / cell id of each row, allow-listed and checked for sample IDs (layerids.py)
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
@@ -133,7 +133,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                   umap_sample: int | None = None, seam_correct: bool = False,
                   user_clusters: list[dict] | None = None, gene_files: str = genepack.DEFAULT_MODE,
                   shard_mb: float = genepack.SHARD_MB,
-                  write_ids: bool = False) -> Path:
+                  write_ids: bool = True, ids_strict: bool = False) -> Path:
     """`markers`: the marker list for suggested cluster names. Default by modality:
     markers/rna_generic.json for RNA (Visium) layers, markers/protein_generic.json for the
     protein grid layer of an image dataset. `grid_um` (image datasets only): grid square size
@@ -146,8 +146,10 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     `gene_files`: "pack" (default) = each layer's genes in shards read with HTTP Range requests
     (genepack.py); "loose" = one file per gene, for a host that cannot answer Range requests;
     "both" = the two side by side (either viewer version reads it). `shard_mb`: pack shard size.
-    `write_ids`: also write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, layerids.py); off by default,
-    an export holds no barcode otherwise."""
+    `write_ids`: write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, layerids.py); on by default,
+    False (--no-ids) writes none. `ids_strict` (--ids, the lists asked for explicitly): a layer whose ids fail the
+    allow-list or the sample-ID check stops the export before anything is written; otherwise that layer's list is
+    left out with a message and the export goes on."""
     if gene_files not in genepack.MODES:
         raise ValueError(f"gene_files must be one of {genepack.MODES}, not {gene_files!r}")
     ds_dir = Path(ds_dir)
@@ -156,8 +158,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
         import stdformats
         user_clusters = stdformats.user_specs(ds_dir, m, user_clusters)
     userclusters.check_layers(user_clusters, m)
-    # --ids: every layer's ids read and checked (allow-list, sample-ID patterns) before anything is written
-    ids_plan = layerids.plan(ds_dir, m, log=log) if write_ids else {}
+    # every layer's ids read and checked (allow-list, sample-ID patterns) before anything is written: with --ids a
+    # failed check stops here, by default that layer's list is left out with a message (layerids.plan)
+    ids_plan = layerids.plan(ds_dir, m, log=log, strict=ids_strict) if write_ids else {}
     out = Path(dest) / m["id"]
     out.mkdir(parents=True, exist_ok=True)
     r = PyramidReader(ds_dir, m)

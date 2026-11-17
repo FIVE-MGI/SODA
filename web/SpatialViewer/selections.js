@@ -18,9 +18,10 @@
 // Polygon / MultiPolygon features (holes kept), and the MultiPoints written here. A QuPath export lines up only when
 // QuPath opened the same full-resolution image the export was made from (same crop, same flip, same scale).
 //
-// Barcodes. The export holds them only when it was made with `prepare.py export --ids` (or `prepare.py ids` was run on
-// it): expr/<key>/ids.txt.gz, one id per positions.bin row, named in the manifest's layer entry (`ids`). They are the
-// instrument's barcodes / cell ids, never sample IDs (prepare.py checks them before writing).
+// Barcodes. An export holds them by default (prepare.py export; --no-ids leaves them out, `prepare.py ids` adds them to
+// an export made without): expr/<key>/ids.txt.gz, one id per positions.bin row, named in the manifest's layer entry
+// (`ids`). They are the instrument's barcodes / cell ids, checked for sample IDs before writing (layerids.py): a
+// layer whose ids failed the check has none.
 /* exported SodaShapes */
 (function () {
   "use strict";
@@ -281,7 +282,7 @@
     const t = $("shIds");
     t.title = e && e.ids
       ? `One row per ${w.bin} inside the shapes (the ticked ones, else all): its ${e.ids.column === "cell_id" ? "cell id" : "barcode"}, position and shape`
-      : "This export has no barcode list: re-export with prepare.py export --ids, or run prepare.py ids on it";
+      : "This export has no barcode list for this layer (made with --no-ids, before lists were written by default, or its ids failed the sample ID check): run prepare.py ids on it";
     syncButtons();
   }
   function syncButtons() {
@@ -500,7 +501,7 @@
     const e = api.layer(), w = W();
     if (!e || !e.ids) {
       msg(`This export has no barcode list for this layer, so the ${w.bins} cannot be saved with their barcodes or cell ids. ` +
-          `Exports keep no barcodes unless asked: re-export with prepare.py export --ids, or add the list to this export with prepare.py ids.`, true);
+          `It was exported with --no-ids, by a SODA from before the lists were written by default, or its ids failed the sample ID check (the export log says which). Add the list with prepare.py ids.`, true);
       return;
     }
     msg("Reading the barcode list…");

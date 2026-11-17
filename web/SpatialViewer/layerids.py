@@ -1,27 +1,36 @@
-"""Optional per-layer id list: the instrument's own barcode / cell id of every bin, for the viewer's
-"Save barcodes (CSV)" (selections.js).
+"""Per-layer id list: the instrument's own barcode / cell id of every bin, for the viewer's
+"Save barcodes (CSV)" (selections.js), as Loupe Browser, Xenium Explorer and Vitessce keep them.
 
     <dest>/<id>/expr/<key>/ids.txt.gz    gzip of UTF-8 text, one id per line, one line per row of
                                          positions.bin, in the same order (no header)
 
 and the layer's manifest entry gets `"ids": {"file": "ids.txt.gz", "n": rows, "bytes": size of the file,
-"column": "barcode" | "cell_id"}`. Without that entry the export has no id list (the default).
+"column": "barcode" | "cell_id"}`. Without that entry the export has no id list.
 
-Off unless asked: `prepare.py export --ids`, or `prepare.py ids --id X --out <cache> --dest <export root>` to
-add the lists to an export made before (it reads the barcodes from the prepare cache, writes the files and
-updates manifest.json; nothing else changes). The notebook, the README examples and catalog.py never ask.
+On by default: `prepare.py export` (and batch.py, the notebook and the desktop app, which run it) writes the
+lists; `--no-ids` leaves them out. `prepare.py ids --id X --out <cache> --dest <export root>` adds them to an
+export made without them (it reads the barcodes from the prepare cache, writes the files and updates
+manifest.json; nothing else changes). `--ids` is still accepted: it asks for the lists explicitly, which makes
+a failed check stop the export (below). The data owner decides what is published: the checks below catch the
+usual mistakes, they do not make an id list safe to publish.
 
 The ids go into the folder that gets published, so two gates come before anything is written, for every
-layer of the dataset (a refusal writes nothing at all):
+layer of the dataset:
 
-1. Allow-list. Every id must FULLY match the id format of its platform (FORMATS below, taken from what the
-   readers in this folder put into the cache). Anything else - a merge prefix such as "S1_" or a sample name
-   glued to a barcode, a run or slide name in a cell id, a GeoMx Sample_ID - stops it. Ids are never
-   rewritten or stripped here: fix the input, or leave --ids off.
-2. deid.find_ids over the whole list: the lab's own sample-ID patterns.
+1. Format, for the platforms in FORMATS below (taken from what the readers in this folder put into the cache):
+   every id must FULLY match its platform's format. Anything else - a merge prefix such as "S1_" or a sample
+   name glued to a barcode, a run or slide name in a cell id - fails it. Ids are never rewritten or stripped
+   here: fix the input, or use --no-ids. A platform with no format here (an AnnData or SpatialData table's
+   obs names, ...) has no such check: its ids pass when they hold no line break or control character (one id
+   per line must stay one row) and gate 2 finds nothing.
+2. deid.find_ids over the whole list: the lab's own sample-ID patterns, for every platform.
 
-A refusal names the layer, the platform and how many ids failed; it never prints an id (the log of a
-refused run would otherwise carry the very IDs it refused). A platform with no format here gets no list.
+What a failed gate does depends on how the lists were asked for:
+  - by default (no flag): that layer's list is left out with a *** message, and the export goes on (other
+    layers keep theirs);
+  - explicitly (`--ids`, or `prepare.py ids`): the whole dataset is refused and nothing is written at all.
+A message names the layer, the platform, the reason and how many ids failed; it never prints an id (the log
+of a run would otherwise carry the very IDs it left out).
 
 GeoMx ROI layers (their row names carry slide and sample names) and protein grid layers (squares have no
 id) get none.
@@ -81,24 +90,46 @@ def platform_of(dataset_kind: str | None, layer: dict) -> str | None:
     return None
 
 
-def check_ids(ids: list[str], platform: str | None, key: str) -> None:
-    """Refuse (SystemExit) unless every id fits the platform's format and none looks like a sample ID.
-    The message names the layer and counts; it never contains an id."""
-    where = f"{key}/{FILE}"
-    if platform not in _FULL:
-        raise SystemExit(f"[ids] REFUSING to write {where}: no known id format for this platform "
-                         f"({platform or 'unknown'}); id lists are written only for {', '.join(sorted(FORMATS))}")
-    rx = _FULL[platform]
-    bad = sum(1 for i in ids if not rx.match(i))
-    if bad:
-        raise SystemExit(f"[ids] REFUSING to write {where}: {bad:,} of {len(ids):,} ids do not match the {platform} "
-                         f"id format ({FORMATS[platform]}); a sample or run name in the ids, or a merge prefix, "
-                         f"would be published. Nothing was written. Leave --ids off, or prepare from the "
-                         f"instrument's own files.")
+def problem(ids: list[str], platform: str | None) -> tuple[str, str] | None:
+    """Why this list may not be published, as (kind, reason), or None when the gates pass.
+    kind: "mismatch" (ids outside the platform's format), "shape" (a line break or control character in an id of
+    a platform without a format), "sample" (deid.py's sample-ID patterns). The reason names counts and the
+    format; it never contains an id."""
+    if platform in _FULL:
+        rx = _FULL[platform]
+        bad = sum(1 for i in ids if not rx.match(i))
+        if bad:
+            return ("mismatch", f"{bad:,} of {len(ids):,} ids do not match the {platform} id format ({FORMATS[platform]}); "
+                                f"a sample or run name in the ids, or a merge prefix, would be published")
+    else:
+        bad = sum(1 for i in ids if _CTRL.search(i))
+        if bad:
+            return ("shape", f"{bad:,} of {len(ids):,} ids hold a line break or another control character, so the "
+                             f"one-id-per-line list would not line up with the rows ({platform or 'no known id format'})")
     hits = len(deid.find_ids("\n".join(ids)))          # one id per line: a match never spans two ids
     if hits:
-        raise SystemExit(f"[ids] REFUSING to write {where}: {hits:,} ids look like sample IDs (deid.py patterns). "
-                         f"Nothing was written.")
+        return ("sample", f"{hits:,} ids look like sample IDs (deid.py patterns)")
+    return None
+
+
+_CTRL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def check_ids(ids: list[str], platform: str | None, key: str) -> None:
+    """Refuse (SystemExit) unless the list passes the gates: the lists were asked for explicitly (--ids,
+    prepare.py ids). The message names the layer and counts; it never contains an id."""
+    why = problem(ids, platform)
+    if why is None:
+        return
+    raise SystemExit(f"[ids] REFUSING to write {key}/{FILE}: {why[1]}. Nothing was written. Without --ids the "
+                     f"export leaves this list out and goes on; --no-ids writes no id list; or fix the ids at the source.")
+
+
+def skip_message(key: str, platform: str | None, why: tuple[str, str]) -> str:
+    """The line logged when a default export leaves a layer's list out (never an id): a *** line, which the
+    notebook and batch.py flag for reading."""
+    return (f"[ids] *** {key}: barcode / cell id list LEFT OUT of the export: {why[1]}. The export goes on without "
+            f"it. Fix the ids at the source, or use --no-ids to leave every list out.")
 
 
 def layer_ids(er, ds_dir: Path | None = None, log=print) -> list[str] | None:
@@ -113,9 +144,11 @@ def layer_ids(er, ds_dir: Path | None = None, log=print) -> list[str] | None:
     return [b for b, keep in zip(bcs, on.tolist()) if keep]
 
 
-def plan(ds_dir: Path, m: dict, log=print) -> dict:
+def plan(ds_dir: Path, m: dict, log=print, strict: bool = True) -> dict:
     """Read and check the ids of every layer that gets a list, before anything is written: {key: ids}.
-    One refused layer stops the whole dataset (SystemExit), so no partial set of lists is published."""
+    strict (--ids, prepare.py ids): one refused layer stops the whole dataset (SystemExit), so no partial set of
+    lists is published. Not strict (the default export): a layer that fails is left out with a message
+    (skip_message) and the others keep theirs."""
     from expr import ExprReader
     out = {}
     for layer in m.get("expr", []):
@@ -129,7 +162,14 @@ def plan(ds_dir: Path, m: dict, log=print) -> dict:
         ids = layer_ids(er, ds_dir, log=log)
         if ids is None:
             continue
-        check_ids(ids, platform_of(m.get("kind"), layer), key)
+        platform = platform_of(m.get("kind"), layer)
+        if strict:
+            check_ids(ids, platform, key)
+        else:
+            why = problem(ids, platform)
+            if why is not None:
+                log(skip_message(key, platform, why))
+                continue
         out[key] = ids
     return out
 

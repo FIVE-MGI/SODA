@@ -591,6 +591,8 @@ class App:
                 extra += ["--jobs", str(min(jobs, 8))]
             if b.get("rebuild"):
                 extra.append("--rebuild")
+            if b.get("ids") is False:                  # the barcode / cell id lists are written unless unticked
+                extra.append("--no-ids")
             argv = batch_argv(Path(src), Path(work), extra)
             Path(work).expanduser().resolve().mkdir(parents=True, exist_ok=True)
             self.job = Job(argv, Path(work).expanduser().resolve(), self.wd / "prepare.log")
@@ -719,7 +721,8 @@ def cmd_prepare(args: list[str]) -> int:
         prog="SODA prepare",
         description="prepare.py batch for a folder of datasets, into <work>/export, <work>/cache and <work>/logs. "
                     "Any other prepare.py batch option (--options, --jobs, --key, --title, --only, --rebuild, "
-                    "--dry-run ...) is passed on. The sample ID check is always a gate (--check-ids).")
+                    "--dry-run, --no-ids ...) is passed on. The sample ID check is always a gate (--check-ids). Each export holds "
+                    "the barcode / cell id lists by default (checked for sample IDs; --no-ids leaves them out).")
     ap.add_argument("--src", required=True, help="the folder of dataset folders")
     ap.add_argument("--work", required=True, help="the output folder")
     a, extra = ap.parse_known_args(args)
