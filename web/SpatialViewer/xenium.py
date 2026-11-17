@@ -10,6 +10,9 @@ cells and / or transcripts but no stain images):
     cell_feature_matrix.h5 | cell_feature_matrix/ (barcodes.tsv.gz, features.tsv.gz, matrix.mtx.gz)
     transcripts.parquet | transcripts.zarr.zip | transcripts.zarr/
 
+--src may also be a Xenium transcripts store on its own (transcripts.zarr.zip, or <name>_transcripts.zarr.zip):
+its molecules are drawn on a transcript-density background, as for a folder without stain images or cells.
+
 --src may be the folder, or a zip of it (Xenium's output bundle, or a zip of the whole output folder, with
 the dataset folder at the top of the zip or a few folders down): zipinput.py reads the members in place
 where that is cheap and copies out only the stain images (and a compressed transcripts.zarr.zip) into a
@@ -57,6 +60,11 @@ def is_control(name: str) -> bool:
 
 def is_root(names) -> bool:
     return bool(set(names) & ROOT_NAMES)
+
+
+def is_transcripts_store(name: str) -> bool:
+    """transcripts.zarr.zip, or a <name>_transcripts.zarr.zip on its own (detect.is_transcripts_store)."""
+    return str(name).lower().endswith("transcripts.zarr.zip")
 
 
 # A dataset folder is a Path or a zipinput.ZipInput; a file in it a Path or a zipinput.Member (both have
@@ -397,7 +405,8 @@ def finish_transcripts(w, ds_dir: Path) -> dict:
 # ---------------------------------------------------------------------------------- plan
 def add_args(p) -> None:
     p.add_argument("--src", required=True, help="the Xenium output folder (the one holding morphology_focus/, or "
-                                                "cells / transcripts without stain images), or a zip of it")
+                                                "cells / transcripts without stain images), or a zip of it, or a "
+                                                "Xenium transcripts store on its own (<name>_transcripts.zarr.zip)")
     p.add_argument("--no-cells", action="store_true", help="skip the cells layer")
     p.add_argument("--no-transcripts", action="store_true", help="skip the molecules layer")
     p.add_argument("--qv-min", type=float, default=20.0,
@@ -510,7 +519,16 @@ def plan(args, log=print) -> Plan:
     import pyramid
     P = Plan()
     src = Path(args.src)
-    if src.is_file():
+    if src.is_file() and is_transcripts_store(src.name):
+        # a transcripts store on its own (<name>_transcripts.zarr.zip): no stains, no cells, no experiment.xenium;
+        # its molecules on a transcript-density background (the no-image path below), read in place
+        log(f"[xenium] {src.name}: a Xenium transcripts store on its own (no stain images, no cells)")
+        folder = None
+        P.manifest_source = {"transcripts": str(src)}
+        P.inp = inp = {"experiment": None, "cells": None, "matrix_h5": None, "matrix_mtx": None,
+                       "transcripts": src, "cell_boundaries": None}
+        stains, xpx = [], None
+    elif src.is_file():
         work = Path(args.unzip_to) if getattr(args, "unzip_to", None) else Path(args.out) / "_unzipped" / args.id
         P.zip = folder = open_zip(src, work, log=log)
         P.manifest_source = {"zip": str(src), "folder": str(src)}
@@ -520,12 +538,13 @@ def plan(args, log=print) -> Plan:
     else:
         raise SystemExit(f"[xenium] --src {src} not found")
     P.folder = folder
-    P.inp = inp = find_inputs(folder)
-    if isinstance(folder, Path):
-        stains = sorted((folder / "morphology_focus").glob("*.ome.tif*"))
-    else:
-        stains = folder.glob("morphology_focus", r"\.ome\.tiff?$")
-    xpx = pixel_size(folder)
+    if folder is not None:
+        P.inp = inp = find_inputs(folder)
+        if isinstance(folder, Path):
+            stains = sorted((folder / "morphology_focus").glob("*.ome.tif*"))
+        else:
+            stains = folder.glob("morphology_focus", r"\.ome\.tiff?$")
+        xpx = pixel_size(folder)
 
     if stains:
         import re as _re

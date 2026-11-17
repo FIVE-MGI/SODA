@@ -10,8 +10,12 @@ r"""Prepare and export a whole folder of datasets in one go, with a log of any t
 This is the notebook (notebooks/SODA_pipeline.ipynb, Sections 2 to 5) without the notebook:
 
 1. Each folder under --src is one dataset, and its name becomes the dataset id (letters, digits,
-   _ and -; anything else becomes _). One image file or .h5ad on its own counts too; other loose
-   files are ignored. The notebook's older inputs/<kind>/<id>/ layout works as well. Each one is
+   _ and -; anything else becomes _). One image file or .h5ad, a zipped Xenium output or a Xenium
+   transcripts store (<name>_transcripts.zarr.zip) on its own counts too; other loose files are ignored,
+   and so is any name starting with _ or . (a place to keep what is not a dataset). x.zip beside a folder
+   x/ is a second dataset, x_zip, when it can be read as it is (the log says they may be the same data).
+   The notebook's older inputs/<kind>/<id>/ layout works as well. The notebook (Section 2) and the
+   desktop app find datasets with this same code (find_datasets). Each one is
    looked at with detect.py (`prepare.py detect`). Only a "certain" verdict is run. Anything else
    is skipped and the log says why and what to add to the options file (or the --kind ... flag of
    `prepare.py auto`) to settle it.
@@ -254,7 +258,7 @@ def run_child(argv: list[str]):
 
 
 # ---------------------------------------------------------------------------------------------
-# finding the datasets (the notebook's Section 2, find_datasets / check_dataset)
+# finding the datasets: the one copy, used here, by the notebook (Section 2) and by the desktop app
 # ---------------------------------------------------------------------------------------------
 def load_options(path: Path | None) -> tuple[dict, list[str]]:
     """The options file: {dataset id: {key: value}}. Returns (options, warnings)."""
@@ -368,7 +372,7 @@ def _user_files(d: dict, o: dict) -> None:
 
 def check_dataset(ds_id: str, src: Path, options: dict, bins: str | None, hint: str | None = None,
                   expand: bool = True) -> list[dict]:
-    """One folder (or file): detect.py's report, then the notebook's own checks."""
+    """One folder (or file): detect.py's report, then the checks of the notebook's Section 2."""
     o = options.get(ds_id, {})
     src = Path(o["src"]) if "src" in o else Path(src)
     ov = {k: o[k] for k in FILE_OPTIONS if k in o}
@@ -387,7 +391,8 @@ def check_dataset(ds_id: str, src: Path, options: dict, bins: str | None, hint: 
          "verdict": rep["verdict"], "kind": rep["kind"] or ("/".join(kinds) + "?" if kinds else "?"),
          "variant": rep["variant"] or "", "label": o.get("label", ds_id), "opts": o,
          "forceKind": bool(o.get("kind") or hint), "problems": [], "hint": [], "notes": [],
-         "user": None, "status": None, "reason": "", "steps": {}}
+         "user": None, "status": None, "reason": "", "steps": {},
+         "report": rep}                                  # detect.py's report (the notebook shows it; not in the logs)
     if rep["verdict"] != "certain":
         d["problems"].append(f"not {'sure' if rep['verdict'] == 'ambiguous' else rep['verdict']}: {rep['message']}")
         d["hint"] = hint_lines(rep, ds_id)
@@ -405,8 +410,17 @@ def check_dataset(ds_id: str, src: Path, options: dict, bins: str | None, hint: 
     return [d]
 
 
+ZIP_SUFFIX = "_zip"      # the id of x.zip when the folder x/ beside it is a dataset too
+
+
 def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict], list[str]]:
-    """Every dataset under `src` (the notebook's find_datasets). Returns (datasets, warnings)."""
+    """Every dataset under `src`: batch.py's, the notebook's (Section 2 calls this) and the desktop app's one
+    finder. Returns (datasets, warnings).
+
+    Names starting with "." or "_" are left out (a place to keep what is not a dataset), and so is README.txt.
+    x.zip beside a folder x/: both are datasets when the zip can be prepared as it is (a zipped Xenium output), the
+    zip with the id x_zip, and a warning says they may be the same data; a zip that cannot (it must be unzipped
+    first) is left out with a warning, as the folder beside it is taken to be its unzipped copy."""
     rows, warn = [], []
 
     def is_kind_folder(p: Path) -> bool:              # inputs/visium/<id>/ ... of the older layout
@@ -414,13 +428,24 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
 
     entries = sorted(src.iterdir(), key=lambda q: q.name.lower())
     folders = {q.name.lower() for q in entries if q.is_dir()}
+    parked = sum(1 for p in entries if p.name.startswith("_"))
+    if parked:
+        warn.append(f"{parked} name(s) under the inputs folder start with _ and are left out (not datasets)")
     for p in entries:
         if p.name.startswith((".", "_")) or p.name == "README.txt":
             continue
         if (p.is_file() and p.suffix.lower() == ".zip" and p.stem.lower() in folders
                 and safe_id(p.stem) in {r["id"] for r in rows}):          # x/ sorts before x.zip
-            warn.append(f"{p.name} is not prepared: the folder {p.stem} beside it is (an unzipped copy, it seems); "
-                        f"to prepare the zip itself, move it into a folder of its own")
+            zid = safe_id(p.stem) + ZIP_SUFFIX
+            got = check_dataset(zid, p, options, bins)
+            if got and all(r["verdict"] == "certain" for r in got):
+                rows += got
+                warn.append(f"{p.name} and the folder {p.stem} beside it are prepared as two datasets, "
+                            f"{safe_id(p.stem)} and {zid}: they may be the same data (the folder an unzipped copy of "
+                            f"the zip). If they are, keep one: move the other out of the inputs folder")
+            else:
+                warn.append(f"{p.name} is not prepared: it cannot be read as it is, and the folder {p.stem} beside it "
+                            f"is prepared (an unzipped copy, it seems)")
             continue
         if p.is_dir() and is_kind_folder(p):
             for sub in sorted(q for q in p.iterdir() if q.is_dir()):
