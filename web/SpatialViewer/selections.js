@@ -9,7 +9,9 @@
 // full membership instead: a bin is inside a shape when it is inside its outline (Circle, Freehand, an imported
 // polygon) or in its list of bins (a selection, a combined shape), whatever was drawn after it. A combined shape is a
 // list of bins (kind "rows", as "Use selection as a shape" makes) and keeps how it was made (s.def), so on another
-// layer its bins are found again from the outlines. Save JSON keeps it as an ordinary list of bins (format unchanged).
+// layer its bins are found again from the outlines. Save JSON keeps it as an ordinary list of bins (format unchanged)
+// plus, when it was made from outlines only, that recipe (`def`, an added field); a link to the view carries the
+// recipe instead of the bins (see saveDef below).
 //
 // GeoJSON. Coordinates are in the export's full-resolution image pixels (x right, y down, origin top-left), as every
 // other file of the export. An outline is a Polygon; a list of bins is a MultiPoint of the bins' centres. Import takes
@@ -156,9 +158,69 @@
       let rows = null;
       if (s.def) { const m = maskOfDef(s.def, pos, key); if (m) rows = maskRows(m); }
       if (!rows) rows = s.home.layer === key ? s.home.rows : EMPTY;
+      if (s.home.layer === PENDING) s.home = { layer: key, rows };      // restored from its recipe: this is its first layer
       s.rows = rows; s.layer = key;
       s.away = rows === EMPTY ? s.home.layer : null;
     }
+  }
+
+  // ---- how a shape was made, in Save JSON and in a link to the view (viewer.js sessionState / sessionApply) ----------
+  // A shape made here from outlines (Circle, Freehand, imported polygons) is saved with its recipe as `def`:
+  //   { points: [[x, y], ...] } | { geo: [polygon: [ring: [[x, y], ...], ...], ...] } | { op: "union"|"inter"|"sub", parts: [def, ...] }
+  // in image pixels (2 decimals). Save JSON keeps its list of bins too (`rows`, as before); a link carries only the
+  // recipe, which is far shorter, and the bins are found again from it when the link is opened. A shape with a plain
+  // selection in it (bins of one layer, no outline) has no recipe and is saved as its list of bins only.
+  const PENDING = "\u0000def";                  // layer of a shape restored from its recipe, before its bins are found
+  const DEF_DEPTH = 6, DEF_LEAVES = 64, DEF_POINTS = 20000;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  function saveDef(s) {
+    if (!s || !s.def) return null;
+    let leaves = 0;
+    const pack = (d, depth) => {
+      if (!d || depth > DEF_DEPTH) return null;
+      if (d.pts) { leaves++; return { points: d.pts.map((p) => [r2(p[0]), r2(p[1])]) }; }
+      if (d.geo) { leaves++; return { geo: d.geo.map((rings) => rings.map((ring) => ring.map((p) => [r2(p[0]), r2(p[1])]))) }; }
+      if (d.op && OPS[d.op] && Array.isArray(d.parts)) {
+        const parts = d.parts.map((x) => pack(x, depth + 1));
+        return parts.every(Boolean) ? { op: d.op, parts } : null;
+      }
+      return null;                              // bins of one layer: no recipe
+    };
+    const out = pack(s.def, 0);
+    return out && leaves <= DEF_LEAVES ? out : null;
+  }
+  // a recipe read from a file or a link (untrusted): checked, or null
+  function readDef(j) {
+    let leaves = 0, points = 0;
+    const pt = (p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && Math.abs(p[0]) < 1e9 && Math.abs(p[1]) < 1e9;
+    const ring = (r) => { if (!Array.isArray(r) || r.length < 3 || !r.every(pt)) return null; points += r.length; return r.map((p) => [Number(p[0]), Number(p[1])]); };
+    const read = (d, depth) => {
+      if (!d || typeof d !== "object" || depth > DEF_DEPTH || ++leaves > DEF_LEAVES * 2) return null;
+      if (Array.isArray(d.points)) { const r = ring(d.points); return r ? { pts: r } : null; }
+      if (Array.isArray(d.geo)) {
+        const geo = d.geo.slice(0, DEF_LEAVES).map((rings) => (Array.isArray(rings) && rings.length ? rings.slice(0, 64).map(ring) : null));
+        return geo.length && geo.every((rs) => rs && rs[0]) ? { geo: geo.map((rs) => rs.filter(Boolean)) } : null;
+      }
+      if (typeof d.op === "string" && OPS[d.op] && Array.isArray(d.parts) && d.parts.length >= 2 && d.parts.length <= DEF_LEAVES) {
+        const parts = d.parts.map((x) => read(x, depth + 1));
+        return parts.every(Boolean) ? { op: d.op, parts } : null;
+      }
+      return null;
+    };
+    const d = read(j, 0);
+    return d && points <= DEF_POINTS ? d : null;
+  }
+  // viewer.js sessionApply, right after it rebuilt the shapes from `saved` (the file's or the link's shapes, same order)
+  function restore(shapes, saved) {
+    if (!Array.isArray(shapes) || !Array.isArray(saved)) return;
+    shapes.forEach((sh, i) => {
+      const j = saved[i], d = j && j.def ? readDef(j.def) : null;
+      if (d) {
+        sh.def = d;
+        if (!sh.rows) { sh.rows = EMPTY; sh.layer = PENDING; sh.home = null; }    // a link: the bins come from the recipe
+      }
+      if (sh.rows && !(sh.pts && sh.pts.length >= 3)) sh.kind = "rows";
+    });
   }
 
   // ---- the operations ------------------------------------------------------------------------------------------
@@ -455,7 +517,7 @@
   window.SodaShapes = {
     init(a) { api = a; buildDom(); refresh(); },
     refresh() { if (api) refresh(); },
-    remap,
+    remap, saveDef, restore,
     // for tests from the console
     _pick(ids) { picked.clear(); ids.forEach((i) => picked.add(i)); sig = ""; refresh(); },
     _combine(op, ids) { this._pick(ids); combine(op); return $("shMsg").textContent; },

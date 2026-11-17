@@ -2946,9 +2946,13 @@
         : { minUmi: LASSO.minUmi, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
             minDetect: LASSO.minDetect, minDetectFrac: LASSO.minDetectFrac, minDetectCap: LASSO.minDetectCap,
             cap: R ? R.params.cap : LASSO_CAP, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
-      shapes: L.shapes.map((s) => ({ name: s.name, color: s.hex, kind: s.kind,
-                                      points: s.pts.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]),
-                                      ...(s.rows ? { rows: Array.from(s.rows) } : {}) })),
+      // a shape combined from outlines (selections.js) also keeps its recipe, `def`; a link carries that instead of its bins
+      shapes: L.shapes.map((s) => {
+        const def = window.SodaShapes ? window.SodaShapes.saveDef(s) : null;
+        return { name: s.name, color: s.hex, kind: s.kind,
+                 points: s.pts.map((p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100]),
+                 ...(s.rows && (full || !def) ? { rows: Array.from(s.rows) } : {}), ...(def ? { def } : {}) };
+      }),
       resolution: /^\s*(auto)?\s*$/i.test($("lassoRes").value) ? "auto" : Number($("lassoRes").value) || 0,
       result: R ? { method: R.info.method, points: R.info.nIn, genesUsed: R.info.nGenesUsed, minDetect: R.info.minDetect || null,
                     nPcs: R.info.nPcs, nNeighbors: R.info.nNeighbors || null, init: R.info.init || null, seconds: +R.secs.toFixed(2),
@@ -3020,6 +3024,7 @@
       L.shapes = j.shapes.map((s, i) => ({ id: i + 1, name: s.name || `Shape ${i + 1}`, kind: s.kind || "free", pts: s.points || [],
                                            ...(Array.isArray(s.rows) ? { rows: Uint32Array.from(s.rows) } : {}),
                                            hex: s.color || LASSO_COLORS[i % LASSO_COLORS.length], bins: 0, shared: 0, lost: 0 }));
+      if (window.SodaShapes) window.SodaShapes.restore(L.shapes, j.shapes);   // combined shapes: their recipe (selections.js)
       L.next = L.shapes.length + 1; L.selShape = null;
     }
     if (Number.isInteger(j.seed)) $("lassoSeed").value = j.seed;

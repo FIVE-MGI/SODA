@@ -303,13 +303,20 @@ by `viewlink.js`):
 - The layer, drawn shapes, the clustering on show with cluster names, cell sets and hidden
   clusters (`sectionClusters`) and the quality thresholds (`qcFilter`) are where Save JSON always had
   them, one level up. A file without `view` (saved before 16 November 2026) loads as it did.
+- A shape made by Combine / Overlap / Subtract (selections.js) is a list of bins (`rows`, as
+  before) and, when it was made from outlines only (Circle, Freehand, imported polygons), also
+  carries its recipe `def`: `{"points": [[x, y], ...]}`, `{"geo": [[ring, hole, ...], ...]}` or
+  `{"op": "union" | "inter" | "sub", "parts": [def, ...]}`, in image pixels. Save JSON writes
+  both; the link writes only `def`, and the bins are found again from it on opening. A shape with
+  a plain selection inside it has no `def` and stays a list of bins.
 
 The link is `<page>?ds=<dataset>[&data=…|&static=…][&qc=…]#v=<payload>`. The payload is
 `1d.` + base64url(deflate-raw(UTF-8 JSON)), or `1j.` + base64url(UTF-8 JSON) from a browser
 without `CompressionStream`; the leading digit is the format version. The JSON is the state
 above with defaults left out (`seed` 42, `mode` "bins", `resolution` "auto", no shapes). The
 page aims at 2,000 characters for the whole link: outlines are first thinned to 40 points
-(and shapes made from a selection dropped), then shapes are left out, then cluster names;
+(the outlines in a combined shape's `def` too, and shapes made from a selection dropped), then
+shapes are left out, then cluster names;
 what was left out is said under the button. A reader accepts payloads up to 16,000 characters
 that unpack to at most 512 kB, keeps only known keys of the right type and range, looks names
 up in the open dataset's own lists (it never fetches by a name from a link) and reads no

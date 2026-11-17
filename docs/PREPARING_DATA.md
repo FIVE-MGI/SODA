@@ -1039,7 +1039,9 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   of the others. It works on the bins inside each shape, counting every shape whole even where a
   later one covers it; the result is one more shape (drawn last, so it takes its bins from the
   earlier ones, as every new shape does) that Run UMAP, the volcano and the plots use like a drawn
-  one, and it is found again from the outlines on another layer. *Save GeoJSON* writes the shapes
+  one, and it is found again from the outlines on another layer. Save JSON and Copy link to this
+  view keep it too: a shape combined from outlines goes into a link as how it was made, which is
+  short, and its bins are found again when the link is opened. *Save GeoJSON* writes the shapes
   in the image's full-resolution pixels with `name`, `shape_type`, `microns_per_pixel` and
   `dataset` per feature (an outline as a Polygon, a combined shape or a selection as a MultiPoint
   of its bins' centres); *Load GeoJSON* reads such a file, or Polygon / MultiPolygon annotations
