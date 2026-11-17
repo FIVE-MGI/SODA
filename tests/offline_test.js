@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Offline test: the page keeps itself (sw.js, offline.js) and opens with no network, in Chromium and WebKit.
+// Offline test: the page keeps itself (sw.js, offline.js) and opens with no network, in Chromium, WebKit and
+// Firefox (Firefox is skipped, with a SKIPPED line, when Playwright's Firefox is not installed).
 // The same steps in each browser, on a page server and a data server of its own (the data on another
 // origin, as blob storage):
 //   online    the demo dataset opens (?static=); the service worker installs and takes over; its caches
@@ -20,12 +21,16 @@
 //             the vendor/ copies; offline, Run UMAP works from them. Then vendor.py --from <saved> checks and
 //             copies them into a temp folder (exit 0), and --check on an empty one says missing (exit 1).
 //
-//   node tests/offline_test.js [--export demo/export] [--shots <dir>] [--only chromium,webkit] [--python <exe>]
+//   node tests/offline_test.js [--export demo/export] [--shots <dir>] [--only chromium,webkit,firefox] [--python <exe>]
 //
 // Playwright as for tests/browsers_test.js (NODE_PATH / --playwright, PLAYWRIGHT_BROWSERS_PATH). Without it,
 // without the demo export, or without the CDN (no internet: the first visit needs it), SKIPPED, exit 0.
 // The existing browser tests block service workers (serviceWorkers: "block") so that their page.route
 // rules see every request; this one allows them and routes nothing.
+// Firefox: context.setOffline works there as in Chromium (the service worker answers). Firefox logs one console
+// error the others do not: deck.gl's bundled Long.js probing WebAssembly, refused by the page's
+// Content-Security-Policy (no 'wasm-unsafe-eval', on purpose) and caught by deck.gl; it is not counted there
+// (see tests/browsers_test.js).
 "use strict";
 const http = require("http");
 const fs = require("fs");
@@ -39,7 +44,7 @@ const REPO = path.resolve(__dirname, "..");
 const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const SHOTS = arg("--shots", "");
-const ONLY = arg("--only", "chromium,webkit").split(",").filter(Boolean);
+const ONLY = arg("--only", "chromium,webkit,firefox").split(",").filter(Boolean);
 const PYTHON = arg("--python", "");
 const DS = "demo_visiumhd", OTHER = "demo_multiplex";
 
@@ -187,8 +192,9 @@ async function run(browserType, eng, urls) {
     }, { shapes, done });
   }
   const showOffline = (page) => page.evaluate(() => { if (window.SodaLayout) window.SodaLayout.show("panelOffline"); });
+  const quiet = (c) => eng === "firefox" && /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/.test(c.text);
   const errorsOf = (log, allow) => [...log.pageErrors.map((e) => `page: ${e}`),
-    ...log.console.filter((c) => !/\/vendor\//.test(c.url) && !/\/vendor\//.test(c.text) && !(allow && allow.test(`${c.text} ${c.url}`))).map((c) => `console: ${c.text.slice(0, 160)} ${c.url}`)];
+    ...log.console.filter((c) => !/\/vendor\//.test(c.url) && !/\/vendor\//.test(c.text) && !quiet(c) && !(allow && allow.test(`${c.text} ${c.url}`))).map((c) => `console: ${c.text.slice(0, 160)} ${c.url}`)];
 
   const pageUrl = `${urls.page}/?static=${encodeURIComponent(urls.data + "/plain")}&ds=${DS}`;
   const rootUrl = `${urls.data}/plain/${DS}/`;
