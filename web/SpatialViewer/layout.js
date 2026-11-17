@@ -36,12 +36,16 @@
   //          turns them into squares / cells / ROIs and markers, as it does for the labels
   const SECTIONS = {
     panelChannels: { more: ["imgOpacity"],
-      help: "The picture under everything else. Stains: tick one to show it, click its colour to change it, and drag the two handles under its histogram to set the darkest and the brightest value shown (reset puts them back). Type in the filter to shorten a long list. An H&E image has no stains to pick: Image off hides it. Image opacity is under More options." },
+      help: "The picture under everything else. Stains: tick one to show it, click its colour to change it, and drag the two handles under its histogram to set the darkest and the brightest value shown. The γ button opens two more settings for that stain: Gamma (below 1 brightens faint signal, above 1 darkens it; 1 changes nothing, a double-click puts it back) and Colours (its own colour, or grey, viridis or magma from dark to bright, best for one stain on its own). reset puts all of these back. Type in the filter to shorten a long list. An H&E image has no stains to pick: Image off hides it. Image opacity is under More options." },
     panelGenes: { more: ["geneOpacity", "pointScale", "tissueBins", "cellNuclei"],
       help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. Cell shapes (segmented cells that came with their boundaries): Outlines draws every cell's own outline once you zoom in, Dots keeps the dots. More options: opacity, point size, an outline of every bin in the tissue, and the nucleus outlines." },
+    panelPaint: {
+      help: "Colours every bin by one number, or by two genes, instead of by the genes picked above. A value per bin: pick the value (total counts, genes detected, % mitochondrial and whatever else the export measured per bin, such as a GeoMx ROI's Q3 normalisation factor). The colours run along viridis from the From value (dark) to the to value (yellow); Auto sets them to the 1st and 99th percentile, and Log spreads out values that pile up at the low end. Hover or tap a bin to read its value. Two genes: type a gene in A and in B and press Enter; a bin counts as having a gene when its value is above that gene's number (empty: above 0, that is found at all; for markers, above the median square). Both / one only colours each bin by which of the two it has (yellow both, red A only, green B only) and counts them; Blend adds red for A to green for B, brighter for more, so bins high in both turn yellow. Bins with neither are not drawn. Gene set score: type or paste a list of genes (spaces, commas or new lines between them) and press Score or Ctrl+Enter, or pick a cell type to use its marker genes (the dataset's own list first, then SODA's generic one). Each bin's score is the mean, over the listed genes the layer has, of its normalised value: log1p(10,000 × count / the bin's total count) for sequencing bins and cells, log1p(count / Q3 factor) for GeoMx ROIs, and for markers the marker scaled from its 1st to its 99th percentile square. It is a plain mean, not a module score with control genes. Genes the layer does not have are left out and named under the list. The colours and From / to work as for a value. The legend on the map and in Save image says what the colours mean. Colour bins by cluster (Clusters tab) wins over this while it is on." },
     panelMolecules: { more: ["molSize", "molOpacity"],
       help: "Every decoded molecule of the genes picked here, one dot each, one colour per gene. Zoomed out only a share of the dots is drawn; zoom in to see them all. More options: dot size and opacity." },
     panelOverlays: { help: "Outlines that came with the dataset (regions, cells, ROIs), drawn over the picture. Tick one to show it; hover an outline to read its name." },
+    panelMeasure: {
+      help: "Ruler: click two points on the tissue, or press and drag, to read the distance between them in µm. Area: click the corners of a shape and close it with a double-click, Enter, Finish or a click on its first corner, or press and drag round it; you get its area in µm² and its perimeter in µm. The numbers come from the export's microns per pixel (an export without one gives image pixels and says so). On a touch screen one finger draws (drag, or tap the points) and two fingers move the picture; Done drawing puts the tool away. By keyboard: turning a tool on with Enter moves the focus to the map, where the arrow keys move the picture, + and - zoom, Enter or Space puts a point at the centre cross, Enter again without moving closes an area, Backspace takes the last point back and Escape stops. Each measurement is listed here (✕ removes it), drawn on the map, kept in Save image with its numbers in the legend, and saved in Save JSON and the view link." },
     panelRna: { more: ["rnaBin", "rnaPointSize"], moreAt: "end",
       help: "Each dot is a cell, placed by the UMAP that came with the data and coloured by its cluster. Add a gene to get one small UMAP per gene, coloured by how much of it each cell has. View: Normal draws the cells, Density a smoothed map. More options: bin size (Density) and point size." },
     panelUmap: { notes: ["umapNote"],
@@ -68,7 +72,7 @@
     panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
   };
   const ORDER = {
-    view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
+    view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelMeasure", "panelRna"],
     clusters: ["panelUmap", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
     analyze: ["panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
     save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
@@ -507,6 +511,8 @@
       return b && /on\s*$/i.test(b.textContent) ? "image off" : "image on";
     },
     panelGenes: () => names("geneList", "none picked"),
+    panelPaint: () => (window.SodaPaint ? window.SodaPaint.summary() : ""),
+    panelMeasure: () => (window.SodaMeasure ? window.SodaMeasure.summary() : ""),
     panelMolecules: () => names("molList", "none picked"),
     panelOverlays() { const n = $("overlayList") ? $("overlayList").querySelectorAll("input[type=checkbox]:checked").length : 0; return n ? `${n} on` : "off"; },
     panelRna: () => names("rnaGeneList", "clusters, no gene picked"),
