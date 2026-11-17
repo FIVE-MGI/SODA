@@ -628,6 +628,11 @@ def main(argv=None):
                 manifest["pixelSizeUm"] = sr_um
         if not layers:
             log("[visium] WARNING: no count layers found under", args.outs)
+        spots = next((e for e in manifest["expr"] if e["key"] == "spots" and e.get("spotDiameterPx")), None)
+        if manifest["pixelSizeUm"] is None and spots:     # classic Visium without microns_per_pixel (Space Ranger < 2)
+            manifest["pixelSizeUm"] = 55.0 / spots["spotDiameterPx"]
+            log(f"[visium] pixel size {manifest['pixelSizeUm']:.4f} µm: 55 µm spots / spot_diameter_fullres (no "
+                f"microns_per_pixel, no resolution in the image; --pixel-size overrides)")
 
     manifest["overlays"] = parse_geojson_args(args.geojson, ds_dir)
     with open(ds_dir / "manifest.json", "w") as f:
