@@ -12,7 +12,7 @@
 // PCA -> the same UMAP, Leiden, markers and suggested names.
 // Speed (the same results as before, bit for bit on one browser): umapfit.js runs umap-js's fit over typed
 // arrays; the Leiden runs of the stability sweep go to helper workers (leiden_worker.js) when the browser
-// has cores to spare; the last run's layout is kept, so the same shapes again with other clustering
+// has cores to spare, and run while the layout's epochs do (fitUmapEpochs); the last run's layout is kept, so the same shapes again with other clustering
 // settings only re-cluster. Fast mode (params.sampling, above params.fastAbove bins): the UMAP and Leiden
 // of a seeded, shape-stratified sample of params.fastSample bins, every other bin placed by its 15 nearest
 // sample bins in PCA space (layout, below); markers and the result cover every bin.
@@ -304,10 +304,11 @@ const median = (xs) => { if (!xs.length) return null; const s = xs.slice().sort(
 // The runs of one resolution are independent: with cores to spare they go to helper workers
 // (leiden_worker.js, the same leiden.js), each holding the graph and the subsamples. Which worker runs
 // which job does not matter: every run is the same function of (graph, resolution, seed). Up to 8
-// helpers, one core left for the page; none when the browser reports fewer than 3 cores or cannot start
-// a worker from a worker, and any failure falls back to running them here.
+// helpers, one core left for the page (and one more for the layout when the sweep runs alongside it,
+// fitUmapEpochs); none when that leaves fewer than 2 or the browser cannot start a worker from a worker,
+// and any failure falls back to running them here.
 function leidenPool(g, N, keeps) {
-  const cores = (self.navigator && navigator.hardwareConcurrency) || 1, n = Math.min(8, cores - 1);
+  const cores = (self.navigator && navigator.hardwareConcurrency) || 1, n = Math.min(8, cores - (sideWork.on ? 2 : 1));
   if (n < 2 || typeof Worker === "undefined") return null;
   try {
     const ws = [];
