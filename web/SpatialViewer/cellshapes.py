@@ -1203,11 +1203,20 @@ def run(args, log=print) -> None:
         sets = user_sets(args.boundaries, args.nuclei, args.boundary_units, m, id_col=args.boundary_id, log=log)
     elif kind == "xenium":
         folder = Path(args.src or src.get("folder") or "")
-        if not folder.is_dir():
-            raise SystemExit(f"[outlines] Xenium folder {folder} not found: give --src")
-        if not (folder / "experiment.xenium").exists() and (folder / "data").is_dir():
-            folder = folder / "data"
-        sets = xenium_sets(folder, um, log=log)
+        if folder.is_file():                                     # a zipped Xenium output (xenium.py / zipinput.py)
+            import xenium
+            zi = xenium.open_zip(folder, Path(args.out) / "_unzipped" / args.id, log=log)
+            try:
+                sets = xenium.outline_sets(zi, um, log=log)
+            finally:
+                zi.cleanup()
+                zi.close()
+        else:
+            if not folder.is_dir():
+                raise SystemExit(f"[outlines] Xenium folder {folder} not found: give --src")
+            if not (folder / "experiment.xenium").exists() and (folder / "data").is_dir():
+                folder = folder / "data"
+            sets = xenium_sets(folder, um, log=log)
     elif kind == "merscope":
         import merscope
         folder = Path(args.src or src.get("folder") or "")
