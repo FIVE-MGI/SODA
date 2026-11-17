@@ -16,8 +16,10 @@ stereoseq.py, geomx.py, rnaseq.py, expr.find_visium_layers):
                tissue positions (classic), each layer with filtered_feature_bc_matrix.h5; plus the
                full-resolution image given to spaceranger, which is NOT in that folder: a TIFF
                next to it (its pixel size is checked against tissue_hires_image.png / scale factor)
-    xenium     morphology_focus/*.ome.tif (required); experiment.xenium, cells + cell_feature_matrix,
-               transcripts.parquet / .zarr.zip (each optional)
+    xenium     morphology_focus/*.ome.tif; experiment.xenium, cells + cell_feature_matrix,
+               transcripts.parquet / .zarr.zip (each optional; without the stain images, cells or
+               transcripts are drawn on a density background). Also a zip of the output folder: read as
+               it is (xenium.py, zipinput.py)
     cosmx      *_exprMat_file, *_metadata_file, *_fov_positions_file, *_tx_file (csv / csv.gz /
                parquet) and the FOV image folders (Morphology2D, CellComposite ...)
     merscope   detected_transcripts, cell_by_gene + cell_metadata, images/mosaic_<stain>_z<k>.tif
@@ -41,7 +43,7 @@ Verdicts (the rule: when it is not sure it does not guess, it shows what it foun
     ambiguous   more than one kind fits, or a choice is open (two candidate images, two
                 segmentation runs, several datasets in one folder ...)
     incomplete  a kind is recognised but a required file is missing (it says which), or the
-                data is still zipped
+                data is still zipped (every kind but Xenium, whose zip is read as it is)
     unknown     nothing recognised, an empty folder, a path that does not exist or cannot be read
 
 Files of a platform win over loose image files: a Xenium folder that also holds derived TIFFs
@@ -75,7 +77,8 @@ KIND_WORDS = {"visium": "Visium (Space Ranger output)", "xenium": "Xenium output
 NEEDS = {
     "visium": "Space Ranger's outs folder (binned_outputs/square_NNNum/ for Visium HD, or filtered_feature_bc_matrix.h5 "
               "+ spatial/tissue_positions for classic Visium) and the full-resolution image given to spaceranger",
-    "xenium": "a Xenium output folder with morphology_focus/*.ome.tif (cells and transcripts are optional)",
+    "xenium": "a Xenium output folder (or a zip of it) with morphology_focus/*.ome.tif, or with cells "
+              "(cells table + cell_feature_matrix) and / or transcripts without the stain images",
     "cosmx": "CosMx flat files: *_exprMat_file + *_metadata_file and / or *_tx_file (csv, csv.gz or parquet)",
     "merscope": "a MERSCOPE region folder: detected_transcripts, cell_by_gene + cell_metadata and / or images/mosaic_*.tif",
     "stereoseq": "the registered image <SN>_<stain>_regist.tif and a .gef / .gem(.gz) / .cellbin.gef file",
@@ -285,6 +288,14 @@ def zip_tree(path: Path, max_names: int = MAX_ENTRIES) -> Tree | None:
         return None
     t = Tree(None, inside=Path(path).name)
     t._ensure("")
+    t.refused = None                    # the zip-slip / zip-bomb checks the readers make (zipinput.check_list)
+    try:
+        import zipinput
+        zipinput.check_list(infos, Path(path).stat().st_size, Path(path).name)
+    except SystemExit as e:             # zipinput.ZipRefused
+        t.refused = str(e).removeprefix("[zip] ")
+    except (ImportError, OSError):
+        pass
     for i in infos[:max_names]:
         name = i.filename.replace("\\", "/").strip("/")
         if not name or name.startswith("__MACOSX/"):
@@ -518,11 +529,18 @@ def find_xenium(cx: Ctx) -> list[dict]:
         has_cells = bool(cells and matrix)
         parts = (["cells"] if has_cells else []) + (["molecules"] if tx else [])
         variant = "+".join(parts) or "stains"
-        c = _cand("xenium", variant, "Xenium (" + ", ".join(["stains"] * bool(stains) + parts) + ")", rel)
+        # no stain images: cells and / or transcripts on a density background (xenium.plan), when the folder is
+        # surely Xenium's and holds something to draw; a Xenium 1.x image file still asks for the 2.0 layout
+        no_image = not stains and bool(strong) and not old and bool(has_cells or tx)
+        c = _cand("xenium", variant, "Xenium (" + ", ".join(["stains"] * bool(stains) + parts
+                                                           + ["no stain images"] * no_image) + ")", rel)
         if stains:
             _ev(c, "stain images", _join(rel, "morphology_focus") + "/",
                 f"{len(stains)} file(s): " + ", ".join(stains[:4]) + (" ..." if len(stains) > 4 else ""))
             c["_claim_dirs"].append(_join(rel, "morphology_focus"))
+        elif no_image:
+            c["notes"].append("no stain images (morphology_focus/*.ome.tif): drawn on a "
+                              + ("transcript" if tx else "cell") + " density background instead")
         else:
             why = (f" ({old} is the single-file layout of Xenium Onboard Analysis 1.x: the xenium reader needs the "
                    f"morphology_focus/ folder of 2.0 and later; the file can be prepared on its own with --kind tiff)"
@@ -531,6 +549,8 @@ def find_xenium(cx: Ctx) -> list[dict]:
                   "copy the morphology_focus folder of the Xenium output into this folder")
         if "experiment.xenium" in f:
             _ev(c, "pixel size", _join(rel, "experiment.xenium"))
+        elif no_image:
+            c["notes"].append("no experiment.xenium: Xenium's usual pixel size (0.2125 µm) is taken for the background's grid")
         else:
             c["notes"].append("no experiment.xenium: the pixel size comes from the image's own OME metadata")
         if has_cells:
@@ -1582,18 +1602,22 @@ def _zip_listing(path: Path) -> dict | None:
         return None
     names = [n.lower() for f in zt.files.values() for n in f]
     out = {"dcc": bool(names) and sum(n.endswith(".dcc") for n in names) >= max(1, 0.5 * len(names)),
-           "pkc": any(n.endswith(".pkc") for n in names), "files": zt.n_files}
+           "pkc": any(n.endswith(".pkc") for n in names), "files": zt.n_files, "refused": zt.refused}
     zc = Ctx(zt)
-    best = None
+    best, n_xen = None, 0
     for kind in ("xenium", "visium", "cosmx", "merscope", "stereoseq", "geomx"):
         for c in PLATFORM_FINDERS[kind](zc):
             if c["kind"] == "geomx" and not any(n.endswith(".dcc") for n in names):
                 continue
+            n_xen += c["kind"] == "xenium"
             score = (len(c["evidence"]), -_depth(c["root"]))
             if best is None or score > best[0]:
                 best = (score, c)
     if best:
-        out.update(kind=best[1]["kind"], variant=best[1]["variant"], label=best[1]["label"], inner=best[1]["root"])
+        b = best[1]
+        out.update(kind=b["kind"], variant=b["variant"], label=b["label"], inner=b["root"],
+                   missing=[m["what"] for m in b["missing"]], notes=list(b["notes"]),
+                   evidence=[e["what"] for e in b["evidence"]], several=n_xen > 1 and b["kind"] == "xenium")
     return out
 
 
@@ -1696,7 +1720,10 @@ def _unit(cands: list[dict], extras: list[str]) -> dict:
     if c["missing"]:
         zipped = c.get("zipped")
         rep.update(verdict="incomplete", reason="zipped" if zipped else "missing-files",
-                   message=(f"this is a zipped {KIND_WORDS[c['kind']]}: unzip it into a folder first, then point at that folder"
+                   message=(f"this is a zipped {KIND_WORDS[c['kind']]}, but it is not read as it is: "
+                            + "; ".join(m["what"] for m in c["missing"])
+                            if zipped and c["kind"] == "xenium" else
+                            f"this is a zipped {KIND_WORDS[c['kind']]}: unzip it into a folder first, then point at that folder"
                             if zipped else f"this looks like {c['label']}, but something it needs is missing: "
                             + "; ".join(m["what"] for m in c["missing"])))
         rep["suggestions"] = [m["fix"] for m in c["missing"] if m["fix"]]
@@ -1840,7 +1867,7 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
                 extras_of.setdefault(root, []).append(f"{n_h5} .h5ad file(s) in this folder are not used; one can be prepared "
                                                       f"on its own with --src <file>")
 
-    # ---- zipped instrument output
+    # ---- zipped instrument output (a Xenium zip is read as it is: xenium.py / zipinput.py; the others must be unzipped)
     zipped = []
     for (rel, n), z in sorted(zips.items()):
         if z.get("kind") and not z["dcc"]:
@@ -1849,8 +1876,23 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
             c = _cand(z["kind"], z["variant"], f"{z['label']}, zipped", _join(rel, n), is_file=True)
             c["zipped"] = t.path(rel, n)
             _ev(c, "zip file list", _join(rel, n), f"{_mb(t.f(rel)[n])}, {z['files']:,} files inside; holds {z['label']}")
-            _miss(c, f"the files are inside {n}: prepare.py does not read zipped instrument output", None,
-                  f"unzip {n} into a folder, then point at that folder" + (f" (the dataset is in {z['inner']}/ inside it)" if z.get("inner") else ""))
+            where = (f" (the dataset is in {z['inner']}/ inside it)" if z.get("inner") else "")
+            if z["kind"] == "xenium" and z.get("refused"):
+                _miss(c, z["refused"], None, "check where the zip came from; unzip a copy you trust and point at the folder")
+            elif z["kind"] == "xenium" and not z.get("missing") and not z.get("several"):
+                c["args"]["src"] = t.path(rel, n)
+                c["notes"].append("read from the zip as it is: the stain images (and a compressed transcripts.zarr.zip) are "
+                                  "copied out into <cache>/_unzipped/<id>/ while it is prepared, never next to the zip")
+                c["notes"] += z.get("notes", [])
+            elif z["kind"] == "xenium" and z.get("several"):
+                _miss(c, f"{n} holds more than one Xenium output folder", None,
+                      f"unzip {n} and point at the folder you want")
+            elif z["kind"] == "xenium":
+                _miss(c, "inside " + n + ": " + "; ".join(z["missing"]), None,
+                      f"unzip {n}, add what is missing, then point at that folder" + where)
+            else:
+                _miss(c, f"the files are inside {n}: prepare.py reads a zipped Xenium output as it is, but not a zipped "
+                         f"{KIND_WORDS[z['kind']]}", None, f"unzip {n} into a folder, then point at that folder" + where)
             zipped.append(_finish(c, {}))
     other_archives = sorted(n for f in t.files.values() for n in f
                             if n.lower().endswith((".tar.gz", ".tgz", ".tar", ".7z", ".rar")))
@@ -1865,18 +1907,31 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
         units.setdefault(home if home is not None else c["root"], []).append(c)
     real_units = bool(units)
     notes = []
-    if zipped and not real_units:
-        for c in zipped:
+    xen_roots = [c["root"] for c in cands if c["kind"] == "xenium"]
+
+    def unzipped_copy(c):                                # X.zip with the folder X/ beside it, or a zip inside a Xenium folder
+        rel, n = c["root"].rpartition("/")[0], c["root"].rpartition("/")[2]
+        stem = _join(rel, n[:-4] if n.lower().endswith(".zip") else n)
+        return any(r == rel or _under(r, stem) for r in xen_roots)
+    for c in zipped:
+        if c["status"] == "complete" and not unzipped_copy(c):           # a zipped Xenium output: a dataset of its own
             units.setdefault(c["root"], []).append(c)
-    elif zipped:
-        notes += [f"{Path(c['zipped']).name} holds a zipped {KIND_WORDS[c['kind']]} (not looked into further)" for c in zipped]
+        elif not real_units:
+            units.setdefault(c["root"], []).append(c)
+        elif c["status"] == "complete":
+            notes.append(f"{Path(c['zipped']).name} holds a zipped {KIND_WORDS[c['kind']]}; not prepared on its own, as "
+                         f"the unzipped Xenium folder beside it (or around it) is (to prepare the zip itself: --src "
+                         f"{_quote(c['zipped'])})")
+        else:
+            notes.append(f"{Path(c['zipped']).name} holds a zipped {KIND_WORDS[c['kind']]} (not looked into further)")
     if other_archives:
         notes.append(f"{len(other_archives)} archive(s) were not looked into (only .zip file lists are read): "
                      + ", ".join(other_archives[:4]) + (" ..." if len(other_archives) > 4 else ""))
     lone = sorted(n for f in t.files.values() for n in f if n.lower().endswith("transcripts.zarr.zip") and n != "transcripts.zarr.zip")
     if lone:
         notes.append(f"{len(lone)} file(s) named like {lone[0]} look like a Xenium transcripts store on its own: the Xenium "
-                     f"reader needs the output folder with morphology_focus/ and the file named transcripts.zarr.zip")
+                     f"reader needs it named transcripts.zarr.zip, in the output folder or in a folder of its own (then its "
+                     f"molecules are drawn on a transcript-density background)")
     n_zip = sum(1 for f in t.files.values() for n in f if n.lower().endswith(".zip") and not n.lower().endswith(".zarr.zip"))
     if n_zip > len(zips):
         notes.append(f"{n_zip - len(zips)} zip file(s) were not looked into (the first {MAX_ZIPS} are)")
@@ -1924,7 +1979,7 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
         rep.update({k: d[k] for k in ("verdict", "reason", "message", "kind", "variant", "label", "candidates", "suggestions")})
         rep["extras"] = d["extras"] + notes
         if d["root"] and not t.single and d["verdict"] == "certain":
-            is_file = d["candidates"][0]["kind"] in ("tiff", "rnaseq", "anndata") and Path(d["path"]).is_file()
+            is_file = Path(d["path"]).is_file()                 # one image / AnnData file, or a zipped Xenium output
             rep["extras"].insert(0, f"the dataset is the file {d['root']} in the folder given" if is_file
                                  else f"the dataset is in {d['root']}/ below the folder given")
         return done()

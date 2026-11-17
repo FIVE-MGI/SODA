@@ -407,8 +407,15 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
     def is_kind_folder(p: Path) -> bool:              # inputs/visium/<id>/ ... of the older layout
         return p.name in KIND_FOLDERS and not any(s["root"] == "" for s in detect.detect(p)["datasets"])
 
-    for p in sorted(src.iterdir(), key=lambda q: q.name.lower()):
+    entries = sorted(src.iterdir(), key=lambda q: q.name.lower())
+    folders = {q.name.lower() for q in entries if q.is_dir()}
+    for p in entries:
         if p.name.startswith((".", "_")) or p.name == "README.txt":
+            continue
+        if (p.is_file() and p.suffix.lower() == ".zip" and p.stem.lower() in folders
+                and safe_id(p.stem) in {r["id"] for r in rows}):          # x/ sorts before x.zip
+            warn.append(f"{p.name} is not prepared: the folder {p.stem} beside it is (an unzipped copy, it seems); "
+                        f"to prepare the zip itself, move it into a folder of its own")
             continue
         if p.is_dir() and is_kind_folder(p):
             for sub in sorted(q for q in p.iterdir() if q.is_dir()):
