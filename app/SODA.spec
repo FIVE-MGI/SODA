@@ -54,6 +54,9 @@ _PRIVATE_DIRS = {"logos", "__pycache__", ".venv", "node_modules"}
 
 
 def page_files():
+    # vendor/ (deck.gl and umap-js, from `prepare.py vendor`; not committed) comes along like any other
+    # file when it is there, so the app's viewer needs no internet; without it the viewer uses the CDN.
+    # build_release.ps1 / build_release_mac.sh check it (vendor.py --check) before this runs.
     out = []
     for p in SODA.rglob("*"):
         if not p.is_file():

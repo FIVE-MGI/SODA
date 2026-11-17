@@ -89,16 +89,22 @@
     O.state = "registering"; paint();
     try {
       const reg = await navigator.serviceWorker.register(`sw.js?app=${O.app}`, { updateViaCache: "none" });
-      const mine = () => reg.active && reg.active.scriptURL.indexOf(`app=${O.app}`) > 0;
+      // this version installed (its files kept) and activated (older versions' caches deleted)
+      const mine = () => reg.active && reg.active.state === "activated" && reg.active.scriptURL.indexOf(`app=${O.app}`) > 0;
       // wait for this version to be installed (its files kept) and to take over: at most two minutes
       for (let i = 0; i < 480 && !(mine() && navigator.serviceWorker.controller); i++) {
-        if (!reg.installing && !reg.waiting && i > 40 && !mine()) break;      // nothing coming: the install failed
+        if (!reg.installing && !reg.waiting && !(reg.active && reg.active.state === "activating") && i > 40 && !mine()) break;   // nothing coming: the install failed
         await sleep(250);
       }
       O.state = mine() ? "ready" : "failed";
       if (!mine()) O.why = reg.active ? "an earlier version stays kept" : "the browser did not keep it";
     } catch (e) {
-      O.state = "failed"; O.why = e && e.message ? e.message.replace(/\?[^\s]*/g, "") : String(e);
+      // offline, some browsers (WebKit) fail register() because they cannot fetch sw.js to compare it, while
+      // this same version, already kept, answers the page: that is ready, not failed
+      let reg = null;
+      try { reg = await navigator.serviceWorker.getRegistration(SCOPE); } catch (err) { /* none */ }
+      if (reg && reg.active && reg.active.scriptURL.indexOf(`app=${O.app}`) > 0 && navigator.serviceWorker.controller) O.state = "ready";
+      else { O.state = "failed"; O.why = e && e.message ? e.message.replace(/\?[^\s]*/g, "") : String(e); }
     }
     return done();
   }

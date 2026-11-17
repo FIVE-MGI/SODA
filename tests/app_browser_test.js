@@ -34,12 +34,14 @@ const until = (page, fn, a, ms = 30000) => page.waitForFunction(fn, a, { timeout
   let browser;
   try { browser = await pw.chromium.launch(); }
   catch (e) { console.log(`SKIPPED: cannot launch Chromium (${String(e.message).split("\n")[0]})`); process.exit(0); }
-  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  // the viewer's service worker (sw.js) is tested by tests/offline_test.js; here the page as it loads
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, serviceWorkers: "block" });
   const page = await ctx.newPage();
   const errors = [], failed = [];
   // gates.json is optional (a lab's published gates); the page asks for it and the browser logs the 404,
-  // as tests/compat_test.js allows too
-  const optional = (u) => /\/gates\.json(\?|$)/.test(u || "");
+  // as tests/compat_test.js allows too. So is vendor/ (deck.gl from the app itself when it was built with
+  // `prepare.py vendor`; else the CDN).
+  const optional = (u) => /\/gates\.json(\?|$)|\/vendor\//.test(u || "");
   page.on("console", (m) => {
     if (m.type() !== "error") return;
     const u = (m.location() || {}).url || "";

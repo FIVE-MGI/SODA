@@ -61,6 +61,15 @@ echo "   python       -> $PY"
 echo "[1/6] checking the build environment..."
 "$PY" "$REPO/tools/check_install.py"
 "$PY" -m PyInstaller --version >/dev/null || { echo "PyInstaller is not installed for $PY (pip install pyinstaller==6.21.0)" >&2; exit 1; }
+# deck.gl and umap-js, optional: with web/SpatialViewer/vendor/ (python web/SpatialViewer/prepare.py vendor before
+# the build) they go into the app (SODA.spec takes the whole page folder) and Open viewer needs no internet;
+# without it the viewer loads them from cdn.jsdelivr.net. A vendor/ that is there must be complete.
+if [[ -d "$REPO/web/SpatialViewer/vendor" ]]; then
+    "$PY" "$REPO/web/SpatialViewer/vendor.py" --check || { echo "web/SpatialViewer/vendor/ is incomplete or not the pinned files: run python web/SpatialViewer/prepare.py vendor again" >&2; exit 1; }
+    echo "   vendor/: deck.gl and umap-js included (the viewer works with no internet)"
+else
+    echo "   no web/SpatialViewer/vendor/: the viewer will load deck.gl from the CDN (prepare.py vendor includes it)"
+fi
 
 # 2. PyInstaller ----------------------------------------------------------------------------
 echo "[2/6] running PyInstaller (several minutes)..."

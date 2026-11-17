@@ -174,7 +174,7 @@ async function cut(resp, range) {
 async function fromKept(req, k) {
   try { return await fetch(req); }
   catch (err) {
-    const hit = await (await caches.open(k.name)).match(bare(req.url));
+    const hit = await caches.match(bare(req.url), { cacheName: k.name });   // match, not open: open would make a removed copy again
     if (!hit) return Response.error();
     const range = req.headers.get("range");
     return range ? cut(hit, range) : hit;
@@ -191,13 +191,15 @@ async function fromApp(e) {
       const u = req.url, copy = r.clone();
       const fixed = /[?&]v=/.test(u) && !/\/config\.js\?/.test(u);
       e.waitUntil((async () => {
+        // a newer version took over (and deleted this cache) while this worker still answered: keep nothing
+        if (!(await caches.has(APP_CACHE))) return;
         const cache = await caches.open(APP_CACHE);
         if (!fixed || !(await cache.match(u))) await cache.put(u, new Response(await copy.arrayBuffer(), { headers: { "Content-Type": copy.headers.get("Content-Type") || "application/octet-stream" } }));
       })().catch(() => {}));
     }
     return r;
   } catch (err) {
-    const hit = await (await caches.open(APP_CACHE)).match(req.url);
+    const hit = await caches.match(req.url, { cacheName: APP_CACHE });
     return hit || Response.error();
   }
 }
@@ -208,26 +210,29 @@ async function fromPage(e) {
       // the same version's page as it is now (its ?v= strings unchanged): that is the one to open offline
       const copy = r.clone();
       e.waitUntil(copy.text().then(async (t) => {
-        if (hashRefs(appRefs(t)) === APP) await (await caches.open(APP_CACHE)).put(PAGE, new Response(t, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
+        if (hashRefs(appRefs(t)) === APP && await caches.has(APP_CACHE)) await (await caches.open(APP_CACHE)).put(PAGE, new Response(t, { headers: { "Content-Type": "text/html; charset=utf-8" } }));
       }).catch(() => {}));
     }
     return r;
   } catch (err) {
-    const hit = await (await caches.open(APP_CACHE)).match(PAGE);
+    const hit = await caches.match(PAGE, { cacheName: APP_CACHE });
     return hit || Response.error();
   }
 }
 async function fromLibs(e) {
-  const req = e.request, cache = await caches.open(LIB_CACHE);
-  const hit = await cache.match(req.url);
+  const req = e.request;
+  const hit = await caches.match(req.url, { cacheName: LIB_CACHE });
   if (hit) return hit;
-  const r = await fetch(req);
+  let r;
+  // not kept and out of reach (offline, or no vendor/ copy kept): an error status, not a rejected answer,
+  // which WebKit reports as a page error; the page then falls back as it does online (libs.js, the worker)
+  try { r = await fetch(req); } catch (err) { return new Response("", { status: 504, statusText: "Offline" }); }
   // kept now if it was not at install (the CDN was out of reach then): only a copy the browser checked
   // against the pinned hash (the page's script tags carry it), never an opaque one
   const L = LIBS.find((x) => x.localUrl === req.url || x.cdn === req.url);
   if (L && r.ok && (r.type === "basic" || r.type === "cors") && req.integrity === L.sri) {
     const copy = r.clone();
-    e.waitUntil(whole(copy).then((w) => cache.put(req.url, w)).catch(() => {}));
+    e.waitUntil(whole(copy).then(async (w) => { if (await caches.has(LIB_CACHE)) await (await caches.open(LIB_CACHE)).put(req.url, w); }).catch(() => {}));
   }
   return r;
 }

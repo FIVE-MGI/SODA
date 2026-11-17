@@ -6232,8 +6232,11 @@
       S.src = liveSource(src, seq, openCtl.signal);
       S.m = await S.src.manifest();
     } catch (e) {
-      if (!stale()) status(`Cannot open ${id}: ${navigator.onLine === false && !(S.keepInfo && S.keepInfo.root && window.SodaOffline &&
-        window.SodaOffline.state().kept.some((k) => k.root === S.keepInfo.root)) ? "this computer is offline, and this dataset is not kept for offline use (Save tab, Offline use)" : e.message}`, true);
+      // offline, or the data out of reach (a network error) on a page that keeps itself: say whether it is kept
+      const off = window.SodaOffline ? window.SodaOffline.state() : null;
+      const notKept = !!off && !(S.keepInfo && S.keepInfo.root && off.kept.some((k) => k.root === S.keepInfo.root));
+      if (!stale()) status(`Cannot open ${id}: ${navigator.onLine === false && notKept ? "this computer is offline, and this dataset is not kept for offline use (Save tab, Offline use)"
+        : e instanceof TypeError && notKept && !!navigator.serviceWorker && !!navigator.serviceWorker.controller ? `${e.message} (the data cannot be reached, and this dataset is not kept for offline use)` : e.message}`, true);
       return;
     }
     if (stale()) return;

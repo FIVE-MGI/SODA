@@ -253,6 +253,10 @@ needed on managed lab PCs; it is built only where Inno Setup 6 is installed.
   nothing. Options: make releases from a public repository, or attach the zip/dmg to a lab share.
 - **Notarisation and Windows signing**: need the certificates above.
 - **Offline viewing**: the viewer loads deck.gl (and umap-js for the circle tool) from
-  cdn.jsdelivr.net, so "Open viewer" needs internet, as the hosted page does. Bundling those
-  two files into the app would make it fully offline.
+  cdn.jsdelivr.net unless the build includes them: run `python web/SpatialViewer/prepare.py vendor`
+  before `build_release.ps1` / `build_release_mac.sh` and `web/SpatialViewer/vendor/` goes into the
+  app (the build scripts check it with `vendor.py --check` and say whether it is included).
+  Without it, the viewer still keeps both libraries after one "Open viewer" with internet (its
+  service worker, see [ADVANCED.md, Offline use](ADVANCED.md#9-offline-use)). The release
+  workflows do not run `prepare.py vendor` yet.
 - **Self-update**, and an app icon (both `icon=None` today, as FIVE Atlas).

@@ -8,7 +8,7 @@
 //             SHA-384 checked against libs.js.
 //   keep      Save tab > Offline use > Keep this dataset: a size is shown first, then the files are kept;
 //             a view link is made.
-//   offline   context.setOffline(true), reload: the page and the dataset open, tiles drawn; Draw a region
+//   offline   context.setOffline(true) (WebKit: both servers refuse connections, see run()), reload: the page and the dataset open, tiles drawn; Draw a region
 //             (two circles) and Run UMAP (umap-js in the worker); a marker list reads; the view link opens
 //             in a second window; a dataset that was not kept says so.
 //   update    back online, the page served with every ?v= string changed (a new publish): reload, the new
@@ -69,6 +69,7 @@ fs.mkdirSync(catDir);
 fs.writeFileSync(path.join(catDir, "datasets.json"), JSON.stringify({ soda: 1, title: "Offline test", default: DS,
   datasets: [DS, OTHER].filter((id) => fs.existsSync(path.join(EXPORT, id, "manifest.json"))).map((id) => ({ id, label: `Demo ${id}` })) }));
 function dataHandler(req, res) {
+  if (NET.down) { req.socket.destroy(); return; }
   if (req.method === "OPTIONS") { preflight(req, res); return; }
   const u = decodeURIComponent(req.url.split("?")[0]);
   const m = /^\/plain(\/.*)$/.exec(u);
@@ -77,7 +78,9 @@ function dataHandler(req, res) {
   sendFile(req, res, file, TYPES[path.extname(file)]);
 }
 const PG = { variant: "", vendor: false, hits: [] };
+const NET = { down: false };              // WebKit's "offline": both servers refuse every connection
 function pageHandler(req, res) {
+  if (NET.down) { req.socket.destroy(); return; }
   const u = decodeURIComponent(req.url.split("?")[0]);
   PG.hits.push(u);
   const send = (code, type, body) => { res.writeHead(code, { "Content-Type": type, "Cache-Control": "no-store" }); res.end(req.method === "HEAD" ? "" : body); };
@@ -129,8 +132,9 @@ async function run(browserType, eng, urls) {
     const dir = path.join(SHOTS, eng); fs.mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: path.join(dir, `${name}.png`) }).catch(() => {});
   };
-  const until = (page, fn, a, ms = 45000) => page.waitForFunction(fn, a, { timeout: ms, polling: 200 }).then(() => true, () => false);
-  const opened = (page, id, ms = 45000) => until(page, (id) => { const sv = window.__spatialViewer; return sv && sv.state && sv.state.m && sv.state.m.id === id && sv.state.dsId === id; }, id, ms);
+  let untilErr = "";
+  const until = (page, fn, a, ms = 45000) => page.waitForFunction(fn, a, { timeout: ms, polling: 200 }).then(() => true, (e) => { untilErr = String(e.message).split(String.fromCharCode(10))[0].slice(0, 200); return false; });
+  const opened = (page, id = DS, ms = 45000) => until(page, (id) => { const sv = window.__spatialViewer; return sv && sv.state && sv.state.m && sv.state.m.id === id && sv.state.dsId === id; }, id, ms);
   const where = (page) => page.evaluate(() => { const sv = window.__spatialViewer, s = document.getElementById("status");
     return { m: sv && sv.state && sv.state.m ? sv.state.m.id : null, ds: sv && sv.state ? sv.state.dsId : null, status: s && !s.hidden ? s.textContent.slice(0, 160) : "" }; }).catch((e) => ({ err: String(e.message).slice(0, 160) }));
   const statusText = (page) => page.evaluate(() => { const s = document.getElementById("status"); return s && !s.hidden ? s.textContent : ""; });
@@ -189,6 +193,13 @@ async function run(browserType, eng, urls) {
   const pageUrl = `${urls.page}/?static=${encodeURIComponent(urls.data + "/plain")}&ds=${DS}`;
   const rootUrl = `${urls.data}/plain/${DS}/`;
   let swOk = false;
+  // offline: Chromium's context.setOffline. WebKit's (Playwright) fails every navigation before the service
+  // worker sees it ("WebKit encountered an internal error"), so there both servers refuse connections
+  // instead: the network error a page meets when its site is out of reach (navigator.onLine stays true,
+  // and the CDN stays reachable, which the kept libraries do not need)
+  const EMULATE = eng !== "webkit";
+  const offline = async (ctx, on) => { if (EMULATE) await ctx.setOffline(on); NET.down = !!on && !EMULATE; };
+  if (!EMULATE) notes.push(`${eng}: "offline" = the page and data servers refuse connections (Playwright's WebKit setOffline fails navigations before the service worker)`);
   PG.variant = ""; PG.vendor = false;
 
   // ---- online: first visit, the service worker installs ----------------------------------------------
@@ -200,7 +211,7 @@ async function run(browserType, eng, urls) {
     if (L && r.ok()) { try { bodies[L.path] = await r.body(); } catch (e) { /* a worker's: from the cache later */ } }
   });
   await page.goto(pageUrl, { waitUntil: "load" });
-  ok(await opened(page), `online: ${DS} opens: ${JSON.stringify(await where(page))}`, "first visit online");
+  ok(await opened(page), `online: ${DS} opens: ${JSON.stringify(await where(page))} ${untilErr}`, "first visit online");
   ok(await drawn(page) > 0.01, "online: tiles drawn", "first visit online");
   const st0 = await swReady(page);
   const s0 = await offState(page);
@@ -258,7 +269,7 @@ async function run(browserType, eng, urls) {
   await shot(page, "3_kept");
 
   // ---- offline -------------------------------------------------------------------------------------------
-  await A.ctx.setOffline(true);
+  await offline(A.ctx, true);
   A.log.console.length = 0; A.log.pageErrors.length = 0;
   await page.reload({ waitUntil: "load" });
   const onl = await page.evaluate(() => navigator.onLine);
@@ -289,7 +300,7 @@ async function run(browserType, eng, urls) {
   }
 
   // ---- a new publish: every ?v= changed ---------------------------------------------------------------
-  await A.ctx.setOffline(false);
+  await offline(A.ctx, false);
   PG.variant = "u2";
   await page.reload({ waitUntil: "load" });
   await opened(page);
@@ -298,27 +309,28 @@ async function run(browserType, eng, urls) {
   const c2 = await cacheInfo(page);
   const files2 = c2.app.length === 1 ? c2.files[c2.app[0]] : [];
   ok(st2 === "ready" && s2.app !== s0.app && c2.app.length === 1 && c2.app[0].endsWith(`|${s2.app}`) && !c2.app.includes(c0.app[0]),
-     `a newer ?v= replaces the cache: ${c0.app[0].split("|").pop()} -> ${c2.app.join(", ").split("|").pop()} (${c2.app.length} app cache)`, "new ?v= replaces the cache");
+     `a newer ?v= replaces the cache: ${c0.app[0].split("|").pop()} -> ${c2.app.join(", ").split("|").pop()} (${c2.app.length} app cache: ${c2.app.map((n) => `${n.split("|").pop()} ${c2.files[n].length} files`).join(", ")})`, "new ?v= replaces the cache");
   ok(files2.some((f) => /\/viewer\.js\?v=[\w.-]+u2$/.test(f)) && !files2.some((f) => /\/viewer\.js\?v=[\w.-]+[^2]$/.test(f)),
      "the new cache holds the new version's files only", "new ?v= replaces the cache");
   ok(c2.lib.length === 1 && c2.lib[0] === c0.lib[0] && c2.data.length === 1, "the libraries and the kept dataset stay", "new ?v= replaces the cache");
-  await A.ctx.setOffline(true);
+  await offline(A.ctx, true);
   await page.reload({ waitUntil: "load" });
   const new2 = await page.evaluate(() => !!document.querySelector('script[src$="u2"]'));
   ok(await opened(page) && new2 && await drawn(page) > 0.01, "offline after the update: the new version opens, with the dataset", "new ?v= replaces the cache");
   await shot(page, "6_offline_after_update");
 
   // ---- remove ----------------------------------------------------------------------------------------------
-  await A.ctx.setOffline(false);
+  await offline(A.ctx, false);
   await showOffline(page);
   await until(page, () => !document.getElementById("offDrop").hidden, null, 10000);
   await page.click("#offDrop");
   const gone = await until(page, () => !window.SodaOffline.state().kept.length, null, 10000);
   ok(gone && !(await cacheInfo(page)).data.length, "Remove offline copy: the kept data is gone", "remove a kept dataset");
-  await A.ctx.setOffline(true);
+  await offline(A.ctx, true);
   await page.reload({ waitUntil: "load" });
   const refused = await until(page, () => /not kept for offline use/.test((document.getElementById("status") || {}).textContent || ""), null, 30000);
   ok(refused, `offline after Remove: the page opens, the dataset says it is not kept: "${await statusText(page)}"`, "remove a kept dataset");
+  await offline(A.ctx, false);
   await A.ctx.close();
 
   // ---- vendor/: the libraries from the page's own site --------------------------------------------------
@@ -338,11 +350,12 @@ async function run(browserType, eng, urls) {
   const libv = cv.lib.length === 1 ? cv.files[cv.lib[0]] : [];
   ok(stv === "ready" && Object.values(LIBS).every((L) => libv.includes(`/vendor/${L.path}`)), `vendor: the service worker kept the vendor/ copies: ${libv.join(", ")}`, "vendor/ (no CDN)");
   ok(!errorsOf(B.log).length, `vendor: no error: ${errorsOf(B.log).slice(0, 3).join(" | ") || "none"}`, "vendor/ (no CDN)");
-  await B.ctx.setOffline(true);
+  await offline(B.ctx, true);
   await pv.reload({ waitUntil: "load" });
   const ov = await until(pv, () => !!window.deck && window.SODA_LIBS_FROM && window.SODA_LIBS_FROM.deck === "local", null, 30000);
   ok(ov, "vendor, offline: the page loads deck.gl from the kept vendor/ copy", "vendor/ (no CDN)");
   await shot(pv, "7_vendor_offline");
+  await offline(B.ctx, false);
   await B.ctx.close();
   // a vendor/ file that is not the pinned one is refused by the browser: the CDN copy is used
   const bad = path.join(SAVED, LIBS.deck.path), good = fs.readFileSync(bad);
@@ -374,6 +387,7 @@ async function run(browserType, eng, urls) {
     const bt = pw[name];
     if (!bt) { console.log(`  SKIPPED ${name}: not a Playwright browser`); continue; }
     console.log(`-- ${name}`);
+    NET.down = false;
     try { done[name] = await run(bt, name, urls); }
     catch (e) { fail++; failures.push(`${name} | crashed: ${String(e.stack || e).split("\n").slice(0, 3).join(" ")}`); console.log(`  FAIL ${name} crashed: ${e.stack || e}`); done[name] = "crashed"; }
   }
@@ -396,6 +410,7 @@ async function run(browserType, eng, urls) {
     const r3 = d.status === 1 && /REFUSED/.test(d.stdout) && !fs.existsSync(path.join(empty, "vendor", LIBS.deck.path)); if (r3) pass++; else { fail++; failures.push(`vendor.py wrong file: ${d.status}: ${d.stdout}`); }
     console.log(`${r3 ? "  ok  " : "  FAIL"} vendor.py --from <wrong files>: refused, nothing written (exit ${d.status})`);
   }
+  NET.down = false;
   data.close(); pg.close();
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* temp */ }
 
