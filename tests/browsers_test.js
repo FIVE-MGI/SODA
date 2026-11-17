@@ -13,7 +13,9 @@
 //             and Run UMAP (a worker that loads umap-js); Save JSON and Save CSV (file downloads);
 //             volcano (its worker) and its PNG (an SVG drawn on a canvas); heatmap / violin and the
 //             plot's PNG; Cell sets merge and its CSV; the QC filter; Save image at 1x, 2x and 4x (the
-//             PNG's size read from the file); Copy link.
+//             PNG's size read from the file); Copy link to this view, and that link opened in a new tab
+//             (same dataset, layer, genes, mode and camera). Compare's two linked windows are not run:
+//             only that the browser has BroadcastChannel, which they need (probe).
 //   links     ?data=<folder>/&ds=<id> (no datasets.json), and ?data=<folder>/ with a datasets.json
 //             carrying tags: the picker lists every dataset, a tag filter narrows the list, a row opens.
 //   outlines  a cells layer with segmentation boundaries (demo_xenium), Cell shapes on Outlines, zoomed in
@@ -303,6 +305,8 @@ async function probe(browser, eng, urls) {
         webkitBackdropFilter: CSS.supports("-webkit-backdrop-filter", "blur(2px)"), inset: CSS.supports("inset", "0"), gap: CSS.supports("gap", "1px"), aspectRatio: CSS.supports("aspect-ratio", "1") };
       out.clipboardWrite = !!(navigator.clipboard && navigator.clipboard.writeText);
       out.anchorDownload = "download" in document.createElement("a");
+      out.broadcastChannel = typeof BroadcastChannel === "function";
+      out.compressionStream = typeof CompressionStream === "function";
       // the largest 2D canvas that still encodes a PNG (Save image draws on one)
       out.canvas = {};
       for (const [w, h] of [[8192, 8192], [16384, 4096], [11000, 7000], [16384, 16384]]) {
@@ -327,6 +331,8 @@ async function probe(browser, eng, urls) {
     t.ok(p.anchorDownload, "<a download> (Save JSON / CSV / PNG)", "file download via <a download>");
     t.ok(p.canvas["8192x8192"] === "ok", `a 2D canvas of 8192 x 8192 encodes a PNG (${p.canvas["8192x8192"]})`, "2D canvas 8192 x 8192 to PNG");
     mark("createImageBitmap with options", eng.name, p.createImageBitmapOptions === true);
+    t.ok(p.broadcastChannel, "BroadcastChannel (Compare: the second, linked window)", "BroadcastChannel (Compare windows)");
+    info("CompressionStream (shorter view links; without it the link is plain JSON)", eng.name, p.compressionStream);
     for (const [k, v] of Object.entries(p.css)) if (k !== "webkitBackdropFilter") mark(`CSS ${k}`, eng.name, v);
     info("OffscreenCanvas (not used by the page)", eng.name, p.offscreenCanvas);
     info("module workers (not used by the page)", eng.name, p.moduleWorker);
@@ -551,14 +557,37 @@ async function walk(browser, eng, urls) {
     });
 
     // Copy link: the clipboard API, or the textarea fallback; the message says which worked
-    await step("Copy link", async () => {
+    // Copy link to this view (viewlink.js): the clipboard (or the box it shows when the browser will not copy),
+    // then the link opened in a new tab of the same browser: the same dataset, layer, genes, mode and camera
+    await step("Copy link to this view", async () => {
+      await ev(() => { const sv = window.__spatialViewer, S = sv.state, i = S.m.image;
+        sv.deck.props.onViewStateChange({ viewState: { ...S.viewState, target: [i.width * 0.4, i.height * 0.55, 0], zoom: S.viewState.zoom + 1 }, viewId: "ortho" }); });
+      await settled(P); await P.waitForTimeout(400);
+      const want = await ev(() => { const S = window.__spatialViewer.state; return { ds: S.dsId, layer: S.exprKey, genes: S.genes.map((g) => g.name), mode: S.umap ? S.umap.view : null,
+        x: S.viewState.target[0], y: S.viewState.target[1], zoom: S.viewState.zoom }; });
       await ev(() => document.getElementById("btnCopyLink").click());
-      await P.waitForTimeout(400);
+      await until(P, () => /link to this view|could not/i.test(document.getElementById("saveMsg").textContent), null, 15000);
       const said = await ev(() => document.getElementById("saveMsg").textContent);
       let clip = null;
       if (eng.clipboard) clip = await ev(() => navigator.clipboard.readText()).catch(() => null);
-      const url = P.url();
-      t.ok(/Link copied/.test(said) && (clip === null || clip === url), `Copy link: "${said.slice(0, 60)}"${clip !== null ? ` (clipboard ${clip === url ? "holds the address" : "WRONG: " + clip})` : ""}`, "Copy link (clipboard)");
+      const box = await ev(() => { const b = document.getElementById("saveLinkBox"); return b && !b.hidden ? b.value : null; });
+      const link = clip || box || (await ev(async () => (await window.SodaViewLink.make()).url));
+      t.ok(/^Link to this view copied/.test(said) && /#v=1[dj]\./.test(link) && (clip === null || clip === link),
+        `Copy link to this view: "${said.slice(0, 70)}" (${clip !== null ? "clipboard" : box ? "box" : "made"}: ${link.length} characters)`, "Copy link to this view (clipboard)");
+      const t2 = await openPage(browser, eng, link, "view link opened", "view link restores the view");
+      try {
+        const done = await until(t2.page, (ds) => { const sv = window.__spatialViewer, S = sv && sv.state; return S && S.dsId === ds && S.m && window.SodaViewLink && !window.SodaViewLink.pending() && S.genes.length > 0; }, want.ds, 60000);
+        await settled(t2.page); await t2.page.waitForTimeout(800);
+        const got = await t2.page.evaluate(() => { const S = window.__spatialViewer.state; return { ds: S.dsId, layer: S.exprKey, genes: S.genes.map((g) => g.name), mode: S.umap ? S.umap.view : null,
+          x: S.viewState.target[0], y: S.viewState.target[1], zoom: S.viewState.zoom, notes: window.SodaViewLink.notes() }; });
+        const camOk = Math.abs(got.zoom - want.zoom) < 0.05 && Math.hypot(got.x - want.x, got.y - want.y) < 4 * Math.pow(2, -want.zoom) + 2;
+        t2.ok(done && got.ds === want.ds && got.layer === want.layer && JSON.stringify(got.genes) === JSON.stringify(want.genes) && got.mode === want.mode && camOk,
+          `restored: ${JSON.stringify({ ...got, x: Math.round(got.x), y: Math.round(got.y), zoom: +got.zoom.toFixed(3) })} (wanted ${JSON.stringify({ ...want, x: Math.round(want.x), y: Math.round(want.y), zoom: +want.zoom.toFixed(3) })})`);
+        const r2 = await lookDrawn(t2.page, 0.01);
+        t2.ok(r2.lit > 0.01 && !r2.err, `map drawn (lit ${r2.lit.toFixed(3)}${r2.status ? `; status "${r2.status}"` : ""})`);
+        await t2.shot("viewlink_opened");
+        checkClean(t2, "view link restores the view");
+      } finally { await t2.ctx.close(); }
     });
     const r = await look(P);
     t.ok(!r.err, `no error line at the end (${r.status || "none"})`);
