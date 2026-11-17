@@ -1,40 +1,125 @@
 # SODA: Spatial Omics Data Annex
 
-SODA shows very large spatial biology datasets in a web browser:
-multiplexed immunofluorescence, H&E, Visium and Visium HD spatial transcriptomics,
-Xenium (stains, cells and single transcripts), and single-cell RNA-seq UMAPs. Each slide
-is converted once into a pyramid of small image tiles plus compact per-gene data. For the
-image, the browser fetches only the tiles on screen, so a 30-channel whole slide opens in
-seconds and pans without downloading the rest. Genes are different: picking a gene downloads
-all of that gene (its value in every bin or cell of the section, or every molecule of it), as
-one HTTP Range request into a pack that holds a layer's genes in a few large files.
-The output is plain static files: you can look at it on
-your own computer, put it on any web host for public data, or keep it in a private cloud
-container behind a password. No database and no always-on server are needed, but the page
-needs an internet connection: it loads its libraries from a public CDN.
+SODA turns what a spatial biology instrument writes into a link that opens the whole slide
+in a web browser. You run it once on your own computer, from a Python notebook; it writes
+plain files that you upload to your own storage, and anyone with the link can look, with
+nothing to install.
+
+**Licence: to be decided before public release.** See [Licence](#licence).
 
 <!-- SCREENSHOT PLACEHOLDER: docs/img/overview.png
      Whole-slide multiplex IF view with the channel panel open. Lead adds the image. -->
 
-## Show your own data in 4 steps
+## Quick start
 
-No coding needed: you paste a few commands and fill in two lines.
+From instrument folder to shared link. You need Python 3.12 or 3.13 (64-bit), Git and an
+internet connection. Nothing leaves your computer until step 5.
 
-1. **Install** with one command: `bash install.sh` (macOS / Linux) or
-   `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows). It ends with **SODA is
-   installed**. Then activate it and run `pip install jupyter` ([details](#try-it-in-5-minutes)).
-2. **Convert.** Open `notebooks/SODA_pipeline.ipynb` and fill in your work folder (`WORK`) and
-   your cloud folder's link (`CLOUD_URL`). Run Section 0, put each dataset in its own folder
-   under `inputs/` (any name: SODA works out what each one is), then **Run All**.
-3. **Upload.** Answer Section 7's one question (is this data public?), then upload the
-   `export/` folder, as it is, to your own storage: Azure, AWS, Google Cloud or a web server.
-   Box, Google Drive and Dropbox do not work.
-4. **Share** the link the notebook prints: `<the SODA page>/index.html?data=<your folder>`.
+1. **Install** (once, a few minutes). In a terminal:
 
-Every step in detail, with the one storage setting (CORS) the link needs:
-[docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). Everything beyond that: [docs/ADVANCED.md](docs/ADVANCED.md),
-including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-datasets-at-once-without-the-notebook)
-(`prepare.py batch`, with a log of any that fail).
+   ```bash
+   git clone <this repository's URL> soda
+   cd soda
+   bash install.sh                                        # macOS / Linux
+   powershell -ExecutionPolicy Bypass -File install.ps1   # Windows
+   ```
+
+   It ends with **SODA is installed**. Then turn the environment on and add Jupyter:
+
+   ```bash
+   source .venv/bin/activate          # macOS / Linux
+   .venv\Scripts\activate             # Windows
+   pip install jupyter
+   ```
+
+2. **Make the demo data.** It is synthetic: no tissue, no patient. Pick a work folder on a
+   big disk (here `D:\SODA_work`; on a Mac, for example `~/SODA_work`):
+
+   ```bash
+   python examples/make_demo.py --out D:\SODA_work\inputs
+   ```
+
+3. **Run the notebook.** `jupyter notebook notebooks/SODA_pipeline.ipynb`. In the
+   *Settings* cell set `WORK` to the same work folder, leave `CLOUD_URL` empty, then
+   **Run > Run All Cells**. The demo takes a few minutes. The run stops at Section 7 with a
+   question: that is expected.
+4. **Open the preview.** Section 6 starts a small local server and the cell after it stops it
+   again, so after Run All click into Section 6's server cell and press **Shift+Enter**. Open
+   the first link it prints in Chrome. Search a gene (for example `MARKER_FASC1`), then try
+   **Tissue | Side by side | UMAP**. Run the next cell to stop the server.
+5. **Share your own data.** Use a new work folder. Put each dataset in its own folder under
+   its `inputs/` (any name: SODA works out what each one is), set `WORK` and your storage
+   folder's link (`CLOUD_URL`), and run the notebook again. Section 5 checks the export for
+   sample IDs when you have a key file. In Section 7 answer one question (is this data
+   public?), upload the `export/` folder as it is to your own storage (Azure, AWS, Google
+   Cloud or a web server; not Box, Google Drive or Dropbox; never `cache/` or `inputs/`),
+   allow the SODA page to read it once (CORS), and share the link the notebook prints:
+   `<the SODA page>/index.html?data=<your folder>`.
+
+Every step in detail: [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). The same demo from
+the command line, without the notebook: [Try it in 5 minutes](#try-it-in-5-minutes). A whole
+folder of datasets in one command:
+[ADVANCED.md, section 8](docs/ADVANCED.md#8-many-datasets-at-once-without-the-notebook).
+
+## Documentation
+
+| Guide | What it covers |
+|---|---|
+| [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | every input type, its command and options; export, clustering, Draw a region; common problems |
+| [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways to share: a link to your data folder, or your own copy of SODA |
+| [docs/HOSTING.md](docs/HOSTING.md) | hosting from a laptop to a password-protected cloud site; what the host must do; pre-upload checklist |
+| [deploy/azure/README.md](deploy/azure/README.md) | Azure, step by step: private container, password, Static Web App |
+| [docs/ADVANCED.md](docs/ADVANCED.md) | your own site, passwords, names and colours, every notebook setting, your own clusters, marker lists, the code, batch runs, offline use |
+| [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the sample ID check before upload, and its limits |
+| [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) | the exported files, byte by byte, for people writing their own tools |
+| [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md) | the SODA desktop app for Windows and Mac (no Python needed) |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | measured times and memory, the machine they came from, and how to measure your own |
+| [REPRODUCE.md](REPRODUCE.md) | how to reproduce the numbers and figures in the paper |
+| [CHANGELOG.md](CHANGELOG.md) | what is in each version |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | reporting a problem, asking a question, sending a change |
+
+## Troubleshooting
+
+The common failures, and where the fix is written down.
+
+- **The page says it "could not reach" your folder, or genes do not load.** Your storage
+  does not yet let the SODA page read it. Set the CORS rule once, and allow the `Range`
+  header: [SHARE_YOUR_DATA.md, Step 4](docs/SHARE_YOUR_DATA.md#step-4-let-the-soda-page-read-it-one-setting-once).
+  The notebook's last cell tests this and prints the fix for your storage. A host that does
+  not answer Range requests at all: [HOSTING.md, What the host must do](docs/HOSTING.md#what-the-host-must-do).
+- **A Box, Google Drive, Dropbox or OneDrive link does not work.** Their share links open a
+  preview page, not the files, and other sites may not read them. Use Azure, AWS, Google
+  Cloud or a web server: [SHARE_YOUR_DATA.md, Step 3](docs/SHARE_YOUR_DATA.md#step-3-upload-the-whole-export-folder).
+- **A `?data=` link opens nothing on a password-protected site.** A site with a password
+  (`tokenEndpoint` in `config.js`) does not open `?data=` links from outside, unless
+  `config.js` sets `allowDataLinks: true`: [ADVANCED.md, section 2](docs/ADVANCED.md#2-private-data-with-a-password).
+- **The install stops, or says no suitable Python was found.** The install script needs
+  Python 3.12 or 3.13, 64-bit. On Intel Macs, Linux on ARM, or with Python 3.10 or 3.11, use
+  the manual install under [Try it in 5 minutes](#try-it-in-5-minutes). Python 3.14 is not
+  covered yet ([Requirements](#requirements)). `python tools/check_install.py` says which
+  package is missing or has the wrong version.
+- **The image does not appear (often on a phone).** The status line says why; add `&diag=1`
+  to the address for a full report: [Browser support](#browser-support).
+- **Bins do not line up, out of memory, `[deid] REFUSING to publish`, and other messages
+  while preparing:** [PREPARING_DATA.md, Common problems](docs/PREPARING_DATA.md#common-problems).
+
+## How it works
+
+Each slide is converted once into a pyramid of small image tiles plus compact per-gene data.
+For the image, the browser fetches only the tiles on screen, so a 30-channel whole slide
+opens in seconds and pans without downloading the rest. Genes are different: picking a gene
+downloads all of that gene (its value in every bin or cell of the section, or every molecule
+of it), as one HTTP Range request into a pack that holds a layer's genes in a few large
+files. The output is plain static files: you can look at it on your own computer, put it on
+any web host for public data, or keep it in a private cloud container behind a password. No
+database and no always-on server are needed. By default the page loads its two libraries
+(deck.gl and umap-js) from a public CDN; `prepare.py vendor` puts them on your own site
+instead, and after one visit the page also opens with no network
+([Offline use](docs/ADVANCED.md#9-offline-use)).
+
+SODA reads multiplexed immunofluorescence (OME-TIFF, QPTIFF, Akoya), H&E, Visium and Visium
+HD, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, single-cell RNA-seq, and the standard
+formats: spatial AnnData, OME-Zarr and SpatialData.
 
 ## Features
 
@@ -186,8 +271,8 @@ opens it. You need Python 3.12 or 3.13 (64-bit), Git, and an internet connection
 macOS / Linux:
 
 ```bash
-git clone <this repository's URL> spatial-viewer
-cd spatial-viewer
+git clone <this repository's URL> soda
+cd soda
 bash install.sh
 source .venv/bin/activate
 ```
@@ -195,8 +280,8 @@ source .venv/bin/activate
 Windows (PowerShell or Command Prompt):
 
 ```powershell
-git clone <this repository's URL> spatial-viewer
-cd spatial-viewer
+git clone <this repository's URL> soda
+cd soda
 powershell -ExecutionPolicy Bypass -File install.ps1
 .venv\Scripts\Activate.ps1
 ```
@@ -228,8 +313,10 @@ python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache 
 ```
 
 `make_demo.py` writes a Space Ranger-shaped Visium HD folder (`demo/raw/visiumhd/`: an
-H&E-like image and `outs/` with 8 µm and 16 µm bins) and a small 6-channel fluorescence
-image (`demo/raw/multiplex.ome.tif`). Everything goes under `demo/`, which Git ignores.
+H&E-like image and `outs/` with 8 µm and 16 µm bins), a small 9-channel fluorescence image
+(`demo/raw/multiplex.ome.tif`: six stains plus three test cases for the slide QC) and a
+tiled copy of it (`multiplex_tiled.ome.tif`, for the seam correction). Everything goes under
+`demo/`, which Git ignores.
 
 **3. Start two local web servers**, each in its own terminal window (activate the
 environment in each). One serves the data, one serves the page:
@@ -305,19 +392,6 @@ explained in that file. `config.js` is listed in `.gitignore`.
 
 **Rather not set it up yourself?** We can prepare and host your datasets for you. Please
 email wbuchser@wustl.edu with any questions about hosting.
-
-## Documentation
-
-| | |
-|---|---|
-| [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | commands and options per input type, export, clustering, the circle tool, common problems |
-| [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways: a link to your data folder, or your own copy of SODA |
-| [docs/ADVANCED.md](docs/ADVANCED.md) | the advanced way in one place: your own site, passwords, labels and colours, every notebook setting, your own clusters, marker lists, which code file does what, a batch run over a folder of datasets with a log of any that fail |
-| [docs/HOSTING.md](docs/HOSTING.md) | hosting options from a laptop to a password-protected cloud site; pre-upload checklist |
-| [deploy/azure/README.md](deploy/azure/README.md) | Azure Static Web App + private blob container + password, step by step |
-| [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the upload gate, and its limits |
-| [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) | the exported file tree, byte by byte, for people writing their own tools |
-| [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md) | the SODA desktop app for Windows and Mac (no Python needed): how it is built and released, like FIVE Atlas |
 
 ## Requirements
 
@@ -429,15 +503,24 @@ tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smok
 tests/viewlink_test.js  the link that restores a view: round trips, the length budget, damaged and hostile links (node only; the smoke test runs it)
 tools/label_editor.html  place UMAP cluster labels by hand (writes labelPositions for config.js)
 tools/check_install.py   checks that the Python packages import, with the right versions
+tools/perf/           the timing scripts behind docs/PERFORMANCE.md
+REPRODUCE.md          how to reproduce the paper's numbers and figures
+CITATION.cff          how to cite SODA (GitHub's "Cite this repository")
+CHANGELOG.md          what is in each version
+CONTRIBUTING.md       reporting a problem, asking a question, sending a change
+.github/              the automated test (smoke.yml), app builds, Pages, issue templates
 ```
 
 ## Citing
 
-Manuscript in preparation. Until it is published, please cite this repository by its URL.
+Manuscript in preparation. Until it is published, please cite this repository: GitHub's
+**Cite this repository** button reads [CITATION.cff](CITATION.cff) (version 0.9.0; no DOI yet).
 <!-- CITATION PLACEHOLDER: replace with the paper reference and DOI once available. -->
 
-## License
+## Licence
 
-©2026 Washington University. Non-commercial, non-clinical research use; see
-[LICENSE](LICENSE). For a commercial license, contact Washington University's Office
-of Technology Management at otm@wustl.edu.
+**Licence: to be decided before public release.** The [LICENSE](LICENSE) file holds the
+current Washington University terms (©2026 Washington University; non-commercial,
+non-clinical research use). They may change before the repository is made public. For a
+commercial licence under the current terms, contact Washington University's Office of
+Technology Management at otm@wustl.edu.

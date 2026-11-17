@@ -1,6 +1,6 @@
 # The advanced way
 
-The [4 steps in the README](../README.md#show-your-own-data-in-4-steps) and
+The [quick start in the README](../README.md#quick-start) and
 [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) are enough to share your data. This page is for
 everything past that: your own website, a password, your own names and colours, the
 notebook's settings, your own clusters, marker lists, the code, a batch run over many datasets, and offline use.
