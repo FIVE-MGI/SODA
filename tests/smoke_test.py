@@ -2746,7 +2746,10 @@ def check_stereoseq(c: Checker, root: Path, clustering: bool, log_path: Path) ->
 # a spatial AnnData .h5ad (Squidpy layout, classic Visium) / an AnnData-Zarr of cells without an image / an OME-Zarr
 # image / a SpatialData store shaped like spatialdata-io's Xenium / one shaped like a Visium HD 16 µm layer
 SA_AV, SA_AC, SA_OZ, SA_SX, SA_SH = "demo_anndata_visium", "demo_anndata_cells", "demo_omezarr", "demo_sdata_xenium", "demo_sdata_visiumhd"
-STD_DS = (SA_AV, SA_AC, SA_OZ, SA_SX, SA_SH)
+# zarr v3 (zarrv3.py): the OME-Zarr image as OME-NGFF 0.5 (sharded, transpose, big-endian, v2 chunk keys) and the
+# cells AnnData-Zarr again
+SA_OZ3, SA_AC3 = "demo_omezarr_v3", "demo_anndata_cells_v3"
+STD_DS = (SA_AV, SA_AC, SA_OZ, SA_SX, SA_SH, SA_OZ3, SA_AC3)
 STD_FAKE = "INT" + "9961"           # the generator's made-up sample ID (library name, a column's values; deid:ok)
 STD_CASES = "stdformats_cases"
 
@@ -2771,6 +2774,10 @@ def stdformats_commands(root: Path) -> list[list[str]]:
         [prep, "export", "--id", SA_SX, "--out", cache, "--dest", export, "--markers", mk],
         [prep, "spatialdata", "--id", SA_SH, "--src", f"{raw}/sdata_visiumhd.zarr", "--out", cache, "--pixel-size", "2"],
         [prep, "export", "--id", SA_SH, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "omezarr", "--id", SA_OZ3, "--src", f"{raw}/image_v3.ome.zarr", "--out", cache],
+        [prep, "export", "--id", SA_OZ3, "--out", cache, "--dest", export, "--no-umap"],
+        [prep, "anndata", "--id", SA_AC3, "--src", f"{raw}/anndata_cells_v3.zarr", "--out", cache, "--coords-um", "1"],
+        [prep, "export", "--id", SA_AC3, "--out", cache, "--dest", export, "--no-umap"],
     ]
 
 
@@ -2802,6 +2809,38 @@ def _std_layer(c: Checker, root: Path, ds: str, key: str, want_px: np.ndarray, c
             bad.append(g)
     c.ok(not bad, f"{ds}: {key} gene files = the matrix (differ: {bad[:4]})")
     return pos
+
+
+def _check_zarr_v3(c: Checker, root: Path, tr, tj) -> dict:
+    """The zarr v3 fixtures (zarrv3.py): the OME-NGFF 0.5 image = the v2 image, the AnnData-Zarr v3 = the v2 one."""
+    raw, export, cache = root / "raw", root / "export", root / "cache"
+    out = {}
+    for ds in (SA_OZ3, SA_AC3):
+        if not c.ok((export / ds / "manifest.json").exists(), f"{ds}: exported"):
+            return out
+    # ---- OME-NGFF 0.5 image (zarr v3: level 0 sharded + blosc, level 1 transpose + big-endian + gzip, "." keys)
+    m3, m2 = read_json(export / SA_OZ3 / "manifest.json"), read_json(export / SA_OZ / "manifest.json")
+    c.eq([(ch["name"], ch["color"]) for ch in m3["image"]["channels"]], [(ch["name"], ch["color"]) for ch in m2["image"]["channels"]],
+         f"{SA_OZ3}: channel names and colours from ome.omero (NGFF 0.5 under attributes.ome)")
+    c.eq((m3.get("pixelSizeUm"), m3["image"]["width"], m3["image"]["height"]), (0.5, m2["image"]["width"], m2["image"]["height"]),
+         f"{SA_OZ3}: pixel size and size = the zarr v2 image's")
+    try:
+        import zarr
+        img = zarr.open_group(str(cache / SA_OZ3 / "image.zarr"), mode="r")["0"][:]
+        c.ok(np.array_equal(img, tr["oz_image"]), f"{SA_OZ3}: level 0 of the pyramid = the image, pixel for pixel (read from shards)")
+    except ImportError:
+        print("    SKIP the OME-Zarr v3 pixel check (zarr not installed)")
+    ng, zv = app_module("ngff"), app_module("zarrv3")
+    for lev in ("1", "2"):
+        a = ng.open_array(raw / "image_v3.ome.zarr" / lev)
+        b = tr["oz_image"][:, ::2 ** int(lev), ::2 ** int(lev)]
+        c.ok(isinstance(a, zv.Array) and a.shape == b.shape and np.array_equal(a[...], b) and np.array_equal(a[1, 3:17, 5:40], b[1, 3:17, 5:40]),
+             f"zarrv3: image_v3 level {lev} ({read_json(raw / 'image_v3.ome.zarr' / lev / 'zarr.json')['codecs'][0]['name']} ...) = the image, whole and a window")
+    # ---- AnnData-Zarr v3 = the v2 one
+    for f in ("positions.bin", "genes.json"):
+        a, b = export / SA_AC3 / "expr" / "cells" / f, export / SA_AC / "expr" / "cells" / f
+        c.ok(a.exists() and b.exists() and a.read_bytes() == b.read_bytes(), f"{SA_AC3}: {f} = the zarr v2 AnnData's, byte for byte")
+    return out
 
 
 def check_stdformats(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict:
@@ -2914,6 +2953,7 @@ def check_stdformats(c: Checker, root: Path, clustering: bool, log_path: Path) -
          f"{SA_SH}: equal squares = a 16 µm bin layer (side through the inverse image transformation)")
     c.ok(not m.get("imaging"), f"{SA_SH}: an RGB image is a photo")
     _std_layer(c, root, SA_SH, "016um", tr["sh_xy_px"], tr["sh_counts"], genes, "square centres / the image's scale")
+    out.update(_check_zarr_v3(c, root, tr, tj))
 
     # ---- what is refused, and that no message names the made-up sample ID
     def cli(*argv):
@@ -2924,7 +2964,8 @@ def check_stdformats(c: Checker, root: Path, clustering: bool, log_path: Path) -
             lg.write(f"\n$ prepare.py {' '.join(argv)}\n{p.stdout}")
         return p.returncode, p.stdout
     cases, never = root / STD_CASES, root / "std_never"
-    for kind, name, say, extra in (("omezarr", "v3.ome.zarr", ["zarr v3", "zarr_write_format = 2"], []),
+    for kind, name, say, extra in (("omezarr", "v3_badcodec.ome.zarr", ["zarr v3", "'zfp'", "zarr_write_format = 2"], []),
+                                   ("spatialdata", "labels_3d.zarr", ["labels element", "not read yet"], []),
                                    ("omezarr", "plate.ome.zarr", ["plate", "one field"], []),
                                    ("anndata", "two_libraries.h5ad", ["2 image libraries", "--library"], []),
                                    ("anndata", "two_libraries.h5ad", ["not one of the 2 libraries"], ["--library", "zz"]),
@@ -2984,6 +3025,7 @@ DETECT_WANT = {
     "stereoseq": ("stereoseq", "bins+cells"),
     "anndata_visium.h5ad": ("anndata", "h5ad"), "anndata_cells.zarr": ("anndata", "zarr"), "image.ome.zarr": ("omezarr", "zarr"),
     "sdata_xenium.zarr": ("spatialdata", "zarr"), "sdata_visiumhd.zarr": ("spatialdata", "zarr"),
+    "image_v3.ome.zarr": ("omezarr", "zarr-v3"), "anndata_cells_v3.zarr": ("anndata", "zarr-v3"),
 }
 # `prepare.py auto` runs whose cache must equal the explicit subcommand's: (id, source under raw/, options passed through)
 LONE_STORE, XST = "demo_transcripts.zarr.zip", "demo_xenium_store"   # a Xenium transcripts store on its own
@@ -3321,11 +3363,17 @@ def check_detect(c: Checker, root: Path, log_path: Path) -> dict:
         case("h5ad", "ambiguous", "several-datasets")
     std = root / STD_CASES                               # standard formats (stdformats.py) that are refused or asked about
     if std.exists():
-        r = detect.detect(std / "v3.ome.zarr")
-        c.ok(r["verdict"] == "incomplete" and r["kind"] == "omezarr" and "zarr v3" in r["message"],
-             f"detect a zarr v3 OME-Zarr: incomplete, says zarr v3 (got {r['verdict']} {r['kind']}: {r['message'][:120]})")
+        r = detect.detect(std / "v3_badcodec.ome.zarr")
+        c.ok(r["verdict"] == "incomplete" and r["kind"] == "omezarr" and "zarr v3" in r["message"] and "'zfp'" in r["message"],
+             f"detect a zarr v3 OME-Zarr with a codec SODA does not read: incomplete, names it (got {r['verdict']} {r['kind']}: {r['message'][:120]})")
         r = detect.detect(std / "plate.ome.zarr")
         c.ok(r["verdict"] == "incomplete" and "plate" in r["message"], f"detect an HCS plate: incomplete ({r['verdict']}: {r['message'][:120]})")
+        for name in ("labels_region.zarr", "labels_3d.zarr"):             # zarr v2 / zarr v3: refused as prepare refuses it
+            r = detect.detect(std / name)
+            c.ok(r["verdict"] == "incomplete" and r["kind"] == "spatialdata" and "labels element" in r["message"]
+                 and "not read yet" in r["message"],
+                 f"detect a SpatialData table on a labels element ({name}): incomplete, says labels are not read "
+                 f"({r['verdict']} {r['kind']}: {r['message'][:120]})")
         r = detect.detect(std / "two_libraries.h5ad")
         text = " | ".join(r["suggestions"]) + " | " + detect.format_report(r)
         c.ok(r["verdict"] == "ambiguous" and r["reason"] == "open-choice" and r["kind"] == "anndata" and "--library 2" in text

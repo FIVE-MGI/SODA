@@ -33,11 +33,22 @@ performance cores should be faster. Measured in November 2026.
 | Akoya PhenoCycler section (34 markers, 14,080 × 9,600 px) | 4.5 min | 3.0 min | 0.8 GB | 0.23 GB, 6,650 files |
 | GeoMx DSP study (2 scans, 84 AOIs, mouse whole transcriptome) | 4.1 min | 0.7 min | 0.4 GB | 0.15 GB, 2,922 files |
 | MERSCOPE region (65,029 cells, 2.35 M transcripts, no images) | 0.6 min | 1.9 min | 1.6 GB | 36 MB, 210 files |
+| Classic Visium section (10x V1_Adult_Mouse_Brain: 2,702 spots of 55 µm, 32,285 genes, 11,291 × 11,757 px H&E) | 0.9 min | 1.0 min | 0.7 GB | 0.29 GB, 657 files |
+| SpatialData Xenium store, zarr v3 (sandbox Xenium rep1: 167,780 cells, 35,416 × 25,778 px, 34 M transcripts) | 3.2 min | 6.4 min | 1.1 GB | 0.45 GB, 2,343 files |
 
 - Exports used `--fmt jpg` with UMAP and Leiden clustering on (the defaults otherwise).
 - Most of a large export is the whole-section UMAP and clustering. For the Visium HD 8 µm layer
   that is 5.7 min of the 8.2; for Stereo-seq bin20 it is 10.6 min of the 18.
 - Most of the Xenium prepare is the image pyramid: 13.9 min of the 16.
+- Classic Visium: `prepare.py visium` on Space Ranger 1.1.0's outputs as 10x hands them out
+  (`V1_Adult_Mouse_Brain_filtered_feature_bc_matrix.h5`, `spatial/`, the 0.4 GB full-resolution
+  TIFF), conditions as above: input and cache on the network share (`input=D: (network)
+  cache=D: (network)`), export to it (`cache=D: (network) dest=D: (network)`), the 8 efficiency
+  cores. Prepare peak 0.52 GB, export 0.73 GB.
+- SpatialData Xenium (zarr v3, read by `zarrv3.py`; `--pixel-size 0.2125`): the same conditions.
+  The image pyramid is 2.0 min of the 3.2; the export's UMAP and clustering 4.0 min of the 6.4.
+  The export time is the first full export (UMAP on) before the molecules were added; adding them
+  was a second, incremental export of 0.8 min. Peak 0.86 GB prepare, 1.13 GB export.
 - Writing the export to the local SSD instead of the network share made no consistent difference.
 
 ## Opening a dataset
@@ -76,7 +87,6 @@ On a CPU about 4 times slower (the page capped at a quarter of one core), the sa
 
 ## What was not measured
 
-- Classic (55 µm) Visium.
 - Visium HD's 2 µm layer.
 - A whole Akoya slide (one section was cropped out of it).
 - Real hosting over the internet. Only deck.gl came from its CDN, and the data came from a local server.

@@ -85,12 +85,12 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
   the tissue) and the segmented cells of the cell bin file as a layer of their own; gene maps,
   UMAP and clusters, QC, Draw a region and the plots work on both.
 - **Standard formats.** A spatial AnnData (`.h5ad` or AnnData-Zarr, the Squidpy layout), an
-  OME-Zarr image (NGFF 0.4) or a SpatialData store (tables on circles or polygons, images,
-  points, coordinate transformations) is read without installing anndata or spatialdata, and
-  becomes an ordinary SODA dataset: the image, the expression layer, cell outlines, molecules,
-  and the file's own clusters, colours and UMAP. What is not read (zarr v3 stores, labels
-  regions, plates, transformations other than scale / translation / affine) is refused with
-  the reason. The page reads the converted export; opening these files in the browser
+  OME-Zarr image (NGFF 0.4 or 0.5) or a SpatialData store (tables on circles or polygons, images,
+  points, coordinate transformations), in zarr v2 or v3, is read without installing anndata or
+  spatialdata, and becomes an ordinary SODA dataset: the image, the expression layer, cell
+  outlines, molecules, and the file's own clusters, colours and UMAP. What is not read (a zarr v3
+  codec outside the common ones, labels regions, plates, transformations other than scale /
+  translation / affine) is refused with the reason. The page reads the converted export; opening these files in the browser
   directly is a possible later step.
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view

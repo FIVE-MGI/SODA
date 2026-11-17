@@ -34,6 +34,13 @@ import zarr
 from numcodecs import Blosc
 
 
+def classic_matrix(outs: Path) -> Path | None:
+    """A classic Visium matrix saved under 10x Genomics' download name, <sample>_filtered_feature_bc_matrix.h5
+    (the public sample datasets), when outs has exactly one and no filtered_feature_bc_matrix.h5."""
+    hits = sorted(p for p in Path(outs).glob("*_filtered_feature_bc_matrix.h5") if p.is_file())
+    return hits[0] if len(hits) == 1 else None
+
+
 def find_visium_layers(outs: Path) -> list[dict]:
     """Every count layer under a Space Ranger `outs` folder.
     Visium HD: outs/binned_outputs/square_XXXum/;  classic Visium: outs itself."""
@@ -53,6 +60,8 @@ def find_visium_layers(outs: Path) -> list[dict]:
                                "h5": h5, "positions": pos, "scalefactors": sf if sf.exists() else None,
                                "binSizeUm": float(m.group(1))})
     h5 = outs / "filtered_feature_bc_matrix.h5"
+    if not h5.exists():
+        h5 = classic_matrix(outs) or h5
     if h5.exists():
         sp = outs / "spatial"
         pos = next((p for p in (sp / "tissue_positions.parquet", sp / "tissue_positions.csv",

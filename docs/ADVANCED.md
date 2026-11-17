@@ -306,10 +306,12 @@ The page, in `web/SpatialViewer/`:
 The Python tools that write the data are in the same folder. `prepare.py` is the entry
 point (one subcommand per input type, plus `export`, `userclusters`, `inspect`, `detect`, `auto` and
 `batch`, which is `batch.py`); each
-other `.py` file starts with a note on what it does. The standard formats are three of them:
+other `.py` file starts with a note on what it does. The standard formats are four of them:
 `stdformats.py` (the `anndata`, `omezarr` and `spatialdata` subcommands), `annstore.py` (reads an
-AnnData's groups from `.h5ad` or zarr with h5py / zarr, without the anndata package) and `ngff.py`
-(OME-NGFF images and coordinate transformations). What they write, file by file:
+AnnData's groups from `.h5ad` or zarr with h5py / zarr, without the anndata package), `ngff.py`
+(OME-NGFF images and coordinate transformations) and `zarrv3.py` (a small reader for zarr v3
+stores: `zarr.json`, sharding and the common codecs, since SODA's zarr stays at version 2). What
+they write, file by file:
 [DATA_FORMAT.md](DATA_FORMAT.md). The password function is
 `deploy/azure/api/token/index.js`.
 
