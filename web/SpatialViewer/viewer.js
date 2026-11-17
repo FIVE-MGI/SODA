@@ -2122,8 +2122,10 @@
                   // already drops to fewer runs; past it the exact layout's time grows with the bins and the
                   // sample's stays flat.
                   fastAbove: 20000, fastSample: 10000,
-                  // the time shown before a run (s): per bin on the exact path, flat in fast mode (desktop)
-                  etaPerBin: 0.00095, etaFast: 15 };
+                  // the time shown before a run (s): per bin on the exact path, flat in fast mode (desktop). Measured on
+                  // 8 shared efficiency cores (docs/PERFORMANCE.md): 50,000 bins with clustering 93-142 s on every bin,
+                  // 17-33 s in fast mode; an unshared desktop is faster, so these round to the middle
+                  etaPerBin: 0.0015, etaFast: 20 };
   // The UMAP itself is one long sequential loop: 50,000 bins on every bin take over a minute on a desktop
   // core and would take several on a phone, long enough to be frozen by a locked screen. On touch the
   // sample stops at the soft cap.
