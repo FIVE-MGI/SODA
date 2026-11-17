@@ -20,6 +20,14 @@ const umapReady = (async () => {
   const L = SODA_LIBS.umap;
   for (const [url, opts] of [[L.local, {}], [L.cdn, { mode: "cors", credentials: "omit" }]]) {
     try {
+      // vendor/ first asked without the hash: when it is not there, WebKit reports a failed check of the hash
+      // ("access control checks") as an error rather than the plain 404. No answer at all (offline: sw.js keeps
+      // GETs only) is not "not there": the hash-checked GET below may still come from the kept copy.
+      if (url === L.local) {
+        let h = null;
+        try { h = await fetch(url, { method: "HEAD" }); } catch (e) { /* offline */ }
+        if (h && !h.ok) continue;
+      }
       const r = await fetch(url, { ...opts, integrity: L.sri });
       if (!r.ok) continue;
       await r.arrayBuffer();

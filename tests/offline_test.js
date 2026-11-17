@@ -350,10 +350,18 @@ async function run(browserType, eng, urls) {
   const libv = cv.lib.length === 1 ? cv.files[cv.lib[0]] : [];
   ok(stv === "ready" && Object.values(LIBS).every((L) => libv.includes(`/vendor/${L.path}`)), `vendor: the service worker kept the vendor/ copies: ${libv.join(", ")}`, "vendor/ (no CDN)");
   ok(!errorsOf(B.log).length, `vendor: no error: ${errorsOf(B.log).slice(0, 3).join(" | ") || "none"}`, "vendor/ (no CDN)");
+  // keep the dataset here too (a new context keeps nothing of the first), for Run UMAP offline below
+  await showOffline(pv);
+  await pv.click("#offKeep");
+  await until(pv, () => !document.getElementById("offGo").hidden, null, 30000);
+  await pv.click("#offGo");
+  await until(pv, (root) => { const s = window.SodaOffline.state(); return !s.busy && s.kept.some((k) => k.root === root); }, rootUrl, 120000);
   await offline(B.ctx, true);
   await pv.reload({ waitUntil: "load" });
   const ov = await until(pv, () => !!window.deck && window.SODA_LIBS_FROM && window.SODA_LIBS_FROM.deck === "local", null, 30000);
   ok(ov, "vendor, offline: the page loads deck.gl from the kept vendor/ copy", "vendor/ (no CDN)");
+  const uvo = ov && await opened(pv) ? await lassoUmap(pv) : { error: "not open" };
+  ok(uvo.done && uvo.emb > 0, `vendor, offline: Run UMAP with the kept vendor/ umap-js: ${JSON.stringify(uvo)}`, "vendor/ (no CDN)");
   await shot(pv, "7_vendor_offline");
   await offline(B.ctx, false);
   await B.ctx.close();
