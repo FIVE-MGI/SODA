@@ -32,6 +32,9 @@ duplicate (both not written), a saturated channel (flagged), a fold (its squares
 places the rest (sectionumap.UMAP_SAMPLE path); its clusters must agree with the first.
 demo_tiled is the same image with per-tile steps in two markers: the export must find the
 tile grid, correct those two markers (seams.py) and recover the factors that were put in.
+A float32 OME-TIFF (~0..66 with fractions; NaN, inf and negatives; a constant channel) must be scaled into the
+16-bit cache (0 .. its 99.99th percentile -> 0 .. 65535, order kept, far more than 67 grey levels) and a uint16
+one must come through exactly as before (check_float_image).
 It also checks the built-in marker lists and that the channel-name cleanup is the same
 in celltypes.py and lasso_worker.js.
 Stereo-seq (examples/make_stereoseq_demo.py, web/SpatialViewer/stereoseq.py): a synthetic chip as a
@@ -178,6 +181,8 @@ RNA = "demo_rnaseq"
 # older tissue GEF with stored bin10 + bin50 / shuffled whole-chip GEM cut with the mask image
 ST, STG, STL, STM = "demo_stereoseq", "demo_stereoseq_gem", "demo_stereoseq_lv", "demo_stereoseq_mask"
 ST_DS = (ST, STG, STL, STM)
+# float32 / uint16 OME-TIFF fixtures (write_float_fixtures): the cast into the 16-bit cache
+FL, U16, FL_SHAPE = "demo_float32", "demo_uint16", (192, 320)
 NO_CLUSTER = 0xFFFF
 CLUSTER_MODULES = ("umap", "igraph", "leidenalg")
 # a barcode or a local path must never reach the export
@@ -290,6 +295,42 @@ def stereoseq_commands(root: Path) -> list[list[str]]:
     ]
 
 
+def write_float_fixtures(root: Path):
+    """Two small OME-TIFFs for the image cast (pyramid._float_scale): float32 as a PhenoChart / inForm component
+    export holds it (~0..66 with fractions; a channel with negatives, NaN and +-inf; a constant channel), and uint16
+    (must come through exactly as before)."""
+    import tifffile
+    d = root / "floatimg"            # not under raw/: detect.py reads every dataset there
+    d.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(11)
+    H, W = FL_SHAPE
+    ramp = rng.uniform(0, 66, (H, W)).astype(np.float32)
+    ramp[:4] = 0                                                   # a background strip
+    odd = rng.uniform(-3, 66, (H, W)).astype(np.float32)
+    odd[0, :8], odd[1, :8], odd[2, :8] = np.nan, np.inf, -np.inf
+    flat = np.full((H, W), 5.0, np.float32)
+    kw = dict(ome=True, photometric="minisblack")
+    tifffile.imwrite(str(d / "float32.ome.tif"), np.stack([ramp, odd, flat]),
+                     metadata={"axes": "CYX", "Channel": {"Name": ["Ramp", "Odd", "Flat"]}}, **kw)
+    u = rng.integers(0, 4000, (2, H, W)).astype(np.uint16)
+    u[:, :4] = 0
+    tifffile.imwrite(str(d / "uint16.ome.tif"), u, metadata={"axes": "CYX", "Channel": {"Name": ["A", "B"]}}, **kw)
+
+
+def float_commands(root: Path) -> list[list[str]]:
+    """prepare + export of the float32 / uint16 fixtures (write_float_fixtures), into export_float/."""
+    try:
+        r = root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        r = root.resolve().as_posix()
+    prep = "web/SpatialViewer/prepare.py"
+    out = []
+    for ds, f in ((FL, "float32"), (U16, "uint16")):
+        out += [[prep, "tiff", "--id", ds, "--src", f"{r}/floatimg/{f}.ome.tif", "--out", f"{r}/cache", "--pixel-size", "0.5"],
+                [prep, "export", "--id", ds, "--out", f"{r}/cache", "--dest", f"{r}/export_float", "--grid-um", "0", "--no-umap"]]
+    return out
+
+
 def clean_stereoseq(root: Path):
     for p in [root / "raw" / "stereoseq"] + [root / sub / ds for sub in ("cache", "export") for ds in ST_DS]:
         if p.exists():
@@ -375,8 +416,9 @@ def clean(root: Path):
     for p in [root / "raw", root / "user", root / "export_sample" / MX, root / "export_user" / VIS,
               root / "export_user" / XE, root / "export_partial" / VIS, root / "export_loose" / VIS,
               root / "export_both" / XE, root / "export" / RNA, root / "export_rnaseq_loose", root / "export_repack",
-              root / "export_tamper", root / "xenin", root / "cache" / "_unzipped"] + [root / sub / ds for sub in ("cache", "export")
-                                                                                     for ds in (VIS, MX, TL) + XEN_DS + XIN_DS + GEOMX_DS]:
+              root / "export_tamper", root / "xenin", root / "cache" / "_unzipped", root / "export_float", root / "floatimg",
+              root / "cache" / FL, root / "cache" / U16] + [root / sub / ds for sub in ("cache", "export")
+                                                            for ds in (VIS, MX, TL) + XEN_DS + XIN_DS + GEOMX_DS]:
         if p.exists():
             print(f"  removing earlier output {p}", flush=True)
             shutil.rmtree(p)
@@ -1494,6 +1536,69 @@ def check_tiled(c: Checker, root: Path) -> dict:
     c.ok(not others, f"demo_tiled: markers without steps were corrected: {others}")
     print(f"    grid {gr['w']} x {gr['h']} px at {gr['x0']}, {gr['y0']}; corrected {cor.get('corrected')}; "
           f"recovered factors: {res}")
+    return res
+
+
+def _monotone(src: np.ndarray, out: np.ndarray) -> bool:
+    """out never goes down where src goes up: the order of the values is kept (ties allowed)."""
+    o = np.argsort(src.ravel(), kind="stable")
+    return bool(np.all(np.diff(out.ravel()[o].astype(np.int64)) >= 0))
+
+
+def check_float_image(c: Checker, root: Path) -> dict:
+    """The float32 fixture is scaled into the 16-bit cache (0 .. its 99.99th percentile -> 0 .. 65535,
+    pyramid._float_scale) instead of being cast as-is (~66 grey levels); uint16 comes through unchanged."""
+    try:
+        import tifffile
+        import zarr
+        from PIL import Image  # noqa: F401  (_img_tile)
+    except ImportError as e:
+        print(f"    SKIP float / uint16 image checks ({e.name} not installed)")
+        return {}
+    res = {}
+    raw = root / "floatimg"
+    # ---- float32
+    src = tifffile.imread(str(raw / "float32.ome.tif"))
+    m = read_json(root / "export_float" / FL / "manifest.json")
+    c.eq(m["image"]["dtype"], "uint16", f"{FL}: cache dtype")
+    z0 = np.asarray(zarr.open_group(str(root / "cache" / FL / "image.zarr"), mode="r")["0"][:])
+    c.eq(z0.shape, src.shape, f"{FL}: level 0 shape")
+    ramp, cr = src[0], z0[0]
+    pos = ramp[ramp > 0].astype(np.float64)
+    top = float(np.percentile(pos, 99.99))
+    want = np.rint(np.clip(ramp.astype(np.float64) * (65535.0 / top), 0, 65535)).astype(np.uint16)
+    # the scale is taken from every pixel here (the fixture is far below pyramid.FLOAT_SAMPLE_SIDE)
+    c.ok(np.array_equal(cr, want), f"{FL}: Ramp not 0 .. p99.99 ({top:.4f}) -> 0 .. 65535: "
+                                   f"{int((cr != want).sum())} pixels differ, max {int(cr.max())}")
+    t0 = _img_tile(root / "export_float" / FL, m, 0)
+    lv_cache, lv_tile = len(np.unique(cr)), len(np.unique(t0))
+    c.ok(lv_cache > 10000, f"{FL}: Ramp has {lv_cache} distinct levels in the cache (a plain cast keeps 67)")
+    c.ok(lv_tile >= 200, f"{FL}: Ramp's exported tile has {lv_tile} distinct levels (a plain cast keeps <= 67)")
+    c.ok(_monotone(ramp, cr), f"{FL}: Ramp's order of values not kept in the cache")
+    c.ok(_monotone(ramp, t0), f"{FL}: Ramp's order of values not kept in the exported tile")
+    odd, co = src[1], z0[1]
+    bad = ~np.isfinite(odd) | (odd <= 0)
+    c.ok(int(co[bad].max()) == 0, f"{FL}: NaN / +-inf / negative pixels not 0 in the cache (max {int(co[bad].max())})")
+    c.ok(_monotone(odd[~bad], co[~bad]), f"{FL}: Odd's order of values not kept")
+    c.ok(len(np.unique(co[~bad])) > 10000, f"{FL}: Odd has {len(np.unique(co[~bad]))} distinct levels")
+    c.ok(len(np.unique(z0[2])) == 1, f"{FL}: the constant channel is not one value in the cache: {np.unique(z0[2])[:5]}")
+    res[FL] = {"levelsCache": lv_cache, "levelsTile": lv_tile, "p9999": round(top, 4)}
+    # ---- uint16: stored as it is, `bits` / `window` and the tiles by the same rule as before
+    src = tifffile.imread(str(raw / "uint16.ome.tif"))
+    m = read_json(root / "export_float" / U16 / "manifest.json")
+    z0 = np.asarray(zarr.open_group(str(root / "cache" / U16 / "image.zarr"), mode="r")["0"][:])
+    c.ok(z0.dtype == np.uint16 and np.array_equal(z0, src), f"{U16}: level 0 is not the input as it is")
+    for k, ch in enumerate(m["image"]["channels"]):
+        nz = src[k][src[k] > 0]
+        lo, hi = float(np.percentile(nz, 1.0)), float(np.percentile(nz, 99.8))
+        t = float(max(float(np.percentile(nz, 99.99)), hi, 1))
+        c.ok(ch["bits"] == [0, t] and ch["window"] == [round(lo * 255.0 / t, 2), round(hi * 255.0 / t, 2)]
+             and ch["dataMax"] == int(src[k].max()), f"{U16}: channel {k} bits / window / dataMax {ch}")
+        tile = _img_tile(root / "export_float" / U16, m, k)
+        exp = np.clip((src[k].astype(np.float32) - 0.0) * (255.0 / (t - 0.0)), 0, 255).astype(np.uint8)
+        c.ok(np.array_equal(tile, exp), f"{U16}: channel {k} tile differs from the 16-bit rule in "
+                                        f"{int((tile != exp).sum())} pixels")
+    print(f"    float32 Ramp: {lv_cache} levels in the cache, {lv_tile} in the tile (p99.99 {top:.3f}); uint16 unchanged")
     return res
 
 
@@ -4880,6 +4985,9 @@ def main(argv=None) -> int:
             if cmd[0] == "examples/make_xenium_demo.py":
                 write_xenium_user_files(root)
                 write_xenium_inputs(root)
+        write_float_fixtures(root)
+        for cmd in float_commands(root):                 # float32 / uint16 OME-TIFF into the 16-bit cache
+            timings[f"{cmd[1]} {cmd[3]}"] = run(cmd, log_path)
         if not args.reuse:
             clean_imaging(root)
         for cmd in imaging_commands(root):               # CosMx / MERSCOPE fixtures
@@ -4916,6 +5024,8 @@ def main(argv=None) -> int:
     summary[GRID_KEY] = check_multiplex(c, root, clustering)
     print("checks: demo_tiled (tile seams)")
     summary["tiles"] = check_tiled(c, root)
+    print("checks: float32 / uint16 OME-TIFF into the 16-bit cache (pyramid._float_scale)")
+    summary["floatImage"] = check_float_image(c, root)
     print("checks: the lab's own clusters / UMAP (userclusters.py)")
     summary["userClusters"] = check_user(c, root, clustering, log_path)
     print("checks: demo_xenium (cells layer + molecules), demo_xenium_pq, demo_xenium_nt")

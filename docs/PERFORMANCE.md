@@ -43,6 +43,7 @@ performance cores should be faster. Measured in November 2026.
 ## Opening a dataset
 
 Times run from navigation start, as the median of 3 runs. *Cold* is a fresh browser profile.
+`bench_open.js` now opens about:blank (untimed, then 1 s) before the cold visit, so cold means an empty cache, not a browser still starting; the cold numbers below predate that and include browser start-up.
 *Warm* is a second visit in the same browser.
 
 | | Unthrottled, cold | Home connection, cold | Warm |
