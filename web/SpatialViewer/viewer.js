@@ -2116,13 +2116,26 @@
   // max(minDetect, min(minDetectFrac x bins, minDetectCap)) bins are left out.
   const LASSO = { minPoints: 50, fewPoints: 300, smallShape: 20, softCap: 20000, cap: 50000, minUmi: 10,
                   nPcs: 30, nPcsProtein: 15, nNeighbors: 15, minDist: 0.3, minShapesForUmap: 15, umapJs: "1.4.0",
-                  minDetect: 5, minDetectFrac: 0.01, minDetectCap: 30 };
-  // The run is single-threaded: 50,000 bins took 76 s on a desktop core and would take 2-5 min on
-  // a phone, long enough to be frozen by a locked screen. On touch the sample stops at the soft cap.
+                  minDetect: 5, minDetectFrac: 0.01, minDetectCap: 30,
+                  // Fast mode (lasso_worker.js): above fastAbove bins, the UMAP and Leiden of a seeded sample of
+                  // fastSample bins (stratified by shape), every other bin placed by its 15 nearest sample bins.
+                  // "Run on every bin" (sampling "exact") skips it. 20,000 = softCap, where the stability sweep
+                  // already drops to fewer runs; past it the exact layout's time grows with the bins and the
+                  // sample's stays flat.
+                  fastAbove: 20000, fastSample: 10000,
+                  // the time shown before a run (s): per bin on the exact path, flat in fast mode (desktop). Measured on
+                  // 8 shared efficiency cores (docs/PERFORMANCE.md): 50,000 bins with clustering 93-142 s on every bin,
+                  // 17-33 s in fast mode; an unshared desktop is faster, so these round to the middle
+                  etaPerBin: 0.0015, etaFast: 20 };
+  // The UMAP itself is one long sequential loop: 50,000 bins on every bin take over a minute on a desktop
+  // core and would take several on a phone, long enough to be frozen by a locked screen. On touch the
+  // sample stops at the soft cap.
   const LASSO_CAP = TOUCH ? LASSO.softCap : LASSO.cap;
   const lassoBlank = () => ({ tool: null, shapes: [], next: 1, drawing: null, pos: null, hvg: null,
     chunks: new Map(), assign: null, bin: null, result: null, brush: null, selShape: null, hover: -1,
     worker: null, running: false, lpVs: null,
+    // "auto": fast mode above LASSO.fastAbove bins; "exact": every bin ("Run on every bin"); new shapes: "auto"
+    sampling: "auto",
     // Leiden clusters of the last result (absent when the worker skipped clustering)
     selCluster: null, lpColor: "cluster", clNames: {} });
   let lpDeck = null;
@@ -2317,7 +2330,7 @@
   // UMAP that no longer matches what is drawn.
   function lassoShapesChanged() {
     const L = S.lasso;
-    lassoCancel(); L.result = null; L.brush = null; L.hover = -1; L.selCluster = null;
+    lassoCancel(); L.result = null; L.brush = null; L.hover = -1; L.selCluster = null; L.sampling = "auto";
     if (L.selShape !== null && L.selShape >= L.shapes.length) L.selShape = null;
     $("lassoPanel").hidden = true;
     lassoAssign();
@@ -2579,7 +2592,10 @@
       if (qcOut) m += ` The QC filter leaves out ${qcOut.toLocaleString()} of them.`;
       if (total > LASSO_CAP) m += ` Over ${LASSO_CAP.toLocaleString()}: a seeded sample of ${LASSO_CAP.toLocaleString()} will be used` +
         (TOUCH ? ` (a phone's limit; a computer takes up to ${LASSO.cap.toLocaleString()}).` : ".");
-      const secs = Math.round(Math.min(total, LASSO_CAP) * 0.00095);
+      const nRun = Math.min(total - qcOut, LASSO_CAP), fast = lassoFastLikely(nRun);
+      if (fast) m += ` Above ${LASSO.fastAbove.toLocaleString()}: the UMAP and clusters will be of a seeded ${LASSO.fastSample.toLocaleString()}-bin sample, ` +
+        "the other bins placed by their nearest neighbours (the result has a Run on every bin button).";
+      const secs = Math.round(fast ? LASSO.etaFast : nRun * LASSO.etaPerBin);
       if (TOUCH && total > 5000) m += ` On a phone this takes about ${secs}-${3 * secs} s: keep this page open until it finishes.`;
       else if (total > LASSO.softCap) m += ` This will take about ${secs} s.`;
       $("lassoMsg").textContent = L.prot ? toProtWords(m) : isCells() ? toCellWords(m) : isRois() ? toRoiWords(m) : m;
@@ -2595,6 +2611,11 @@
     if (window.SodaShapes) window.SodaShapes.refresh();
   }
 
+  // would a run of n bins go to fast mode? (lasso_worker.js decides, on the bins left after the UMI floor)
+  const lassoFastLikely = (n) => {
+    const L = S.lasso;
+    return !!L && !L.prot && $("lassoMode").value === "bins" && L.sampling !== "exact" && n > LASSO.fastAbove && n > LASSO.fastSample;
+  };
   function lassoCancel() {
     const L = S.lasso;
     if (L && L.worker && L.running) { L.worker.terminate(); L.worker = null; }
@@ -2866,6 +2887,8 @@
     L.shapes.forEach((s) => (s.missing = false));
     L.running = true; $("lassoCancel").hidden = false; buildLassoUI();
     lassoWake(true);
+    // started now, so it loads umap-js while the chunks download
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117b");
     msg(`Fetching ${need.size} data chunk(s)…`);
     const { bufs, missing } = await lassoFetch([...need.keys()]);
     if (!L.running) return;                         // cancelled while fetching
@@ -2882,11 +2905,13 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261116of2");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117b");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
+    const sampling = L.prot ? "exact" : L.sampling || "auto";
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
                      nPcs: LASSO.nPcs, nPcsProtein: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist, minShapesForUmap: LASSO.minShapesForUmap,
-                     minDetect: LASSO.minDetect, minDetectFrac: LASSO.minDetectFrac, minDetectCap: LASSO.minDetectCap, resolution };
+                     minDetect: LASSO.minDetect, minDetectFrac: LASSO.minDetectFrac, minDetectCap: LASSO.minDetectCap, resolution,
+                     sampling, fastAbove: LASSO.fastAbove, fastSample: LASSO.fastSample };
     const t0 = performance.now();
     L.worker.onmessage = (ev) => {
       const d = ev.data;
@@ -2910,6 +2935,9 @@
            drop ? (L.prot ? `Left out ${drop.toLocaleString()} low-signal squares (no marker above ${Math.round((I.lowSignalX || 0.2) * 100)}% of its range: rims and gaps).`
                           : `Dropped ${drop.toLocaleString()} bins with < ${LASSO.minUmi} UMI.`) : "",
            I.sampledFrom ? `Showing ${I.nIn.toLocaleString()} of ${I.sampledFrom.toLocaleString()} bins (seeded sample, stratified by shape).` : "",
+           I.fast ? `Fast mode: UMAP${cluster ? " and Leiden" : ""} of a ${I.fast.sample.toLocaleString()}-bin sample (seeded, stratified by shape); ` +
+             `the other ${(I.fast.of - I.fast.sample).toLocaleString()} bins placed by their ${I.fast.k} nearest sample bins${cluster ? " and given their clusters" : ""}. ` +
+             "Markers, Save CSV and volcano plots use every bin. Run on every bin (in the panel) skips the sample." : "",
            cluster && I.nClusters < 2 ? `Leiden found one cluster (resolution ${L.result.resolution}).` :
            cluster ? `${I.nClusters} Leiden clusters at resolution ${L.result.resolution}${I.autoResolution ? " (chosen by stability)" : ""}` +
              (I.stability != null ? `, stability ${I.stability.toFixed(2)}.` : ".") :
@@ -2936,8 +2964,9 @@
                                normalize: H.normalize || null, bg: H.bg, hi: H.hi, cofactor: H.cofactor,
                                mean: st ? st.mean : null, sd: st ? st.sd : null } : null;
     const flags = L.prot && S.qc.flags && S.qc.key === S.exprKey ? S.qc.flags : null;   // for the "Artefact?" name
+    // dataKey: the worker keeps the last layout, and re-clusters it when only the clustering settings changed
     L.worker.postMessage({ chunks: bufs, rowShape: L.assign, nShapes: L.shapes.length, nGenes: L.hvg.nGenes, params, resolution,
-                           geneNames: L.hvgGenes || null, markerSet, protein, flags, qcKeep });
+                           geneNames: L.hvgGenes || null, markerSet, protein, flags, qcKeep, dataKey: `${S.dsId}|${S.exprKey}` });
     L.qcNote = null; $("bqStale").hidden = true;
   }
 
@@ -3088,13 +3117,17 @@
     }));
     lpDeck.setProps({ layers, viewState: L.lpVs || { target: [0, 0, 0], zoom: 0 } });
     const I = R.info;
-    $("lpTitle").textContent = `${I.method === "pca" ? "PCA (PC1 vs PC2)" : "UMAP"} of drawn shapes · ${R.info.mode === "bins" ? `one dot per ${wd().bin}` : "one dot per shape"}`;
+    $("lpTitle").textContent = `${I.method === "pca" ? "PCA (PC1 vs PC2)" : "UMAP"} of drawn shapes · ${R.info.mode === "bins" ? `one dot per ${wd().bin}` : "one dot per shape"}` +
+      (I.fast ? ` · fast mode (${I.fast.sample.toLocaleString()}-${wd().bin} sample)` : "");
     const warns = [];
     if (I.method === "pca") warns.push(`Fewer than ${LASSO.minShapesForUmap} shapes: a UMAP of so few points is meaningless, so this is PC1 vs PC2 (${(I.varFrac[0] * 100).toFixed(0)}% / ${((I.varFrac[1] || 0) * 100).toFixed(0)}% of variance).`);
     else if (I.mode === "bins" && I.nIn < LASSO.fewPoints) warns.push(`Few points (${I.nIn}): treat this layout as a sketch.`);
     if (R.cluster && I.stability != null && !I.stable) warns.push(lassoStabilityNote({ ...I, sweep: null }));   // numbers only: safe as HTML
     if (I.sampledFrom) warns.push(`Showing ${I.nIn.toLocaleString()} of ${I.sampledFrom.toLocaleString()} ${wd().bins} (seeded sample, stratified by shape).`);
+    if (I.fast) warns.push(`<b>UMAP${R.cluster ? " and clusters" : ""} of a ${I.fast.sample.toLocaleString()}-${wd().bin} sample; other ${wd().bins} placed by nearest neighbours.</b> ` +
+      `<button type="button" id="lpExact" title="Lay out and cluster all ${I.fast.of.toLocaleString()} ${wd().bins} (slower)">Run on every ${wd().bin}</button>`);   // numbers and fixed words only: safe as HTML
     $("lpWarn").innerHTML = warns.join("<br>"); $("lpWarn").hidden = !warns.length;
+    if ($("lpExact")) $("lpExact").onclick = () => { if (L.running) return; L.sampling = "exact"; lassoRun(); };
     const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     if (byCl) {
       // one row per cluster with its top markers; click lights its bins on the slide
@@ -3206,12 +3239,22 @@
     lassoRefresh(); buildLassoUI();
   }
   // a file or a link carried merges of a run: kept until a run whose own cluster sizes match those saved
-  // (the same shapes, seed and resolution give the same clusters), then applied once; otherwise said and dropped
+  // (the same shapes, seed and resolution give the same clusters), then applied once; otherwise said and dropped.
+  // Fast mode's clusters are the sample's, voted onto the other bins: merges made on a fast-mode run go only to a
+  // fast-mode run of the same sample (its size, of how many bins, and a hash of its bin rows), and merges made on
+  // every bin only to a run on every bin (runLayoutOf; a merge saved without it was made on every bin)
+  function runLayoutOf(R) {
+    const F = R && R.info && R.info.fast;
+    if (!F || !F.isSample) return { sampling: "exact" };
+    let h = 0x811c9dc5;
+    for (let j = 0; j < R.rows.length; j++) if (F.isSample[j]) h = Math.imul(h ^ R.rows[j], 0x01000193) >>> 0;
+    return { sampling: "fast", sample: { n: F.sample, of: F.of, hash: h } };
+  }
   function runSetsSave(R) {
     if (!R || !R.cluster || !R.sets || !R.sets.length) return null;
     const raw = R.clRaw || R.cluster, K = R.info.nClusters || 0, z = new Array(K).fill(0);
     for (let j = 0; j < raw.length; j++) if (raw[j] < K) z[raw[j]]++;
-    return { sizes: z, sets: R.sets.map((s) => ({ ids: s.ids.slice(), prev: s.prev == null ? null : s.prev, name: S.lasso.clNames[s.ids[0]] || null })) };
+    return { sizes: z, ...runLayoutOf(R), sets: R.sets.map((s) => ({ ids: s.ids.slice(), prev: s.prev == null ? null : s.prev, name: S.lasso.clNames[s.ids[0]] || null })) };
   }
   function runSetsPending() {
     const L = S.lasso, R = L.result, p = L.pendingRunSets;
@@ -3220,9 +3263,13 @@
     const K = R.info.nClusters || 0, z = new Array(K).fill(0);
     for (let j = 0; j < R.cluster.length; j++) if (R.cluster[j] < K) z[R.cluster[j]]++;
     const sets = window.SodaSets && window.SodaSets.region ? window.SodaSets.region.cleanList(p.sets).filter((s) => s.ids.every((k) => k < K)) : [];
-    const same = Array.isArray(p.sizes) && p.sizes.length === K && p.sizes.every((n, k) => n === z[k]);
+    const lay = runLayoutOf(R), ps = p.sample || {}, was = p.sampling || "exact";
+    const sameLayout = was === lay.sampling && (lay.sampling === "exact" || (ps.n === lay.sample.n && ps.of === lay.sample.of && ps.hash === lay.sample.hash));
+    const same = sameLayout && Array.isArray(p.sizes) && p.sizes.length === K && p.sizes.every((n, k) => n === z[k]);
     if (!same || !sets.length) {
-      $("lassoMsg").textContent += `\nThe merged clusters saved with this view were not applied: this run's clusters are not the ones they were made from.`;
+      $("lassoMsg").textContent += !sameLayout
+        ? `\nThe merged clusters saved with this view were not applied: they were made on ${was === "fast" ? "a fast-mode run (a sample's clusters)" : "a run on every bin"}, and this run ${lay.sampling === "fast" ? (was === "fast" ? "has another sample" : "is in fast mode") : "is on every bin"}.`
+        : `\nThe merged clusters saved with this view were not applied: this run's clusters are not the ones they were made from.`;
       return;
     }
     runSetsU(R);
@@ -3257,13 +3304,16 @@
     const out = {
       tool: "SODA circle -> UMAP", version: 1, umapJs: LASSO.umapJs, dataset: S.dsId, layer: S.exprKey,
       seed: Number($("lassoSeed").value), mode: $("lassoMode").value,
+      // Draw a region: "auto" (a sample above params.fastAbove bins), "exact" (every bin)
+      sampling: L.sampling || "auto",
       params: L.prot
         ? { modality: "protein", channels: L.hvg ? L.hvg.channels : null, nPcs: LASSO.nPcsProtein, nNeighbors: LASSO.nNeighbors,
             minDist: LASSO.minDist, cap: R ? R.params.cap : LASSO_CAP, normalisation: L.hvg ? L.hvg.normalize : null, scaling: "z-score within the shapes, clip 10",
             overlap: "drawn last wins" }
         : { minUmi: LASSO.minUmi, nPcs: LASSO.nPcs, nNeighbors: LASSO.nNeighbors, minDist: LASSO.minDist,
             minDetect: LASSO.minDetect, minDetectFrac: LASSO.minDetectFrac, minDetectCap: LASSO.minDetectCap,
-            cap: R ? R.params.cap : LASSO_CAP, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins" },
+            cap: R ? R.params.cap : LASSO_CAP, sectionHvgs: L.hvg ? L.hvg.nGenes : null, normalisation: "log1p CP10k", overlap: "drawn last wins",
+            fastAbove: LASSO.fastAbove, fastSample: LASSO.fastSample },
       // a shape combined from outlines (selections.js) also keeps its recipe, `def`; a link carries that instead of its bins
       shapes: L.shapes.map((s) => {
         const def = window.SodaShapes ? window.SodaShapes.saveDef(s) : null;
@@ -3274,6 +3324,11 @@
       resolution: /^\s*(auto)?\s*$/i.test($("lassoRes").value) ? "auto" : Number($("lassoRes").value) || 0,
       result: R ? { method: R.info.method, points: R.info.nIn, genesUsed: R.info.nGenesUsed, minDetect: R.info.minDetect || null,
                     nPcs: R.info.nPcs, nNeighbors: R.info.nNeighbors || null, init: R.info.init || null, seconds: +R.secs.toFixed(2),
+                    // "fast": the UMAP (and Leiden) of a sample, the other bins placed by their nearest sample bins
+                    sampling: R.info.fast ? "fast" : "exact",
+                    ...(R.info.fast ? { fast: { sample: R.info.fast.sample, of: R.info.fast.of, neighbours: R.info.fast.k, placedBy: R.info.fast.placedBy,
+                                                sampleRows: Array.from(R.rows).filter((_, j) => R.info.fast.isSample[j]),
+                                                sampleClusterSizes: R.info.fast.sampleClusterSizes || null } } : {}),
                     ...(R.cluster ? { resolution: R.resolution, nClusters: R.info.nClusters, clusterSizes: R.info.clusterSizes || null,
                                       autoResolution: !!R.info.autoResolution, stability: R.info.stability != null ? R.info.stability : null,
                                       clusterStability: R.info.clusterStability || null, sweep: R.info.sweep || null,
@@ -3317,12 +3372,15 @@
       const merged = !!(R.sets && R.sets.length && R.clRaw), cl = merged ? R.clRaw : R.cluster;
       const prev = merged ? new Map(R.sets.map((s) => [s.ids[0], s.prev])) : null;
       const own = (c) => (prev && prev.has(c) ? prev.get(c) || `Cluster ${c}` : L.clNames[c] || `Cluster ${c}`);
-      lines.push("bin_row,x_px,y_px,shape,umap_x,umap_y" + (cl ? ",cluster,cluster_name,leiden_resolution" : "") + (merged ? ",set,set_name" : ""));
+      // fast mode: in_umap_sample 1 = laid out (and clustered) in the sample, 0 = placed by its nearest sample bins
+      const fs = R.info.fast ? R.info.fast.isSample : null;
+      lines.push("bin_row,x_px,y_px,shape,umap_x,umap_y" + (cl ? ",cluster,cluster_name,leiden_resolution" : "") + (merged ? ",set,set_name" : "") + (fs ? ",in_umap_sample" : ""));
       for (let j = 0; j < R.rows.length; j++) {
         const r = R.rows[j], none = cl && cl[j] === LASSO_NONE;
         lines.push(`${r},${L.pos[2 * r].toFixed(2)},${L.pos[2 * r + 1].toFixed(2)},${q(L.shapes[R.shape[j]].name)},${R.emb[2 * j]},${R.emb[2 * j + 1]}` +
           (cl ? `,${none ? "" : cl[j]},${none ? "" : q(own(cl[j]))},${R.resolution}` : "") +
-          (merged ? `,${none ? "" : R.cluster[j]},${none ? "" : q(L.clNames[R.cluster[j]] || `Cluster ${R.cluster[j]}`)}` : ""));
+          (merged ? `,${none ? "" : R.cluster[j]},${none ? "" : q(L.clNames[R.cluster[j]] || `Cluster ${R.cluster[j]}`)}` : "") +
+          (fs ? `,${fs[j] ? 1 : 0}` : ""));
       }
     } else {
       lines.push("shape,bins,x,y");
@@ -3365,6 +3423,8 @@
     L.qcNote = binQc ? binQc.setState(j.qcFilter || null) : null;   // a file without qcFilter = no filter
     if (j.mode === "bins" || j.mode === "shapes") $("lassoMode").value = j.mode;
     if (canDraw && Array.isArray(j.shapes)) lassoShapesChanged();
+    // after lassoShapesChanged, which puts it back to "auto"
+    L.sampling = j.sampling === "exact" || j.sampling === "fast" ? j.sampling : "auto";
     if (j.view && window.SodaViewLink) {
       notes = await window.SodaViewLink.apply(j.view, j);
       if (seq !== openSeq) return null;
@@ -3424,6 +3484,8 @@
     window.addEventListener("resize", () => { if (S.lasso && S.lasso.result) renderLassoPanel(); });
     // for testing from the console: restore shapes saved with Save JSON, without a file
     window.__spatialViewer.lassoLoad = (obj) => lassoLoadJson({ text: async () => JSON.stringify(obj) });
+    // for testing from the console: fast mode's threshold and sample size (tests/drawregion_test.js lowers them)
+    window.__spatialViewer.lassoFast = (above, sample) => { LASSO.fastAbove = above; LASSO.fastSample = sample; buildLassoUI(); };
     // volcano plots (volcano.js, de_worker.js): handed only what they need from here
     if (window.SodaVolcano) window.SodaVolcano.init({
       state: () => S, touch: TOUCH, fetchChunks: lassoFetch, chunkOf: lassoChunkOf, addGene, download: lassoDownload,
@@ -6564,6 +6626,17 @@
         else if (S.genePalette === "genes") out.push({ title: `${W.Genes} (pale = few, saturated = many)`, items: on.map((g) => ({ label: g.name, stops: inkStops(g.hex) })) });
         else out.push({ title: on.length > 1 ? `${W.Genes}, averaged (low to high)` : `${W.Gene} (low to high)`, items: [{ label: on.map((g) => g.name).join(", "), stops: lutStops(S.genePalette) }] });
       }
+    }
+    // Draw a region's result on the slide in fast mode: its clusters (or shapes), and that the layout was of a sample
+    const LR = S.lasso && S.lasso.result;
+    if (!umap && LR && S.lasso.bin && LR.info.fast) {
+      const byCl = lassoByCluster() && LR.info.mode === "bins";
+      const items = byCl
+        ? Array.from({ length: LR.info.nClusters || 0 }, (_, c) => ({ label: S.lasso.clNames[c] || `Cluster ${c}`, rgb: clusterRgb(c) }))
+        : S.lasso.shapes.map((s) => ({ label: s.name, rgb: lassoRgb(s) }));
+      if (LR.info.fast) items.push({ label: `UMAP${LR.cluster ? " and clusters" : ""} of a ${LR.info.fast.sample.toLocaleString()}-${W.bin} sample;` },
+                                   { label: `other ${W.bins} placed by nearest neighbours` });
+      if (items.length) out.push({ title: byCl ? "Drawn region: clusters" : "Drawn shapes", items });
     }
     if (!umap && S.mol && S.mol.genes.length) {
       const on = S.mol.genes.filter((g) => g.visible !== false && g.rgb);

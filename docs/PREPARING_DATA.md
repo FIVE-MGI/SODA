@@ -1192,7 +1192,22 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   "One per shape (summed)" needs at least 3 shapes and shows PC1 vs PC2 instead of a UMAP
   when there are fewer than 15.
 - At most **50,000 bins** are embedded. Above that it takes a seeded sample, stratified by
-  shape, and says so. The page estimates about one second per 1,000 bins.
+  shape, and says so.
+- **Fast mode, above 20,000 bins.** The UMAP and the Leiden clusters are computed on a seeded
+  sample of 10,000 bins (stratified by shape, every resolution of the stability sweep tried);
+  every other bin is put at the weighted mean of its 15 nearest sample bins (in the sample's
+  PCA space) and takes their cluster by weighted vote. The panel's title, a note above the
+  plot, the run's message and Save image's legend say so. **Run on every bin** (in that
+  note) runs the exact path on every bin instead. Markers, suggested names, Save CSV (with an
+  `in_umap_sample` column) and the volcano plots use every bin either way. Save JSON records
+  the choice (`sampling`) and the sample (`result.fast`, with its bin rows), and a link to the
+  view keeps "Run on every bin". On a 50,000-bin Visium HD region the clusters agreed with the
+  exact path's at an adjusted Rand index of 0.75, close to the 0.79 between two seeds of the
+  exact path itself.
+- Changing only the Leiden resolution after a run re-clusters the same layout instead of
+  computing the UMAP again. With clustering on, the Leiden runs (on helper workers, one per
+  spare core up to 8) start as soon as the neighbour graph exists and go on while the UMAP
+  is laid out; the layout and the clusters are the same as one after the other.
 - A bin inside two shapes belongs to the one drawn last.
 - Leiden clusters of the result at a resolution you choose (0 = none).
 - **Merge clusters of the run** (Analyze tab, under Draw a region): tick two or more of the run's
@@ -1202,7 +1217,8 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   made before a merge says it is out of date. Un-merge and Undo take merges back. Save JSON and
   Copy link keep them (`runSets`, with the run's cluster sizes): they come back when the same run
   is made again (same shapes, seed and resolution), and are left out with a note when the new
-  run's clusters differ. A new run starts without merges.
+  run's clusters differ. Merges made in fast mode come back only on a fast-mode run of the same
+  sample, and merges made on every bin only on a run on every bin. A new run starts without merges.
 - **Marker squares (Akoya and other multi-channel images)** use the `mat/` files instead, and
   add a comparison with the rest of the slide, because a UMAP of only the shapes cannot show
   what the shapes have in common (a marker high in every square drawn, such as CD45 over an
