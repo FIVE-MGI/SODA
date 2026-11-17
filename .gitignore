@@ -29,3 +29,11 @@ Thumbs.db
 # Demo / smoke-test outputs (python examples/make_demo.py, python tests/smoke_test.py)
 demo/
 .pytest_cache/
+
+# Desktop app builds (app/build_release.ps1, app/build_release_mac.sh write outside the repo;
+# these catch a bare 'pyinstaller app/SODA.spec' run from here)
+app/_buildinfo.py
+/build/
+/dist/
+app/build/
+app/dist/

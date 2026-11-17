@@ -1,0 +1,212 @@
+# Build the SODA desktop app for macOS on GitHub's Mac runners.
+#
+# The same shape as FIVE Atlas's build-macos.yml (docs/DESKTOP_APP.md). PyInstaller cannot
+# cross-compile, so the app is built on the OS and CPU it runs on:
+#   macos-15 -> Apple Silicon (arm64), every Mac sold since 2021.
+# Intel is not built (FIVE Atlas found the Intel runner pool exhausted and starving the arm64 job).
+#
+# Signing: without secrets the app is ad-hoc signed, exactly as FIVE Atlas ships, and the
+# README in the .dmg explains Gatekeeper's one-time refusal. With an Apple Developer ID the job
+# signs and notarises: add the repository secrets MACOS_CERT_P12 (base64 .p12),
+# MACOS_CERT_PASSWORD, MACOS_CODESIGN_ID ("Developer ID Application: ..."), and for notarisation
+# MACOS_NOTARY_APPLE_ID, MACOS_NOTARY_TEAM_ID, MACOS_NOTARY_PASSWORD (an app-specific password).
+#
+# Guard: like pages.yml, this does nothing on its own in the FIVE-MGI repositories. There it only
+# runs when started by hand (Actions tab -> Run workflow), and a manual run only produces a
+# downloadable artifact, never a Release. In a copy of SODA a v* tag builds and publishes.
+name: Build SODA app (macOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string baked into the app and filenames"
+        required: false
+        default: "0.0.0-dev"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write        # attach the .dmg to a Release on a tag push
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || (github.repository != 'FIVE-MGI/SODA' && github.repository != 'FIVE-MGI/spatial-viewer-v2')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+
+      # numpy first as the macosx_11_0 wheel when one exists (FIVE Atlas: pip on a new runner
+      # prefers the macOS 14 wheel, which then needs Sonoma while the plist promises older).
+      # app/check_min_os.py below proves the whole bundle agrees with the plist either way.
+      - name: Install the locked packages and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          NUMPY_PIN="$(grep -E '^numpy==' web/SpatialViewer/requirements-lock.txt)"
+          if pip download "$NUMPY_PIN" --only-binary=:all: --platform macosx_11_0_arm64 \
+               --python-version 3.13 --implementation cp --abi cp313 -d "$RUNNER_TEMP/wheels"; then
+            pip install "$RUNNER_TEMP"/wheels/numpy-*.whl
+          fi
+          pip install --only-binary=:all: -r web/SpatialViewer/requirements-lock.txt
+          pip install "pyinstaller==6.21.0"
+          pip freeze > "$RUNNER_TEMP/requirements-built.txt"
+
+      - name: Resolve version
+        id: ver
+        env:
+          VER_IN: ${{ inputs.version }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="${VER_IN:-0.0.0-dev}"; fi
+          if ! printf '%s' "$v" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then
+            echo "::error::version '$v' is not a plain version string"; exit 1
+          fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+
+      # Only when the secrets exist: a temporary keychain with the Developer ID certificate.
+      - name: Signing identity (optional)
+        id: sign
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PW: ${{ secrets.MACOS_CERT_PASSWORD }}
+          ID: ${{ secrets.MACOS_CODESIGN_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          NOTARY_PW: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          if [ -z "$P12" ] || [ -z "$ID" ]; then echo "no signing secrets: ad-hoc signed build"; exit 0; fi
+          KC="$RUNNER_TEMP/sign.keychain-db"; KCPW="$(uuidgen)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PW" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          if [ -n "$NOTARY_APPLE_ID" ] && [ -n "$NOTARY_TEAM_ID" ] && [ -n "$NOTARY_PW" ]; then
+            xcrun notarytool store-credentials soda-notary --apple-id "$NOTARY_APPLE_ID" \
+              --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PW" --keychain "$KC"
+            echo "notary=soda-notary" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        env:
+          VER: ${{ steps.ver.outputs.value }}
+          CODESIGN_ID: ${{ steps.sign.outputs.id }}
+          NOTARY_PROFILE: ${{ steps.sign.outputs.notary }}
+          SODA_UPDATE_REPO: ${{ github.repository }}
+        run: |
+          chmod +x app/build_release_mac.sh
+          ./app/build_release_mac.sh --version "$VER" --python "$(command -v python)"
+
+      - name: Check bundle minimum macOS and version
+        env:
+          VER: ${{ steps.ver.outputs.value }}
+        run: |
+          APP="$HOME/Library/Caches/SODA_build/release/SODA.app"
+          python3 app/check_min_os.py "$APP"
+          got="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          [ "$got" = "$VER" ] || { echo "::error::Info.plist says $got, expected $VER"; exit 1; }
+
+      # The built bundle, headless (SODA_NO_BROWSER): selftest, prepare the demo data through the
+      # app, the ID check, the viewer server, the home page. (The browser check, --browser, needs
+      # Playwright, which is not installed on the runner; it runs locally.)
+      - name: Smoke-test the built app
+        id: smoke
+        continue-on-error: true
+        run: |
+          set +e
+          EXE="$HOME/Library/Caches/SODA_build/release/SODA.app/Contents/MacOS/SODA"
+          python tests/app_test.py --exe "$EXE" --full-selftest --work "$RUNNER_TEMP/app-test" 2>&1 | tee "$RUNNER_TEMP/app-test.txt"
+          rc=${PIPESTATUS[0]}
+          if [ $rc -ne 0 ]; then
+            [ $rc -eq 137 ] && echo "::error title=sigkill::137 = SIGKILL, the kernel is rejecting the bundle signature"
+            body=$(grep -E "FAIL|Traceback|Error" "$RUNNER_TEMP/app-test.txt" | head -c 3500 | python3 -c "import sys;print(sys.stdin.read().replace('%','%25').replace('\r','%0D').replace('\n','%0A'))")
+            echo "::error title=app-test::${body}"
+          fi
+          exit $rc
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: SODA-macos-${{ matrix.arch }}
+          path: |
+            ~/Library/Caches/SODA_build/release/*.dmg
+            ~/Library/Caches/SODA_build/release/*.zip
+            ~/Library/Caches/SODA_build/release/README.txt
+            ~/Library/Caches/SODA_build/release/SHA256SUMS
+            ${{ runner.temp }}/requirements-built.txt
+            ${{ runner.temp }}/app-test.txt
+            ${{ runner.temp }}/app-test/app_test.log
+          if-no-files-found: warn
+
+      # Only a build that passed its own test becomes the download people are handed. The page:
+      # the two downloads, then the same install README that is inside the .dmg.
+      - name: Attach to release
+        if: github.ref_type == 'tag' && steps.smoke.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="$HOME/Library/Caches/SODA_build/release"
+          V="${GITHUB_REF_NAME#v}"
+          BODY="$RUNNER_TEMP/notes.md"
+          { echo "## Download"
+            echo
+            echo "| You are on | Download this |"
+            echo "|---|---|"
+            echo "| **Windows** 10 / 11 | \`SODA-${V}-win64.zip\` |"
+            echo "| **Mac** (Apple Silicon) | \`SODA-${V}-macos-arm64.dmg\` |"
+            echo
+            echo "Both are under **Assets** below (the Windows zip can appear a few minutes after the Mac files)."
+            echo
+            echo "## Install (Windows)"
+            echo
+            echo "Unzip, copy the **SODA** folder to your own hard drive (not a network drive), and double-click"
+            echo "\`SODA.exe\`. A console window opens and your browser opens the SODA home page; keep the window"
+            echo "open while you work. The first time Windows may say \"Windows protected your PC\" because the app"
+            echo "is not code-signed: click **More info**, then **Run anyway**."
+            echo
+            echo "## Install (Mac)"; echo '```'; cat "$R/README.txt"; echo '```'
+          } > "$BODY"
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --title "SODA $GITHUB_REF_NAME" --notes-file "$BODY"
+          fi
+          gh release upload "$GITHUB_REF_NAME" "$R"/*.dmg "$R"/*.zip "$R/SHA256SUMS" --clobber
+
+      - name: Job summary
+        if: always()
+        run: |
+          R="$HOME/Library/Caches/SODA_build/release"
+          {
+            echo "## SODA macOS build"
+            echo
+            echo "| check | result |"
+            echo "|---|---|"
+            echo "| build | ${{ job.status }} |"
+            echo "| signed with a Developer ID | ${{ steps.sign.outputs.id != '' && 'yes' || 'no (ad-hoc)' }} |"
+            echo "| app test (selftest, prepare + ID check, viewer, home page) | ${{ steps.smoke.outcome }} |"
+            echo
+            if [ -s "$R/SHA256SUMS" ]; then echo '```'; cat "$R/SHA256SUMS"; echo '```'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if the app test failed
+        if: steps.smoke.outcome != 'success'
+        run: |
+          echo "The app was built and uploaded as an artifact, but tests/app_test.py failed."
+          exit 1
