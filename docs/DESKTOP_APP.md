@@ -72,7 +72,7 @@ the same as FIVE Atlas's (download, double-click, the browser opens). This is wh
    one-line Terminal fix or Open Anyway (until the app is notarised, see below).
 3. **The SODA home page opens in the browser** (`http://127.0.0.1:8770/app/`) with three steps:
    - **Prepare a folder of datasets**: a data folder (one sub-folder per dataset, or loose
-     OME-TIFF / QPTIFF / .h5ad files) and an output folder, each with a Browse... button (a
+     OME-TIFF / QPTIFF / .h5ad files, or OME-Zarr / SpatialData / AnnData `.zarr` folders) and an output folder, each with a Browse... button (a
      native folder picker) or a pasted path. Prepare runs `prepare.py batch` on it: every
      dataset is recognised (`detect.py`), prepared and exported, one process per dataset, then
      `datasets.json` and the **sample ID check**. Progress streams onto the page. The result is

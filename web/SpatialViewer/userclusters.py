@@ -728,6 +728,15 @@ def for_layer(specs: list[dict] | None, er, d: Path, ds_dir: Path | None, umap_e
     import when no spec names it. Returns the manifest's umap entry (or `umap_entry` unchanged)."""
     key = er.meta.get("key")
     spec = next((s for s in specs or [] if s["layer"] == key), None)
+    if spec is not None and spec.get("auto"):     # kept from a standard-format file (stdformats.py): never fatal
+        try:
+            return apply(er, d, spec, ds_dir, log)
+        except SystemExit as e:
+            log(f"[userclusters] {key}: the file's own clusterings / UMAP were not attached ({e})")
+            ud = Path(d) / "umap"
+            if ud.is_dir() and not any(ud.iterdir()):    # apply() made it and stopped before writing anything
+                ud.rmdir()
+            return restore(d, log) or umap_entry if umap_entry is not None else umap_entry
     if spec is not None:
         return apply(er, d, spec, ds_dir, log)
     if umap_entry is not None:

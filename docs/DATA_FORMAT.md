@@ -3,7 +3,7 @@
 This is the layout that `prepare.py export` (images, spatial expression) and
 `prepare.py rnaseq` (single-cell UMAPs) write, and that the viewer reads. It is derived
 from `export.py`, `hvgchunks.py`, `binqc.py`, `sectionumap.py`, `regions.py`, `rnaseq.py`,
-`expr.py`, `molecules.py`, `cellshapes.py`, `xenium.py`, `cosmx.py`, `merscope.py`, `viewer.js`, `outlines.js` and `qc.js`. You only need it if you want to write the files with your own tools or
+`expr.py`, `molecules.py`, `cellshapes.py`, `xenium.py`, `cosmx.py`, `merscope.py`, `stdformats.py`, `viewer.js`, `outlines.js` and `qc.js`. You only need it if you want to write the files with your own tools or
 read them from another program.
 
 General rules:
@@ -79,7 +79,7 @@ General rules:
 |---|---|
 | `id` | dataset id = folder name |
 | `label` | display name (the `--label` given to `prepare.py`, else the id) |
-| `kind` | `akoya`, `tiff`, `xenium`, `cosmx`, `merscope`, `stereoseq`, `geomx` or `visium` (the `prepare.py` subcommand used) |
+| `kind` | `akoya`, `tiff`, `xenium`, `cosmx`, `merscope`, `stereoseq`, `geomx`, `visium`, `anndata`, `omezarr` or `spatialdata` (the `prepare.py` subcommand used) |
 | `pixelSizeUm` | µm per full-resolution pixel, for the scale bar; `null` if unknown |
 | `created` | when the cache was prepared, local time, ISO 8601 |
 | `image.width`, `image.height` | full-resolution size in pixels |
@@ -652,6 +652,35 @@ dataset (the image under a transcripts panel). What is specific to it:
   `x * 2^32 + y` for both). They are not exported.
 - The cells layer's outlines (`shapes/cell/`) come from `cellBin/cellBorder`, see
   [Cell outlines](#cell-outlines-shapesset-cells-layers).
+
+### Standard-format datasets (`kind: "anndata"`, `"omezarr"`, `"spatialdata"`)
+
+Written by `prepare.py anndata` / `omezarr` / `spatialdata` (`stdformats.py`, reading with
+`annstore.py` and `ngff.py`) from a spatial AnnData, an OME-Zarr image or a SpatialData store
+(see [Standard formats](PREPARING_DATA.md#standard-formats-spatial-anndata-ome-zarr-spatialdata)).
+The export is an ordinary one: tiles, `expr/<key>/` layers, and for SpatialData `molecules/`
+and `shapes/<set>/`. What differs:
+
+| Where | Field | Meaning |
+|---|---|---|
+| manifest | `imaging` | `true` when the image is a fluorescence image or a density background (not a photo): the side panel shows its channels, as for Xenium. Absent for an H&E / RGB photo |
+| manifest | `image.background` | `"cell density"` when the file had no image: one grey channel (`#b4b4b4`) drawn from the positions |
+| manifest | `anndata` | `source` (`h5ad` or `zarr`), `counts` (`layers/counts`, `raw/X` or `X`), `countsAreIntegers`, `positions` (`obsm <key>`), `libraries`, `pixelSize` (where it came from), `rows`, `rowsTotal` |
+| manifest | `omezarr` | `ngffVersion`, `channels`, `zPlanes`, `zPlane`, `levels`, `dtype` (of the file) |
+| manifest | `spatialdata` | `coordinateSystem` (`global` or `chosen`), `tables`, `imageFrom` (`images` or `density background`), `transforms`, and `layers[]`: `key`, `rows`, `counts`, `countsAreIntegers`, `region` (`circles` or `polygons`) |
+| `expr[]` | `platform` | `visium` for a classic Visium AnnData (its barcodes are Visium barcodes), `anndata` for other AnnData layers, `spatialdata` for SpatialData tables |
+| `molecules` | `platform`, `source` | `spatialdata`, `points` |
+
+- No file, library, table, region, element or coordinate-system name is written to the export:
+  the blocks above hold counts and fixed words only.
+- Layer keys: `spots`, `cells`, or a Visium HD bin size (`016um`) as for Space Ranger output.
+- Only `platform: "visium"` layers can get per-row id lists (`export --ids`, Visium spot
+  barcodes); the `anndata` and `spatialdata` platforms are not on the allow-list, so their ids
+  are refused there.
+- The file's own `obs` clusterings and `X_umap` are kept in the cache (`userobs/<key>/obs.csv`,
+  `umap.csv`, and the manifest's `userObs` list) and attached at export as your own clusters
+  (`source: "user"` in `umap/index.json`). `userObs` and `userobs/` stay in the cache: the
+  export's manifest does not have them.
 
 ## Molecules: `molecules/`
 

@@ -83,6 +83,14 @@ including [a whole folder of datasets in one command](docs/ADVANCED.md#8-many-da
   from the DNB counts of a GEF or GEM file (bin20 / bin50 / bin100 = 10 / 25 / 50 µm, cut to
   the tissue) and the segmented cells of the cell bin file as a layer of their own; gene maps,
   UMAP and clusters, QC, Draw a region and the plots work on both.
+- **Standard formats.** A spatial AnnData (`.h5ad` or AnnData-Zarr, the Squidpy layout), an
+  OME-Zarr image (NGFF 0.4) or a SpatialData store (tables on circles or polygons, images,
+  points, coordinate transformations) is read without installing anndata or spatialdata, and
+  becomes an ordinary SODA dataset: the image, the expression layer, cell outlines, molecules,
+  and the file's own clusters, colours and UMAP. What is not read (zarr v3 stores, labels
+  regions, plates, transformations other than scale / translation / affine) is refused with
+  the reason. The page reads the converted export; opening these files in the browser
+  directly is a possible later step.
 - **Tissue | Side by side | UMAP.** Each section's bins are embedded once into a UMAP
   with Leiden clusters (three resolutions, marker genes per cluster). Switch the main view
   between the tissue and the UMAP, or show both linked side by side: select bins in one
@@ -252,7 +260,8 @@ It runs the same steps and then checks every output file.
 
 1. **[Prepare your data](docs/PREPARING_DATA.md):** point SODA at a dataset's folder and it works
    out what it is (Visium HD, Visium, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, OME-TIFF / QPTIFF,
-   per-marker TIFF folders, H&E, `.h5ad` or 10x RNA-seq):
+   per-marker TIFF folders, H&E, `.h5ad` or 10x RNA-seq), and the standard formats: spatial AnnData
+   (`.h5ad` or AnnData-Zarr, as scanpy / Squidpy write it), OME-Zarr images and SpatialData stores:
 
    ```bash
    python web/SpatialViewer/prepare.py detect path/to/folder                                # what is in there? (writes nothing)
@@ -388,6 +397,7 @@ install.sh / install.ps1  one-command install (macOS, Linux / Windows) into .ven
 web/SpatialViewer/    the page (index.html, viewer.js, ...) and the Python tools (prepare.py, export.py, ...)
 web/SpatialViewer/requirements-lock.txt  every package at one tested version (made from requirements*.txt)
 web/SpatialViewer/markers/  marker-gene lists for suggested cluster names (edit for your tissue)
+web/SpatialViewer/stdformats.py  spatial AnnData, OME-Zarr and SpatialData into a SODA dataset (with annstore.py, ngff.py)
 web/SpatialViewer/detect.py  says what kind of dataset a folder holds (prepare.py detect / auto, the notebook)
 deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
@@ -396,7 +406,9 @@ examples/make_xenium_demo.py  synthetic Xenium output folder (cells, transcripts
 examples/make_geomx_demo.py   synthetic GeoMx DSP study (DCC, PKC, annotation sheets, scans with ROIs)
 examples/make_imaging_demo.py  synthetic CosMx and MERSCOPE folders (FOV images / mosaics, cells, transcripts)
 examples/make_stereoseq_demo.py  synthetic Stereo-seq output (bin GEF, cell bin GEF, GEM, registered image)
+examples/make_stdformats_demo.py  synthetic spatial AnnData (.h5ad, AnnData-Zarr), OME-Zarr and SpatialData stores
 tests/smoke_test.py   end-to-end test
+tests/stdformats_browser_test.js  the standard-format exports open in Chromium (needs Playwright; the smoke test runs it)
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
 tests/diag_test.js    the ?diag=1 panel never prints tokens (node only; the smoke test runs it)
 tests/viewlink_test.js  the link that restores a view: round trips, the length budget, damaged and hostile links (node only; the smoke test runs it)
