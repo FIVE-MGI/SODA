@@ -105,6 +105,12 @@ jobs:
             echo "notary=soda-notary" >> "$GITHUB_OUTPUT"
           fi
 
+      # deck.gl and umap-js inside the app, so its viewer works with no internet: vendor.py fetches the
+      # versions pinned in libs.js and writes a file only if its size and SHA-384 match (exit 1 otherwise,
+      # which fails the job); the build script then checks vendor/ again (--require-vendor).
+      - name: deck.gl and umap-js for offline use (prepare.py vendor)
+        run: python web/SpatialViewer/prepare.py vendor
+
       - name: Build
         env:
           VER: ${{ steps.ver.outputs.value }}
@@ -113,7 +119,7 @@ jobs:
           SODA_UPDATE_REPO: ${{ github.repository }}
         run: |
           chmod +x app/build_release_mac.sh
-          ./app/build_release_mac.sh --version "$VER" --python "$(command -v python)"
+          ./app/build_release_mac.sh --version "$VER" --python "$(command -v python)" --require-vendor
 
       - name: Check bundle minimum macOS and version
         env:
@@ -133,7 +139,7 @@ jobs:
         run: |
           set +e
           EXE="$HOME/Library/Caches/SODA_build/release/SODA.app/Contents/MacOS/SODA"
-          python tests/app_test.py --exe "$EXE" --full-selftest --work "$RUNNER_TEMP/app-test" 2>&1 | tee "$RUNNER_TEMP/app-test.txt"
+          python tests/app_test.py --exe "$EXE" --full-selftest --expect-vendor --work "$RUNNER_TEMP/app-test" 2>&1 | tee "$RUNNER_TEMP/app-test.txt"
           rc=${PIPESTATUS[0]}
           if [ $rc -ne 0 ]; then
             [ $rc -eq 137 ] && echo "::error title=sigkill::137 = SIGKILL, the kernel is rejecting the bundle signature"
@@ -170,17 +176,20 @@ jobs:
             echo
             echo "| You are on | Download this |"
             echo "|---|---|"
-            echo "| **Windows** 10 / 11 | \`SODA-${V}-win64.zip\` |"
+            echo "| **Windows** 10 / 11 | \`SODA-${V}-setup.exe\` (installer), or \`SODA-${V}-win64.zip\` (no install) |"
             echo "| **Mac** (Apple Silicon) | \`SODA-${V}-macos-arm64.dmg\` |"
             echo
-            echo "Both are under **Assets** below (the Windows zip can appear a few minutes after the Mac files)."
+            echo "All are under **Assets** below (the Windows files can appear a few minutes after the Mac files)."
             echo
             echo "## Install (Windows)"
             echo
-            echo "Unzip, copy the **SODA** folder to your own hard drive (not a network drive), and double-click"
-            echo "\`SODA.exe\`. A console window opens and your browser opens the SODA home page; keep the window"
-            echo "open while you work. The first time Windows may say \"Windows protected your PC\" because the app"
-            echo "is not code-signed: click **More info**, then **Run anyway**."
+            echo "Double-click \`SODA-${V}-setup.exe\`: it installs for you only, with no administrator rights, and"
+            echo "puts SODA in the Start menu (uninstall: Settings -> Apps). Or unzip the zip, copy the **SODA** folder"
+            echo "to your own hard drive (not a network drive), and double-click \`SODA.exe\`. A console window opens"
+            echo "and your browser opens the SODA home page; keep the window open while you work. The first time"
+            echo "Windows may say \"Windows protected your PC\" because SODA is not code-signed: click **More info**,"
+            echo "then **Run anyway**. Silent install for IT: \`SODA-${V}-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\`"
+            echo "(more flags in docs/DESKTOP_APP.md)."
             echo
             echo "## Install (Mac)"; echo '```'; cat "$R/README.txt"; echo '```'
           } > "$BODY"

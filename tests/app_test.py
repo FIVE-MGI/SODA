@@ -14,20 +14,26 @@ What it checks, through the app's command line and its local server only:
      batch log, and the sample ID check run as a gate (--check-ids) and clean. An output folder
      inside the data folder is refused.
   4. `SODA check <export>`: clean.
-  5. `SODA view <export> --no-browser`: the viewer page, its scripts as JavaScript, an empty
+  5. `SODA view <export> --no-browser`: the viewer page, its scripts as JavaScript, the app's
      config.js, the export's files; the tools (.py) and paths outside the folder are not served,
      and a request with another Host header is refused.
   6. The home page (`SODA` with SODA_NO_BROWSER=1): served with its token; an action without the
      token is refused; Open viewer, Check and Prepare through its API, the Prepare result with the
      sample ID check; a second launch of the same version hands over to the first; Quit stops it.
+     vendor/ (deck.gl, umap-js; a build made after `prepare.py vendor`): served by the app with the
+     pinned SHA-384 (libs.js); --expect-vendor makes a missing vendor/ a failure (release builds).
   7. --browser: the viewer and the home page in headless Chromium (tests/app_browser_test.js;
-     needs node and Playwright on NODE_PATH, and internet for deck.gl; skipped otherwise).
+     needs node and Playwright on NODE_PATH; skipped otherwise). With vendor/ the CDN is blocked
+     and the viewer must still load deck.gl (from the app); without it deck.gl needs internet.
+     The viewer offers no "Keep this dataset" (offlineKeep: false from the app's config.js).
 
 Every dataset name here is a made-up demo name. Exit code 0 = every check passed.
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import http.client
 import json
 import os
@@ -114,6 +120,8 @@ def main() -> int:
     ap.add_argument("--full-selftest", action="store_true", help="selftest with umap (slower)")
     ap.add_argument("--browser", action="store_true", help="also open the pages in headless Chromium")
     ap.add_argument("--keep", action="store_true", help="keep the scratch folder")
+    ap.add_argument("--expect-vendor", action="store_true",
+                    help="fail unless the app serves vendor/ (deck.gl, umap-js) with the pinned hashes")
     a = ap.parse_args()
 
     soda = [str(Path(a.exe).resolve())] if a.exe else [sys.executable, str(REPO / "app" / "soda_app.py")]
@@ -217,7 +225,10 @@ def main() -> int:
             s, ct, _ = get(base + "/viewer/viewer.js")
             c.ok(s == 200 and "javascript" in ct, f"viewer.js as JavaScript ({ct})")
             s, ct, body = get(base + "/viewer/config.js")
-            c.ok(s == 200 and b"SpatialViewerConfig" in body, "an empty config.js")
+            c.ok(s == 200 and b"SpatialViewerConfig" in body, "the app's own config.js")
+            c.ok(re.search(rb"SpatialViewerConfig\.offlineKeep\s*=\s*false", body) is not None
+                 and b"tokenEndpoint" not in body and re.search(rb"\boffline\s*:", body) is None,
+                 "config.js: offlineKeep = false (no Keep this dataset), offline use itself left on")
             s, ct, body = get(base + "/data/1/datasets.json")
             c.ok(s == 200 and json.loads(body).get("datasets"), "datasets.json from the export")
             s, _, body, h = get(base + f"/data/1/{DATASETS[0]}/manifest.json", full=True)
@@ -246,8 +257,24 @@ def main() -> int:
                 c.ok(s == 404, f"not served: {path} ({s})")
             s, _, _ = get(base + "/viewer/index.html", host="evil.example:80")
             c.ok(s == 403, "another Host header is refused (DNS rebinding)")
+            # vendor/: deck.gl and umap-js inside the app (prepare.py vendor before the build), so the viewer
+            # needs no CDN. The pinned paths and hashes come from the page's own libs.js.
+            s, _, body = get(base + "/viewer/libs.js")
+            mm = re.search(rb"/\* LIBS-JSON \*/(.*?)/\* END-LIBS-JSON \*/", body, re.S)
+            libs = json.loads(mm.group(1)) if s == 200 and mm else {}
+            c.ok(bool(libs), f"libs.js names the pinned libraries ({', '.join(libs) or 'none'})")
+            vend = {}
+            for k, v in libs.items():
+                s, _, b = get(base + "/viewer/vendor/" + v["path"])
+                vend[k] = s == 200 and "sha384-" + base64.b64encode(hashlib.sha384(b).digest()).decode() == v["sri"]
+            has_vendor = bool(vend) and all(vend.values())
+            if a.expect_vendor or any(vend.values()):
+                c.ok(has_vendor, "vendor/: " + ", ".join(f"{k} {'ok' if g else 'MISSING or wrong hash'}" for k, g in vend.items())
+                     + " (served by the app, pinned SHA-384)")
+            else:
+                print("  (no vendor/ in this app: its viewer loads deck.gl and umap-js from the CDN)", flush=True)
             if a.browser:
-                browser_test(c, url, base + "/app/", work, home=False)
+                browser_test(c, url, base + "/app/", work, home=False, no_cdn=has_vendor)
         vp.terminate()
 
         # 6. the home page ---------------------------------------------------------------------
@@ -338,7 +365,7 @@ def main() -> int:
     return 0 if not c.failed else 1
 
 
-def browser_test(c: Checker, viewer_url: str, home_url: str, work: Path, home: bool):
+def browser_test(c: Checker, viewer_url: str, home_url: str, work: Path, home: bool, no_cdn: bool = False):
     node = shutil.which("node")
     if not node:
         print("  (node not found: browser check skipped)")
@@ -347,6 +374,8 @@ def browser_test(c: Checker, viewer_url: str, home_url: str, work: Path, home: b
     shots.mkdir(exist_ok=True)
     args = [node, str(REPO / "tests" / "app_browser_test.js"), "--shots", str(shots)]
     args += ["--home", home_url] if home else ["--viewer", viewer_url, "--datasets", ",".join(DATASETS)]
+    if no_cdn:
+        args += ["--no-cdn"]
     p = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     print("    " + "\n    ".join(p.stdout.strip().splitlines()[-12:]))
     if "SKIPPED" in p.stdout:
