@@ -61,7 +61,7 @@ def _is_gene(text: str, m) -> bool:
     start = m.start() - 3
     if start < 0 or m.group(1).upper() != "T" or text[start:m.start()].upper() not in _GENE_PREFIX:
         return False
-    # "H2-" must begin the name: "BATCH2-T23" is not the gene H2-T23
+    # "H2-" must begin the name: "BATCH2-T23" is not the gene H2-T23 (deid:ok)
     return start == 0 or not text[start - 1].isalnum()
 
 
