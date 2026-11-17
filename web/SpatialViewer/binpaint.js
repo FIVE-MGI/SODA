@@ -509,10 +509,11 @@
       updateTriggers: { getFillColor: [P.ver] },
     });
   }
-  // the UMAP, Side by side and the cell outlines: { key, t, rgb } per row, as viewer.js's gene mix
+  // the UMAP, Side by side and the cell outlines: { key, t, rgb } per row, as viewer.js's gene mix; alpha: the
+  // outlines fill every coloured cell at the dots' one alpha (the colour says how much, not how see-through)
   function mix(nRows) {
     if (!active() || P.t.length !== nRows) return null;
-    return { key: `paint${P.ver}|${P.key}`, t: P.t, rgb: P.rgb };
+    return { key: `paint${P.ver}|${P.key}`, t: P.t, rgb: P.rgb, alpha: ALPHA };
   }
   function valueAt(r) {
     return (P.mode === "value" || P.mode === "set") && P.cur && r >= 0 && r < P.cur.v.length ? P.cur.v[r] : NaN;

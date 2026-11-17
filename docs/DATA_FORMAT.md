@@ -535,7 +535,11 @@ outlines. An export without `shapes` is drawn as dots, as before.
 The viewer draws dots while the median cell (`spotDiameterPx`) is under 5 screen pixels across,
 outlines alone from 9, both cross-faded in between, and stays on dots when more than 120,000
 outlines (20,000 on a touch device) would be in view (`config.js` `outlineFromPx`,
-`outlineFullPx`, `outlineBudget`).
+`outlineFullPx`, `outlineBudget`). Colour never rebuilds a polygon: whatever colours or picks out
+cells (genes, clusters, cell sets, Colour by a value, Draw a region's shapes, a region picked with a
+click, the quality filter) is one RGBA per row that the outline layers read. A link to the view
+carries the Outlines / Dots choice as the view block's `cs` entry (`{"m": "outlines" | "dots", "n": 1}`
+with nucleus outlines on); a link without it leaves the viewer's own choice.
 
 In the prepare cache the same files are in `<cache>/<id>/shapes/<layer key>/<set>/`.
 
