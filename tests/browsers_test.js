@@ -16,12 +16,17 @@
 //             PNG's size read from the file); Copy link.
 //   links     ?data=<folder>/&ds=<id> (no datasets.json), and ?data=<folder>/ with a datasets.json
 //             carrying tags: the picker lists every dataset, a tag filter narrows the list, a row opens.
+//   outlines  a cells layer with segmentation boundaries (demo_xenium), Cell shapes on Outlines, zoomed in
+//             until the outlines take over from the dots: tiles fetched and drawn, no error; compared with
+//             Chromium by pixels.
 //   phone     375 x 812, touch (WebKit as iPhone X, Chromium as a phone): tiles drawn, no sideways
-//             scrolling, the tab rail there, Save image 1x; WebKit compared with Chromium by pixels.
+//             scrolling, the tab rail there, Save image 1x; every Save image size offered only when the whole
+//             picture (map, name and legend) fits the phone's limit, and the largest one saved at that size;
+//             WebKit compared with Chromium by pixels.
 //
 //   node tests/browsers_test.js                         (needs demo/export: run tests/smoke_test.py first)
 //   node tests/browsers_test.js --only webkit,msedge --shots <dir> --export <dir> --all --ports 8892,8893
-//        --ds demo_visiumhd,demo_xenium (only these datasets)  --skip probe,datasets,walk,links
+//        --ds demo_visiumhd,demo_xenium (only these datasets)  --skip probe,datasets,walk,links,outlines
 //   browsers: chromium, webkit, msedge (Edge; skipped when it is not installed), webkit-phone, chromium-phone
 //
 // Playwright is not a dependency of this repo (see tests/phone_browser_test.js): install it anywhere and
@@ -48,7 +53,7 @@ const ONLY = arg("--only", "");
 const SHOTS = arg("--shots", "");
 const ALL = process.argv.includes("--all");
 const DS = arg("--ds", "");                                          // e.g. demo_visiumhd,demo_xenium: only these
-const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, links
+const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, links, outlines
 const PORTS = arg("--ports", "8892,8893").split(",").map(Number);   // data server, page server
 const OPEN_MS = 45000;
 
@@ -562,6 +567,43 @@ async function walk(browser, eng, urls) {
   finally { await t.ctx.close(); }
 }
 
+// ---- cell outlines (outlines.js): a cells layer with segmentation boundaries, zoomed in, Outlines on ------
+const OUTLINE_DS = allIds.find((id) => exists(EXPORT, id, "expr", "cells", "shapes", "cell", "index.json"));
+async function cellOutlines(browser, eng, urls) {
+  const id = OUTLINE_DS, feature = "cell outlines (Outlines on, zoomed in)";
+  const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, `${id} outlines`, feature);
+  const P = t.page, ev = (f, a) => P.evaluate(f, a);
+  const idle = () => P.waitForFunction(() => { const s = window.__spatialViewer.outlines.stats(); if (s.busy) { window.__idle = 0; return false; } window.__idle = (window.__idle || 0) + 1; return window.__idle >= 4; }, null, { timeout: 60000, polling: 100 }).then(() => true, () => false);
+  try {
+    const ready = await until(P, (id) => { const sv = window.__spatialViewer, S = sv && sv.state; return S && S.dsId === id && S.m && sv.outlines && S.exprKey && S.geneIndex && S.geneIndex.length; }, id, 60000);
+    if (!t.ok(ready, `opened ${id}`)) return;
+    await settled(P); await tilesDone(P);
+    // the cells layer, Outlines picked as a reader would
+    const lay = await ev(() => {
+      const S = window.__spatialViewer.state, sel = document.getElementById("exprSelect");
+      if (S.exprKey !== "cells" && [...sel.options].some((o) => o.value === "cells")) { sel.value = "cells"; sel.dispatchEvent(new Event("change")); }
+      return S.exprKey;
+    });
+    await until(P, () => { const S = window.__spatialViewer.state; return S.exprKey === "cells" && window.__spatialViewer.outlines.available(); }, null, 30000);
+    const shown = await ev(() => { const s = document.getElementById("cellShapes"); s.value = "outlines"; s.dispatchEvent(new Event("change")); return !document.getElementById("rowCellShapes").hidden; });
+    t.ok(shown, `the Cell shapes control shows on the cells layer (was on ${lay})`);
+    // zoomed in so the median cell is 40 px across, at the image's centre
+    await ev(() => { const sv = window.__spatialViewer, S = sv.state, e = S.m.expr.find((x) => x.key === S.exprKey), i = S.m.image;
+      window.__idle = 0; sv.deck.props.onViewStateChange({ viewState: { ...S.viewState, target: [i.width / 2, i.height / 2, 0], zoom: Math.log2(40 / e.spotDiameterPx) }, viewId: "ortho" }); });
+    const quiet = await idle();
+    await tilesDone(P);
+    const r = await lookDrawn(P, 0.01);
+    const s = await ev(() => window.__spatialViewer.outlines.stats());
+    t.ok(quiet && s.mode === "outlines" && s.alpha === 1 && s.dot === 0 && s.layers > 0 && s.shown > 50 && s.sets[0].tiles > 0 && !s.sets.some((x) => x.bad),
+      `outlines drawn: ${s.shown} shown, ${s.sets.map((x) => `${x.key}: ${x.tiles} tiles, ${x.polygons} polygons`).join("; ")} (alpha ${s.alpha}, dots ${s.dot}${s.note ? `; "${s.note}"` : ""})`);
+    t.ok(r.lit > 0.01 && !r.err, `map drawn (lit ${r.lit.toFixed(3)}${r.status ? `; status "${r.status}"` : ""})`);
+    const k = `${eng.group}|${id} outlines`; (thumbs[k] = thumbs[k] || {})[eng.name] = r.thumb;
+    await t.shot(`${id}_outlines`);
+    checkClean(t, feature);
+  } catch (e) { t.ok(false, `crashed: ${String(e.message).split("\n")[0]}`); }
+  finally { await t.ctx.close(); }
+}
+
 // ---- ?data= links: one dataset without datasets.json; the list with tags --------------------------------
 async function links(browser, eng, urls) {
   const id = CAT_IDS[1] || CAT_IDS[0];
@@ -644,6 +686,41 @@ async function phone(browser, eng, urls) {
     t.ok(!!z && z.w > 300, `Save image 1x on the phone: ${png ? png.name : "nothing"} ${z ? `${z.w} x ${z.h}` : ""} "${said.slice(0, 100)}"`, "Save image on the phone");
     const sel = await ev2(P, () => [...document.getElementById("snapScale").options].map((o) => `${o.textContent}${o.disabled ? " [off]" : ""}`));
     console.log(`        phone Save image sizes: ${sel.join(" | ")}`);
+    // the phone's limits count the whole picture (map + name + legend): a size is offered only when all of it fits
+    const Z = await ev2(P, () => window.SodaSnapshot._sizes ? window.SodaSnapshot._sizes() : null);
+    if (t.ok(Z && Z.touch, "Save image knows it is on a touch screen", "Save image on the phone: whole picture within the limit")) {
+      const fits = (z) => z.W * z.H <= Z.limits.areaTouch && Math.max(z.W, z.H) <= Z.limits.dimTouch;
+      const offered = new Set(await ev2(P, () => [...document.getElementById("snapScale").options].filter((o) => !o.disabled).map((o) => Number(o.value))));
+      t.ok(Z.sizes.every((z) => (z.W > z.w || z.H > z.h) && fits(z) === offered.has(z.s) && !z.why === fits(z)),
+        `each size offered only when the whole picture fits (${Z.sizes.map((z) => `${z.s}x ${z.W} x ${z.H} = ${(z.W * z.H / 1e6).toFixed(1)} M px${offered.has(z.s) ? "" : " refused"}`).join("; ")}; limit ${Z.limits.areaTouch / 1e6} M px)`,
+        "Save image on the phone: whole picture within the limit");
+      // the largest size offered, saved: the file is the size counted (and within the limit). Not on a software
+      // GPU (SwiftShader), where a large picture can exhaust its memory.
+      const soft = await ev2(P, () => { const gl = window.__spatialViewer.deck.device.gl, d = gl.getExtension("WEBGL_debug_renderer_info"); return /SwiftShader|llvmpipe|softpipe|Software/i.test(d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)); });
+      const big = Z.sizes.filter((z) => offered.has(z.s)).pop();
+      if (big && big.s > 1 && !soft) {
+        let said2 = "";
+        const f = await download(t, async () => { said2 = await ev2(P, (s) => window.SodaSnapshot._save({ scale: s }), big.s); }, 120000);
+        const zz = f && pngSize(f.buf);
+        t.ok(!!zz && Math.abs(zz.w - big.W) <= 2 && Math.abs(zz.h - big.H) <= 2 && zz.w * zz.h <= Z.limits.areaTouch,
+          `Save image ${big.s}x on the phone: ${zz ? `${zz.w} x ${zz.h}` : "nothing"} (counted ${big.W} x ${big.H}) "${said2.slice(0, 80)}"`, "Save image on the phone: whole picture within the limit");
+      }
+      // a taller screen, where the map alone at some size fits the limit but the map with its name does not:
+      // that size must be refused, with the phone's message
+      let edge = null;
+      for (let hgt = 560; hgt <= 1200 && !edge; hgt += 4) {
+        await P.setViewportSize({ width: 375, height: hgt });
+        await P.waitForTimeout(150);
+        const Y = await ev2(P, () => window.SodaSnapshot._sizes());
+        const z = Y.sizes.find((q) => q.w * q.h <= Y.limits.areaTouch && Math.max(q.w, q.h) <= Y.limits.dimTouch && q.W * q.H > Y.limits.areaTouch);
+        if (z) edge = { hgt, z };
+      }
+      if (t.ok(!!edge, `a screen height where the map fits the phone's limit but the whole picture does not${edge ? ` (375 x ${edge.hgt}: ${edge.z.s}x map ${edge.z.w} x ${edge.z.h}, whole ${edge.z.W} x ${edge.z.H})` : ""}`, "Save image on the phone: whole picture within the limit")) {
+        const o = await ev2(P, (s) => { window.dispatchEvent(new Event("resize")); const x = [...document.getElementById("snapScale").options].find((q) => Number(q.value) === s); return x ? { off: x.disabled, txt: x.textContent } : null; }, edge.z.s);
+        t.ok(o && o.off && /too large for a phone or tablet's memory/.test(o.txt), `${edge.z.s}x refused before drawing: "${o ? o.txt : "no option"}"`, "Save image on the phone: whole picture within the limit");
+      }
+      await P.setViewportSize({ width: 375, height: 812 });
+    }
     checkClean(t, "phone layout 375 x 812, touch");
   } catch (e) { t.ok(false, `crashed: ${String(e.message).split("\n")[0]}`); }
   finally { await t.ctx.close(); }
@@ -685,6 +762,7 @@ async function phone(browser, eng, urls) {
         if (!SKIP.includes("datasets")) for (const [kind, id] of picked) await checkDataset(browser, eng, urls, kind, id);
         if (!SKIP.includes("walk")) await walk(browser, eng, urls);
         if (!SKIP.includes("links")) await links(browser, eng, urls);
+        if (!SKIP.includes("outlines")) { if (OUTLINE_DS) await cellOutlines(browser, eng, urls); else console.log("  (no export with cell outlines: outlines not checked)"); }
       } finally { await browser.close(); }
     }
   } finally {
