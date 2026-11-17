@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Browsers test: the page on the demo export in Chromium, WebKit (Safari's engine) and Microsoft Edge,
-// plus an iPhone-sized WebKit and Chromium with touch. The same steps in each browser:
+// Browsers test: the page on the demo export in Chromium, WebKit (Safari's engine), Microsoft Edge and Firefox,
+// plus an iPhone-sized WebKit and Chromium with touch, and a phone-sized Firefox (the size only: Playwright's
+// Firefox has no isMobile / hasTouch emulation, so it is a narrow desktop window, not a touch phone). The same
+// steps in each browser:
 //   probe     what the browser offers (WebGL2 and its limits, createImageBitmap, OffscreenCanvas, module
 //             workers, BigInt64Array, CSS dvh / :has / backdrop-filter, clipboard, the largest 2D canvas
 //             that still encodes a PNG); written to <shots>/<browser>/probe.json, a few must hold.
@@ -24,18 +26,30 @@
 //   phone     375 x 812, touch (WebKit as iPhone X, Chromium as a phone): tiles drawn, no sideways
 //             scrolling, the tab rail there, Save image 1x; every Save image size offered only when the whole
 //             picture (map, name and legend) fits the phone's limit, and the largest one saved at that size;
-//             WebKit compared with Chromium by pixels.
+//             WebKit compared with Chromium by pixels. firefox-phone: the same 375 x 812 window without touch
+//             (clicked, not tapped); the touch-only checks (the page sees a touch screen, the phone's Save image
+//             limits) are left out there and the page is checked to use the desktop limits instead.
 //
 //   node tests/browsers_test.js                         (needs demo/export: run tests/smoke_test.py first)
 //   node tests/browsers_test.js --only webkit,msedge --shots <dir> --export <dir> --all --ports 8892,8893 (default: free ports)
 //        --ds demo_visiumhd,demo_xenium (only these datasets)  --skip probe,datasets,walk,links,outlines
-//   browsers: chromium, webkit, msedge (Edge; skipped when it is not installed), webkit-phone, chromium-phone
+//   browsers: chromium, webkit, msedge (Edge; skipped when it is not installed), firefox (skipped when Playwright's
+//             Firefox is not installed), webkit-phone, chromium-phone, firefox-phone
 //
 // Playwright is not a dependency of this repo (see tests/phone_browser_test.js): install it anywhere and
 // point NODE_PATH or --playwright at its node_modules (PLAYWRIGHT_BROWSERS_PATH if its browsers are
 // elsewhere). Without it, or without the demo export, or without deck.gl from the CDN (no internet), the
-// test says SKIPPED and exits 0; a browser that cannot be launched is SKIPPED on its own. Firefox is in the
-// list only with --only firefox (Playwright's Firefox must be installed for it).
+// test says SKIPPED and exits 0; a browser that cannot be launched is SKIPPED on its own (a line
+// "SKIPPED <browser>: cannot launch (...)"), so a machine without Edge or Firefox still passes.
+//
+// Firefox reports two things in its console that Chromium and WebKit keep quiet about, and that are not
+// faults of the page; only these two, and only in Firefox, are not counted as console errors:
+//   - the vendor/ deck.gl tag when there is no vendor/ folder: Firefox checks the 404 page against the
+//     tag's SHA-384 and says the hashes do not match (Chromium says "404", which is allowed for vendor/
+//     already); libs.js then loads the CDN copy, as in every browser.
+//   - deck.gl's bundled Long.js probing WebAssembly when it loads: the page's Content-Security-Policy has
+//     no 'wasm-unsafe-eval' (on purpose: tests/smoke_test.py checks it is no wider), Firefox logs the
+//     refusal, deck.gl catches it and uses plain JavaScript. Chromium refuses it the same way, silently.
 //
 // Playwright's WebKit is the WebKit engine, not Safari: on Windows it does not use Apple's image decoders,
 // Metal, or an iPhone's memory limits (iOS caps a canvas at about 16.7 million pixels; the page keeps a
@@ -220,6 +234,10 @@ const thumbs = {};                                // thumbs[`${group}|${key}`][e
 // files the page asks for that an export need not have (see tests/compat_test.js)
 // vendor/: deck.gl and umap-js are asked for there first and come from the CDN when a copy has no vendor/ (libs.js)
 const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/about\.html$/, /\/vendor\//];
+// Firefox's console lines that are not the page's faults (see the top of this file): the vendor/ tag's hash
+// checked against a 404, and deck.gl's WebAssembly probe refused by the page's Content-Security-Policy
+const FIREFOX_QUIET = [/integrity attribute match the content of the subresource at .[^ ]*\/vendor\//,
+  /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 
 async function openPage(browser, eng, url, label, feature) {
   // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
@@ -254,7 +272,7 @@ async function openPage(browser, eng, url, label, feature) {
     const dir = path.join(SHOTS, eng.name); fs.mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: path.join(dir, `${name.replace(/[^\w]+/g, "_")}.png`) }).catch(() => {});
   };
-  return { ctx, page, log, ok, shot };
+  return { ctx, page, log, ok, shot, eng };
 }
 // A connection to this test's own servers that the machine dropped (refused / reset at the TCP level, seen
 // now and then on a busy Windows machine with other servers running) says nothing about the browser: up to
@@ -268,7 +286,8 @@ function checkClean(t, feature, allowed = []) {
   if (flaky.size) console.log(`        note: ${dropped.length} connection(s) to the test servers dropped, not counted: ${[...flaky].map((u) => u.replace(/^https?:\/\/[^/]+/, "")).join(", ")}`);
   const allow = (u) => flaky.has(u) || allowed.concat(OPTIONAL).some((re) => re.test(u));
   const bad = t.log.bad.filter((b) => !allow(b.url));
-  const cons = t.log.console.filter((c) => !(/Failed to load resource|status of 404/.test(c.text) && (!c.url || allow(c.url))));
+  const cons = t.log.console.filter((c) => !(/Failed to load resource|status of 404/.test(c.text) && (!c.url || allow(c.url)))
+    && !(t.eng.type === pw.firefox && FIREFOX_QUIET.some((re) => re.test(c.text))));
   t.ok(!t.log.pageErrors.length, `no page error${t.log.pageErrors.length ? ": " + t.log.pageErrors.slice(0, 3).join(" / ") : ""}`, feature);
   t.ok(!cons.length, `no console error${cons.length ? ": " + cons.slice(0, 3).map((c) => `${c.text} ${c.url}`).join(" / ") : ""}`, feature);
   t.ok(!bad.length, `no failed request${bad.length ? ": " + bad.slice(0, 5).map((b) => `${b.status} ${b.url.replace(/^https?:\/\/[^/]+/, "")}`).join(", ") : ""}`, feature);
@@ -776,7 +795,8 @@ const ev2 = (P, f, a) => P.evaluate(f, a);
 // ---- phone layout ----------------------------------------------------------------------------------------
 async function phone(browser, eng, urls) {
   const id = "demo_visiumhd";
-  const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, "phone 375 x 812", "phone layout 375 x 812, touch");
+  const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, "phone 375 x 812",
+    eng.noTouch ? "phone-sized window 375 x 812, no touch" : "phone layout 375 x 812, touch");
   try {
     const P = t.page;
     await until(P, (id) => { const sv = window.__spatialViewer; return sv && sv.state && sv.state.m && sv.state.m.id === id; }, id);
@@ -787,7 +807,8 @@ async function phone(browser, eng, urls) {
       rail: (() => { const e = document.querySelector("[role=tablist]"); if (!e) return null; const b = e.getBoundingClientRect(); return { w: b.width, h: b.height, vis: b.width > 0 && b.height > 0 && b.bottom <= innerHeight + 1 }; })(),
       vp: (() => { const b = document.getElementById("viewport").getBoundingClientRect(); return { w: b.width, h: b.height }; })() }));
     t.ok(r.lit > 0.05, `slide drawn (lit ${r.lit.toFixed(3)}, decoder ${r.decoder})`);
-    t.ok(L.touch === true, "the page sees a touch screen");
+    if (eng.noTouch) t.ok(L.touch === false, "no touch screen here (Playwright's Firefox cannot emulate one): the page does not claim one");
+    else t.ok(L.touch === true, "the page sees a touch screen");
     t.ok(L.sw <= L.iw + 1, `no sideways scrolling (page ${L.sw} px wide, window ${L.iw})`);
     t.ok(L.rail && L.rail.vis, `tab rail on screen ${JSON.stringify(L.rail)}`);
     t.ok(L.vp.w >= 300 && L.vp.h >= 250, `map ${Math.round(L.vp.w)} x ${Math.round(L.vp.h)} px`);
@@ -795,7 +816,7 @@ async function phone(browser, eng, urls) {
     await t.shot("phone_open");
     // a tab opens its sheet (tapped)
     const tab = await P.$("[role=tab]:not([aria-selected=true])");
-    if (tab) { await tab.tap(); await P.waitForTimeout(500); }
+    if (tab) { if (eng.noTouch) await tab.click(); else await tab.tap(); await P.waitForTimeout(500); }
     const sheet = await ev2(P, () => { const p = [...document.querySelectorAll("[role=tabpanel]")].find((x) => !x.hidden && x.getBoundingClientRect().height > 40); return p ? Math.round(p.getBoundingClientRect().height) : 0; });
     t.ok(sheet > 0, `tapping a tab shows its panel (${sheet} px high)`);
     const sid = await ev2(P, () => { const s = [...document.querySelectorAll("select")].find((x) => x.id && x.getClientRects().length && x.getBoundingClientRect().bottom < innerHeight - 80 && x.getBoundingClientRect().top > 0); return s ? s.id : null; });
@@ -810,7 +831,9 @@ async function phone(browser, eng, urls) {
     console.log(`        phone Save image sizes: ${sel.join(" | ")}`);
     // the phone's limits count the whole picture (map + name + legend): a size is offered only when all of it fits
     const Z = await ev2(P, () => window.SodaSnapshot._sizes ? window.SodaSnapshot._sizes() : null);
-    if (t.ok(Z && Z.touch, "Save image knows it is on a touch screen", "Save image on the phone: whole picture within the limit")) {
+    // without touch (firefox-phone) the page uses the desktop limits, as on any narrow desktop window
+    if (eng.noTouch) t.ok(Z && Z.touch === false, "no touch screen: Save image uses the desktop limits (the phone's limits are checked in WebKit and Chromium)");
+    else if (t.ok(Z && Z.touch, "Save image knows it is on a touch screen", "Save image on the phone: whole picture within the limit")) {
       const fits = (z) => z.W * z.H <= Z.limits.areaTouch && Math.max(z.W, z.H) <= Z.limits.dimTouch;
       const offered = new Set(await ev2(P, () => [...document.getElementById("snapScale").options].filter((o) => !o.disabled).map((o) => Number(o.value))));
       t.ok(Z.sizes.every((z) => (z.W > z.w || z.H > z.h) && fits(z) === offered.has(z.s) && !z.why === fits(z)),
@@ -843,7 +866,7 @@ async function phone(browser, eng, urls) {
       }
       await P.setViewportSize({ width: 375, height: 812 });
     }
-    checkClean(t, "phone layout 375 x 812, touch");
+    checkClean(t, eng.noTouch ? "phone-sized window 375 x 812, no touch" : "phone layout 375 x 812, touch");
   } catch (e) { t.ok(false, `crashed: ${String(e.message).split("\n")[0]}`); }
   finally { await t.ctx.close(); }
 }
@@ -857,9 +880,11 @@ async function phone(browser, eng, urls) {
     { name: "chromium", type: pw.chromium, group: "desktop", clipboard: true },
     { name: "webkit", type: pw.webkit, group: "desktop" },
     { name: "msedge", type: pw.chromium, launch: { channel: "msedge" }, group: "desktop", clipboard: true, optional: true },
-    { name: "firefox", type: pw.firefox, group: "desktop", optional: true, onlyIfAsked: true },
+    { name: "firefox", type: pw.firefox, group: "desktop", clipboard: true, optional: true },
     { name: "chromium-phone", type: pw.chromium, group: "phone", device: { ...phoneDev, userAgent: pw.devices["Pixel 7"].userAgent }, phoneOnly: true },
     { name: "webkit-phone", type: pw.webkit, group: "phone", device: phoneDev, phoneOnly: true },
+    // Playwright's Firefox has no isMobile / hasTouch: a 375 x 812 window, nothing more (see phone())
+    { name: "firefox-phone", type: pw.firefox, group: "phone", device: { viewport: { width: 375, height: 812 } }, phoneOnly: true, noTouch: true, optional: true },
   ].filter((e) => (ONLY ? ONLY.split(",").includes(e.name) : !e.onlyIfAsked));
   console.log(`datasets: ${picked.map(([k, id]) => `${k} = ${id}`).join(", ")}`);
   let deckOk = null, ran = [];

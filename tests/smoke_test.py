@@ -62,8 +62,8 @@ an AnnData-Zarr of cells without an image, an OME-Zarr image (NGFF 0.4), and two
 circles, cell / nucleus polygons, transcripts, a second coordinate system; Visium HD-like: equal squares under an image
 with a scale). Checked (check_stdformats): positions through scale factors and NGFF transformations, counts, genes, the
 image pixels, outlines, molecules, the file's own clusterings, no made-up sample ID in any message or export file, the
-cases that are refused (zarr v3, a plate, two libraries, a labels region, mapAxis), and the pages in Chromium
-(tests/stdformats_browser_test.js).
+cases that are refused (zarr v3, a plate, two libraries, a labels region, mapAxis), and the pages in Chromium and
+Firefox (tests/stdformats_browser_test.js).
 Xenium inputs (web/SpatialViewer/xenium.py, zipinput.py): the Xenium demo without its morphology_focus/ (cells and
 molecules on a transcript-density background whose pixels are two 0.5 µm morphology pixels, origin at Xenium's 0, 0),
 zipped as a whole output folder (deflated, two folders down) and as Xenium's own bundle (stored, files at the top),
@@ -79,14 +79,16 @@ it came from (traced ones against their label mask, by IoU), rows (the files are
 cell's centre inside its own outline, cells in parts, holes, crumbs, missing outlines, simplification, and
 that outlines in the wrong units or of another run are refused and change nothing, and --no-outlines. The
 browser half of that is tests/outlines_browser_test.js (Playwright, run here when node is installed): the outlines
-in Chromium, and in Chromium and WebKit what draws a subset of the cells with them (Draw a region, the region
+in Chromium, and in Chromium, WebKit and Firefox what draws a subset of the cells with them (Draw a region, the region
 click-filter, Colour by a value, cell sets, Save image and its legend, a link to the view), checked by pixel.
 Last, the page itself: every local script and
 stylesheet index.html names exists and carries a ?v= string, diag.js (the ?diag=1 panel)
 loads before viewer.js, viewer.js still has its three tile decoders in order and reports
 tile and graphics failures, and, when node is installed, tests/diag_test.js passes (the
 panel's token-stripping). The browser half is tests/phone_browser_test.js (Playwright); tests/browsers_test.js
-runs the page on this export in Chromium, WebKit (Safari's engine), Edge and an iPhone-sized WebKit (Playwright).
+runs the page on this export in Chromium, WebKit (Safari's engine), Edge, Firefox, an iPhone-sized WebKit and Chromium,
+and a phone-sized Firefox (the window size only: Playwright's Firefox cannot emulate touch) (Playwright). A browser
+that is not installed here (Edge, Playwright's Firefox) is SKIPPED by the test with a line saying so.
 Also: prepare.py caps the BLAS / OpenMP threads before numpy loads (threadcap.py: default,
 SODA_THREADS, --threads, a variable already set), the PCA runs on one thread and gives the same
 numbers as on the cap's threads; and the dataset picker (dspicker.js) is wired into the page with its
@@ -95,8 +97,8 @@ tab rail, its four tabs and tab panels with their roles and ids, every section.p
 the four tabs (those in index.html and those the scripts build), no id twice, the controls layout.js
 moves by id all there, and the hooks the other scripts need.
 Your own results (web/SpatialViewer/ownres.js): a reader's CSV / TSV (also .gz) with a UMAP, groupings and
-numbers, matched to the bins by barcode in the browser; wired into the page (check_ownres), and in Chromium
-and WebKit by tests/ownres_browser_test.js on export_user/demo_visiumhd: Seurat and scanpy files, partial
+numbers, matched to the bins by barcode in the browser; wired into the page (check_ownres), and in Chromium,
+WebKit and Firefox by tests/ownres_browser_test.js on export_user/demo_visiumhd: Seurat and scanpy files, partial
 matches, roles put right, colours by pixel, the volcano on a loaded grouping, Save JSON, the view link, junk
 files and a 375 px phone.
 Automatic detection (web/SpatialViewer/detect.py): every synthetic folder above must be named with the right
@@ -124,7 +126,7 @@ Offline use (libs.js, vendor.py, sw.js, offline.js): deck.gl and umap-js pinned 
 place (libs.js) and the same in index.html's vendor/ tag, the worker and vendor.py; vendor/ git-ignored; the
 Content-Security-Policy no wider (no eval of any kind); every worker named with a ?v= string (the service
 worker finds them that way); sw.js's marker list = markers/; and tests/offline_test.js (Playwright,
-Chromium and WebKit): the page and a kept dataset open with no network, Run UMAP works offline, a new ?v=
+Chromium, WebKit and Firefox): the page and a kept dataset open with no network, Run UMAP works offline, a new ?v=
 replaces the cache, the libraries from vendor/ instead of the CDN, and vendor.py.
 
 Without the optional clustering packages (requirements-clustering.txt) the export
@@ -409,6 +411,14 @@ def run(args: list[str], log_path: Path) -> float:
                          f"full log: {log_path}")
     print(f"    ({dt:.1f}s)", flush=True)
     return dt
+
+
+def print_skipped(out: str):
+    """The browser tests' SKIPPED lines, shown here: a browser that is not installed on this machine (Playwright's
+    Firefox or Edge) is skipped by the test itself, which still passes, and says so with a line starting SKIPPED."""
+    for ln in out.splitlines():
+        if ln.strip().startswith("SKIPPED"):
+            print("    " + ln.strip())
 
 
 def clean(root: Path):
@@ -3101,18 +3111,19 @@ def check_stdformats(c: Checker, root: Path, clustering: bool, log_path: Path) -
     c.ok(not [p for p in texts if STD_FAKE in p.read_text(encoding="utf-8", errors="ignore")],
          "standard formats: no export text file holds the made-up sample ID")
 
-    # ---- the page, in Chromium (SKIPPED without node / Playwright)
+    # ---- the page, in Chromium and Firefox (SKIPPED without node / Playwright; Firefox SKIPPED when not installed)
     node = shutil.which("node")
     if not node:
         print("    node not found: tests/stdformats_browser_test.js skipped")
     else:
         p = subprocess.run([node, str(REPO / "tests" / "stdformats_browser_test.js"), "--export", str(export),
-                            "--shots", str(root / "stdformats_shots")], cwd=str(REPO), stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+                            "--shots", str(root / "stdformats_shots"), "--browsers", "chromium,firefox"], cwd=str(REPO),
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         with open(log_path, "a", encoding="utf-8") as lg:
             lg.write(p.stdout)
+        print_skipped(p.stdout)
         print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
-        c.eq(p.returncode, 0, "node tests/stdformats_browser_test.js: the standard-format exports open in Chromium (exit code)")
+        c.eq(p.returncode, 0, "node tests/stdformats_browser_test.js: the standard-format exports open in Chromium and Firefox (exit code)")
         out["browser"] = (p.stdout.strip().splitlines() or [""])[-1]
     return out
 
@@ -4196,18 +4207,19 @@ def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
                             ("outlines.legend()", vj, "viewer.js: Save image's legend names the cell outlines"),
                             ('key: "cs"', js, "outlines.js: a link to the view carries Cell shapes")):
         c.ok(needle in f, f"{what} ({needle!r} not found)")
-    # in the browser: tests/outlines_browser_test.js (SKIPPED without Playwright; WebKit skipped when not installed)
+    # in the browser: tests/outlines_browser_test.js (SKIPPED without Playwright; WebKit / Firefox SKIPPED when not installed)
     node = shutil.which("node")
     if not node:
         print("    node not found: tests/outlines_browser_test.js skipped")
         return res
     p = subprocess.run([node, str(REPO / "tests" / "outlines_browser_test.js"), "--export", str(export),
-                        "--shots", str(root / "outlines_shots"), "--browsers", "chromium,webkit"], cwd=str(REPO),
+                        "--shots", str(root / "outlines_shots"), "--browsers", "chromium,webkit,firefox"], cwd=str(REPO),
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     with open(log_path, "a", encoding="utf-8") as lg:
         lg.write(p.stdout)
+    print_skipped(p.stdout)
     print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
-    c.eq(p.returncode, 0, "node tests/outlines_browser_test.js: outlines, and what draws a subset of the cells with them, in Chromium and WebKit (exit code)")
+    c.eq(p.returncode, 0, "node tests/outlines_browser_test.js: outlines, and what draws a subset of the cells with them, in Chromium, WebKit and Firefox (exit code)")
     return res
 
 
@@ -4317,15 +4329,17 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     for ln in [x for x in lines if x.startswith("packed exports (")] + [lines[-1]]:
         print("    " + ln)
     c.eq(p.returncode, 0, "node tests/compat_test.js: the page opens exports made by older versions and packed current ones (exit code)")
-    # the same page in Chromium, WebKit (Safari's engine), Edge and a phone-sized WebKit, on this run's demo export
-    # (SKIPPED without Playwright; a browser that is not installed is skipped on its own)
+    # the same page in Chromium, WebKit (Safari's engine), Edge, Firefox and phone-sized WebKit, Chromium and Firefox
+    # (Firefox: the size only, no touch), on this run's demo export (SKIPPED without Playwright; a browser that is
+    # not installed, such as Edge or Playwright's Firefox, is SKIPPED on its own and the rest still pass)
     p = subprocess.run([node, str(REPO / "tests" / "browsers_test.js"), "--export", str(root / "export"),
                         "--shots", str(root / "browsers_shots")], cwd=str(REPO),
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     with open(log_path, "a", encoding="utf-8") as lg:
         lg.write(p.stdout)
+    print_skipped(p.stdout)
     print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
-    c.eq(p.returncode, 0, "node tests/browsers_test.js: the page works in Chromium, WebKit and Edge (exit code)")
+    c.eq(p.returncode, 0, "node tests/browsers_test.js: the page works in Chromium, WebKit, Edge and Firefox (exit code)")
 
 
 THREAD_PROBE = r"""
@@ -4557,7 +4571,8 @@ def check_ownres(c: Checker, root: Path, log_path: Path):
     """Your own results (ownres.js, ownres.css): a reader's CSV / TSV (also .gz) of results they already have,
     matched to the bins in the browser with no new export. Wired into the page (its section in the Clusters tab,
     the hooks in viewer.js and binpaint.js, the link extension), no signed typed arrays, and, when node is
-    installed, tests/ownres_browser_test.js in Chromium and WebKit on export_user/demo_visiumhd (barcode lists from
+    installed, tests/ownres_browser_test.js in Chromium, WebKit and Firefox (SKIPPED when not installed) on
+    export_user/demo_visiumhd (barcode lists from
     `prepare.py ids`, check_ids): Seurat and scanpy files, .gz, partial matches, roles put right, colours by
     pixel, the volcano and cell sets on a loaded grouping, Save JSON and the view link, junk files, 375 px."""
     html = (APP / "index.html").read_text(encoding="utf-8")
@@ -4586,12 +4601,13 @@ def check_ownres(c: Checker, root: Path, log_path: Path):
         print("    node not found: tests/ownres_browser_test.js skipped")
         return
     p = subprocess.run([node, str(REPO / "tests" / "ownres_browser_test.js"), "--root", str(root),
-                        "--shots", str(root / "ownres_shots"), "--browsers", "chromium,webkit"], cwd=str(REPO),
+                        "--shots", str(root / "ownres_shots"), "--browsers", "chromium,webkit,firefox"], cwd=str(REPO),
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     with open(log_path, "a", encoding="utf-8") as lg:
         lg.write(p.stdout)
+    print_skipped(p.stdout)
     print("    " + (p.stdout.strip().splitlines() or ["(no output)"])[-1])
-    c.eq(p.returncode, 0, "node tests/ownres_browser_test.js: your own results loaded in the page, in Chromium and WebKit (exit code)")
+    c.eq(p.returncode, 0, "node tests/ownres_browser_test.js: your own results loaded in the page, in Chromium, WebKit and Firefox (exit code)")
 
 
 def check_sharing(c: Checker, log_path: Path):
@@ -4691,7 +4707,8 @@ def check_link_files(c: Checker):
 
 def check_offline(c: Checker, root: Path, log_path: Path):
     """Offline use: the pinned libraries agree everywhere, nothing widens the page's Content-Security-Policy, the
-    service worker can find every file it must keep, and tests/offline_test.js passes in Chromium and WebKit."""
+    service worker can find every file it must keep, and tests/offline_test.js passes in Chromium, WebKit and Firefox
+    (Firefox SKIPPED when Playwright's Firefox is not installed)."""
     import tempfile
     html = (APP / "index.html").read_text(encoding="utf-8")
     js = {f: (APP / f).read_text(encoding="utf-8") for f in ("libs.js", "sw.js", "offline.js", "lasso_worker.js", "viewer.js", "layout.js", "diag.js")}
@@ -4784,9 +4801,10 @@ def check_offline(c: Checker, root: Path, log_path: Path):
         lg.write(p.stdout)
     lines = p.stdout.strip().splitlines() or ["(no output)"]
     tab = lines.index("feature table:") if "feature table:" in lines else len(lines) - 1
+    print_skipped("\n".join(lines[:tab]))
     for ln in lines[tab:]:
         print("    " + ln)
-    c.eq(p.returncode, 0, "node tests/offline_test.js: offline in Chromium and WebKit (exit code)")
+    c.eq(p.returncode, 0, "node tests/offline_test.js: offline in Chromium, WebKit and Firefox (exit code)")
 
 
 def check_publishable(c: Checker, root: Path, log_path: Path):
