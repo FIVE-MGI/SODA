@@ -81,6 +81,14 @@ that outlines in the wrong units or of another run are refused and change nothin
 browser half of that is tests/outlines_browser_test.js (Playwright, run here when node is installed): the outlines
 in Chromium, and in Chromium, WebKit and Firefox what draws a subset of the cells with them (Draw a region, the region
 click-filter, Colour by a value, cell sets, Save image and its legend, a link to the view), checked by pixel.
+A lab's own segmentation of a protein image (web/SpatialViewer/protcells.py, prepare.py --cells): a 320 x 256 px
+5-channel uint16 OME-TIFF with 165 disc cells (gapped labels 3k + 5), prepared with a full-size label mask and a
+nuclear mask, a 2x downscaled mask under --flip v, a QuPath-style GeoJSON (an annotation skipped, a cell without an
+id, two overlapping cells, nucleusGeometry) under --crop and --flip h, and without --cells. Checked
+(check_protcells): cell count, centroids, areas and every channel's mean per cell against numpy on the mask /
+polygons (in the grid's 8-bit units), barcodes, the gene files (every cell), outlines (format, centre inside, size),
+nucleus outlines, mat/, ids, UMAP; the grid layer byte for byte the same as without --cells; and the refusals (a mask
+of another size, a yes / no mask, --nuclei alone, GeoJSON in the wrong units).
 One control for each job (check_layout; in Chromium, WebKit and Firefox by tests/controls_browser_test.js):
 Show on slide and Clear selection once (the chip above the picture), Image opacity at 0 for the old Image off
 button, one run-or-show button for the volcano and the plots; old links and Save JSON files that had the image
@@ -4308,6 +4316,339 @@ def check_outlines(c: Checker, root: Path, log_path: Path) -> dict:
     return res
 
 
+# ------------------------------------------------------------------ a lab's own segmentation of a protein image
+PC, PCN, PCD, PCG = "demo_protcells", "demo_protcells_none", "demo_protcells_half", "demo_protcells_geojson"
+PC_DS = (PC, PCN, PCD, PCG)
+PC_REFUSED = "demo_protcells_refused"
+PC_SHAPE, PC_MPP = (256, 320), 0.5                         # H, W; µm per pixel: 16 µm squares are 32 px
+PC_CHANNELS = ["DAPI", "CD45", "CD31", "PanCK", "Ki67"]
+PC_CROP = (16, 8, 304, 248)                                # x0, y0, x1, y1 of the GeoJSON run
+PC_RAW, PC_EXPORT, PC_EXPORT_UMAP = "protcells", "export_protcells", "export_protcells_umap"
+PC_NO_ID = 7                                               # the GeoJSON cell written without an id
+
+
+def _pc_rel(root: Path) -> str:
+    try:
+        return root.resolve().relative_to(REPO.resolve()).as_posix()
+    except ValueError:
+        return root.resolve().as_posix()
+
+
+def _pc_octagon(cx: float, cy: float, r: float) -> np.ndarray:
+    """Turned so that no edge is level or at 45 degrees: such an edge can run through a row of pixel centres, where
+    inside or outside is a rounding error's choice."""
+    t = (np.arange(8) + 0.37) * np.pi / 4
+    return np.round(np.column_stack([cx + r * np.cos(t), cy + r * np.sin(t)]), 3)
+
+
+def write_protcells_inputs(root: Path):
+    """The image, masks and GeoJSON of the protcells runs, and truth.npz (labels and pixels as written).
+    Cells only on the left 180 px: the squares on the right are off tissue and give the grid its background."""
+    import tifffile
+    d = root / PC_RAW                # not under raw/: detect.py reads every dataset there
+    d.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(29)
+    H, W = PC_SHAPE
+    yy, xx = np.mgrid[0:H, 0:W]
+    lab = np.zeros((H, W), np.uint32)
+    nuc = np.zeros((H, W), np.uint16)
+    img = rng.normal(200, 15, (len(PC_CHANNELS), H, W))
+    cells, k = [], 0
+    for gy in range(12, 250, 16):
+        for gx in range(12, 176, 16):
+            cx, cy, r = gx + rng.uniform(-1.5, 1.5), gy + rng.uniform(-1.5, 1.5), rng.uniform(4.5, 6.4)
+            d2 = (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2
+            inside, core = d2 <= r * r, d2 <= (0.5 * r) ** 2
+            lid = 3 * k + 5                                    # gapped labels, as a cropped / filtered mask has
+            lab[inside], nuc[core] = lid, lid
+            img[0][inside] += 1500
+            img[0][core] += 2000                               # DAPI
+            img[1 + k % 3][inside] += rng.uniform(1500, 3000)  # CD45 / CD31 / PanCK: three kinds of cell
+            if rng.random() < 0.3:
+                img[4][core] += 2500                           # Ki67 in the nucleus
+            cells.append([lid, cx, cy, r])
+            k += 1
+    img = np.clip(np.rint(img), 0, 65535).astype(np.uint16)
+    tifffile.imwrite(str(d / "image.ome.tif"), img, ome=True, photometric="minisblack",
+                     metadata={"axes": "CYX", "Channel": {"Name": PC_CHANNELS}})
+    tifffile.imwrite(str(d / "cells_masks.tif"), lab)                              # Cellpose-style, full size
+    tifffile.imwrite(str(d / "nuclei_masks.tif"), nuc)
+    tifffile.imwrite(str(d / "cells_half.tif"), lab[::2, ::2].astype(np.uint16))   # a 2x downscale
+    tifffile.imwrite(str(d / "cells_wrong_size.tif"), lab[:, :300])                # neither: refused
+    tifffile.imwrite(str(d / "tissue_yes_no.tif"), (lab > 0).astype(np.uint8))      # one label: refused
+    cells = np.array(cells)
+    # QuPath "Export objects as GeoJSON": an annotation (skipped), cells with ids and nucleusGeometry, one cell
+    # without an id (numbered), and one cell overlapping another (the shared pixels belong to neither)
+    feats = [{"type": "Feature", "id": "annotation-1", "properties": {"objectType": "annotation"},
+              "geometry": {"type": "Polygon", "coordinates": [[[2, 2], [200, 2], [200, 254], [2, 254], [2, 2]]]}}]
+    rings = []
+    for i, (lid, cx, cy, r) in enumerate(cells):
+        ring = _pc_octagon(cx, cy, r)
+        rings.append(ring)
+        f = {"type": "Feature", "properties": {"objectType": "cell"},
+             "geometry": {"type": "Polygon", "coordinates": [ring.tolist() + [ring[0].tolist()]]}}
+        nr = _pc_octagon(cx, cy, 0.5 * r)
+        f["nucleusGeometry"] = {"type": "Polygon", "coordinates": [nr.tolist() + [nr[0].tolist()]]}
+        if i != PC_NO_ID:
+            f["id"] = f"cell-{i}"
+        feats.append(f)
+    extra = _pc_octagon(cells[20, 1] + 6.0, cells[20, 2], 4.0)
+    rings.append(extra)
+    feats.append({"type": "Feature", "id": "cell-extra", "properties": {"objectType": "cell"},
+                  "geometry": {"type": "Polygon", "coordinates": [extra.tolist() + [extra[0].tolist()]]}})
+    (d / "cells.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": feats}), encoding="utf-8")
+    np.savez_compressed(d / "truth.npz", lab=lab, nuc=nuc, img=img, cells=cells)
+
+
+def protcells_commands(root: Path, clustering: bool = True) -> list[list[str]]:
+    r = _pc_rel(root)
+    raw, cache, prep = f"{r}/{PC_RAW}", f"{r}/cache", "web/SpatialViewer/prepare.py"
+    img = ["--src", f"{raw}/image.ome.tif", "--out", cache, "--pixel-size", str(PC_MPP), "--threads", "2"]
+    ex = ["--out", cache, "--tissue-smooth-um", "0", "--threads", "2"]
+    out = [[prep, "tiff", "--id", PC, *img, "--cells", f"{raw}/cells_masks.tif", "--nuclei", f"{raw}/nuclei_masks.tif"],
+           [prep, "tiff", "--id", PCN, *img],
+           [prep, "tiff", "--id", PCD, *img, "--cells", f"{raw}/cells_half.tif", "--flip", "v"],
+           [prep, "tiff", "--id", PCG, *img, "--cells", f"{raw}/cells.geojson", "--crop", ",".join(map(str, PC_CROP)),
+            "--flip", "h"]]
+    out += [[prep, "export", "--id", ds, *ex, "--dest", f"{r}/{PC_EXPORT}", "--no-umap"] for ds in PC_DS]
+    if clustering:
+        out.append([prep, "export", "--id", PC, *ex, "--dest", f"{r}/{PC_EXPORT_UMAP}"])
+    return out
+
+
+def clean_protcells(root: Path):
+    for p in [root / PC_RAW, root / PC_EXPORT, root / PC_EXPORT_UMAP] + [root / "cache" / ds for ds in PC_DS + (PC_REFUSED,)]:
+        if p.exists():
+            print(f"  removing earlier output {p}", flush=True)
+            shutil.rmtree(p)
+
+
+def _pc_frame(a: np.ndarray, crop=None, flip: str = "") -> np.ndarray:
+    """An image of the file's pixels (..., H, W) as the cache holds it: --crop, then --flip."""
+    if crop:
+        x0, y0, x1, y1 = crop
+        a = a[..., y0:y1, x0:x1]
+    if "h" in flip:
+        a = a[..., :, ::-1]
+    if "v" in flip:
+        a = a[..., ::-1, :]
+    return a
+
+
+def _pc_polygon_labels(rings: list, shape) -> np.ndarray:
+    """Cell number + 1 of each pixel whose centre lies inside exactly one cell's ring (even-odd), else 0."""
+    H, W = shape
+    cnt, who = np.zeros((H, W), np.int32), np.zeros((H, W), np.int64)
+    for i, ring in enumerate(rings):
+        x0, y0 = max(0, int(np.floor(ring[:, 0].min()))), max(0, int(np.floor(ring[:, 1].min())))
+        x1, y1 = min(W, int(np.ceil(ring[:, 0].max())) + 1), min(H, int(np.ceil(ring[:, 1].max())) + 1)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        ins = _ol_inside(ring, xx.ravel() + 0.5, yy.ravel() + 0.5).reshape(yy.shape)
+        cnt[y0:y1, x0:x1] += ins
+        who[y0:y1, x0:x1][ins] = i + 1
+    return np.where(cnt == 1, who, 0)
+
+
+def _pc_truth(lab: np.ndarray, img: np.ndarray, ids: np.ndarray, channels: list) -> dict:
+    """Area, centroid (mean of pixel centres) and each channel's mean in 8-bit units (the grid's: the `bits` window,
+    not clipped at 255) of the cells `ids` of a label image, from all of its pixels at once."""
+    H, W = lab.shape
+    lut = np.full(int(max(int(lab.max()), int(ids.max()))) + 1, -1, np.int64)
+    lut[ids] = np.arange(len(ids))
+    li = lut[lab.ravel()]
+    m = li >= 0
+    n = len(ids)
+    yy, xx = np.mgrid[0:H, 0:W]
+    A = np.bincount(li[m], minlength=n).astype(np.float64)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cx = np.bincount(li[m], weights=(xx.ravel() + 0.5)[m], minlength=n) / A
+        cy = np.bincount(li[m], weights=(yy.ravel() + 0.5)[m], minlength=n) / A
+        V = np.column_stack([np.bincount(li[m], weights=img[c].ravel()[m].astype(np.float64), minlength=n) / A
+                             for c in range(len(img))])
+    for c, ch in enumerate(channels):
+        b0, b1 = (float(v) for v in ch["bits"])
+        V[:, c] = np.maximum((V[:, c] - b0) * (255.0 / max(b1 - b0, 1e-9)), 0.0)
+    return {"area": A, "xy": np.column_stack([cx, cy]), "V": V}
+
+
+def _pc_layer(c: Checker, root: Path, out_root: Path, ds: str, lab: np.ndarray, img: np.ndarray, want_ids, want_barcodes,
+              what: str, nuclei: bool, not_whole=(), nuc_want: float = 0.95) -> dict:
+    """One cells layer against the truth: the cache (barcodes, area), the export (positions, every channel's gene
+    file, manifest entry, mat/, ids), and the outlines. `not_whole`: barcodes of cells with fewer pixels than their
+    outline holds (overlapping another), left out of the size checks with those cut by the image's edge."""
+    import zarr
+    out = out_root / ds
+    m = read_json(out / "manifest.json")
+    cm = read_json(root / "cache" / ds / "manifest.json")
+    L = next((x for x in m.get("expr", []) if x.get("key") == "cells"), None)
+    if not c.ok(L is not None, f"{what}: no cells layer in the export manifest"):
+        return {}
+    want_ids = np.asarray(want_ids, np.int64)
+    n = len(want_ids)
+    T = _pc_truth(lab, img, want_ids, cm["image"]["channels"])
+    c.eq([x.get("key") for x in m["expr"]], ["cells", GRID_KEY], f"{what}: layers (cells, then the grid's squares)")
+    c.eq((L.get("kind"), L.get("modality"), L.get("nBins"), L.get("nGenes"), L.get("binSizeUm")),
+         ("cells", "protein", n, len(PC_CHANNELS), None), f"{what}: kind / modality / cells / channels / bin size")
+    c.eq(L.get("segmentation", {}).get("cells"), n, f"{what}: segmentation.cells")
+    c.ok(L.get("segmentation", {}).get("segmentedBy", "").startswith("the lab"), f"{what}: the manifest says the lab segmented")
+    g = zarr.open_group(str(root / "cache" / ds / "expr" / "cells.zarr"), mode="r")
+    bcs = [b.decode() for b in g["barcodes"][()]]
+    c.eq(bcs, list(want_barcodes), f"{what}: barcodes = the mask labels / feature ids, in order")
+    c.ok(np.array_equal(np.asarray(g["area"]), T["area"].astype(np.float32)), f"{what}: area per cell = its pixels")
+    d = out / "expr" / "cells"
+    pos = f32(d / "positions.bin", 2)
+    c.eq(len(pos), n, f"{what}: positions.bin rows")
+    if len(pos) == n:
+        err = float(np.abs(pos - T["xy"]).max()) if n else 0.0
+        c.ok(err < 1e-3, f"{what}: centroids = numpy's mean of pixel centres (max error {err:.2e} px)")
+    worst, bad = 0.0, []
+    for j, nm in enumerate(PC_CHANNELS):
+        gf = gene_f32(d, nm)
+        if gf is None or len(gf) != n:
+            bad.append(f"{nm}: {None if gf is None else len(gf)} rows")
+            continue
+        if not np.array_equal(gf[:, :2], pos):
+            bad.append(f"{nm}: positions differ from positions.bin")
+        e = np.abs(gf[:, 2] - T["V"][:, j]) / np.maximum(1.0, np.abs(T["V"][:, j]))
+        worst = max(worst, float(e.max()))
+    c.ok(not bad, f"{what}: one gene file per channel with every cell in positions.bin order: {bad[:3]}")
+    c.ok(worst < 1e-5, f"{what}: every channel's mean per cell = numpy's on the full-resolution pixels "
+                       f"(worst relative error {worst:.2e})")
+    gl = read_json(d / "genes.json")
+    c.eq(sorted(x["n"] for x in gl), sorted(PC_CHANNELS), f"{what}: genes.json lists every channel")
+    c.eq(L.get("channels"), PC_CHANNELS[1:], f"{what}: embedded channels (DAPI written, not embedded)")
+    c.eq(L.get("normalize"), "bg-asinh-v1", f"{what}: normalisation")
+    c.ok(str(L.get("background", "")).startswith("the grid layer's"), f"{what}: background from the grid's off-tissue "
+                                                                       f"squares ({L.get('background')!r})")
+    c.ok(L.get("mat") and (d / "mat").is_dir() and any((d / "mat").iterdir()), f"{what}: mat/ for Draw a region")
+    if (d / "ids.txt.gz").exists():
+        c.eq(gzip.open(d / "ids.txt.gz", "rt").read().split(), list(want_barcodes), f"{what}: ids.txt.gz")
+    else:
+        c.ok(False, f"{what}: no ids.txt.gz")
+    edge = set(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]).tolist())
+    whole = {i for i, (v, b) in enumerate(zip(want_ids.tolist(), want_barcodes)) if v not in edge and b not in not_whole}
+    S = _ol_read(c, out, what)
+    c.eq(sorted(S), ["cell", "nucleus"] if nuclei else ["cell"], f"{what}: outline sets")
+    if "cell" in S:
+        rings = S["cell"]["rings"]
+        c.eq(len(rings), n, f"{what}: every cell has an outline")
+        _ol_centres(c, S["cell"], f"{what} cell")
+        off = [i for i, rs in rings.items() if i in whole and abs(sum(_ol_area(r_) for r_ in rs) - T["area"][i]) > 0.35 * T["area"][i]]
+        c.ok(not off, f"{what}: outline areas within 35% of the cells' pixel areas ({len(off)} not: {off[:5]})")
+    if nuclei and "nucleus" in S:
+        c.ok(len(S["nucleus"]["rings"]) >= 0.95 * n, f"{what}: {len(S['nucleus']['rings'])} of {n} cells have a nucleus outline")
+        _ol_centres(c, S["nucleus"], f"{what} nucleus", want=nuc_want)   # a cell cut by a crop: its centre moves
+        big = [i for i, rs in S["nucleus"]["rings"].items() if i in whole and sum(_ol_area(r_) for r_ in rs) > 0.6 * T["area"][i]]
+        c.ok(not big, f"{what}: nucleus outlines are the small inner discs ({len(big)} not)")
+    txt = (out / "manifest.json").read_text(encoding="utf-8")
+    c.ok(not LOCAL_PATH.search(txt) and "cells_masks" not in txt and "cells.geojson" not in txt,
+         f"{what}: the export manifest names no local path or segmentation file")
+    return {"cells": n, "background": L.get("background"), "dropped": [x["name"] for x in L.get("dropped", [])]}
+
+
+def _pc_refused(c: Checker, root: Path, log_path: Path, extra: list[str], want: str, what: str, empty: bool = True):
+    r = _pc_rel(root)
+    ds = root / "cache" / PC_REFUSED
+    if ds.exists():
+        shutil.rmtree(ds)
+    args = ["web/SpatialViewer/prepare.py", "tiff", "--id", PC_REFUSED, "--src", f"{r}/{PC_RAW}/image.ome.tif",
+            "--out", f"{r}/cache", "--pixel-size", str(PC_MPP), "--threads", "2", *extra]
+    p = subprocess.run([sys.executable, *args], cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                       encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    with open(log_path, "a", encoding="utf-8") as lg:
+        lg.write(f"\n$ python {' '.join(args)}   (must be refused)\n{p.stdout}")
+    last = (p.stdout.strip().splitlines() or [""])[-1]
+    c.ok(p.returncode != 0 and want in p.stdout, f"{what}: refused with the reason (exit {p.returncode}): {last[:300]}")
+    if empty:
+        c.ok(not ds.exists(), f"{what}: refused before anything was written (no cache folder)")
+    else:
+        c.ok(not (ds / "manifest.json").exists() and not (ds / "expr" / "cells.zarr").exists(),
+             f"{what}: no manifest and no cells layer written")
+    if ds.exists():
+        shutil.rmtree(ds)
+
+
+def check_protcells(c: Checker, root: Path, clustering: bool, log_path: Path) -> dict:
+    """A lab's own segmentation of a protein image (protcells.py)."""
+    raw, ex = root / PC_RAW, root / PC_EXPORT
+    tz = np.load(raw / "truth.npz")
+    lab, nuc, img, cells = tz["lab"], tz["nuc"], tz["img"], tz["cells"]
+    res = {}
+    print("  full-size label mask + nuclear mask")
+    ids = np.unique(lab[lab > 0]).astype(np.int64)
+    c.eq(len(ids), len(cells), f"{PC}: the fixture's cells")
+    res["mask"] = _pc_layer(c, root, ex, PC, lab, img, ids, [str(int(v)) for v in ids], f"{PC} (mask)", nuclei=True)
+    c.eq(read_json(ex / PC / "manifest.json")["expr"][0].get("segmentation", {}).get("maskScale"), 1, f"{PC}: mask scale 1")
+    print("  2x downscaled mask, --flip v")
+    full = np.repeat(np.repeat(lab[::2, ::2], 2, 0), 2, 1)[:PC_SHAPE[0], :PC_SHAPE[1]]
+    lab_d = _pc_frame(full, flip="v")
+    ids_d = np.unique(lab_d[lab_d > 0]).astype(np.int64)
+    res["half"] = _pc_layer(c, root, ex, PCD, lab_d, _pc_frame(img, flip="v"), ids_d, [str(int(v)) for v in ids_d],
+                            f"{PCD} (2x mask, flip v)", nuclei=False)
+    c.eq(read_json(ex / PCD / "manifest.json")["expr"][0].get("segmentation", {}).get("maskScale"), 2, f"{PCD}: mask scale 2")
+    print("  QuPath GeoJSON, --crop, --flip h")
+    gj = read_json(raw / "cells.geojson")
+    cell_feats = [f for f in gj["features"] if f["properties"].get("objectType") != "annotation"]
+    fids = [f.get("id") or str(k + 1) for k, f in enumerate(cell_feats)]       # numbered over the features read
+    rings = [np.asarray(f["geometry"]["coordinates"][0][:-1], np.float64) for f in cell_feats]
+    lab_g = _pc_frame(_pc_polygon_labels(rings, PC_SHAPE), crop=PC_CROP, flip="h")
+    present = np.unique(lab_g[lab_g > 0]).astype(np.int64)                    # cell number + 1, file order
+    res["geojson"] = _pc_layer(c, root, ex, PCG, lab_g, _pc_frame(img, crop=PC_CROP, flip="h"), present,
+                               [fids[i - 1] for i in present], f"{PCG} (GeoJSON, crop, flip h)", nuclei=True,
+                               not_whole=("cell-20", "cell-extra"), nuc_want=0.9)
+    c.ok(str(PC_NO_ID + 1) in [fids[i - 1] for i in present], f"{PCG}: the cell without an id is numbered")
+    sg = read_json(ex / PCG / "manifest.json")["expr"][0].get("segmentation", {})
+    c.eq((sg.get("featuresSkipped"), sg.get("featuresNumbered")), (1, 1), f"{PCG}: the annotation skipped, one cell numbered")
+    c.ok(sg.get("pixelsInTwoCells", 0) > 0, f"{PCG}: pixels inside two cells counted ({sg.get('pixelsInTwoCells')})")
+    c.ok(len(present) < len(cell_feats), f"{PCG}: cells outside the crop left out ({len(present)} of {len(cell_feats)})")
+    print("  without --cells: the grid layer as before")
+    mn = read_json(ex / PCN / "manifest.json")
+    c.eq([x.get("key") for x in mn.get("expr", [])], [GRID_KEY], f"{PCN}: the grid layer only")
+    c.ok(not (ex / PCN / "expr" / "cells").exists(), f"{PCN}: no expr/cells/")
+    c.ok("cells" not in (read_json(root / "cache" / PCN / "manifest.json").get("source") or {}), f"{PCN}: no cells source")
+    a, b = ex / PC / "expr" / GRID_KEY, ex / PCN / "expr" / GRID_KEY
+    fa = sorted(p.relative_to(a).as_posix() for p in a.rglob("*") if p.is_file())
+    fb = sorted(p.relative_to(b).as_posix() for p in b.rglob("*") if p.is_file())
+    c.eq(fa, fb, f"{PC} vs {PCN}: the grid layer's files")
+    diff = [f for f in fa if f in fb and (a / f).read_bytes() != (b / f).read_bytes()]
+    c.ok(not diff, f"{PC} vs {PCN}: the grid layer's files are byte for byte the same with --cells ({diff[:5]})")
+    ga = next(x for x in read_json(ex / PC / "manifest.json")["expr"] if x["key"] == GRID_KEY)
+    gb = next(x for x in mn["expr"] if x["key"] == GRID_KEY)
+    c.ok(ga == gb, f"{PC} vs {PCN}: the grid layer's manifest entry is the same "
+                   f"({sorted(k for k in set(ga) | set(gb) if ga.get(k) != gb.get(k))})")
+    if clustering:
+        print("  UMAP + clusters of the cells")
+        mu = read_json(root / PC_EXPORT_UMAP / PC / "manifest.json")
+        Lu = next((x for x in mu["expr"] if x["key"] == "cells"), {})
+        u = Lu.get("umap") or {}
+        ud = root / PC_EXPORT_UMAP / PC / "expr" / "cells" / "umap"
+        c.ok(u and (ud / "index.json").is_file() and (ud / "coords.bin").is_file(), f"{PC}: umap/ of the cells and its manifest entry")
+        ix = read_json(ud / "index.json") if (ud / "index.json").is_file() else {}
+        c.ok(str(ix.get("params", {}).get("unit", "")).startswith("cell"), f"{PC}: the UMAP is of cells "
+                                                                           f"({ix.get('params', {}).get('unit')!r})")
+        c.ok(u.get("nEmbedded", 0) >= 0.9 * len(cells) and u.get("clusterings"),
+             f"{PC}: {u.get('nEmbedded')} of {len(cells)} cells embedded, {len(u.get('clusterings') or [])} clusterings")
+        if (ud / "coords.bin").is_file():
+            c.eq((ud / "coords.bin").stat().st_size, 8 * res["mask"].get("cells", 0), f"{PC}: coords.bin has one x, y per cell")
+        res["umap"] = {"nEmbedded": u.get("nEmbedded"), "clusters": [k.get("n") for k in u.get("clusterings") or []],
+                       "celltypes": bool(u.get("celltypes"))}
+    print("  refused")
+    _pc_refused(c, root, log_path, ["--cells", f"{_pc_rel(root)}/{PC_RAW}/cells_wrong_size.tif"],
+                "whole-number downscale", "a mask of another size")
+    _pc_refused(c, root, log_path, ["--nuclei", f"{_pc_rel(root)}/{PC_RAW}/nuclei_masks.tif"],
+                "--nuclei needs --cells", "--nuclei without --cells")
+    _pc_refused(c, root, log_path, ["--cells", f"{_pc_rel(root)}/{PC_RAW}/tissue_yes_no.tif"],
+                "one label only", "a yes / no mask", empty=False)
+    _pc_refused(c, root, log_path, ["--cells", f"{_pc_rel(root)}/{PC_RAW}/cells.geojson", "--cells-units", "um",
+                                    "--pixel-size", "0.25"],
+                "wrong units", "GeoJSON pixels read as µm", empty=False)
+    print(f"    protcells: {res.get('mask', {}).get('cells')} / {res.get('half', {}).get('cells')} / "
+          f"{res.get('geojson', {}).get('cells')} cells (mask / 2x mask / GeoJSON)")
+    return res
+
+
 def check_marker_lists(c: Checker):
     """The built-in lists load and are usable, and the channel-name cleanup is the same in Python and JS."""
     sys.path.insert(0, str(APP))
@@ -5296,6 +5637,11 @@ def main(argv=None) -> int:
             clean_outlines(root)
         for i, cmd in enumerate(outline_commands(root)):  # outlines from cells.zarr.zip and from a lab's own files
             timings[f"{cmd[1]} {cmd[3]} (outlines {i + 1})"] = run(cmd, log_path)
+        if not args.reuse:
+            clean_protcells(root)
+        write_protcells_inputs(root)                     # a lab's own segmentation of a protein image (--cells)
+        for i, cmd in enumerate(protcells_commands(root, clustering)):
+            timings[f"{cmd[1]} {cmd[3]} (protcells {i + 1})"] = run(cmd, log_path)
         clean_detect(root)                               # prepare.py auto: always fresh, never skipped by --reuse
         make_detect_cases(root)
         for i, cmd in enumerate(detect_commands(root)):
@@ -5349,6 +5695,8 @@ def main(argv=None) -> int:
     check_notebook_finder(c, root)
     print("checks: cell outlines (every platform's boundaries, traced label masks, a lab's own file)")
     summary["outlines"] = check_outlines(c, root, log_path)
+    print("checks: a lab's own segmentation of a protein image (protcells.py, --cells)")
+    summary["protcells"] = check_protcells(c, root, clustering, log_path)
     print("checks: gene packs (genepack.py): every export, loose / both, Range over HTTP, repack, deid")
     summary["genePacks"] = check_packs(c, root, log_path, rna_demo)
     print("checks: marker lists and name cleanup")

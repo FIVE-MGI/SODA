@@ -19,6 +19,9 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
 - CosMx SMI and MERSCOPE: stains, cells, outlines and transcripts.
 - Stereo-seq (STOmics): bin layers from a GEF or GEM file, and the cells of the cell bin file.
 - GeoMx DSP: scans, ROI outlines and ROI groups, Q3-normalised by default.
+- A lab's own cell segmentation of a protein image (`--cells`: a label mask from Cellpose, Mesmer,
+  StarDist or QuPath, or QuPath GeoJSON) becomes a cells layer with outlines, marker means per
+  cell, UMAP and clusters, beside the grid of squares.
 - Single-cell RNA-seq from `.h5ad` or 10x output.
 - Standard formats: spatial AnnData (`.h5ad` or AnnData-Zarr), OME-Zarr images (OME-NGFF 0.4
   and 0.5) and SpatialData stores, in zarr v2 or v3, without installing anndata or
@@ -86,5 +89,6 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
 
 - A SpatialData table whose region is a labels element (a segmentation mask) is refused with
   the reason: save the cells as shapes instead.
-- Cell segmentation of protein images: they are measured on a grid of 16 µm squares.
+- Cell segmentation of protein images: SODA reads a lab's own segmentation (`--cells`) but does
+  not segment; without one, protein images are measured on a grid of 16 µm squares.
 - Opening `.h5ad`, OME-Zarr or SpatialData files in the browser without converting them first.
