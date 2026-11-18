@@ -30,10 +30,10 @@ umap-js from `cdn.jsdelivr.net`, or from a `vendor/` folder next to `index.html`
 `python web/SpatialViewer/prepare.py vendor` (copy that folder along with the page). After one
 visit over https or localhost the page also opens offline; see
 [Offline use](ADVANCED.md#9-offline-use). The
-viewer needs a browser with WebGL2; it is developed and tested in Chrome on desktop, and the
-image path was also tested on an iPhone (WebKit, Safari's engine). Other browsers have not
-been tested. The same link works on phones and tablets: the page lays itself out for the
-screen (see [Browser support](../README.md#browser-support)).
+viewer needs a browser with WebGL2. It is developed in Chrome on desktop; automated tests
+run it in Playwright's Chromium, WebKit (Safari's engine) and Firefox, and the image path was
+also tested on an iPhone. The same link works on phones and tablets: the page lays itself
+out for the screen. What was tested where: [Browser support](../README.md#browser-support).
 
 Before anything leaves your computer, go through the
 [checklist at the end](#before-you-upload-checklist).
