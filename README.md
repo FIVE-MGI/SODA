@@ -54,7 +54,7 @@ internet connection. Nothing leaves your computer until step 5.
    public?), upload the `export/` folder as it is to your own storage (Azure, AWS, Google
    Cloud or a web server; not Box, Google Drive or Dropbox; never `cache/` or `inputs/`),
    allow the SODA page to read it once (CORS), and share the link the notebook prints:
-   `<the SODA page>/index.html?data=<your folder>`.
+   `https://five-mgi.github.io/SODA/index.html?data=<your folder>`.
 
 Every step in detail: [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). The same demo from
 the command line, without the notebook: [Try it in 5 minutes](#try-it-in-5-minutes). A whole

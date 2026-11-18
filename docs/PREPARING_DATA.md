@@ -88,6 +88,104 @@ same check: put each dataset in its own folder under `inputs/`, with any name. N
 (and `README.txt`) are left out by `prepare.py batch`, the notebook and the app, so a folder such as `_old/` is a
 place to keep what is not a dataset.
 
+## Using the notebook
+
+`notebooks/SODA_pipeline.ipynb` runs the commands on this page for you, for every dataset in
+one work folder. Its code is in `notebooks/soda_notebook.py`.
+
+### One folder per dataset
+
+Put each dataset in its own folder under `inputs/` in the work folder (`WORK`). Any folder
+name works, and you do not have to say what kind of data it is: Section 2 of the notebook
+runs the check above (`prepare.py detect`) on each one.
+
+```
+inputs/
+  nerve_section1/      <- for example a Space Ranger outs/ folder + the microscope image
+  tumour_xenium/       <- a Xenium output folder, exactly as the instrument wrote it
+  slide_07.qptiff      <- one image file (QPTIFF, OME-TIFF) or one .h5ad can sit here on its own
+```
+
+- The folder name becomes the dataset id (letters, digits, `_` and `-`; anything else becomes
+  `_`), so do not put patient or sample identifiers in it. A name starting with `_` or `.` is
+  left out: a place to keep things that are not datasets.
+- What each instrument's folder must hold: the table above (*Recognised by*) and the
+  instrument's own section below. For Visium, that is Space Ranger's `outs/` folder **and the
+  full-resolution image you gave `spaceranger count --image`** next to it (not
+  `tissue_hires_image.png`).
+- Zipped output: a zipped Xenium output can stay zipped (put the `.zip` itself under
+  `inputs/`; only its stain images are copied out, into `cache/_unzipped/`, while it is
+  prepared). Any other zipped output must be unzipped first; Section 2 says which zip holds
+  what. `run1.zip` next to a folder `run1/` gives two datasets, `run1` and `run1_zip`
+  (Section 2 says they may be the same data: keep one).
+- Big files you do not want to copy: leave them where they are and point the dataset at them
+  with `src` in `OPTIONS`.
+- Your own UMAP and clusters (Visium): put `my_umap.csv` (`barcode,UMAP_1,UMAP_2`),
+  `my_clusters.csv` (`barcode,seurat_clusters,cell_type,...`) or `my_analysis.h5ad` next to
+  `outs/` and set `user_layer` (e.g. `"008um"`) in `OPTIONS`; see
+  [Your own UMAP and clusters](#your-own-umap-and-clusters-seurat-scanpy).
+- The layout of earlier versions, `inputs/<kind>/<dataset_id>/` (`inputs/visium/...`,
+  `inputs/xenium/...`, `inputs/proteomics_file/...`), still works: the kind folder's name is
+  then taken as what you say the data is.
+
+### Settings per dataset (OPTIONS)
+
+The notebook's `OPTIONS` dictionary (Section 2) is the one place to change anything about a
+dataset. It is keyed by dataset id (the folder's name); leave a dataset out to use what was
+detected and the defaults. When Section 2 is not sure about a dataset, its table prints the
+line to copy in. `prepare.py batch --options options.json` takes the same keys as JSON
+([ADVANCED.md, section 8](ADVANCED.md#8-many-datasets-at-once-without-the-notebook)).
+
+```python
+OPTIONS = {
+    "my_folder":     {"kind": "xenium"},
+    "my_visium":     {"kind": "visium", "image": r"E:\scans\he_fullres.tif"},
+    "neuroma_panel": {"label": "Painful neuroma", "pixel_size": 0.5},
+    "big_scan":      {"src": r"E:\scans\slide_07.qptiff", "label": "Whole slide"},
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `kind` | you say what the folder is: `"visium"`, `"xenium"`, `"cosmx"`, `"merscope"`, `"stereoseq"`, `"geomx"`, `"tiff"` (one image file), `"akoya"` (one TIFF per marker), `"rnaseq"`, `"anndata"`, `"omezarr"` or `"spatialdata"`. Used as given, also when detection is unsure; the table still lists that kind's missing files |
+| `image` | Visium: the full-resolution image given to `spaceranger count --image`, when it is not next to `outs/` or several TIFFs are. Stereo-seq: the registered image. GeoMx: a scan, or a list of scans |
+| `gef`, `gem`, `cellbin`, `tissue_mask` | Stereo-seq: use this file instead of the one picked |
+| `dcc`, `pkc`, `annotation` | GeoMx: use these instead of the ones found (`pkc` and `annotation` may be lists) |
+| `umap`, `obs` | single-cell RNA-seq from a 10x matrix folder: the UMAP CSV, and a list of colour-by CSVs |
+| `label` | the name the picker shows, e.g. `"Normal nerve"` (no sample IDs) |
+| `group` | picker heading: `"proteomics"`, `"transcriptomics"` or `"scrnaseq"` (set automatically) |
+| `src` | use files from another place instead of the `inputs/` subfolder (file or folder, same layout) |
+| `pixel_size` | µm per full-resolution pixel, when the file does not carry it |
+| `channels` | proteomics_file only: channel names in order, comma-separated |
+| `crop` | `"x0,y0,x1,y1"` in full-resolution pixels: keep only that rectangle (not Xenium, CosMx or MERSCOPE) |
+| `flip` | `"h"`, `"v"` or `"hv"`: mirror the image (not Xenium, CosMx or MERSCOPE) |
+| `image_scale` | Visium only: your image width ÷ the width of the image Space Ranger used |
+| `user_layer` | Visium only: the layer your own UMAP / clusters belong to, e.g. `"008um"`, `"016um"` or `"spots"` (needed when you give them) |
+| `user_umap` | your embedding CSV (`barcode,UMAP_1,UMAP_2`); default `my_umap.csv` in the dataset folder |
+| `user_obs` | your clusters CSV, or a list of them; default `my_clusters.csv` and `my_clusters_*.csv` in the dataset folder |
+| `user_h5ad` | an `.h5ad` instead of the CSVs; default `my_analysis.h5ad` in the dataset folder |
+| `user_embedding` | the `obsm` key of the embedding in `user_h5ad` (default `X_umap`) |
+| `user_columns` | only these columns become clusterings, e.g. `"seurat_clusters,cell_type"` |
+| `user_barcode_prefix` / `user_barcode_suffix` | a merged object with several sections: keep this section's barcodes (e.g. `"S1_"`, `"_2"`) |
+| `user_replace` | `True`: show only your clusterings, not SODA's Leiden ones |
+| `no_cells` | Xenium, CosMx, MERSCOPE: `True` skips the cells layer |
+| `bins` | Stereo-seq only: bin sizes in DNBs, e.g. `"50,100"` (default `"20,50,100"` = 10, 25 and 50 µm) |
+| `no_transcripts` | Xenium, CosMx, MERSCOPE: `True` skips the molecules (the slowest part of a Xenium prepare) |
+| `qv_min` | Xenium only: lowest transcript quality value kept (default 20) |
+| `images` | CosMx: `"morphology"`, `"composite"` or `"none"` instead of the automatic choice; MERSCOPE: `"none"` (a transcript-density background instead of the images) |
+| `z` | MERSCOPE: the z-plane of the mosaic images to use (default: the middle one present); CosMx: the plane of raw z-stack images |
+| `cells_dir` | MERSCOPE only: the folder holding `cell_by_gene.csv` and `cell_metadata.csv` when there are several segmentation runs |
+| `layout` | GeoMx only: `"grid"` draws the ROIs on a labelled grid even when scan images are there |
+| `keep_slide_names` | GeoMx only: `True` keeps the slide / scan names as group names (default: Slide 1, Slide 2 ...) |
+| `sheet` | GeoMx only: the sheet of the annotation workbook to read (default: the first one with a Sample_ID column) |
+| `library` | spatial AnnData with several sections in `uns["spatial"]`: which one (a number, 1 = the first; its rows are taken by `obs["library_id"]`) |
+| `matrix` | spatial AnnData / SpatialData: the counts, `"X"`, `"raw"` or a layer name (default `layers["counts"]`, else `raw/X`, else `X`) |
+| `spatial_key`, `image_res`, `layer_kind` | spatial AnnData: the `obsm` key of the positions (default `spatial`); `"lowres"` instead of the hires image; `"cells"` or `"spots"` instead of the automatic choice |
+| `coords_um` | spatial AnnData / SpatialData without an image: µm per unit of the positions (scale bar) |
+| `table`, `region`, `coordinate_system`, `image_element`, `points` | SpatialData: the table, its region, the coordinate system, the image and the points element to read when the store leaves a choice open |
+| `series` | OME-Zarr written by bioformats2raw: the series to read (default 0) |
+| `no_user_clusters` | spatial AnnData / SpatialData: `True` does not keep the file's `obs` columns / `X_umap` as your own clusterings / UMAP |
+
 ## Options shared by every image kind
 
 | Option | Meaning |

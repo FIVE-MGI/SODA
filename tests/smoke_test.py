@@ -3761,26 +3761,41 @@ def check_batch(c: Checker, root: Path, log_path: Path) -> dict:
     return {"exported": len(BATCH_OK), "firstSec": first["seconds"], "againSec": again["seconds"]}
 
 
+NB_HELPER = REPO / "notebooks" / "soda_notebook.py"
+
+
+def notebook_helper():
+    """notebooks/soda_notebook.py, the notebook's code, imported from notebooks/ as the notebook's first cell does."""
+    folder = str(NB_HELPER.parent)
+    sys.path.insert(0, folder)
+    try:
+        import soda_notebook
+    finally:
+        sys.path.remove(folder)
+    return soda_notebook
+
+
 def check_notebook_finder(c: Checker, root: Path):
-    """The notebook's Section 2 cell, run on the batch inputs (as inputs/) and on detect/cases/zip_and_folder: the
-    same datasets as batch.find_datasets, in the notebook's words, and the zip beside its folder noted."""
+    """The notebook's Section 2 cell (soda.check_inputs, notebooks/soda_notebook.py), run on the batch inputs (as
+    inputs/) and on detect/cases/zip_and_folder: the same datasets as batch.find_datasets, in the notebook's words,
+    and the zip beside its folder noted."""
     import contextlib
     import io
     nb = json.loads((REPO / "notebooks" / "SODA_pipeline.ipynb").read_text(encoding="utf-8"))
-    cell = next(("".join(x["source"]) for x in nb["cells"] if x["cell_type"] == "code" and "DATASETS = find_datasets()" in "".join(x["source"])), "")
+    cell = next(("".join(x["source"]) for x in nb["cells"] if x["cell_type"] == "code" and "soda.check_inputs(OPTIONS)" in "".join(x["source"])), "")
     sys.path.insert(0, str(APP))
     try:
         import batch
     finally:
         sys.path.pop(0)
+    soda = notebook_helper()
     for inputs, opts_file in ((root / "batch" / "inputs", root / "batch" / "options.json"),
                               (root / "detect" / "cases" / "zip_and_folder", None)):
         if not c.ok(cell and inputs.exists(), f"notebook Section 2 on {inputs.name}: the cell and the folder are there"):
             continue
         opts = batch.load_options(opts_file)[0] if opts_file else {}
-        g = {"__name__": "nb_section2", "Path": Path, "sys": sys, "importlib": importlib, "SV": APP, "INPUTS": inputs,
-             "VISIUM_BINS": "008um,016um"}
-        g["_OPTS"] = opts                       # the options file stands in for the cell's OPTIONS
+        soda.state.inputs, soda.state.visium_bins, soda.state.datasets = inputs, "008um,016um", None
+        g = {"__name__": "nb_section2", "soda": soda, "_OPTS": opts}   # the options file stands in for the cell's OPTIONS
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
@@ -3789,7 +3804,7 @@ def check_notebook_finder(c: Checker, root: Path):
             c.ok(False, f"notebook Section 2 on {inputs.name}: runs ({type(e).__name__}: {e})")
             continue
         rows, _ = batch.find_datasets(inputs, opts, "008um,016um")
-        nbrows = g.get("DATASETS") or []
+        nbrows = soda.state.datasets or []
         c.eq([(d["id"], d["report"]["verdict"], bool(d["problems"])) for d in nbrows],
              [(r["id"], r["verdict"], bool(r["problems"])) for r in rows],
              f"notebook Section 2 on {inputs.name}: the same datasets, verdicts and ready / not ready as batch.find_datasets")
@@ -3803,13 +3818,17 @@ def check_notebook_finder(c: Checker, root: Path):
 
 
 def check_notebook(c: Checker):
-    """notebooks/SODA_pipeline.ipynb: valid, no saved outputs, code that compiles, and its dataset finding is batch.py's."""
+    """notebooks/SODA_pipeline.ipynb and its code, notebooks/soda_notebook.py: valid, no saved outputs, code that
+    compiles, the helper found from notebooks/ and from the repository folder, and its dataset finding is batch.py's."""
+    import ast
+    import inspect
     p = REPO / "notebooks" / "SODA_pipeline.ipynb"
     try:
         nb = json.loads(p.read_text(encoding="utf-8"))
     except ValueError as e:
         c.ok(False, f"notebook: valid JSON ({e})")
         return
+    c.ok(nb.get("nbformat") == 4 and isinstance(nb.get("cells"), list), "notebook: nbformat 4")
     code = [x for x in nb["cells"] if x["cell_type"] == "code"]
     c.ok(len(code) >= 10 and all(not x.get("outputs") and x.get("execution_count") is None for x in code),
          "notebook: no saved outputs or execution counts")
@@ -3819,15 +3838,61 @@ def check_notebook(c: Checker):
             compile("".join(x["source"]), x.get("id", "cell"), "exec")
         except SyntaxError as e:
             bad.append(f"{x.get('id')}: {e}")
-    c.ok(not bad, f"notebook: every code cell compiles {bad}")
+    try:
+        helper = NB_HELPER.read_text(encoding="utf-8")
+        compile(helper, str(NB_HELPER), "exec")
+    except (OSError, SyntaxError) as e:
+        bad.append(f"soda_notebook.py: {e}")
+        helper = ""
+    c.ok(not bad, f"notebook: every code cell and soda_notebook.py compile {bad}")
     src = "\n".join("".join(x["source"]) for x in code)
-    c.ok("import detect" in src and "import batch" in src and "batch.find_datasets(" in src and "OPTIONS = {" in src
-         and "def check_dataset" not in src and "is_kind_folder" not in src,
+    # the first cell finds the helper whether Jupyter's working folder is notebooks/ or the repository folder
+    first = "".join(code[0]["source"]) if code else ""
+    found = []
+    for cwd in (REPO / "notebooks", REPO):
+        r = subprocess.run([sys.executable, "-c", first.replace("soda.setup()", "print(soda.__file__)")], cwd=str(cwd),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        found.append(bool(r.returncode == 0 and r.stdout.strip() and Path(r.stdout.strip()).resolve() == NB_HELPER.resolve()))
+    c.ok("import soda_notebook as soda" in first and "soda.setup()" in first and all(found),
+         f"notebook: the first cell imports soda_notebook.py from notebooks/ and from the repository folder ({found})")
+    # Section 2: batch.find_datasets (no copy of its own), detect.option_lines, and the OPTIONS dictionary in the notebook
+    c.ok("import detect" in helper and "import batch" in helper and "batch.find_datasets(" in helper
+         and "detect.option_lines(" in helper and "OPTIONS = {" in src and "soda.check_inputs(OPTIONS)" in src
+         and not any(s in src + helper for s in ("def check_dataset", "is_kind_folder")),
          "notebook: Section 2 finds the datasets with batch.find_datasets (no copy of its own) and has the OPTIONS dictionary")
-    c.ok("cell_by_gene" not in src and 'glob("*.qptiff' not in src and "morphology_focus" not in src and "_regist" not in src,
-         "notebook: no per-kind file finding of its own (detect.py has it)")
+    c.ok(not any(s in src + helper for s in ("cell_by_gene", 'glob("*.qptiff', "morphology_focus", "_regist")),
+         "notebook: no per-kind file finding of its own, in the cells or soda_notebook.py (detect.py has it)")
+    # the same scripts as the command lines, and the printed lines (and safety gates) the docs and the paper show
+    kept = ["prepare.py", "catalog.py", "deid.py", "static_serve.py", "[deid] clean", "OK to upload.",
+            "'READY' if not d['problems'] else 'FIX  '", "THE LINK TO SHARE:", "OK: a page on {origin} can read your folder.",
+            'Answer the question first: set IS_THIS_DATA_PUBLIC = "yes" or "no"', "Run Section 5 (the de-identification check) first.",
+            "Section 5 found sample IDs.", "removed the '?...' part of CLOUD_URL",
+            "anyone holding it can read the data", "keep the key file outside the work folder and the repository"]
+    gone = [s for s in kept if s not in helper]
+    c.ok(not gone, f"notebook: soda_notebook.py runs the same scripts and keeps the printed lines and gates ({gone})")
+    c.ok('IS_THIS_DATA_PUBLIC = ""' in src and "soda.share(IS_THIS_DATA_PUBLIC)" in src,
+         "notebook: Section 7 asks is this data public? (empty until answered)")
+    # the advanced settings cell names every setting of soda.advanced(), with its default
+    try:
+        soda = notebook_helper()
+        adv = next("".join(x["source"]) for x in code if "soda.advanced(" in "".join(x["source"]))
+        call = next(n for n in ast.walk(ast.parse(adv)) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "advanced")
+        params = inspect.signature(soda.advanced).parameters
+        defaults = {k: (v.default if v.default is not None else {"visium": "", "proteomics": ""}) for k, v in params.items()}
+        given = {}
+        for k in call.keywords:
+            try:
+                given[k.arg] = ast.literal_eval(k.value)
+            except ValueError:
+                given[k.arg] = defaults.get(k.arg) if ast.unparse(k.value) == "soda.DEFAULT_KEY_FILE" else ast.unparse(k.value)
+        c.eq(given, defaults, "notebook: the advanced settings cell lists every setting with soda.advanced()'s default")
+    except Exception as e:  # noqa: BLE001
+        c.ok(False, f"notebook: the advanced settings cell ({type(e).__name__}: {e})")
     text = "\n".join("".join(x["source"]) for x in nb["cells"] if x["cell_type"] == "markdown")
-    c.ok("own folder under `inputs/`" in text and "How sure" not in src.split("HOW_SURE", 1)[0] and "`kind`" in text,
+    heads = [ln for ln in text.splitlines() if ln.startswith("## ")]
+    c.ok([h.split(".", 1)[0] for h in heads] == [f"## {i}" for i in range(8)],
+         f"notebook: Sections 0 to 7 in order ({heads})")
+    c.ok("own folder under `inputs/`" in text and "How sure" not in helper.split("HOW_SURE", 1)[0] and "`kind`" in text,
          "notebook: Section 1 says one folder per dataset, Section 2 documents the kind override")
 
 

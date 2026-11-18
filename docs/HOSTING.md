@@ -11,7 +11,8 @@ SODA has two halves:
 So hosting means putting those two sets of files somewhere a browser can fetch them.
 
 **Looking for the easy way?** [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) covers the two
-simplest: upload only the data and share a `?data=` link to the shared SODA page, or copy
+simplest: upload only the data and share a `?data=` link to the shared SODA page
+(https://five-mgi.github.io/SODA/), or copy
 SODA on GitHub to get your own site. This page is the full reference.
 
 The options below are in order of effort.

@@ -78,18 +78,18 @@ allow the `Range` request header (some browsers ask first, in a "preflight") and
 see the `Content-Range` answer header. The rules below do both:
 
 - **Azure:** Storage account → Resource sharing (CORS) → Blob service: Allowed origins
-  `<the SODA page's address, e.g. https://soda.example.org>`, Allowed methods `GET, HEAD, OPTIONS`,
+  `https://five-mgi.github.io` (the shared SODA page; for your own copy of SODA, its address), Allowed methods `GET, HEAD, OPTIONS`,
   Allowed headers `*`, Exposed headers `*`, Max age `3600`. (`*` includes `Range` and
   `Content-Range`. If you list headers instead, allow at least `range` and expose
   `content-range, content-length`.) Blob storage answers Range requests by itself, also
   through a read pass (SAS) on the link.
 - **Amazon S3:** Bucket → Permissions → CORS:
   ```json
-  [{ "AllowedOrigins": ["https://soda.example.org"], "AllowedMethods": ["GET", "HEAD"],
+  [{ "AllowedOrigins": ["https://five-mgi.github.io"], "AllowedMethods": ["GET", "HEAD"],
      "AllowedHeaders": ["*"], "ExposeHeaders": ["Content-Range", "Content-Length"], "MaxAgeSeconds": 3600 }]
   ```
 - **Google Cloud Storage:** save the same rule as `cors.json`
-  (`[{"origin": ["https://soda.example.org"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
+  (`[{"origin": ["https://five-mgi.github.io"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
   and run `gcloud storage buckets update gs://<bucket> --cors-file=cors.json`.
 - **A web server:** see the nginx example in [HOSTING.md](HOSTING.md#host-notes). Apache,
   nginx and IIS answer Range requests for static files by default.
@@ -103,10 +103,11 @@ otherwise says the host does not support Range requests. For such a host, export
 ### Step 5. Make the link
 
 Take the web address of your export folder (the folder that holds `datasets.json`), and
-put it after `?data=` on the SODA page's address:
+put it after `?data=` on the address of the shared SODA page, https://five-mgi.github.io/SODA/
+(or of your own copy of SODA):
 
 ```
-https://<the SODA page>/index.html?data=https://yourstorage.blob.core.windows.net/soda/our-atlas/
+https://five-mgi.github.io/SODA/index.html?data=https://yourstorage.blob.core.windows.net/soda/our-atlas/
 ```
 
 Open it yourself first. You should see your title and every dataset in the list. Then

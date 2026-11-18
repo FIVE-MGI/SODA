@@ -85,7 +85,7 @@ FILE_OPTIONS = ("image", "outs", "gef", "gem", "cellbin", "tissue_mask", "dcc", 
                 # standard formats: choices, not files (detect.OVERRIDE_FLAGS)
                 "library", "series", "table", "region", "coordinate_system", "image_element")
 CHOICE_OPTIONS = {"images", "library", "series", "table", "region", "coordinate_system", "image_element"}
-# Options of the kind's own command, and the kinds that take them (the notebook's prepare_args):
+# Options of the kind's own command, and the kinds that take them (the notebook's prepare_args, notebooks/soda_notebook.py):
 KIND_OPTIONS = {"pixel_size": None, "channels": ("tiff", "omezarr"), "image_scale": ("visium", "anndata"),
                 "no_cells": ("xenium", "cosmx", "merscope"),
                 "no_transcripts": ("xenium", "cosmx", "merscope", "spatialdata"),
@@ -476,7 +476,7 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
 
 
 # ---------------------------------------------------------------------------------------------
-# the commands (the notebook's prepare_args / rnaseq_args and its export cell)
+# the commands (the notebook's prepare_args / rnaseq_args / export_args, in notebooks/soda_notebook.py)
 # ---------------------------------------------------------------------------------------------
 def _flag(key: str) -> str:
     return "--" + key.replace("_", "-")
