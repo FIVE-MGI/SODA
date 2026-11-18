@@ -1,7 +1,7 @@
 name: pages
 
 # Publishes the SODA page (web/SpatialViewer) as this repository's GitHub Pages site. In
-# FIVE-MGI/SODA that site is the shared SODA page, https://five-mgi.github.io/SODA/ ; a
+# FIVE-MGI/SODA that site is the shared SODA page, https://soda.mgifive.org/ (custom domain, set in the repository's Settings -> Pages) ; a
 # copy of SODA ("Use this template" on GitHub) gets its own address with no server to run.
 # See docs/SHARE_YOUR_DATA.md ("Make it your own"). It needs Settings -> Pages -> Source:
 # "GitHub Actions" once.

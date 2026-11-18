@@ -14,7 +14,7 @@ Three kinds of result, three kinds of promise:
 ## 1. Get the version the paper used
 
 ```bash
-git clone <this repository's URL> soda
+git clone https://github.com/FIVE-MGI/SODA.git soda
 cd soda
 git checkout v0.9.0
 ```

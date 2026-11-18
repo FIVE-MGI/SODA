@@ -78,18 +78,18 @@ allow the `Range` request header (some browsers ask first, in a "preflight") and
 see the `Content-Range` answer header. The rules below do both:
 
 - **Azure:** Storage account → Resource sharing (CORS) → Blob service: Allowed origins
-  `https://five-mgi.github.io` (the shared SODA page; for your own copy of SODA, its address), Allowed methods `GET, HEAD, OPTIONS`,
+  `https://soda.mgifive.org` (the shared SODA page; you may add `https://five-mgi.github.io` too, its GitHub address, which redirects there; for your own copy of SODA, its address), Allowed methods `GET, HEAD, OPTIONS`,
   Allowed headers `*`, Exposed headers `*`, Max age `3600`. (`*` includes `Range` and
   `Content-Range`. If you list headers instead, allow at least `range` and expose
   `content-range, content-length`.) Blob storage answers Range requests by itself, also
   through a read pass (SAS) on the link.
 - **Amazon S3:** Bucket → Permissions → CORS:
   ```json
-  [{ "AllowedOrigins": ["https://five-mgi.github.io"], "AllowedMethods": ["GET", "HEAD"],
+  [{ "AllowedOrigins": ["https://soda.mgifive.org"], "AllowedMethods": ["GET", "HEAD"],
      "AllowedHeaders": ["*"], "ExposeHeaders": ["Content-Range", "Content-Length"], "MaxAgeSeconds": 3600 }]
   ```
 - **Google Cloud Storage:** save the same rule as `cors.json`
-  (`[{"origin": ["https://five-mgi.github.io"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
+  (`[{"origin": ["https://soda.mgifive.org"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
   and run `gcloud storage buckets update gs://<bucket> --cors-file=cors.json`.
 - **A web server:** see the nginx example in [HOSTING.md](HOSTING.md#host-notes). Apache,
   nginx and IIS answer Range requests for static files by default.
@@ -103,11 +103,11 @@ otherwise says the host does not support Range requests. For such a host, export
 ### Step 5. Make the link
 
 Take the web address of your export folder (the folder that holds `datasets.json`), and
-put it after `?data=` on the address of the shared SODA page, https://five-mgi.github.io/SODA/
+put it after `?data=` on the address of the shared SODA page, https://soda.mgifive.org/
 (or of your own copy of SODA):
 
 ```
-https://five-mgi.github.io/SODA/index.html?data=https://yourstorage.blob.core.windows.net/soda/our-atlas/
+https://soda.mgifive.org/index.html?data=https://yourstorage.blob.core.windows.net/soda/our-atlas/
 ```
 
 Open it yourself first. You should see your title and every dataset in the list. Then
@@ -241,7 +241,7 @@ with `git add -f`).
 Your copy does not change when SODA does. To bring in a newer SODA, on your computer:
 
 ```bash
-git remote add soda <SODA's GitHub address>      # once
+git remote add soda https://github.com/FIVE-MGI/SODA.git      # once
 git pull soda main
 ```
 

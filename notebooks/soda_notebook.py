@@ -51,7 +51,7 @@ if not (SV / "prepare.py").exists():
 if str(SV) not in sys.path:
     sys.path.insert(0, str(SV))
 
-SODA_PAGE = "https://five-mgi.github.io/SODA/"   # the shared SODA page (GitHub Pages of FIVE-MGI/SODA)
+SODA_PAGE = "https://soda.mgifive.org/"   # the shared SODA page (GitHub Pages of FIVE-MGI/SODA, custom domain)
 PAGE_PLACEHOLDER = "<the SODA page's address>"   # shown in the link when SODA_PAGE is set to ""
 DEFAULT_KEY_FILE = Path(os.environ.get("SPATIALVIZ_KEY") or Path.home() / "private" / "soda" / "sample_id_key.csv")
 
@@ -698,7 +698,7 @@ def storage_kind(link):
 
 def cors_fix(link, origin):
     """The setting to change, per storage provider (as in docs/SHARE_YOUR_DATA.md, Step 4)."""
-    o = origin or "<the SODA page's address, e.g. https://five-mgi.github.io>"
+    o = origin or "<the SODA page's address, e.g. https://soda.mgifive.org>"
     kind = storage_kind(link)
     if kind == "azure":
         return (f"Azure: Storage account -> Resource sharing (CORS) -> Blob service: Allowed origins {o},\n"

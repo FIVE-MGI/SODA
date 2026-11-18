@@ -102,7 +102,7 @@ Section 0. Run that cell even if you change nothing.
 | `CLOUD_URL` | empty | your cloud folder's address, without any key or `?sv=...` pass. Needed before Section 7 |
 | `KEY_FILE` | the file named by the `SPATIALVIZ_KEY` environment variable, else `sample_id_key.csv` in `private/soda/` in your home folder | the de-identification key. Keep it outside `WORK` and the repository; never upload it. Section 5 checks for sample IDs only when it exists |
 | `ALWAYS_CHECK_IDS` | `False` | `True` runs the sample ID check even without a key file |
-| `SODA_PAGE` | `"https://five-mgi.github.io/SODA/"` | the address of the SODA page your link opens: the shared SODA page, or your own copy's address. Section 7 builds the link from it |
+| `SODA_PAGE` | `"https://soda.mgifive.org/"` | the address of the SODA page your link opens: the shared SODA page, or your own copy's address. Section 7 builds the link from it |
 | `TITLE` | empty | the name of the whole collection at the top of the page (passed to `catalog.py`); empty keeps the title already in `datasets.json` |
 | `READ_PASS` | empty | private folder only: a read-only pass (Azure SAS, starts with `sv=`), added to the link. Never a write pass |
 | `TILE_FORMAT` | `"jpg"` | image tiles as JPEG (several times smaller) or `"png"` (lossless, for exact intensities) |
