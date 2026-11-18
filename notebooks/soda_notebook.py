@@ -26,6 +26,7 @@ checked the packages; detect.py and batch.py are imported when Section 2 runs. W
 leaves for the next (the datasets found, the prepare results, the sample ID check's answer) is
 kept in `state`.
 """
+import atexit
 import html
 import importlib
 import json
@@ -567,6 +568,7 @@ def preview():
         subprocess.Popen([PY, str(SV / "static_serve.py"), str(export), str(data_port)], cwd=str(SV)),
         subprocess.Popen([PY, "-m", "http.server", str(page_port), "--bind", "127.0.0.1", "--directory", str(SV)]),
     ]
+    atexit.register(stop_preview, True)         # the servers end with the notebook's kernel
     time.sleep(1.5)
     local_folder = f"http://127.0.0.1:{data_port}/"
     print("All datasets, the way your shared link will open them:")
@@ -576,7 +578,8 @@ def preview():
     print("\nOne dataset at a time (also works when your config.js sets a password):")
     for ds in sorted(p.name for p in export.iterdir() if p.is_dir()):
         print(f"  http://127.0.0.1:{page_port}/index.html?static=http://127.0.0.1:{data_port}&ds={ds}")
-    print("\nOpen a link, click through every dataset, then run the next cell to stop the servers.")
+    print("\nOpen a link and click through every dataset. The servers run until the notebook stops "
+          "(or soda.stop_preview()).")
 
 
 def stop_preview(quiet=False):
