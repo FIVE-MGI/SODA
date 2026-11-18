@@ -1,5 +1,34 @@
 # Share your data: two ways
 
+## Start here: who may see the data?
+
+This is the last step, after the export and the de-identification check.
+
+```mermaid
+flowchart TD
+    A["Your export folder is ready<br/>(export, then the de-identification check)"] --> Q{"Can anyone see this data?"}
+    Q -->|"Yes, public"| P1["Upload export/ to your own cloud storage, public-read"]
+    P1 --> P2["Allow https://soda.mgifive.org to read it:<br/>a CORS rule that also allows Range"]
+    P2 --> P3["A link on the shared page:<br/>soda.mgifive.org/?data=&lt;your folder&gt;<br/>(the link that goes in a paper)"]
+    P2 --> P4["Or your own copy of SODA:<br/>Use this template, then GitHub Pages"]
+    Q -->|"No, private"| W{"Who needs to see it?"}
+    W -->|"A few people, for a while"| V1["Private folder plus a read pass (SAS) on the link.<br/>Send it privately; never put it in a paper"]
+    W -->|"Your lab, long term"| V2["A password-protected SODA site on Azure<br/>(deploy/azure/README.md)"]
+    W -->|"Only you"| V3["Upload nothing: the notebook's preview (Section 6)<br/>or the desktop app (DESKTOP_APP.md)"]
+```
+
+- **Public, shared page:** [1. Share a link](#1-share-a-link) below.
+- **Public, your own copy:** [2. Make it your own](#2-make-it-your-own) below.
+- **Private:** the same upload and link steps with a private folder and a read pass;
+  for a password site see [deploy/azure/README.md](../deploy/azure/README.md) and
+  [HOSTING.md](HOSTING.md). Only you: [DESKTOP_APP.md](DESKTOP_APP.md).
+
+GitHub holds only the SODA page, never your data. Box, Google Drive and Dropbox cannot
+serve the data (no Range requests, no CORS rule), so use cloud storage that can (the table
+in Step 3).
+
+---
+
 You have prepared your data (one folder per dataset, from `prepare.py export` or the
 notebook). There are two ways to let other people look at it.
 
