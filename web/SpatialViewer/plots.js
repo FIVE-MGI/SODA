@@ -36,7 +36,7 @@
     if (!S || !S.m || !S.src) return null;
     if (S.mode === "rna") return S.rna && S.src.buf ? "rna" : null;
     const e = curExpr(S);
-    return e && e.kind !== "protein" && S.src.gene ? "spatial" : null;
+    return e && e.kind !== "protein" && e.modality !== "protein" && S.src.gene ? "spatial" : null;
   }
   // cells of a single-cell dataset hold stored values, bins hold counts
   const words = () => (modeNow() === "rna" ? { bin: "cell", bins: "cells", above: "a value above 0", indep: "Cells of one sample are not independent replicates" }

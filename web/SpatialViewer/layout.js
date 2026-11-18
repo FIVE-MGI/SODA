@@ -294,7 +294,7 @@
       if (!S || !S.m) return null;
       if (S.mode === "rna" || S.m.kind === "rnaseq") return "rna";
       const e = (S.m.expr || []).find((x) => x.key === S.exprKey);
-      return e ? (e.kind || "bins") : "none";
+      return e ? (e.modality === "protein" ? "protein" : e.kind || "bins") : "none";   // a lab's own cells of a protein image: protein
     } catch (e) { return null; }
   }
   function defaultOpen(id) {

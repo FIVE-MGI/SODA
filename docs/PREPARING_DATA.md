@@ -777,6 +777,47 @@ Everything after that is automatic, so a slide needs no hand-tuning:
   sample of 200,000 and the other squares are placed into it (`--umap-sample N`; 0 = fit on
   every square, slower).
 
+### Your own cell segmentation (a cells layer)
+
+SODA does not segment cells. If your lab has segmented the image, give the result to `tiff`,
+`akoya` or `omezarr` with `--cells`, and you get a "cells" layer beside the grid layer:
+
+```bash
+python web/SpatialViewer/prepare.py tiff --id tonsil_panel --src slide.qptiff --out cache --cells slide_cp_masks.tif
+python web/SpatialViewer/prepare.py tiff --id tonsil_panel --src slide.qptiff --out cache --cells cells.geojson
+```
+
+| Tool | What to give `--cells` |
+|---|---|
+| Cellpose | the label mask TIFF (`*_cp_masks.tif`, `--save_tif`) |
+| Mesmer / DeepCell | the whole-cell label image as a 2-D TIFF (a file holding whole-cell and nuclear masks together must be split: nuclei go to `--nuclei`) |
+| StarDist | the label image TIFF (nuclei: give it as `--cells`) |
+| QuPath | Export objects as GeoJSON (cells; annotations and tiles in the file are skipped), or a labelled-image export as TIFF |
+
+- **Label mask**: one integer per cell, 0 = background, at the image's full-resolution size or a
+  whole-number downscale of it (2x, 3x ... : each mask pixel then covers 2 x 2, 3 x 3 image
+  pixels; the mask may be one pixel short or long from rounding). Any other size is refused,
+  with the sizes in the message. A colour, yes / no or multi-page mask is refused too.
+- **GeoJSON**: Polygon / MultiPolygon features in full-resolution pixels of the image
+  (`--cells-units um` for µm from its top-left corner). The cell id is the feature's id
+  (or `cell_id`, `id` ... as for [your own outlines](#cell-outlines-segmentation-boundaries));
+  features without one are numbered. A pixel belongs to a cell when its centre lies inside the
+  cell's polygon; a pixel inside two cells' polygons belongs to neither. If fewer than half of
+  the cells lie on the image, nothing is written (wrong units or another image).
+- `--nuclei` (optional, same file kinds, same ids as `--cells`) adds nucleus outlines; QuPath's
+  `nucleusGeometry` is read from the `--cells` GeoJSON without it.
+- Both are in the pixels of the file as it was segmented: `--crop` and `--flip` are applied to
+  them as to the image. The image needs its pixel size.
+
+What you get: per cell its area, centroid and the mean of every marker over the cell's own
+full-resolution pixels (the image is read a tile row at a time, never whole), and its outline
+(traced along the mask's pixel edges, or the polygon). On export the cells are treated exactly
+as the grid squares: the same channel cleanup, the slide's background (taken from the grid
+layer's off-tissue squares), the 99.5th-percentile scaling and asinh, UMAP and Leiden on the
+centred log-ratio, suggested names and Draw a region. The viewer opens on the
+"Cells (own segmentation)" layer (the grid is the other choice in Layer); outlines show when you zoom in. The cell areas stay in the
+cache (`expr/cells.zarr/area`). Without `--cells` nothing changes.
+
 ## H&E or other brightfield image on its own
 
 ```bash

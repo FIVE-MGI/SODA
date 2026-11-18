@@ -4,7 +4,8 @@ Akoya / PhenoCycler (and any multi-channel fluorescence TIFF) has no count matri
 there is nothing for the gene search, the whole-section UMAP or the clusters to read.
 This lays a square grid over the image, takes each marker channel's mean intensity per
 square, and writes it as an ordinary expression layer of the image dataset, so all of
-that machinery works unchanged (cell segmentation is a later, separate step):
+that machinery works unchanged (a lab's own cell segmentation becomes a cells layer beside it, by the same
+rules: protcells.py; SODA segments nothing):
 
     expr/grid<NNN>um/positions.bin     float32 x,y  square centres in full-res image px (tissue squares only)
     expr/grid<NNN>um/genes.json        [{n, t}]     one per marker channel written; t = mean over the squares
@@ -104,8 +105,10 @@ def is_photo(channels: list[dict]) -> bool:
 
 def applies_to(m: dict) -> bool:
     """Image datasets only: not Visium (it has real counts), not RNA-seq, not a colour photo,
-    not a density background standing in for missing images (cosmx.py / merscope.py)."""
-    return (m.get("kind") not in ("visium", "rnaseq") and not m.get("expr") and "image" in m
+    not a density background standing in for missing images (cosmx.py / merscope.py). A lab's own cells of
+    the image (protcells.py, modality "protein") do not count as expression: the grid is still made."""
+    expr = [L for L in m.get("expr") or [] if L.get("modality") != "protein"]
+    return (m.get("kind") not in ("visium", "rnaseq") and not expr and "image" in m
             and not m["image"].get("background") and not is_photo(m["image"].get("channels", [])))
 
 
@@ -508,8 +511,11 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
                      umap: bool = True, celltypes: bool = True, log=print, force: bool = False,
                      tissue_smooth_um: float = DEFAULT_TISSUE_SMOOTH_UM, umap_sample: int | None = None,
                      seam_correct: bool = False, gene_files: str = genepack.DEFAULT_MODE,
-                     shard_mb: float = genepack.SHARD_MB) -> dict | None:
+                     shard_mb: float = genepack.SHARD_MB, stats: dict | None = None) -> dict | None:
     """Write expr/<key>/ for an image dataset (PyramidReader `r`, manifest `m`) into export folder `out`.
+
+    `stats`: a dict to fill with {"background": {channel name: background}} for every channel (protcells.py
+    takes the slide's background from it); nothing written depends on it.
 
     `tissue_smooth_um`: moving-average window (µm) over the square means before the tissue
     threshold; 0 = threshold the raw means (the old, lacy mask). `umap_sample`: fit the section
@@ -577,6 +583,9 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     # channels): a fold covering more than 0.5% of the tissue would otherwise set every channel's
     # p99.5 and squash the real signal (the demo's 150 µm fold made fascicles read as perineurium)
     bg_all, bg_rule = background(V64, keep)
+    if stats is not None:
+        stats["background"] = {nm: float(b) for nm, b in zip(names, bg_all)}
+        stats["backgroundRule"] = bg_rule
     Vt_all = V64[rows]
     bright = bright_squares(Vt_all[:, [j for j in written if not NUCLEAR.match(names[j])]])
     ref = ~bright if (~bright).sum() >= max(50, n // 2) else np.ones(n, bool)

@@ -14,6 +14,8 @@ r"""Build the viewer cache for one dataset.
 
     python prepare.py akoya  --src <folder of NN_Marker_Sample_gray.tif> --id sample1 --out <cache folder>
     python prepare.py tiff   --src <stack.tif|qptiff|ome.tif>            --id x        --out <cache folder>
+           (akoya / tiff / omezarr + --cells <label mask .tif | cells.geojson> [--nuclei ...] [--cells-units um]:
+            a lab's own cell segmentation as a "cells" layer with outlines; SODA segments nothing. protcells.py)
     python prepare.py visium --image <hires.tif> --outs <spaceranger outs> --id sample1_visiumhd --out <cache folder>
     python prepare.py xenium --src <xenium output folder, or a zip of it> --id x1 --out <cache folder>
            (stains; cells -> a "cells" expression layer; transcripts -> the molecules layer; without stain
@@ -441,6 +443,9 @@ def main(argv=None):
         common(p_)
     for p_ in (x, cx, mc, ss, sub.choices["spatialdata"]):
         cellshapes.add_prepare_args(p_)                 # --no-outlines, --outline-tolerance-um
+    import protcells
+    for p_ in (a, t, sub.choices["omezarr"]):
+        protcells.add_args(p_)                          # --cells, --nuclei, --cells-units: a lab's own segmentation
     for p in sub.choices.values():
         p.add_argument("--threads", type=int,
                        help="BLAS / OpenMP threads for numpy and scipy (default: min(8, CPUs this process may use); "
@@ -598,6 +603,17 @@ def main(argv=None):
     if manifest["pixelSizeUm"] is None and getattr(src, "pixel_size_um", None):
         manifest["pixelSizeUm"] = float(src.pixel_size_um)
         log(f"[image] pixel size from file: {manifest['pixelSizeUm']:.4f} µm/px")
+    # a lab's own segmentation (--cells): checked before the pyramid is built, measured after it (protcells.py)
+    cells_plan = None
+    if getattr(args, "cells", None) or getattr(args, "nuclei", None):
+        try:
+            cells_plan = protcells.precheck(args, manifest, (manifest.get("crop") or {}).get("ofFullSize")
+                                            or (src.width, src.height), log=log)
+        except SystemExit:
+            src.close()
+            if made_dir and not any(ds_dir.iterdir()):
+                ds_dir.rmdir()                                             # refused before anything was written
+            raise
     try:
         manifest["image"] = pyramid.build_image(src, ds_dir, tile=args.tile, log=log,
                                                 colors=getattr(plat, "colors", None))
@@ -608,6 +624,8 @@ def main(argv=None):
         plat.finish(ds_dir, manifest, args, log=log)                       # cells layer, molecules
     if args.kind == "stereoseq":
         stereoseq.build(args, ds_dir, manifest, log=log)
+    if cells_plan:
+        protcells.build(cells_plan, ds_dir, manifest, args, log=log)
 
     if args.kind == "visium":
         layers = find_visium_layers(Path(args.outs))
