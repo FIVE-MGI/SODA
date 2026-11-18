@@ -483,8 +483,11 @@ def export_all():
         if d["kind"] == "scrnaseq" or not results.get(d["id"]):
             continue
         log = state.work / "logs" / f"{d['id']}_export.log"
+        before = log.stat().st_size if log.exists() else 0      # run() appends: read only this run's lines
         exported[d["id"]] = run(export_args(d), log)
-        txt = log.read_text(encoding="utf-8", errors="replace")
+        with open(log, "rb") as f:
+            f.seek(before)
+            txt = f.read().decode("utf-8", errors="replace")
         if "***" in txt:
             print(f"WARNING {d['id']}: the export log has a *** line; read it before uploading.")
     print("exported:", [k for k, v in exported.items() if v])
