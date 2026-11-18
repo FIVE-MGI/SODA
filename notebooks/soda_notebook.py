@@ -641,11 +641,12 @@ def share(is_this_data_public):
     state.link = SimpleNamespace(mode=mode, page=page, folder_link=folder_link, share_link=share_link, read_pass=read_pass)
 
     lines = []
-    for ds in sorted(p for p in export.iterdir() if p.is_dir()):
+    # a folder without manifest.json is an export that stopped part-way: catalog.py leaves it out of datasets.json too
+    for ds in sorted(p for p in export.iterdir() if p.is_dir() and (p / "manifest.json").is_file()):
         man = json.loads((ds / "manifest.json").read_text(encoding="utf-8"))
         d = next((x for x in state.datasets or [] if x["id"] == ds.name), None)
         o = state.options.get(ds.name, {})
-        group = o.get("group") or (GROUP[d["kind"]] if d else "transcriptomics")
+        group = o.get("group") or (GROUP.get(d["kind"], "transcriptomics") if d else "transcriptomics")
         label = o.get("label") or man.get("label") or ds.name
         entry = f'{ds.name}: {{ group: "{group}", label: {json.dumps(label)}'
         entry += f', base: "{base_url}/{ds.name}/" }},' if mode == "public" else " },"
