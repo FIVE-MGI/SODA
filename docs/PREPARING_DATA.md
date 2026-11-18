@@ -159,6 +159,7 @@ OPTIONS = {
 | `channels` | proteomics_file only: channel names in order, comma-separated |
 | `crop` | `"x0,y0,x1,y1"` in full-resolution pixels: keep only that rectangle (not Xenium, CosMx or MERSCOPE) |
 | `flip` | `"h"`, `"v"` or `"hv"`: mirror the image (not Xenium, CosMx or MERSCOPE) |
+| `cells`, `nuclei`, `cells_units` | protein images only: your own cell segmentation, a label mask TIFF (Cellpose, Mesmer, StarDist, QuPath) or a GeoJSON (QuPath), as a full path; `cells_units` `"um"` when the GeoJSON is in µm. SODA reads it, it does not segment: see [Your own cell segmentation](#your-own-cell-segmentation-a-cells-layer) |
 | `image_scale` | Visium only: your image width ÷ the width of the image Space Ranger used |
 | `user_layer` | Visium only: the layer your own UMAP / clusters belong to, e.g. `"008um"`, `"016um"` or `"spots"` (needed when you give them) |
 | `user_umap` | your embedding CSV (`barcode,UMAP_1,UMAP_2`); default `my_umap.csv` in the dataset folder |

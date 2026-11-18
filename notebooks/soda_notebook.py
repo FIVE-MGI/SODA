@@ -415,6 +415,8 @@ def prepare_args(d):
         opt(key, "geomx")
     for key in ("crop", "flip"):
         opt(key, "proteomics_file", "proteomics_markers", "visium")
+    for key in ("cells", "nuclei", "cells_units"):   # a lab's own cell segmentation of a protein image (--cells)
+        opt(key, "proteomics_file", "proteomics_markers", "omezarr")
     return a
 
 
