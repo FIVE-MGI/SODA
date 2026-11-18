@@ -6901,7 +6901,7 @@
             ? `No datasets.json in ${DATA.root} — run catalog.py on the export folder (the notebook does this) and upload it, or check the link.`
             : /^40[13] /.test(e.message)
             ? `${DATA.root} is not readable (${e.message.slice(0, 3)}). The folder must allow public reading, or the link must carry a read pass.`
-            : `Could not reach ${DATA.root}. Check the link. If it is right, the storage must allow this page to read it (a CORS rule, see docs/HOSTING.md).`, true);
+            : `Could not reach ${DATA.root}. Check the link. If it is right, the storage must allow this page to read it (a CORS rule: docs/SHARE_YOUR_DATA.md, Step 4).`, true);
           return;
         }
       }
