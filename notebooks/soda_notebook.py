@@ -809,6 +809,9 @@ def cors_test(link, origin, page, timeout=30):
                 problems += range_test(root.rstrip("/"), qs, cat, origin, page, timeout)
         except ValueError:
             problems.append(f"{shown} is not a SODA dataset list (is the link the export folder itself?).")
+        except (urllib.error.URLError, OSError) as e:   # the Range test's requests: a timeout or a dropped connection
+            problems.append(f"The Range test of one gene pack got no answer ({getattr(e, 'reason', e)}). "
+                            "Check the connection and run this cell again.")
     allow = (headers.get("Access-Control-Allow-Origin") or "").strip()
     if allow not in ("*", origin):
         problems.append(f"The storage does not let the page on {origin} read it (CORS: "
