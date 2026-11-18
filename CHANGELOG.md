@@ -77,6 +77,15 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
   windows, with Playwright.
 - Performance scripts (`tools/perf/`) and measured times in `docs/PERFORMANCE.md`.
 
+### Fixed before release
+
+- Float images (32-bit) are scaled from 0 to their 99.99th percentile into 16 bits. Before,
+  they were cast without scaling and looked posterized.
+- Save image: a save right after a 2x save could come out twice too large. The picture's size
+  now comes from the map's resting pixel ratio.
+- Offline use: the service worker no longer re-creates an app cache that a publish deleted,
+  and keeps the page only while its own worker is in charge.
+
 ### Deprecated
 
 - Encrypted link files (`links.py`, `linkPath` in `config.js`) still work but will be removed
