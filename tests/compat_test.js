@@ -17,9 +17,10 @@
 //   catalog  ?data=<folder>/               with --python: datasets.json written by the current
 //            catalog.py over the old manifests; the list shows every dataset and each one opens.
 //
-// With --packed <export root> it also opens CURRENT exports, whose gene files are packed
-// (web/SpatialViewer/genepack.py), with the same checks; there a gene must arrive as one 206 answer
-// to a Range request into a pack. On top of that, for those exports:
+// It also opens CURRENT exports, whose gene files are packed (web/SpatialViewer/genepack.py): the public
+// example exports named by --packed-ids (default visiumhd_pub,merscope_2), from the shared test data
+// (tests/test_data.js: SODA_TEST_DATA or --data-root; --no-packed leaves them out), with the same checks;
+// there a gene must arrive as one 206 answer to a Range request into a pack. On top of that, for those exports:
 //   sas      ?data=<root>/?sv=..&sig=..&ds=<id>  a data link with a read pass: the pass rides on the
 //            Range request too, and the gene is right
 //   compare  the same link, then compare.js "Open beside" (one dataset, a Visium HD one if named):
@@ -27,10 +28,11 @@
 //   norange  ?static=<the same folder on a server that ignores Range>  the whole shard comes back
 //            (200) and the gene is cut out of it, right; with config packWholeMaxMB below the
 //            shard size the gene is refused with a message that names Range, and nothing else breaks
-// Its own line, "packed exports (...): N passed, M failed", comes before the old exports line.
+// Its own line, "packed exports (...): N passed, M failed", comes before the old exports line. A packed id
+// the data root cannot give is SKIPPED with a line saying so.
 //
 //   node tests/compat_test.js [--fixtures <dir>] [--only v1-20261002] [--python <python>]
-//                             [--packed <export root>] [--packed-ids demo_visiumhd,demo_xenium]
+//                             [--data-root <url or folder>] [--packed-ids visiumhd_pub,merscope_2] [--no-packed]
 //                             [--ports 8890,8891] [--shots <dir>] [--playwright <node_modules>]
 //
 // Playwright is not a dependency of this repo (see tests/phone_browser_test.js): install it
@@ -52,9 +54,9 @@ const ONLY = arg("--only", "");
 const PYTHON = arg("--python", "");
 const SHOTS = arg("--shots", "");
 const PORTS = arg("--ports", "8890,8891").split(",").map(Number);    // data server, page server
-const PACKED = arg("--packed", "") ? path.resolve(arg("--packed", "")) : "";
-const PACKED_IDS = arg("--packed-ids", "");
-const OPEN_MS = 30000;
+const D = require("./test_data");                              // the current exports: SODA_TEST_DATA / --data-root
+const PACKED_IDS = process.argv.includes("--no-packed") ? [] : arg("--packed-ids", "visiumhd_pub,merscope_2").split(",").filter(Boolean);
+const OPEN_MS = 60000;
 
 let pw = null;
 for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").split(path.delimiter), path.join(REPO, "node_modules")].filter(Boolean)) {
@@ -67,16 +69,19 @@ if (!pw) { console.log("SKIPPED: playwright is not installed (see the top of thi
 const datasetsOf = (v) => fs.readdirSync(path.join(FIX, v)).filter((id) => fs.existsSync(path.join(FIX, v, id, "manifest.json"))).sort();
 const versions = fs.existsSync(FIX) ? fs.readdirSync(FIX).filter((v) => fs.statSync(path.join(FIX, v)).isDirectory())
   .filter((v) => (!ONLY || ONLY.split(",").includes(v)) && datasetsOf(v).length).sort() : [];
-// current (packed) exports to open: those named, else every dataset in the folder with a genePack
-const packedIds = !PACKED || !fs.existsSync(PACKED) ? [] : fs.readdirSync(PACKED).filter((id) => fs.existsSync(path.join(PACKED, id, "manifest.json")))
-  .filter((id) => (PACKED_IDS ? PACKED_IDS.split(",").includes(id) : true)).sort();
+// current (packed) exports to open: those named that the data root has (found before the run)
+let packedIds = [];
 // the linked second window (step 1b of checkPacked) on one dataset only: every extra window is another
 // WebGL context in the one software-rendered browser, and a few too many make it take contexts back
-const compareId = packedIds.find((id) => /visium/i.test(id)) || packedIds[0];
+let compareId = null;
 if (!versions.length) {
   console.log(`SKIPPED: no old exports in ${FIX} (rebuild them with tests/fixtures/old_exports/make_old_exports.py)`); process.exit(0);
 }
 const readJson = (...p) => JSON.parse(fs.readFileSync(path.join(...p), "utf-8").replace(/\bNaN\b/g, "null"));
+// where a dataset's files are read from: an old fixture folder, or (version "current") the shared test data
+const srcOf = (version, id) => (version === "current" ? { id } : { dir: path.join(FIX, version, id) });
+const relOf = (s, p) => [s.id, ...p].join("/");
+const jsonOf = async (s, ...p) => (s.dir ? readJson(s.dir, ...p) : D.json(relOf(s, p)));
 
 // ---- datasets.json from the current catalog.py, written next to copies of the old manifests ----
 let catDir = null;
@@ -102,8 +107,12 @@ function handler(route) {
     if (req.method === "OPTIONS") { preflight(req, res); return; }
     const u = decodeURIComponent(req.url.split("?")[0]);
     const file = route(u);
-    if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
     const noRange = /^\/norange\//.test(u);              // a host that ignores Range
+    if (file && file.rel !== undefined) {                 // the current exports (tests/test_data.js)
+      res.on("finish", () => seen.push({ url: req.url, range: req.headers.range || "", status: res.statusCode }));
+      D.serve(req, res, file.rel, TYPES[path.extname(file.rel)], { range: !noRange }); return;
+    }
+    if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
     res.on("finish", () => seen.push({ url: req.url, range: req.headers.range || "", status: res.statusCode }));
     sendFile(req, res, file, TYPES[path.extname(file)], { range: !noRange });
   };
@@ -112,8 +121,8 @@ const inside = (root, rel) => { const f = path.join(root, rel); return f.startsW
 // /plain/<version>/...  the old folder as it is (no datasets.json)
 // /cat/<version>/...    the same, plus the datasets.json catalog.py wrote
 const dataRoute = (u) => {
-  const pk = u.match(/^\/(packed|norange)(\/.*)$/);           // the current export root (--packed)
-  if (pk) return PACKED ? inside(PACKED, pk[2]) : null;
+  const pk = u.match(/^\/(packed|norange)(\/.*)$/);           // the current exports (tests/test_data.js)
+  if (pk) return { rel: pk[2].slice(1) };
   const m = u.match(/^\/(plain|cat)(\/.*)$/);
   if (!m) return null;
   if (m[1] === "cat" && catDir && /\/datasets\.json$/.test(m[2])) return inside(catDir, m[2]);
@@ -177,21 +186,25 @@ const pickFromSearch = (page, box, results, name) => page.evaluate(([box, result
 }, [box, results, name]);
 
 const fileSize = (...p) => { const f = path.join(...p); return fs.existsSync(f) ? fs.statSync(f).size : -1; };
+const sizeOf = async (s, ...p) => (s.dir ? fileSize(s.dir, ...p) : D.size(relOf(s, p)));
 const encName = (n) => encodeURIComponent(n);
 // a gene's bytes in a packed group: the slice of its shard (genepack.py), or -1 / null when none
-const packOf = (pack, ...dir) => pack ? { pack, dir: path.join(...dir) } : null;
-function packSlice(pk, e) {
+const packOf = (pack, s, ...sub) => pack ? { pack, s, sub } : null;
+async function packSlice(pk, e) {
   if (!pk || !e || !(e.b > 0)) return null;
-  const fd = fs.openSync(path.join(pk.dir, pk.pack.dir || "genepack", pk.pack.shards[e.s].file), "r");
+  const p = [...pk.sub, pk.pack.dir || "genepack", pk.pack.shards[e.s].file];
+  if (!pk.s.dir) return D.range(relOf(pk.s, p), e.o, e.b);
+  const fd = fs.openSync(path.join(pk.s.dir, ...p), "r");
   try { const b = Buffer.alloc(e.b); fs.readSync(fd, b, 0, e.b, e.o); return b; } finally { fs.closeSync(fd); }
 }
 // the layer's first gene that has a file (genes with no counts have none), by total; its points
-function geneToAdd(dir, L) {
-  const genes = readJson(dir, "expr", L.key, "genes.json");
-  const bytes = (g) => (L.genePack ? (g.b > 0 ? g.b : -1) : fileSize(dir, "expr", L.key, "gene", `${encName(g.n)}.bin`));
-  const withFile = genes.filter((g) => bytes(g) > 0);
-  withFile.sort((a, b) => b.t - a.t);
-  return { genes, gene: withFile[0], pts: withFile[0] ? bytes(withFile[0]) / 12 : -1 };
+async function geneToAdd(s, L) {
+  const genes = await jsonOf(s, "expr", L.key, "genes.json");
+  const sized = [];
+  for (const g of genes) sized.push([g, L.genePack ? (g.b > 0 ? g.b : -1) : await sizeOf(s, "expr", L.key, "gene", `${encName(g.n)}.bin`)]);
+  const withFile = sized.filter((x) => x[1] > 0);
+  withFile.sort((a, b) => b[0].t - a[0].t);
+  return { genes, gene: withFile[0] && withFile[0][0], pts: withFile[0] ? withFile[0][1] / 12 : -1 };
 }
 
 let pass = 0, fail = catFail.length;
@@ -228,7 +241,7 @@ async function openPage(browser, url, version, label, config) {
 // Files the page asks for that no export is required to have, current ones included (the browser
 // still logs their 404 as a console error): <dataset>/gates.json, a lab's published gates
 // (viewer.js gateFetchPublished, "absent = none, quietly"), and the page's own markers/<file> named by
-// a grid layer's celltypes markerSet (the fixtures were exported with examples/demo_protein_markers.json,
+// a grid layer's celltypes markerSet (the fixtures were exported with the old generators' protein marker list,
 // which the page does not ship; no list = no suggested names, as for a current export made that way).
 // vendor/: deck.gl and umap-js are asked for there first and come from the CDN when a copy has no vendor/ (libs.js)
 const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/vendor\//];
@@ -249,10 +262,10 @@ async function shot(t, version, label) {
 }
 
 // the full set of checks on one dataset, opened with ?static= (an old fixture, or with version
-// "current" a dataset of the --packed export root)
+// "current" a current export of the shared test data, tests/test_data.js)
 async function checkDataset(browser, urls, version, id) {
   const cur = version === "current";
-  const dir = cur ? path.join(PACKED, id) : path.join(FIX, version, id), m = readJson(dir, "manifest.json");
+  const dir = srcOf(version, id), m = await jsonOf(dir, "manifest.json");
   const label = `static ${id}`;
   const t = await openPage(browser, `${urls.page}/index.html?static=${urls.data}/${cur ? "packed" : `plain/${version}`}&ds=${id}`, version, label);
   try {
@@ -265,14 +278,14 @@ async function checkDataset(browser, urls, version, id) {
     if (m.kind === "rnaseq") {
       await until(t.page, () => { const R = window.__spatialViewer.state.rna; return R && R.index && R.index.length; });
       await settled(t.page);
-      const genes = readJson(dir, "genes.json");
+      const genes = await jsonOf(dir, "genes.json");
       r = await look(t.page);
       t.ok(r.rna && r.rna.n === m.nCells, `UMAP read: ${r.rna && r.rna.n} cells (manifest ${m.nCells})`);
       t.ok(r.rna && r.rna.index === genes.length, `genes listed: ${r.rna && r.rna.index} (genes.json ${genes.length})`);
       const cat = (m.obs || []).find((o) => o.type === "category");
       t.ok(!cat || (r.rna.colorBy === cat.name && r.rna.cat), `coloured by "${r.rna && r.rna.colorBy}" (obs/${cat ? cat.file : "-"} read)`);
       const pk = packOf(m.genePack, dir);
-      const g = genes[0].n, k = (pk ? packSlice(pk, genes[0]) : fs.readFileSync(path.join(dir, "gene", `${encName(g)}.bin`))).readUInt32LE(0);
+      const g = genes[0].n, k = (pk ? await packSlice(pk, genes[0]) : dir.dir ? fs.readFileSync(path.join(dir.dir, "gene", `${encName(g)}.bin`)) : await D.bytes(relOf(dir, ["gene", `${encName(g)}.bin`]))).readUInt32LE(0);
       const shown = await pickFromSearch(t.page, "rnaSearch", "rnaResults", g);
       await until(t.page, () => window.__spatialViewer.state.rna.genes.length > 0, null, 15000);
       r = await look(t.page);
@@ -298,7 +311,7 @@ async function checkDataset(browser, urls, version, id) {
         const L = ex.find((e) => e.key === r.exprKey);
         t.ok(!!L, `expression layer opened: ${r.exprKey} (manifest: ${ex.map((e) => e.key).join(", ")})`);
         if (L) {
-          const { genes, gene, pts } = geneToAdd(dir, L);
+          const { genes, gene, pts } = await geneToAdd(dir, L);
           t.ok(r.geneIndex === genes.length, `${L.kind === "protein" ? "markers" : "genes"} listed: ${r.geneIndex} (genes.json ${genes.length})`);
           const shown = await pickFromSearch(t.page, "geneSearch", "geneResults", gene.n);
           await until(t.page, () => window.__spatialViewer.state.genes.length > 0, null, 15000);
@@ -308,10 +321,10 @@ async function checkDataset(browser, urls, version, id) {
           t.ok(shown === gene.n && got && got.name === gene.n && got.n === pts, `gene ${gene.n} added from the search: ${got ? got.n : "none"} points (file ${pts})`);
           if (L.genePack) t.ok(fetched(t, new RegExp(`/expr/${L.key}/genepack/[0-9a-f]+-\\d+\\.pack$`), 206), `expr/${L.key}: the gene read by a Range request into the pack (206)`);
           else t.ok(fetched(t, new RegExp(`/expr/${L.key}/gene/${encName(gene.n)}\\.bin$`)), `expr/${L.key}/gene/${gene.n}.bin fetched`);
-          if (L.regions) t.ok(r.regionIds === fileSize(dir, "expr", L.key, "positions.bin") / 8, `region.bin read: ${r.regionIds} rows`);
+          if (L.regions) t.ok(r.regionIds === (await sizeOf(dir, "expr", L.key, "positions.bin")) / 8, `region.bin read: ${r.regionIds} rows`);
           if (L.umap) {
-            const idx = readJson(dir, "expr", L.key, "umap", "index.json");
-            const rows = fileSize(dir, "expr", L.key, "positions.bin") / 8;
+            const idx = await jsonOf(dir, "expr", L.key, "umap", "index.json");
+            const rows = (await sizeOf(dir, "expr", L.key, "positions.bin")) / 8;
             await t.page.evaluate(() => window.__spatialViewer.umapSetView("umap"));
             await until(t.page, () => { const U = window.__spatialViewer.state.umap; return U && U.cl && U.view === "umap" && !U.anim; }, null, 15000);   // the flight from the tissue has landed
             await settled(t.page);
@@ -354,7 +367,7 @@ async function addLayerGene(t, dir, m) {
   let r = await look(t.page);
   const L = (m.expr || []).find((e) => e.key === r.exprKey);
   if (!L) { t.ok(false, `expression layer opened: ${r.exprKey}`); return null; }
-  const { gene, pts } = geneToAdd(dir, L);
+  const { gene, pts } = await geneToAdd(dir, L);
   await pickFromSearch(t.page, "geneSearch", "geneResults", gene.n);
   await until(t.page, () => { const S = window.__spatialViewer.state, st = document.getElementById("status");
     return S.genes.length > 0 || (st && !st.hidden && st.classList.contains("err")); }, null, 15000);
@@ -363,7 +376,7 @@ async function addLayerGene(t, dir, m) {
   return { L, gene, pts, r, got: r.genes[0] };
 }
 async function checkPacked(browser, urls, id) {
-  const dir = path.join(PACKED, id), m = readJson(dir, "manifest.json");
+  const dir = srcOf("current", id), m = await jsonOf(dir, "manifest.json");
   const packedLayers = (m.expr || []).filter((L) => L.genePack).map((L) => L.key);
   const V = "current";
   if (!(m.expr || []).length && !m.genePack && !(m.molecules && m.molecules.genePack)) return;
@@ -377,8 +390,8 @@ async function checkPacked(browser, urls, id) {
       t.ok(opened, "opens from a ?data= link with a read pass");
       if (m.kind === "rnaseq") {
         await until(t.page, () => { const R = window.__spatialViewer.state.rna; return R && R.index && R.index.length; });
-        const genes = readJson(dir, "genes.json"), e = genes.find((g) => g.b > 0);
-        const k = packSlice(packOf(m.genePack, dir), e).readUInt32LE(0);
+        const genes = await jsonOf(dir, "genes.json"), e = genes.find((g) => g.b > 0);
+        const k = (await packSlice(packOf(m.genePack, dir), e)).readUInt32LE(0);
         await pickFromSearch(t.page, "rnaSearch", "rnaResults", e.n);
         await until(t.page, () => window.__spatialViewer.state.rna.genes.length > 0, null, 15000);
         const r = await look(t.page), got = r.rna.genes[0];
@@ -396,7 +409,7 @@ async function checkPacked(browser, urls, id) {
       }
       // molecules: the most abundant gene's dots, from the molecules pack
       if (m.molecules && m.molecules.genePack) {
-        const idx = readJson(dir, m.molecules.dir || "molecules", "index.json");
+        const idx = await jsonOf(dir, m.molecules.dir || "molecules", "index.json");
         const g = idx.genes.filter((x) => x.b > 0).sort((a, b) => b.c - a.c)[0];
         await until(t.page, () => !!window.__spatialViewer.state.mol.index);
         await pickFromSearch(t.page, "molSearch", "molResults", g.n);
@@ -532,6 +545,10 @@ async function checkCatalog(browser, urls, version) {
 }
 
 (async () => {
+  for (const id of PACKED_IDS) {
+    if (await D.has(id)) packedIds.push(id); else console.log(D.skipLine(id, "(current packed export)"));
+  }
+  compareId = packedIds.find((id) => /visium/i.test(id)) || packedIds[0];
   const data = await listen(handler(dataRoute), PORTS[0]), pageSrv = await listen(handler(pageRoute), PORTS[1]);
   const urls = { data: `http://127.0.0.1:${data.address().port}`, page: `http://127.0.0.1:${pageSrv.address().port}` };
   let browser;
@@ -548,7 +565,7 @@ async function checkCatalog(browser, urls, version) {
   }
   try {
     if (packedIds.length) {
-      console.log(`current (packed) exports in ${PACKED}: ${packedIds.join(", ")}`);
+      console.log(`current (packed) exports from ${D.describe()}: ${packedIds.join(", ")}`);
       for (const id of packedIds) { await checkDataset(browser, urls, "current", id); await checkPacked(browser, urls, id); }
     }
     for (const v of versions) {
