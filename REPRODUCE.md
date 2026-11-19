@@ -8,7 +8,7 @@ Three kinds of result, three kinds of promise:
 
 | Kind | Example | What you should get |
 |---|---|---|
-| Synthetic data and the files made from it | the demo dataset, its UMAP and clusters, the smoke test | the same files and the same checks passing, with the same package versions |
+| The tests | the smoke test and the browser tests, on the public example exports | the same checks passing, with the same package versions |
 | Times and memory | Supplementary Table 2, the tables in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | the same order of magnitude; they depend on the machine and on the data |
 | Results on real datasets | Supplementary Table 2, Figures 2 and 3 | the same commands on the same public datasets (sections [9](#9-the-public-datasets) to [11](#11-the-figures)) |
 
@@ -79,7 +79,6 @@ Everything random is seeded. The default seed is **42**.
 | The shuffled order each gene's molecules are written in (`molecules.py`) | `SEED = 42` |
 | Draw a region in the browser (`lasso_worker.js`, `leiden.js`) | 42; Save JSON stores the seed with the shapes, so Load JSON reruns the same |
 | Volcano plot, heatmap / violin sampling (`volcano.js`, `de_worker.js`, `plots.js`, `plots_worker.js`) | 42 |
-| Synthetic demo data | `--seed` of each generator: `make_demo.py` 0, `make_xenium_demo.py` 7, `make_geomx_demo.py`, `make_imaging_demo.py`, `make_stereoseq_demo.py`, `make_stdformats_demo.py` 11 |
 
 **Threads do not change the result.** `prepare.py` caps the maths libraries' threads (at
 most 8; `--threads <n>` or `SODA_THREADS=<n>` to change it). The thread count changes only the
@@ -87,29 +86,19 @@ last bits of some floating-point values; the exported UMAP coordinates and clust
 byte-identical with 1, 8 and 24 threads on the datasets compared. The smoke test checks this
 (see `web/SpatialViewer/threadcap.py`).
 
-## 5. The synthetic demo data
+## 5. The public example exports
 
-Nothing in it comes from a tissue, a patient or an instrument. Each generator draws every
-pixel and count from its seed, so the same `--seed` gives the same files.
+The seven public datasets of section [9](#9-the-public-datasets), prepared and exported with
+SODA, are online in one folder with its `datasets.json`:
 
-```bash
-python examples/make_demo.py --out demo/raw
+```
+https://fivestore.blob.core.windows.net/soda/examples/
 ```
 
-writes a Visium HD-shaped folder (8 µm and 16 µm bins, an H&E-like image) and a 9-channel
-fluorescence image. The README's [Try it in 5 minutes](README.md#try-it-in-5-minutes) prepares,
-exports and opens it. The other generators each take `--out` and `--seed`:
-
-| Generator | Makes |
-|---|---|
-| `examples/make_xenium_demo.py` | a Xenium output folder (cells, transcripts, stains) |
-| `examples/make_geomx_demo.py` | a GeoMx DSP study (DCC, PKC, annotation sheets, scans with ROIs) |
-| `examples/make_imaging_demo.py` | CosMx and MERSCOPE folders |
-| `examples/make_stereoseq_demo.py` | Stereo-seq output (bin GEF, cell bin GEF, GEM, registered image) |
-| `examples/make_stdformats_demo.py` | spatial AnnData (`.h5ad`, AnnData-Zarr), OME-Zarr and SpatialData stores |
-
-The figure in the README (`docs/img/demo_side_by_side.jpg`) is this demo in Side by side
-mode, coloured by Leiden cluster.
+Open them on the shared page, or from your own copy as in the README's
+[Try it in 5 minutes](README.md#try-it-in-5-minutes), with
+`index.html?data=https://fivestore.blob.core.windows.net/soda/examples/`. The tests open these
+exports (sections [6](#6-the-smoke-test) and [7](#7-the-browser-tests)).
 
 ## 6. The smoke test
 
@@ -117,15 +106,17 @@ mode, coloured by Leiden cluster.
 python tests/smoke_test.py
 ```
 
-From the repository folder, with the environment active. It makes all the synthetic data
-above, prepares and exports it with the README's commands, and checks every file: the tiles,
-the gene data, that the clusters match the regions the demo was drawn from, the sample ID
-check, and much more (the full list is at the top of `tests/smoke_test.py`). It ends with
+From the repository folder, with the environment active. It checks the tools and the public
+example exports of section [5](#5-the-public-example-exports), read by default from
+https://fivestore.blob.core.windows.net/soda/examples/: the tiles, the gene data, the sample
+ID check, and much more (the full list is at the top of `tests/smoke_test.py`). To use a
+local copy of the exports instead, pass <!-- TODO tests flag -->. It ends with
 **SMOKE TEST PASSED: N checks**.
 
-- `--root <dir>` writes somewhere other than `demo/`; `--reuse` keeps earlier outputs;
-  `--checks-only` runs no commands and only checks the outputs already there.
-- The log is `demo/smoke_test.log`, the summary `demo/smoke_test_summary.json`.
+- `--root <dir>` sets the folder it writes to <!-- TODO tests flag: the default folder -->;
+  `--reuse` keeps earlier outputs; `--checks-only` runs no commands and only checks the
+  outputs already there.
+- The log is `smoke_test.log`, the summary `smoke_test_summary.json`, in that folder.
 - Exit code 0: every check passed. 1: a check failed. 2: a command failed.
 - Without the clustering packages the UMAP checks are skipped, and it says so.
 - Without Node.js the JavaScript tests are skipped. Without Playwright the browser tests print
@@ -147,12 +138,14 @@ The performance numbers used Playwright 1.56. The tests also find Playwright thr
 `PLAYWRIGHT_BROWSERS_PATH`. Microsoft Edge is tested only where it is installed; a browser
 that cannot be started is reported as SKIPPED on its own.
 
-Run the smoke test first: it makes `demo/export`, which the browser tests open. The smoke test
-already runs most of them. To run one by itself:
+The browser tests open the public example exports of section
+[5](#5-the-public-example-exports), at https://fivestore.blob.core.windows.net/soda/examples/;
+to use a local copy, pass <!-- TODO tests flag -->. The smoke test already runs most of
+them. To run one by itself:
 
 | Command | What it checks |
 |---|---|
-| `node tests/browsers_test.js` | the page on every demo dataset in Chromium, WebKit (Safari's engine), Firefox and Edge, plus phone-sized windows; pixel comparison with Chromium |
+| `node tests/browsers_test.js` | the page on every example dataset in Chromium, WebKit (Safari's engine), Firefox and Edge, plus phone-sized windows; pixel comparison with Chromium |
 | `node tests/phone_browser_test.js` | the image path in phone browsers (WebKit as an iPhone, Chromium), with each failure injected. Not run by the smoke test |
 | `node tests/offline_test.js` | the page and a kept dataset open with no network |
 | `node tests/outlines_browser_test.js` | cell outlines, and what draws a subset of the cells with them |
@@ -216,7 +209,6 @@ Every real dataset in the paper is a public download. None of them is in this re
 | `stereoseq_1` | STOmics Stereo-seq demo chip C04042E3, mouse whole brain (fresh frozen, H&E) | STOmics demo data (https://www.stomics.tech/col1317); no open licence stated, the site's terms apply (do not redistribute) | 4,497,528,479 B (3 files) |
 | `geomx_1` | NanoString GeoMx DSP Spatial Organ Atlas, mouse embryo E11 (2 scans, 84 AOIs, mouse whole transcriptome) | NanoString Spatial Organ Atlas; no licence stated (Bruker Spatial Biology terms of use, research use only) | 3,525,766,712 B (2 files) |
 | `merscope_crop` (Figure 2) | Vizgen MERSCOPE small data sample: a cropped region with its images (500 genes plus 50 blank control probes, 1,179 cells) | Zenodo 7852005, CC BY 4.0 | 129,368,282 B |
-| `demo_visiumhd`, `demo_multiplex` | synthetic, made by `examples/make_demo.py` (section 5) | this repository | none |
 
 The commands below put each dataset in its own folder under `data/`. `curl -C -` resumes a
 download that stopped; compare each file's size with the table afterwards. They run in bash
@@ -350,29 +342,6 @@ Every other step is the same line with its own `--label`, `--step` (`prepare` or
 `--input` (the files or folders the step reads; only recorded, for the input size) and
 `--measure` (`cache/<id>` for a prepare, `export/<id>` for an export).
 
-**The demo** (README demo rows), in this order. Steps 2-5 measure `demo/cache/<id>` or
-`demo/export/<id>`:
-
-```bash
-python examples/make_demo.py --out demo/raw
-```
-
-```bash
-python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/visiumhd/image.tif --outs demo/raw/visiumhd/outs --out demo/cache
-```
-
-```bash
-python web/SpatialViewer/prepare.py tiff --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
-```
-
-```bash
-python web/SpatialViewer/prepare.py export --id demo_visiumhd --out demo/cache --dest demo/export --markers examples/demo_markers.json
-```
-
-```bash
-python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json
-```
-
 **Prepare, one real dataset per kind.** The `--label` text is the name the page shows:
 
 ```bash
@@ -410,9 +379,8 @@ python web/SpatialViewer/prepare.py geomx --dcc data/geomx_1/mu_dev_E11_workflow
 python web/SpatialViewer/prepare.py export --id <id> --out cache --dest export --fmt jpg
 ```
 
-**Opening.** For each of the nine exports (the two demo datasets with `--data-root demo/export`,
-the seven above with `--data-root export`), once unthrottled and once on the home connection.
-Chromium inherits the affinity:
+**Opening.** For each of the seven exports above, once unthrottled and once on the home
+connection. Chromium inherits the affinity:
 
 ```bash
 start "" /affinity FF0000 /wait /b node tools/perf/bench_open.js --data-root export --ds <id> --net none --reps 3 --genes top,median --csv open.csv --out open_logs
@@ -461,8 +429,9 @@ The panels are screenshots, in headless Chromium, of the executed notebook, of t
 folder and of the page opening the export with the link the notebook printed.
 
 **Figure 3** is the page on `xenium_pub`, `visiumhd_pub` and `phenocycler_pub`, exported as in
-section 10. Serve the exports and the page as in the README's
-[Try it in 5 minutes](README.md#try-it-in-5-minutes):
+section 10, or the copies of section [5](#5-the-public-example-exports). To use your own
+exports, serve them and the page as in
+[HOSTING.md, On your own computer](docs/HOSTING.md#a-on-your-own-computer):
 
 ```bash
 python web/SpatialViewer/static_serve.py export 8765
@@ -482,6 +451,5 @@ and open `http://localhost:8766/index.html?static=http://localhost:8765&ds=xeniu
 - Check the versions first: `python tools/check_install.py`, and the `versions` block in
   `expr/<layer>/umap/index.json` of both exports.
 - A different Python, operating system or package version may move UMAP coordinates
-  slightly and so renumber clusters; the smoke test checks that clusters still follow the
-  drawn regions, not exact coordinates.
+  slightly and so renumber clusters.
 - Open an issue with the bug report template (see [CONTRIBUTING.md](CONTRIBUTING.md)).
