@@ -63,7 +63,7 @@ jobs:
   # has a secret SODA_TEST_PRIVATE_DATA (the private container's folder URL with a read SAS), and are
   # SKIPPED with one line each otherwise. The SAS is never printed (GitHub masks it, the tests leave it out).
   browsers:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # Playwright 1.56 has no browsers for ubuntu 26.04 (ubuntu-latest)
     timeout-minutes: 150
     env:
       SODA_TEST_DATA: https://fivestore.blob.core.windows.net/soda/examples/
