@@ -18,7 +18,12 @@ Sizes are kept small with the old code's own options: a crop of the demo images,
 JPEG tiles (PNG ones of the noisy synthetic stains were ~2 MB per version) and only the 16 um
 bin layer. The demo generator of each version makes the raw data
 (v1 had none, so it uses the earliest one in spatial-viewer-v2, 891ca86). Only synthetic data
-from examples/make_demo.py and the made-up inputs below are used.
+from that old commit's examples/make_demo.py and the made-up inputs below are used.
+
+The synthetic demo generators (examples/make_*demo.py, examples/demo_*markers.json) are no longer in the
+current tree: the tests use the public example exports now. The fixtures under v1-*/ and v2-*/ stay as
+they were committed, and this script can still rebuild them, because it takes each generator and its
+marker lists from the old commit named in VERSIONS (`git archive`), never from the working tree.
 
     python tests/fixtures/old_exports/make_old_exports.py --work <scratch folder outside the repo> \
         --v1-repo <clone of FIVE-MGI/spatial-viewer> [--install]
