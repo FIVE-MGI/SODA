@@ -9,8 +9,8 @@ data type, and the steps that lead to the problem. Check the README's
 [Troubleshooting](README.md#troubleshooting) first: the common failures are there.
 
 **Never paste sample IDs, patient information, passwords, or a link that carries a read pass**
-(an Azure `?sv=...&sig=...`, an S3 pre-signed link). Use the synthetic demo
-(`python examples/make_demo.py --out demo/raw`) to show a problem when you can.
+(an Azure `?sv=...&sig=...`, an S3 pre-signed link). Show a problem on one of the public
+example datasets when you can ([README, Quick start](README.md#quick-start)).
 
 ## Send a change
 

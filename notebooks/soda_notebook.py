@@ -335,14 +335,14 @@ def memory_check():
         if sizes:
             gb, big = sizes[0]
             print(f"largest input: {big['id']} ({big['kind']}), about {gb:.2f} GB of input files")
-            # Measured peaks (README, Requirements): the demo 0.6 GB; a CosMx slide's counts 0.76 GB;
+            # Measured peaks (README, Requirements): a CosMx slide's counts 0.76 GB;
             # a whole mouse brain Stereo-seq chip 2.7 GB to prepare (3.9 GB from tissue.gem.gz) and
             # 8.5 GB to export, the largest measured. Whole-section data: have more free than 8.5 GB.
             whole = gb >= 1.0                       # 1 GB of input or more: treat as a whole section
             need = 8.5 if whole else 1.0
             print(f"suggested free memory: more than {need} GB "
                   + ("(whole-section data: the largest measured peak, a whole Stereo-seq chip, was 8.5 GB)"
-                     if whole else "(small data: the demo peaked at 0.6 GB)"))
+                     if whole else "(small data: a CosMx slide's counts peaked at 0.76 GB)"))
             hd2 = [d["id"] for d in ready if d["kind"] == "visium" and "outs" in d["found"]
                    and (d["found"]["outs"] / "binned_outputs" / "square_002um").is_dir()
                    and (not bins or "002um" in bins.split(","))]
