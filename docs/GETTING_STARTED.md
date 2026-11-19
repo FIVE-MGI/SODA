@@ -97,7 +97,7 @@ cd C:\soda
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 ```powershell
-.venv\Scripts\python -m pip install jupyter
+soda-env\Scripts\python -m pip install jupyter
 ```
 
 **Mac (Terminal):**
@@ -108,11 +108,11 @@ cd ~/soda
 bash install.sh
 ```
 ```bash
-.venv/bin/python -m pip install jupyter
+soda-env/bin/python -m pip install jupyter
 ```
 
 ✅ The second line ends with **`SODA is installed`**; the third ends with `Successfully installed`.
-Everything goes into the `.venv` folder inside `soda`; nothing else on your computer changes.
+Everything goes into the `soda-env` folder inside `soda`; nothing else on your computer changes.
 
 ---
 
@@ -124,8 +124,8 @@ Pick **one** of these two ways.
 
 **A. In your browser (JupyterLab).** In the same terminal:
 
-- **Windows:** `.venv\Scripts\jupyter lab`
-- **Mac:** `.venv/bin/jupyter lab`
+- **Windows:** `soda-env\Scripts\jupyter lab`
+- **Mac:** `soda-env/bin/jupyter lab`
 
 A browser tab called **JupyterLab** opens. (Keep the terminal open; closing it stops the
 notebook.) On the left, double-click **notebooks** → **SODA_pipeline.ipynb**.
@@ -136,10 +136,10 @@ notebook.) On the left, double-click **notebooks** → **SODA_pipeline.ipynb**.
 2. On the left, open **notebooks** → **SODA_pipeline.ipynb**. If VS Code offers to install
    the **Python** and **Jupyter** extensions, say yes.
 3. Top right of the notebook: **Select Kernel** → **Python Environments** → the one marked
-   **`.venv`**. (Not listed? Close the notebook and open it again.)
+   **`soda-env`** (or **Jupyter Kernel** → **SODA**). (Not listed? Close the notebook and open it again.)
 
 Either way: the text cells explain each step; the grey boxes with code are the ones you run.
-Commands that start with `powershell`, `bash` or `.venv` (like Step 3's) go in a **terminal**,
+Commands that start with `powershell`, `bash` or `soda-env` (like Step 3's) go in a **terminal**,
 never in the notebook. In VS Code, **Terminal → New Terminal** opens one already in the `soda`
 folder.
 

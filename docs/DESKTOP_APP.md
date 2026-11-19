@@ -161,7 +161,7 @@ Design points, each a deliberate difference from a plain PyInstaller app:
 Windows (from the repository folder, after `install.ps1`):
 
 ```
-pip install pyinstaller==6.21.0          (into .venv)
+pip install pyinstaller==6.21.0          (into soda-env)
 python web\SpatialViewer\prepare.py vendor   (deck.gl and umap-js into the app; about 1.5 MB from cdn.jsdelivr.net)
 powershell -ExecutionPolicy Bypass -File app\build_release.ps1 -Version 0.1.0 -OutRoot D:\builds\soda -RequireVendor
 ```
@@ -176,8 +176,8 @@ that an error instead (the workflow uses it).
 macOS (on an Apple Silicon Mac, after `install.sh`):
 
 ```
-.venv/bin/pip install pyinstaller==6.21.0
-.venv/bin/python web/SpatialViewer/prepare.py vendor
+soda-env/bin/pip install pyinstaller==6.21.0
+soda-env/bin/python web/SpatialViewer/prepare.py vendor
 ./app/build_release_mac.sh --version 0.1.0 --require-vendor
 ```
 

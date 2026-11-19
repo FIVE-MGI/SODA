@@ -9,6 +9,7 @@
     { "route": "/requirements-clustering.txt", "statusCode": 404 },
     { "route": "/.password", "statusCode": 404 },
     { "route": "/.venv/*", "statusCode": 404 },
+    { "route": "/soda-env/*", "statusCode": 404 },
     { "route": "/__pycache__/*", "statusCode": 404 }
   ],
   "globalHeaders": {

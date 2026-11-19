@@ -50,7 +50,7 @@ SODA_MODULES = sorted(p.stem for p in SODA.glob("*.py"))
 
 # What goes into _internal/soda/: the page folder minus anything private or local.
 _PRIVATE_NAMES = {"config.js", ".password", "sample_id_key.csv"}
-_PRIVATE_DIRS = {"logos", "__pycache__", ".venv", "node_modules"}
+_PRIVATE_DIRS = {"logos", "__pycache__", ".venv", "soda-env", "node_modules"}
 
 
 def page_files():

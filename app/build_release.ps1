@@ -49,12 +49,13 @@ if (-not $Version) {
 }
 if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') { throw "version '$Version' is not a plain version string" }
 
-# The Python to build with: -Python, else the repository's .venv (what install.ps1 makes).
+# The Python to build with: -Python, else the repository's soda-env (what install.ps1 makes; or an older .venv).
 if ($Python) {
     $Py = (Get-Command $Python -ErrorAction SilentlyContinue).Source
     if (-not $Py) { $Py = $Python }
 } else {
-    $Py = Join-Path $Repo ".venv\Scripts\python.exe"
+    $Py = Join-Path $Repo "soda-env\Scripts\python.exe"
+    if (-not (Test-Path $Py)) { $Py = Join-Path $Repo ".venv\Scripts\python.exe" }
 }
 if (-not (Test-Path $Py) -and -not (Get-Command $Py -ErrorAction SilentlyContinue)) {
     throw "Python not found: $Py. Run install.ps1 first, or pass -Python."

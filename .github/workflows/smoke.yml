@@ -27,25 +27,25 @@ jobs:
           find . -name '*.js' -not -path './node_modules/*' -not -path '*/node_modules/*' -print0 \
             | xargs -0 -n1 node --check
 
-      # The same one-command install users run: makes .venv and installs the pinned
+      # The same one-command install users run: makes soda-env and installs the pinned
       # versions in requirements-lock.txt, so the lock file is tested on Linux too.
       - name: Install (install.sh, from the lock file)
         run: |
           bash install.sh --python "$(command -v python)"
-          .venv/bin/python -m pip freeze
+          soda-env/bin/python -m pip freeze
 
       # No raw data on the runner: the pipeline part (prepare + export on the public datasets) and the export
       # checks say SKIPPED with one line each; everything that needs no data runs. No Playwright in this job,
       # so the browser tests it starts say SKIPPED too: the browsers job below runs them.
       - name: Smoke test (the page and the code; the pipeline needs raw data and is skipped here)
-        run: .venv/bin/python tests/smoke_test.py --root "$RUNNER_TEMP/smoke"
+        run: soda-env/bin/python tests/smoke_test.py --root "$RUNNER_TEMP/smoke"
 
       # The desktop app's launcher from source (app/soda_app.py): selftest and the python stand-in. Prepare,
       # Check, the viewer server and the home page need the public raw data (--raw-data), which the runner
       # does not have: SKIPPED with one line. Runs even if the smoke test failed, so both results show.
       - name: Desktop app test (tests/app_test.py, from source)
         if: success() || failure()
-        run: .venv/bin/python tests/app_test.py --work "$RUNNER_TEMP/app-test"
+        run: soda-env/bin/python tests/app_test.py --work "$RUNNER_TEMP/app-test"
 
       - name: Upload the log on failure
         if: failure()

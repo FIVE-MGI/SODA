@@ -198,7 +198,7 @@ def assert_clean(obj, what: str):
 
 _TEXT_EXT = {".js", ".json", ".html", ".txt", ".md", ".css", ".geojson", ".csv", ".py", ".ps1", ".yml", ".yaml"}
 _ALLOW = "deid:ok"          # a line containing this marker is a documented FAKE example
-_SKIP_DIRS = {".venv", "__pycache__", ".git", "tiles", "gene"}
+_SKIP_DIRS = {".venv", "soda-env", "__pycache__", ".git", "tiles", "gene"}
 
 
 _GZ_SHOW = 10               # per .gz file: this many line numbers, then a count

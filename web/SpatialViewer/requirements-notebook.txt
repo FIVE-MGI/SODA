@@ -1,0 +1,5 @@
+# What the SODA notebook needs on top of requirements-lock.txt: the Jupyter kernel package, so VS Code
+# (and JupyterLab) can run notebooks/SODA_pipeline.ipynb with SODA's environment, and ipywidgets for the
+# progress bars. install.ps1 / install.sh install these and register the environment as the Jupyter kernel "SODA".
+ipykernel==7.4.0
+ipywidgets==8.1.9

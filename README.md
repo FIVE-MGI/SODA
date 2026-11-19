@@ -40,8 +40,8 @@ computer until step 6.
    It ends with **SODA is installed**. Then turn the environment on and add Jupyter:
 
    ```bash
-   source .venv/bin/activate          # macOS / Linux
-   .venv\Scripts\activate             # Windows
+   source soda-env/bin/activate          # macOS / Linux
+   soda-env\Scripts\activate             # Windows
    pip install jupyter
    ```
 
@@ -285,7 +285,7 @@ macOS / Linux:
 git clone https://github.com/FIVE-MGI/SODA.git soda
 cd soda
 bash install.sh
-source .venv/bin/activate
+source soda-env/bin/activate
 ```
 
 Windows (PowerShell or Command Prompt):
@@ -294,17 +294,17 @@ Windows (PowerShell or Command Prompt):
 git clone https://github.com/FIVE-MGI/SODA.git soda
 cd soda
 powershell -ExecutionPolicy Bypass -File install.ps1
-.venv\Scripts\Activate.ps1
+soda-env\Scripts\Activate.ps1
 ```
 
-The install script finds Python 3.12 or 3.13, makes a virtual environment `.venv` in the
+The install script finds Python 3.12 or 3.13, makes a virtual environment `soda-env` in the
 repository, installs the exact, tested package versions from
 `web/SpatialViewer/requirements-lock.txt`, checks that they all import, and ends with
 **SODA is installed**. It needs no administrator rights, takes a few minutes the first time
 and is safe to run again. If no suitable Python is found, it says so and what to install.
 (`-ExecutionPolicy Bypass` only lets this one script run; it changes no setting. If
 PowerShell refuses the activation line, use Command Prompt and run
-`.venv\Scripts\activate.bat`.) Once the environment is active, `python` means the
+`soda-env\Scripts\activate.bat`.) Once the environment is active, `python` means the
 environment's Python on every system.
 
 > **By hand instead** (or where the script stops: Intel Macs, Linux on ARM, Python 3.10 or
@@ -470,7 +470,7 @@ WebKit is the engine, not iOS Safari, so a real iPhone is still the only proof f
 ## Repository layout
 
 ```
-install.sh / install.ps1  one-command install (macOS, Linux / Windows) into .venv
+install.sh / install.ps1  one-command install (macOS, Linux / Windows) into soda-env
 web/SpatialViewer/    the page (index.html, viewer.js, ...) and the Python tools (prepare.py, export.py, ...)
 web/SpatialViewer/requirements-lock.txt  every package at one tested version (made from requirements*.txt)
 web/SpatialViewer/markers/  marker-gene lists for suggested cluster names (edit for your tissue)

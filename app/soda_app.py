@@ -73,7 +73,7 @@ APP_CONFIG_JS = (b"window.SpatialViewerConfig = window.SpatialViewerConfig || {}
                  b"window.SpatialViewerConfig.offlineKeep = false;\n")
 # Files next to the page that are never served (as server.py): the tools, not the page.
 _BLOCKED_SUFFIXES = (".py", ".pyc", ".ps1", ".sh", ".txt", ".md", ".password", ".csv")
-_BLOCKED_PARTS = ("__pycache__", ".venv", ".password")
+_BLOCKED_PARTS = ("__pycache__", ".venv", "soda-env", ".password")
 
 
 # ---------------------------------------------------------------------------------------------

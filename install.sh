@@ -7,18 +7,21 @@
 #
 # What it does:
 #   1. finds Python 3.12 or 3.13 (python3.13, python3.12, python3, python on the PATH)
-#   2. makes a virtual environment in .venv inside the repository (or reuses it)
+#   2. makes a virtual environment in soda-env inside the repository (or reuses it)
 #   3. upgrades pip in it
 #   4. installs the exact package versions in web/SpatialViewer/requirements-lock.txt
-#   5. checks that every package imports (tools/check_install.py, about 10 seconds; up to a
+#   5. adds what the notebook needs (ipykernel, web/SpatialViewer/requirements-notebook.txt) and
+#      registers the environment as the Jupyter kernel "SODA", so VS Code and JupyterLab list it
+#   6. checks that every package imports (tools/check_install.py, about 10 seconds; up to a
 #      minute right after a fresh install)
 #
-# No administrator rights (sudo) are needed; everything goes into .venv. Safe to run again:
-# it reuses .venv and only changes packages whose version differs from the lock file.
+# No administrator rights (sudo) are needed; everything goes into soda-env (the kernel's name goes
+# in your user's Jupyter folder). Safe to run again: it reuses soda-env and only changes packages
+# whose version differs from the lock file.
 #
 # Options:
 #   --python <path>   use this Python instead of searching for one (or set PYTHON=<path>)
-#   --venv <folder>   make the environment here instead of .venv (or set VENV=<folder>)
+#   --venv <folder>   make the environment here instead of soda-env (or set VENV=<folder>)
 #
 # The lock file covers macOS 12+ on Apple Silicon (M1 and newer) and Linux on x86_64 (glibc
 # 2.28+). Not yet run on a Mac by us. Intel Macs
@@ -29,6 +32,7 @@ set -u
 REPO="$(cd "$(dirname "$0")" && pwd)"
 LOCK="$REPO/web/SpatialViewer/requirements-lock.txt"
 CHECK="$REPO/tools/check_install.py"
+NBREQ="$REPO/web/SpatialViewer/requirements-notebook.txt"
 PYTHON="${PYTHON:-}"
 VENV="${VENV:-}"
 
@@ -40,7 +44,7 @@ while [ $# -gt 0 ]; do
     *) echo "Unknown option: $1 (see: bash install.sh --help)"; exit 2 ;;
   esac
 done
-[ -n "$VENV" ] || VENV="$REPO/.venv"
+[ -n "$VENV" ] || VENV="$REPO/soda-env"
 
 step() { printf '\n== %s\n' "$1"; }
 fail() { printf '\nSTOPPED: %s\n' "$1"; exit 1; }
@@ -54,7 +58,7 @@ supported() { [ "$1" = "3.12" ] || [ "$1" = "3.13" ]; }
 [ -f "$LOCK" ] || fail "Cannot find $LOCK. Run this script from the SODA repository folder."
 
 # ---------------------------------------------------------------- 1. Python
-step "1/5 Looking for Python 3.12 or 3.13"
+step "1/6 Looking for Python 3.12 or 3.13"
 chosen=""; chosen_info=""; found=""
 try_python() {
   [ -z "$chosen" ] || return 0
@@ -109,7 +113,7 @@ case "$plat|$machine" in
 esac
 
 # ---------------------------------------------------------------- 2. venv
-step "2/5 Virtual environment: $VENV"
+step "2/6 Virtual environment: $VENV"
 VPY="$VENV/bin/python"
 if [ -e "$VENV" ]; then
   vinfo=""
@@ -119,7 +123,7 @@ if [ -e "$VENV" ]; then
   supported "$vver" || fail "$VENV was made with Python $vver; SODA needs 3.12 or 3.13. Rename or delete that folder, then run this script again."
   echo "Already there (Python $vver); reusing it."
 else
-  if ! "$chosen" -m venv "$VENV"; then
+  if ! "$chosen" -m venv --prompt soda "$VENV"; then
     fail "Could not make the virtual environment in $VENV (see the message above).
          On Debian or Ubuntu the venv module is a separate package: sudo apt install python$ver-venv
          (this one step needs administrator rights), then run this script again."
@@ -129,20 +133,27 @@ else
 fi
 
 # ---------------------------------------------------------------- 3. pip
-step "3/5 Upgrading pip"
+step "3/6 Upgrading pip"
 "$VPY" -m pip install --disable-pip-version-check --upgrade pip \
   || fail "pip could not be upgraded. Check the internet connection (and proxy settings), then run this script again."
 
 # ---------------------------------------------------------------- 4. packages
-step "4/5 Installing the pinned packages (a few minutes the first time)"
+step "4/6 Installing the pinned packages (a few minutes the first time)"
 "$VPY" -m pip install --disable-pip-version-check -r "$LOCK" \
   || fail "Installing the packages failed; the lines above name the package. Check the internet connection
          and run this script again (it continues where it stopped)."
 "$VPY" -m pip check --disable-pip-version-check \
   || fail "pip check found packages that do not fit together (listed above). Please report this with the output."
 
-# ---------------------------------------------------------------- 5. check
-step "5/5 Checking that everything imports"
+# ---------------------------------------------------------------- 5. notebook
+step "5/6 Notebook support: ipykernel, and the Jupyter kernel SODA"
+"$VPY" -m pip install --disable-pip-version-check -r "$NBREQ" \
+  || fail "Installing ipykernel failed (see above). Check the internet connection and run this script again."
+"$VPY" -m ipykernel install --user --name soda --display-name "SODA" \
+  || fail "Registering the Jupyter kernel SODA failed (see above). Please report this with the output."
+
+# ---------------------------------------------------------------- 6. check
+step "6/6 Checking that everything imports"
 "$VPY" "$CHECK" || fail "The import check failed (see above). Please report this with the output."
 
 case "$VENV" in
@@ -151,6 +162,13 @@ case "$VENV" in
 esac
 echo
 echo "SODA is installed."
+echo
+echo "In VS Code: open notebooks/SODA_pipeline.ipynb, then Select Kernel (top right) > Python Environments > soda-env"
+echo "  (or Select Kernel > Jupyter Kernel > SODA). In JupyterLab: the kernel called SODA."
+if [ -d "$REPO/.venv" ] && [ "$VENV" != "$REPO/.venv" ]; then
+  echo
+  echo "Note: $REPO/.venv is from an older SODA install (SODA now uses soda-env). You can delete that folder."
+fi
 echo
 echo "Next, from the repository folder, turn the environment on in your window:"
 echo "  source $rel/bin/activate"

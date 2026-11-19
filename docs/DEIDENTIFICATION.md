@@ -131,7 +131,7 @@ It looks at:
   `content <path>:<line> -> looks like a sample ID (not shown)`, never the ID (10 lines per
   file, then a count).
 
-It skips `.venv`, `__pycache__`, `.git`, `tiles` and `gene` folders (image tiles and
+It skips `soda-env`, `.venv`, `__pycache__`, `.git`, `tiles` and `gene` folders (image tiles and
 per-gene files: binary, named by numbers and gene symbols), and `*.link.txt` files
 (encrypted, random-looking text). A line containing the marker `deid:ok` is skipped: it is
 meant for documented, made-up examples in source code. Do not use it to silence a real hit.

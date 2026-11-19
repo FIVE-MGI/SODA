@@ -9,18 +9,21 @@ From the repository folder, in PowerShell or Command Prompt:
 
 What it does:
   1. finds Python 3.12 or 3.13 (the py launcher first, then python on the PATH)
-  2. makes a virtual environment in .venv inside the repository (or reuses it)
+  2. makes a virtual environment in soda-env inside the repository (or reuses it)
   3. upgrades pip in it
   4. installs the exact package versions in web\SpatialViewer\requirements-lock.txt
-  5. checks that every package imports (tools\check_install.py, about 10 seconds; up to a
+  5. adds what the notebook needs (ipykernel, web\SpatialViewer\requirements-notebook.txt) and
+     registers the environment as the Jupyter kernel "SODA", so VS Code and JupyterLab list it
+  6. checks that every package imports (tools\check_install.py, about 10 seconds; up to a
      minute right after a fresh install)
 
-No administrator rights are needed; everything goes into .venv. Safe to run again: it reuses
-.venv and only changes packages whose version differs from the lock file.
+No administrator rights are needed; everything goes into soda-env (the kernel's name goes in your
+user's Jupyter folder). Safe to run again: it reuses soda-env and only changes packages whose
+version differs from the lock file.
 
 Options:
   -Python <path to python.exe>   use this Python instead of searching for one
-  -Venv <folder>                 make the environment here instead of .venv
+  -Venv <folder>                 make the environment here instead of soda-env
 #>
 param(
     [string]$Python = "",
@@ -31,7 +34,8 @@ $ErrorActionPreference = "Continue"
 $Repo = $PSScriptRoot
 $Lock = Join-Path $Repo "web\SpatialViewer\requirements-lock.txt"
 $Check = Join-Path $Repo "tools\check_install.py"
-if (-not $Venv) { $Venv = Join-Path $Repo ".venv" }
+$NbReq = Join-Path $Repo "web\SpatialViewer\requirements-notebook.txt"
+if (-not $Venv) { $Venv = Join-Path $Repo "soda-env" }
 $Supported = @("3.12", "3.13")
 
 function Say($text) { Write-Host $text }
@@ -61,7 +65,7 @@ if (-not (Test-Path $Lock)) {
 }
 
 # ---------------------------------------------------------------- 1. Python
-Step "1/5 Looking for Python 3.12 or 3.13"
+Step "1/6 Looking for Python 3.12 or 3.13"
 $candidates = @()
 if ($Python) {
     $candidates += ,@($Python, @())
@@ -103,7 +107,7 @@ if (-not $chosen) {
 Say ("Using Python {0} at {1}" -f $chosen.Version, $chosen.Path)
 
 # ---------------------------------------------------------------- 2. venv
-Step "2/5 Virtual environment: $Venv"
+Step "2/6 Virtual environment: $Venv"
 $VenvPy = Join-Path $Venv "Scripts\python.exe"
 if (Test-Path $Venv) {
     $existing = $null
@@ -117,7 +121,7 @@ if (Test-Path $Venv) {
     Say ("Already there (Python {0}); reusing it." -f $existing.Version)
 } else {
     $pre = @($chosen.Pre | Where-Object { $_ })
-    & $chosen.Exe @pre -m venv $Venv
+    & $chosen.Exe @pre -m venv --prompt soda $Venv
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $VenvPy)) {
         Fail "Could not make the virtual environment in $Venv (see the message above)."
     }
@@ -125,26 +129,40 @@ if (Test-Path $Venv) {
 }
 
 # ---------------------------------------------------------------- 3. pip
-Step "3/5 Upgrading pip"
+Step "3/6 Upgrading pip"
 & $VenvPy -m pip install --disable-pip-version-check --upgrade pip
 if ($LASTEXITCODE -ne 0) {
     Fail "pip could not be upgraded. Check the internet connection (and proxy settings), then run this script again."
 }
 
 # ---------------------------------------------------------------- 4. packages
-Step "4/5 Installing the pinned packages (a few minutes the first time)"
+Step "4/6 Installing the pinned packages (a few minutes the first time)"
 & $VenvPy -m pip install --disable-pip-version-check -r $Lock
 if ($LASTEXITCODE -ne 0) {
     Fail ("Installing the packages failed; the lines above name the package. Check the internet connection`n" +
-          "         and run this script again (it continues where it stopped).")
+          "         and run this script again (it continues where it stopped). If it says No such file or directory`n" +
+          "         with a long path: move the SODA folder somewhere short, such as C:\soda, and run it there.")
 }
 & $VenvPy -m pip check --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) {
     Fail "pip check found packages that do not fit together (listed above). Please report this with the output."
 }
 
-# ---------------------------------------------------------------- 5. check
-Step "5/5 Checking that everything imports"
+# ---------------------------------------------------------------- 5. notebook
+Step "5/6 Notebook support: ipykernel, and the Jupyter kernel SODA"
+& $VenvPy -m pip install --disable-pip-version-check -r $NbReq
+if ($LASTEXITCODE -ne 0) {
+    Fail ("Installing ipykernel failed (see above). Check the internet connection and run this script again.`n" +
+          "         If it says No such file or directory with a long path: Windows limits paths to 260 characters.`n" +
+          "         Move the SODA folder somewhere short, such as C:\soda, and run this script again there.")
+}
+& $VenvPy -m ipykernel install --user --name soda --display-name "SODA"
+if ($LASTEXITCODE -ne 0) {
+    Fail "Registering the Jupyter kernel SODA failed (see above). Please report this with the output."
+}
+
+# ---------------------------------------------------------------- 6. check
+Step "6/6 Checking that everything imports"
 & $VenvPy $Check
 if ($LASTEXITCODE -ne 0) {
     Fail "The import check failed (see above). Please report this with the output."
@@ -156,6 +174,14 @@ if ($Venv.StartsWith($Repo, [System.StringComparison]::OrdinalIgnoreCase)) {
 }
 Write-Host ""
 Write-Host "SODA is installed." -ForegroundColor Green
+Say ""
+Say "In VS Code: open notebooks\SODA_pipeline.ipynb, then Select Kernel (top right) > Python Environments > soda-env"
+Say "  (or Select Kernel > Jupyter Kernel > SODA). In JupyterLab: the kernel called SODA."
+$old = Join-Path $Repo ".venv"
+if ((Test-Path $old) -and ($Venv -ne $old)) {
+    Say ""
+    Say "Note: $old is from an older SODA install (SODA now uses soda-env). You can delete that folder."
+}
 Say ""
 Say "Next, from the repository folder, turn the environment on in your window:"
 Say "  PowerShell:      $rel\Scripts\Activate.ps1"

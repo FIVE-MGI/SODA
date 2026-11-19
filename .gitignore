@@ -17,6 +17,7 @@ sample_id_key.csv
 
 # Python / Node
 .venv/
+soda-env/
 __pycache__/
 *.pyc
 node_modules/

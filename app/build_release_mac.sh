@@ -19,7 +19,7 @@
 #
 # Usage:
 #     ./app/build_release_mac.sh
-#     ./app/build_release_mac.sh --version 0.2.0 --out-root /Volumes/Scratch/soda --python .venv/bin/python
+#     ./app/build_release_mac.sh --version 0.2.0 --out-root /Volumes/Scratch/soda --python soda-env/bin/python
 #     ... --require-vendor    fail unless web/SpatialViewer/vendor/ (deck.gl, umap-js) is there and checks out
 #                             (release builds: python web/SpatialViewer/prepare.py vendor first)
 #
@@ -48,7 +48,7 @@ done
 printf '%s' "$VERSION" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z.+-]*$' || { echo "version '$VERSION' is not a plain version string" >&2; exit 2; }
 
 if [[ -z "$PY" ]]; then
-    if [[ -x "$REPO/.venv/bin/python" ]]; then PY="$REPO/.venv/bin/python"; else PY="$(command -v python3 || true)"; fi
+    if [[ -x "$REPO/soda-env/bin/python" ]]; then PY="$REPO/soda-env/bin/python"; elif [[ -x "$REPO/.venv/bin/python" ]]; then PY="$REPO/.venv/bin/python"; else PY="$(command -v python3 || true)"; fi
 fi
 [[ -n "$PY" ]] || { echo "no python found: run install.sh first, or pass --python" >&2; exit 1; }
 ARCH="$(uname -m)"

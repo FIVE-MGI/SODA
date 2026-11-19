@@ -24,7 +24,7 @@ git checkout v0.9.0
 
 ## 2. The environment
 
-**Python 3.12 or 3.13, 64-bit.** The install script makes `.venv` in the repository and
+**Python 3.12 or 3.13, 64-bit.** The install script makes `soda-env` in the repository and
 installs every package at one exact version from the lock file:
 
 ```bash

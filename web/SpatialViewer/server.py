@@ -51,7 +51,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "H
 
 # Files in this folder that must never be served (the page's own html/js/css are fine).
 _BLOCKED_SUFFIXES = (".py", ".pyc", ".ps1", ".txt", ".md", ".password")
-_BLOCKED_PARTS = ("/.venv/", "/__pycache__/", "/.password")
+_BLOCKED_PARTS = ("/.venv/", "/soda-env/", "/__pycache__/", "/.password")
 
 
 def _blocked_path(path: str) -> bool:

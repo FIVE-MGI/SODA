@@ -1493,7 +1493,7 @@ panel or species than the slide's; a slide with two panels needs both PKC files.
 **Windows: `FileNotFoundError` while the UMAP starts.** umap-learn's compiler writes cache
 files inside the Python environment. If that environment sits in a deeply nested folder the
 full path can pass Windows' 260-character limit. Keep the virtual environment at a short
-path such as `<repo>\.venv`, or enable long paths in Windows.
+path such as `<repo>\soda-env`, or enable long paths in Windows.
 
 **`[umap] ...: skipped - umap is not installed`.** Install
 `requirements-clustering.txt`, delete nothing, and run the export again: existing tiles are

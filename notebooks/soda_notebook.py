@@ -116,7 +116,7 @@ def check_packages():
     for w in wrong:
         print("  WRONG VERSION:", w)
     if wrong or any(need[m] == "core" for m in missing):
-        print("\nThis Python is not set up for SODA. Make the .venv above, install the requirements in it,"
+        print("\nThis Python is not set up for SODA. Make the soda-env above, install the requirements in it,"
               "\nand run this notebook with that environment. Stop here until this cell shows no MISSING core or WRONG lines.")
 
 
