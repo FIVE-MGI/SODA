@@ -11,6 +11,10 @@ web/SpatialViewer/vendor/
 sample_id_key.csv
 *_key.csv
 
+# Secrets: server.py's password file and any local environment file
+.password
+.env
+
 # Python / Node
 .venv/
 __pycache__/

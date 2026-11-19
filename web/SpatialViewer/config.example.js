@@ -52,6 +52,8 @@ window.SpatialViewerConfig = {
   // Set this and leave `datasets` above empty: the page then lists every dataset in that
   // folder, with the titles, groups and settings in its datasets.json.
   // data: "https://yourstorage.example.org/soda-export/",
+  // (site.js, kept in git, can name a folder too: the page opens it only when neither the
+  // link nor this file names any data. This file wins.)
 
   // Whether this page also opens other people's folders from a link
   // (index.html?data=<their folder>). On by default, off when tokenEndpoint is set.

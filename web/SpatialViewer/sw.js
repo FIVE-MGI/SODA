@@ -190,9 +190,9 @@ async function fromApp(e) {
   try {
     const r = await fetch(req);
     if (r.ok && r.type === "basic" && !r.redirected) {
-      // keep what this version uses: a file with a ?v= once, a marker list or config.js whenever it changes
+      // keep what this version uses: a file with a ?v= once, a marker list, config.js or site.js whenever it changes
       const u = req.url, copy = r.clone();
-      const fixed = /[?&]v=/.test(u) && !/\/config\.js\?/.test(u);
+      const fixed = /[?&]v=/.test(u) && !/\/(?:config|site)\.js\?/.test(u);
       e.waitUntil((async () => {
         // a newer version took over (and deleted this cache) while this worker still answered: keep nothing
         if (!current() || !(await caches.has(APP_CACHE))) return;

@@ -4728,6 +4728,20 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
                          ("onTileError: () => {}", "tile errors are handled in getTileData (reported by fetchTile)"),
                          ("Math.min(cfg.tileCacheSize || touchMax, touchMax)", "config.js cannot lift the touch tile-cache limit")):
         c.ok(needle in js, f"viewer.js: {what} ({needle!r} not found)")
+    # site.js: the tracked default data folder (a site published straight from the repository has no config.js)
+    sj = (APP / "site.js").read_text(encoding="utf-8")
+    m = re.search(r'\bdata:\s*"([^"]*)"', sj)
+    c.ok("window.SodaSite" in sj and m is not None and (m.group(1) == "" or m.group(1).startswith("https://")),
+         f"site.js: window.SodaSite with data empty or an https:// link ({m.group(1) if m else 'no data:'})")
+    # site.js is public (in git and on GitHub Pages): a read pass (SAS) in its link would publish the pass
+    c.ok(m is None or not re.search(r"[?&](sig|sv|se|sp|skoid)=", m.group(1)),
+         "site.js: the data link has no read pass (sig=/sv=/se=/sp=); only a public-read folder goes there")
+    c.ok("site.js" in names and "config.js" in names and names.index("site.js") < names.index("config.js") < names.index("viewer.js"),
+         "index.html: site.js loads before config.js and viewer.js")
+    c.ok(all(k in js for k in ("window.SodaSite", 'params.get("static")', "TOKEN_URL || (cfg.datasets", '|| SITE_DATA;')),
+         "viewer.js: site.js's folder is used only when no link, ?static=/?api=, config.js data/datasets/server or password names data")
+    c.ok("No datasets: add entries to config.js" not in js and "open the SODA link you were given" in js,
+         "viewer.js: the page with no data says in plain words how to open a link")
     dj = (APP / "diag.js").read_text(encoding="utf-8")
     c.ok('get("diag") !== "1"' in dj, "diag.js: the panel must stay off without ?diag=1")
     node = shutil.which("node")

@@ -135,6 +135,19 @@ def _import_umap():
     return umap
 
 
+def _umap_legacy(umap) -> dict:
+    """compatibility_layout=True where umap-learn has it (0.6+): the 0.5.x pipeline SODA was
+    tested with, i.e. the same embedding as without it, and no FutureWarning on every export.
+    Older umap-learn (0.5.x) has no such argument and is that pipeline already."""
+    import inspect
+    try:
+        if "compatibility_layout" in inspect.signature(umap.UMAP.__init__).parameters:
+            return {"compatibility_layout": True}
+    except (TypeError, ValueError):
+        pass
+    return {}
+
+
 def _graph(graph: sparse.spmatrix, ig):
     g = sparse.triu(sparse.csr_matrix(graph), k=1).tocoo()
     G = ig.Graph(n=graph.shape[0], edges=np.column_stack([g.row, g.col]).tolist(), directed=False)
@@ -258,7 +271,7 @@ def embed_and_cluster(pcs: np.ndarray, markers_of, libs, key, log=print, t0: flo
     t0 = time.time() if t0 is None else t0
     # random_state makes umap-learn single-threaded: slower, but the same bytes every run
     reducer = umap.UMAP(n_neighbors=N_NEIGHBORS, min_dist=MIN_DIST, n_components=2, metric="euclidean",
-                        init=INIT, random_state=SEED, transform_seed=SEED)
+                        init=INIT, random_state=SEED, transform_seed=SEED, **_umap_legacy(umap))
     rest = nn = None
     if sample is None:
         emb = reducer.fit_transform(pcs).astype(np.float32)

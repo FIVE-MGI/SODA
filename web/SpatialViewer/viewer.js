@@ -373,9 +373,18 @@
   // page then opens it with no ?data= on the link. That one is the site owner's choice, so it
   // is allowed even where links from outside are not. A ?data= on the link still wins.
   const DATA_LINKS = cfg.allowDataLinks !== undefined ? !!cfg.allowDataLinks : !TOKEN_URL;
+  // site.js (kept in git, unlike config.js): the folder a page published straight from the
+  // repository opens when nothing names one; it never overrides a link, ?static=/?api= or config.js.
+  const SITE_DATA = (() => {
+    const s = window.SodaSite;
+    const v = s && typeof s.data === "string" ? s.data.trim() : "";
+    const other = params.get("static") || params.get("api") || cfg.data || cfg.apiBase || cfg.useLocalServer
+      || TOKEN_URL || (cfg.datasets && Object.keys(cfg.datasets).length);
+    return other ? "" : v;
+  })();
   const DATA = (() => {
     const fromLink = (params.get("data") || "").trim();
-    const raw = fromLink || (typeof cfg.data === "string" ? cfg.data.trim() : "");
+    const raw = fromLink || (typeof cfg.data === "string" ? cfg.data.trim() : "") || SITE_DATA;
     if (!raw) return null;
     if (fromLink && !DATA_LINKS) return { error: "this site does not open data links (it is password-protected)" };
     let u;
@@ -6896,7 +6905,7 @@
         const paper = text(cat.paper, 2000);
         dataPaper = /^https:\/\//i.test(paper) ? paper : "";         // a link that opens a page, nothing else
         dataDefault = text(cat.default, 200);
-        if (!S.datasets.length) { status(`The folder's datasets.json lists no datasets: ${DATA.root}`, true); return; }
+        if (!S.datasets.length) { status(`This data folder lists no datasets. Check its datasets.json (catalog.py writes it): ${DATA.root}`, true); return; }
       } catch (e) {
         const ds = params.get("ds");
         // the link may name one dataset's own folder (the one holding manifest.json), not the folder above
@@ -7133,7 +7142,16 @@
       if (renderPending) render(); else updateHud();
     }).observe($("viewport"));
 
-    if (!S.datasets.length) { status("No datasets: add entries to config.js (static links) or set apiBase", true); return; }
+    // nothing named any data: on the shared page (no site.js data) that is a visitor without a link
+    if (!S.datasets.length) {
+      // (a data folder with an empty list already stopped above, at datasets.json)
+      status(useServer ? "The data server lists no datasets."
+        : DATA ? "This data folder lists no datasets."
+        : "No data to show yet. To look at a dataset, open the SODA link you were given (it ends in ?data=…). " +
+          "To share your own data, see docs/SHARE_YOUR_DATA.md in the SODA repository. " +
+          "Site owners: name a data folder in site.js or config.js (data:).", !!(DATA || useServer));
+      return;
+    }
     const want = params.get("ds") || dataDefault || cfg.defaultDataset;
     const first = S.datasets.find((d) => d.id === want) || S.datasets[0];
     await openDataset(first.id);
