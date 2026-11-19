@@ -423,7 +423,10 @@ def prepare_args(d):
 def rnaseq_args(d):
     """The prepare.py command for single-cell RNA-seq: straight into export/ (no cache)."""
     o = state.options.get(d["id"], {})
-    return [PY, SV / "prepare.py"] + d["argv"] + ["--id", d["id"], "--label", o.get("label", d["id"]), "--dest", state.export]
+    a = [PY, SV / "prepare.py"] + d["argv"] + ["--id", d["id"], "--label", o.get("label", d["id"]), "--dest", state.export]
+    if o.get("embedding"):                             # OPTIONS: which obsm key is the map (else X_umap, a t-SNE, then PCA)
+        a += ["--embedding", o["embedding"]]
+    return a
 
 
 def prepare_all():

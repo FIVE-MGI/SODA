@@ -102,6 +102,12 @@ def read_h5ad(path: Path, embedding: str = "X_umap"):
             if k in obsm:
                 emb = np.asarray(obsm[k][()], dtype=np.float32)[:, :2]
                 break
+        if emb is None and embedding == "X_umap":       # no UMAP and none asked for: a t-SNE, then PCA (detect.py says so)
+            import detect
+            alt = detect.pick_embedding(list(obsm.keys()), embedding)
+            if alt:
+                print(f"[rnaseq] {path.name}: no X_umap in obsm; showing obsm['{alt}'] as the map", flush=True)
+                emb = np.asarray(obsm[alt][()], dtype=np.float32)[:, :2]
     if emb is None:
         raise SystemExit(f"{path.name}: no '{embedding}' in obsm - export the UMAP from Seurat/scanpy first "
                          f"(found: {list(obsm.keys()) if obsm is not None else 'no obsm'})")

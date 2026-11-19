@@ -86,8 +86,9 @@ WHOLE_SECTION_GB = 8.5          # largest measured peak (README, Requirements): 
 FILE_OPTIONS = ("image", "outs", "gef", "gem", "cellbin", "tissue_mask", "dcc", "pkc", "annotation", "cells_dir",
                 "h5ad", "mtx", "umap", "obs", "images",
                 # standard formats: choices, not files (detect.OVERRIDE_FLAGS)
-                "library", "series", "table", "region", "coordinate_system", "image_element")
-CHOICE_OPTIONS = {"images", "library", "series", "table", "region", "coordinate_system", "image_element"}
+                "library", "series", "table", "region", "coordinate_system", "image_element",
+                "embedding")                    # single-cell .h5ad: which obsm key is the map (default X_umap)
+CHOICE_OPTIONS = {"images", "library", "series", "table", "region", "coordinate_system", "image_element", "embedding"}
 # Options of the kind's own command, and the kinds that take them (the notebook's prepare_args, notebooks/soda_notebook.py):
 KIND_OPTIONS = {"pixel_size": None, "channels": ("tiff", "omezarr"), "image_scale": ("visium", "anndata"),
                 "no_cells": ("xenium", "cosmx", "merscope"),

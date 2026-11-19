@@ -923,7 +923,9 @@ From an AnnData file (scanpy; or Seurat converted with SeuratDisk or sceasy):
 python web/SpatialViewer/prepare.py rnaseq --id pbmc_cells --label "All cells" --h5ad path/to/cells.h5ad --dest export
 ```
 
-- The embedding is read from `obsm["X_umap"]` (change with `--embedding X_tsne` etc.).
+- The embedding is read from `obsm["X_umap"]`. Without one, SODA uses a UMAP under another name, then a t-SNE
+  (`X_tsne`), then another 2-D layout, then the first two PCA components, and Section 2 says which. To pick one
+  yourself: `--embedding X_tsne` (notebook: `OPTIONS["<id>"] = {"embedding": "X_tsne"}`).
 - Gene names come from the first of the `var` columns `gene_symbols`, `feature_name`,
   `gene_name`, `gene_names`, `features`, `name`, else the `var` index.
 - `obs` columns with 2-200 distinct values become colour-by categories; numeric columns

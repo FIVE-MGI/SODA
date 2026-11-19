@@ -382,6 +382,22 @@ def csv_first_cell(path) -> str | None:
     return line.split(",")[0].strip().strip('"').strip().lower()
 
 
+def pick_embedding(keys, want: str = "X_umap") -> str | None:
+    """The obsm key to draw as the map when `want` is not in an .h5ad: a UMAP under another name, else a
+    t-SNE, else another 2-D layout (PHATE, ForceAtlas2, MDE...), else the PCA (its first two components).
+    Never the spatial positions. None when obsm has nothing usable. rnaseq.read_h5ad uses the same order."""
+    keys = [k for k in keys if "spatial" not in k.lower()]
+    if want in keys:
+        return want
+    tiers = (("umap",), ("tsne", "t-sne"), ("phate", "draw_graph", "fa2", "forceatlas", "mde", "densmap", "trimap", "pacmap"),
+             ("pca",))
+    for words in tiers:
+        hit = sorted(k for k in keys if any(w in k.lower() for w in words))
+        if hit:
+            return hit[0]
+    return None
+
+
 def h5ad_obsm(path) -> dict | None:
     """{"obsm": [keys]} of an AnnData file, {"error": ...} when it is not one, None without h5py."""
     try:
@@ -1372,11 +1388,21 @@ def find_rnaseq(cx: Ctx, skip_dir, skip_file, want: str | None = None) -> list[d
                 _miss(c, f"{n}: {info['error']}")
             else:
                 keys = info["obsm"]
+                alt = None if cx.ov.get("embedding") else pick_embedding(keys, emb)
                 if any(k in keys for k in (emb, emb.upper(), "X_UMAP", "umap", "UMAP")):
                     _ev(c, "UMAP", f"obsm of {n}", ", ".join(keys))
+                elif alt:
+                    what = "t-SNE" if "sne" in alt.lower() else "PCA (its first two components)" if "pca" in alt.lower() else "map"
+                    _ev(c, "map of the cells", f"obsm['{alt}'] of {n}: there is no X_umap, so SODA shows this {what} as the UMAP",
+                        ", ".join(keys))
+                    others = [k for k in keys if k != alt and "spatial" not in k.lower()]
+                    if others:
+                        c["notes"].append(f"to show another one instead, paste into OPTIONS: \"embedding\": \"{others[0]}\"   "
+                                          f"(the ones in the file: {', '.join(keys)})")
                 else:
-                    _miss(c, f"an embedding in obsm ('{emb}' not found; obsm holds: {', '.join(keys) or 'nothing'})", "embedding",
-                          "add --embedding <one of those keys>, or save the UMAP into the file from scanpy / Seurat first")
+                    _miss(c, f"a map of the cells (a UMAP or t-SNE) in the file: its obsm holds {', '.join(keys) or 'nothing'}", "embedding",
+                          "save a UMAP into the file first (scanpy: sc.pp.neighbors(adata); sc.tl.umap(adata); "
+                          "adata.write_h5ad(...)), then run this check again")
             c["args"]["h5ad"] = t.path(rel, n)
             out.append(c)
     if want == "anndata":
@@ -2202,6 +2228,8 @@ def option_lines(rep: dict, ds_id: str, name: str = "OPTIONS") -> list[str]:
             out.append("  " + m["fix"])
         elif m["arg"] and m["arg"] in KIND_ARGS[c["kind"]]:
             out.append("  or point at it: " + entry(kind=c["kind"], **{m["arg"]: "<path>"}))
+        elif m["arg"] and m["arg"] in OVERRIDE_FLAGS and not m["fix"].startswith("add --"):
+            out.append("  " + m["fix"])
         elif m["arg"]:
             out.append("  " + m["fix"].replace("add --" + m["arg"], f'set "{m["arg"]}" in {name}["{ds_id}"]:'))
     return out
