@@ -3,7 +3,7 @@
 // Firefox (Firefox is skipped, with a SKIPPED line, when Playwright's Firefox is not installed).
 // The same steps in each browser, on a page server and a data server of its own (the data on another
 // origin, as blob storage):
-//   online    the demo dataset opens (?static=); the service worker installs and takes over; its caches
+//   online    the public merscope_2 opens (?static=; small enough to keep); the service worker installs and takes over; its caches
 //             hold index.html, the ?v= files, the workers, the marker lists, deck.gl and umap-js; nothing
 //             of the data is kept. The CDN bytes the browser received are saved (temp folder) and their
 //             SHA-384 checked against libs.js.
@@ -11,7 +11,7 @@
 //             a view link is made.
 //   offline   context.setOffline(true) (WebKit: both servers refuse connections, see run()), reload: the page and the dataset open, tiles drawn; Draw a region
 //             (two circles) and Run UMAP (umap-js in the worker); a marker list reads; the view link opens
-//             in a second window; a dataset that was not kept says so.
+//             in a second window; a dataset that was not kept (phenocycler_pub) says so.
 //   update    back online, the page served with every ?v= string changed (a new publish): reload, the new
 //             version's cache replaces the old one (only one soda-app cache of this folder), and the page
 //             opens offline again from the new one.
@@ -21,10 +21,11 @@
 //             the vendor/ copies; offline, Run UMAP works from them. Then vendor.py --from <saved> checks and
 //             copies them into a temp folder (exit 0), and --check on an empty one says missing (exit 1).
 //
-//   node tests/offline_test.js [--export demo/export] [--shots <dir>] [--only chromium,webkit,firefox] [--python <exe>]
+//   node tests/offline_test.js [--data-root <url or folder>] [--shots <dir>] [--only chromium,webkit,firefox] [--python <exe>]
 //
-// Playwright as for tests/browsers_test.js (NODE_PATH / --playwright, PLAYWRIGHT_BROWSERS_PATH). Without it,
-// without the demo export, or without the CDN (no internet: the first visit needs it), SKIPPED, exit 0.
+// Playwright as for tests/browsers_test.js (NODE_PATH / --playwright, PLAYWRIGHT_BROWSERS_PATH). The data: the public
+// exports (tests/test_data.js: SODA_TEST_DATA or --data-root). Without Playwright, without the data, or without the
+// CDN (no internet: the first visit needs it), SKIPPED, exit 0.
 // The existing browser tests block service workers (serviceWorkers: "block") so that their page.route
 // rules see every request; this one allows them and routes nothing.
 // Firefox: context.setOffline works there as in Chromium (the service worker answers). Firefox logs one console
@@ -41,12 +42,12 @@ const { spawnSync } = require("child_process");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
+const D = require("./test_data");                              // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const SHOTS = arg("--shots", "");
 const ONLY = arg("--only", "chromium,webkit,firefox").split(",").filter(Boolean);
 const PYTHON = arg("--python", "");
-const DS = "demo_visiumhd", OTHER = "demo_multiplex";
+const DS = "merscope_2", OTHER = "phenocycler_pub";             // kept / not kept (merscope_2: the smallest public export)
 
 let pw = null;
 for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").split(path.delimiter), path.join(REPO, "node_modules")].filter(Boolean)) {
@@ -54,9 +55,6 @@ for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").sp
 }
 if (!pw) { try { pw = require("playwright"); } catch (e) { /* none */ } }
 if (!pw) { console.log("SKIPPED: playwright is not installed (see tests/browsers_test.js)"); process.exit(0); }
-if (!fs.existsSync(path.join(EXPORT, DS, "manifest.json"))) {
-  console.log(`SKIPPED: no demo export at ${EXPORT} (run tests/smoke_test.py first, or pass --export)`); process.exit(0);
-}
 
 // the pinned libraries, from libs.js (as vendor.py reads them)
 const LIBS = JSON.parse(/\/\* LIBS-JSON \*\/([\s\S]*?)\/\* END-LIBS-JSON \*\//.exec(fs.readFileSync(path.join(PAGE, "libs.js"), "utf-8"))[1]);
@@ -72,13 +70,14 @@ const inside = (root, rel) => { const f = path.join(root, rel); return f.startsW
 const catDir = path.join(TMP, "cat");
 fs.mkdirSync(catDir);
 fs.writeFileSync(path.join(catDir, "datasets.json"), JSON.stringify({ soda: 1, title: "Offline test", default: DS,
-  datasets: [DS, OTHER].filter((id) => fs.existsSync(path.join(EXPORT, id, "manifest.json"))).map((id) => ({ id, label: `Demo ${id}` })) }));
+  datasets: [DS, OTHER].map((id) => ({ id, label: `Public ${id}` })) }));
 function dataHandler(req, res) {
   if (NET.down) { req.socket.destroy(); return; }
   if (req.method === "OPTIONS") { preflight(req, res); return; }
   const u = decodeURIComponent(req.url.split("?")[0]);
   const m = /^\/plain(\/.*)$/.exec(u);
-  const file = m ? (m[1] === "/datasets.json" ? path.join(catDir, "datasets.json") : inside(EXPORT, m[1])) : null;
+  if (m && m[1] !== "/datasets.json") { D.serve(req, res, m[1].slice(1), TYPES[path.extname(m[1])]); return; }   // tests/test_data.js
+  const file = m ? path.join(catDir, "datasets.json") : null;
   if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
   sendFile(req, res, file, TYPES[path.extname(file)]);
 }
@@ -173,9 +172,12 @@ async function run(browserType, eng, urls) {
     const ready = await until(page, () => !document.getElementById("panelLasso").hidden && window.__spatialViewer.state.lasso && window.__spatialViewer.state.lasso.hvg, null, 30000);
     if (!ready) return { error: "Draw a region is not offered" };
     const box = await ev(() => { const r = document.getElementById("viewport").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
-    for (const [fx, fy] of [[0.42, 0.45], [0.6, 0.55]]) {
+    // centred on two bins (a third and two thirds down the bin list), so each circle is over tissue whatever its shape
+    const at = await ev(() => { const sv = window.__spatialViewer, pos = sv.state.lasso.pos, n = pos.length / 2, vp = sv.deck.getViewports()[0];
+      return [0.37, 0.63].map((f) => { const r = Math.floor(n * f), p = vp.project([pos[2 * r], pos[2 * r + 1]]); return [p[0], p[1]]; }); });
+    for (const [px, py] of at) {
       await ev(() => { if (window.__spatialViewer.state.lasso.tool !== "circle") document.getElementById("lassoCircle").click(); });
-      const cx = box.x + box.w * fx, cy = box.y + box.h * fy, rad = Math.min(box.w, box.h) * 0.09;
+      const cx = box.x + px, cy = box.y + py, rad = Math.min(box.w, box.h) * 0.09;
       await page.mouse.move(cx, cy); await page.mouse.down();
       for (let i = 1; i <= 6; i++) await page.mouse.move(cx + (rad * i) / 6, cy);
       await page.mouse.up();
@@ -297,7 +299,7 @@ async function run(browserType, eng, urls) {
   await shot(p2, "5_offline_view_link");
   await p2.close();
   // a dataset that was not kept: says so
-  if (fs.existsSync(path.join(EXPORT, OTHER, "manifest.json"))) {
+  if (await D.has(OTHER)) {
     const p3 = watch(await A.ctx.newPage(), { console: [], pageErrors: [] });
     await p3.goto(`${urls.page}/?static=${encodeURIComponent(urls.data + "/plain")}&ds=${OTHER}`, { waitUntil: "load" }).catch(() => {});
     const said = await until(p3, () => /not kept for offline use/.test((document.getElementById("status") || {}).textContent || ""), null, 30000);
@@ -386,9 +388,10 @@ async function run(browserType, eng, urls) {
 }
 
 (async () => {
+  await D.need([DS]);
   const data = await listen(dataHandler), pg = await listen(pageHandler);
   const urls = { data: `http://127.0.0.1:${data.address().port}`, page: `http://127.0.0.1:${pg.address().port}` };
-  console.log(`offline test: page ${urls.page}, data ${urls.data}, export ${EXPORT}`);
+  console.log(`offline test: page ${urls.page}, data ${urls.data}, from ${D.describe()}`);
   const done = {};
   // the first visit needs the CDN: without internet, skip
   try {
