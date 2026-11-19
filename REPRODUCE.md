@@ -88,8 +88,9 @@ byte-identical with 1, 8 and 24 threads on the datasets compared. The smoke test
 
 ## 5. The public example exports
 
-The seven public datasets of section [9](#9-the-public-datasets), prepared and exported with
-SODA, are online in one folder with its `datasets.json`:
+Four of the datasets of section [9](#9-the-public-datasets) (`xenium_pub`, `visiumhd_pub`,
+`phenocycler_pub`, `merscope_2`), prepared and exported with SODA, are online in one folder
+with its `datasets.json`:
 
 ```
 https://fivestore.blob.core.windows.net/soda/examples/
@@ -99,6 +100,10 @@ Open them on the shared page, or from your own copy as in the README's
 [Try it in 5 minutes](README.md#try-it-in-5-minutes), with
 `index.html?data=https://fivestore.blob.core.windows.net/soda/examples/`. The tests open these
 exports (sections [6](#6-the-smoke-test) and [7](#7-the-browser-tests)).
+
+The other three (`cosmx_1`, `stereoseq_1`, `geomx_1`) are not redistributed, for licence
+reasons (see the table in section 9): download them from their sources with the commands in
+section [9](#9-the-public-datasets).
 
 ## 6. The smoke test
 
