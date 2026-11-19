@@ -124,14 +124,14 @@ An image dataset is tens of thousands of small files. AzCopy handles that well a
 resume an interrupted upload. Run from the repository folder:
 
 ```bash
-azcopy copy "demo/export/demo_visiumhd" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive
+azcopy copy "export/my_dataset" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive
 ```
 
-That creates `<container>/demo_visiumhd/...`. To upload every dataset in the export
+That creates `<container>/my_dataset/...`. To upload every dataset in the export
 folder at once:
 
 ```bash
-azcopy copy "demo/export/*" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive
+azcopy copy "export/*" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive
 ```
 
 Keep the double quotes on Windows too: the SAS contains `&`, which the shell would
@@ -146,7 +146,7 @@ azcopy jobs resume <job-id> --destination-sas "<UPLOAD-SAS>"
 
 Or simply run the same `azcopy copy` again with `--overwrite=false` added: files
 already in the container are skipped. After you re-export a dataset, use
-`azcopy sync "demo/export/demo_visiumhd" "https://<account>.blob.core.windows.net/<container>/demo_visiumhd?<UPLOAD-SAS>" --recursive`
+`azcopy sync "export/my_dataset" "https://<account>.blob.core.windows.net/<container>/my_dataset?<UPLOAD-SAS>" --recursive`
 so changed files are replaced.
 
 AzCopy sets each blob's content type from its file extension (`.json` → `application/json`,
@@ -251,9 +251,9 @@ Edit it. The parts that matter for this setup:
 ```js
 window.SpatialViewerConfig = {
   datasets: {
-    demo_visiumhd: { group: "transcriptomics", label: "Demo section" },   // key = folder name in the container
+    my_dataset: { group: "transcriptomics", label: "My dataset" },        // key = folder name in the container
   },
-  defaultDataset: "demo_visiumhd",
+  defaultDataset: "my_dataset",
   tokenEndpoint: "/api/token",
   // ...the rest as in config.example.js
 };
@@ -363,8 +363,8 @@ Both skip the function. Neither can revoke access by changing a password.
    ```js
    tokenEndpoint: "",
    datasets: {
-     demo_visiumhd: { label: "Demo section",
-                      base: "https://<account>.blob.core.windows.net/<container>/demo_visiumhd/" },
+     my_dataset: { label: "My dataset",
+                   base: "https://<account>.blob.core.windows.net/<container>/my_dataset/" },
    },
    ```
 
@@ -391,7 +391,7 @@ prints a random folder name, for example `Qx7...`. Upload each dataset to
 Then, for each dataset:
 
 ```bash
-python web/SpatialViewer/links.py encrypt --password "<password>" --url "https://<account>.blob.core.windows.net/<container>/<random name>/demo_visiumhd/" --out web/SpatialViewer/demo_visiumhd.link.txt
+python web/SpatialViewer/links.py encrypt --password "<password>" --url "https://<account>.blob.core.windows.net/<container>/<random name>/my_dataset/" --out web/SpatialViewer/my_dataset.link.txt
 ```
 
 and in `config.js`:
@@ -399,12 +399,12 @@ and in `config.js`:
 ```js
 tokenEndpoint: "",
 datasets: {
-  demo_visiumhd: { label: "Demo section", linkPath: "demo_visiumhd.link.txt" },
+  my_dataset: { label: "My dataset", linkPath: "my_dataset.link.txt" },
 },
 ```
 
 Commit the `.link.txt` files with the page. Check a link with
-`python web/SpatialViewer/links.py decrypt --password "<password>" --file web/SpatialViewer/demo_visiumhd.link.txt`.
+`python web/SpatialViewer/links.py decrypt --password "<password>" --file web/SpatialViewer/my_dataset.link.txt`.
 
 Know the limits before you choose this:
 

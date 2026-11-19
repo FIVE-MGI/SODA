@@ -56,8 +56,8 @@ General rules:
 
 ```json
 {
- "id": "demo_visiumhd",
- "label": "demo_visiumhd",
+ "id": "my_dataset",
+ "label": "my_dataset",
  "kind": "visium",
  "pixelSizeUm": 0.2737,
  "created": "2026-11-02T10:00:00",
@@ -235,7 +235,7 @@ A message prints the layer, the platform, the format and the count of failing id
 check` also reads `ids.txt.gz` (any `.gz` that unpacks to text) and reports a hit there as file and line
 only.
 
-Size, measured on the smoke-test demo data: 8 µm bins 13,291 rows 35.1 kB (2.64 bytes per row), 16 µm
+Size, measured on small synthetic test data: 8 µm bins 13,291 rows 35.1 kB (2.64 bytes per row), 16 µm
 bins 3,388 rows 8.5 kB (2.50 B/row), Xenium cells 838 rows 2.3 kB (2.69 B/row). As plain text a Visium HD
 barcode is 22 bytes per row and a Xenium cell id 11, so gzip takes off 85-90 %; for comparison
 `positions.bin` is 8 bytes per row. Grid barcodes compress this well because neighbouring rows differ in a

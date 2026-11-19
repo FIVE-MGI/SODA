@@ -48,23 +48,22 @@ whatever title you give your instance in `config.js`.
 
 ## A. On your own computer
 
-This is the 5-minute demo from the [README](../README.md), and the way to check your own
-export before uploading it. From the repository folder, with the virtual environment
-active:
+This is the way to check your own export before uploading it. From the repository folder,
+with the virtual environment active:
 
 ```bash
-python web/SpatialViewer/static_serve.py demo/export 8765
+python web/SpatialViewer/static_serve.py export 8765
 python -m http.server 8766 --directory web/SpatialViewer
 ```
 
 Run each in its own terminal window; both keep running until you press Ctrl+C. Then open
 
 ```
-http://localhost:8766/index.html?static=http://localhost:8765&ds=demo_visiumhd
+http://localhost:8766/index.html?static=http://localhost:8765&ds=my_dataset
 ```
 
-For your own data, point the first command at your export folder and change `ds=` to
-your dataset id. (On Windows, if `python` is not found, try `py`.)
+Point the first command at your export folder and set `ds=` to your dataset id. (On
+Windows, if `python` is not found, try `py`.)
 
 What the pieces do:
 
@@ -81,7 +80,7 @@ What the pieces do:
 
 ## B. Any static web host (public data)
 
-Use this when the data may be public: a published dataset, a teaching set, demo data.
+Use this when the data may be public: a published dataset, a teaching set.
 Anyone who has, or guesses, the address can download the files.
 
 Copy the page files and the export folders to the host, then tell `config.js` where each
@@ -90,26 +89,26 @@ dataset lives, with `tokenEndpoint` empty:
 ```js
 window.SpatialViewerConfig = {
   datasets: {
-    demo_visiumhd: { label: "Demo section", base: "data/demo_visiumhd/" },                       // same site
+    my_dataset: { label: "My dataset", base: "data/my_dataset/" },                             // same site
     // other_set: { label: "...", base: "https://data.example.org/viewer/other_set/" },        // elsewhere
   },
-  defaultDataset: "demo_visiumhd",
+  defaultDataset: "my_dataset",
   tokenEndpoint: "",
 };
 ```
 
 `base` is the address of one dataset folder, ending in `/`. A relative `base` such as
-`data/demo_visiumhd/` is read relative to the page, so the simplest layout puts the export
+`data/my_dataset/` is read relative to the page, so the simplest layout puts the export
 next to the page:
 
 ```
 index.html  viewer.js  styles.css  lasso_worker.js  umapfit.js  leiden.js  leiden_worker.js  config.js  logos/
-data/demo_visiumhd/manifest.json
-data/demo_visiumhd/tiles/...
+data/my_dataset/manifest.json
+data/my_dataset/tiles/...
 ```
 
 You do not need to publish the `.py` files, `requirements*.txt` or `run.ps1`. Never
-publish the prepare cache (`demo/cache`, which holds the full-resolution raw image) or
+publish the prepare cache (`cache/`, which holds the full-resolution raw image) or
 the de-identification key file.
 
 ### What the host must do
@@ -150,7 +149,7 @@ the de-identification key file.
 ### Host notes
 
 - **GitHub Pages.** Same site for page and data, so no CORS. GitHub limits a published
-  site to 1 GB and the repository should stay small, so this suits only small demo
+  site to 1 GB and the repository should stay small, so this suits only small
   datasets. Git is also slow with many thousands of files.
 - **Netlify, Cloudflare Pages and similar.** Same site, no CORS. Check the plan's limits on
   files per deploy and on total size.
@@ -174,7 +173,7 @@ the de-identification key file.
   For IIS, add MIME maps for `.bin` and `.pack` (`application/octet-stream`) and `.geojson`
   (`application/json`), or IIS refuses to serve those files.
 - **Amazon S3 static website / a public S3 bucket.** Upload with
-  `aws s3 sync demo/export s3://<bucket>/ ` (it sets content types from the extension).
+  `aws s3 sync export s3://<bucket>/ ` (it sets content types from the extension).
   Bucket CORS configuration, if the page is elsewhere:
 
   ```json
@@ -260,7 +259,7 @@ on request. Use it to look at a freshly prepared dataset on a lab workstation, o
 it on your local network.
 
 ```bash
-python web/SpatialViewer/server.py --cache demo/cache --port 8760 --host 127.0.0.1 --password "<a password>"
+python web/SpatialViewer/server.py --cache cache --port 8760 --host 127.0.0.1 --password "<a password>"
 ```
 
 Then open `http://localhost:8760/SpatialViewer/index.html?api=http://localhost:8760`
@@ -292,7 +291,7 @@ instead of from the server. (`useLocalServer: true` in `config.js` lets you leav
 1. **De-identify and check.** Run the gate on the export and on your config:
 
    ```bash
-   python web/SpatialViewer/deid.py check demo/export/demo_visiumhd web/SpatialViewer/config.js
+   python web/SpatialViewer/deid.py check export/my_dataset web/SpatialViewer/config.js
    ```
 
    It must end with `[deid] clean`. It finds only sample-ID patterns, so also **read the
@@ -303,13 +302,13 @@ instead of from the server. (`useLocalServer: true` in `config.js` lets you leav
    the manifest. Check that nothing else slipped in:
 
    ```bash
-   grep -rl -e "C:\\\\" -e "/Users/" -e "/home/" demo/export/demo_visiumhd --include=*.json
+   grep -rl -e "C:\\\\" -e "/Users/" -e "/home/" export/my_dataset --include=*.json
    ```
 
    Windows PowerShell:
 
    ```powershell
-   Get-ChildItem demo\export\demo_visiumhd -Recurse -Include *.json | Select-String -SimpleMatch -Pattern ':\\', '/Users/', '/home/' | Select-Object -First 5
+   Get-ChildItem export\my_dataset -Recurse -Include *.json | Select-String -SimpleMatch -Pattern ':\\', '/Users/', '/home/' | Select-Object -First 5
    ```
 
    No output is the good result.
@@ -322,14 +321,14 @@ instead of from the server. (`useLocalServer: true` in `config.js` lets you leav
    macOS / Linux:
 
    ```bash
-   find demo/export/demo_visiumhd -type f | wc -l
-   du -sh demo/export/demo_visiumhd
+   find export/my_dataset -type f | wc -l
+   du -sh export/my_dataset
    ```
 
    Windows PowerShell:
 
    ```powershell
-   Get-ChildItem demo\export\demo_visiumhd -Recurse -File | Measure-Object -Property Length -Sum
+   Get-ChildItem export\my_dataset -Recurse -File | Measure-Object -Property Length -Sum
    ```
 
    (`Count` is the number of files, `Sum` the bytes.)

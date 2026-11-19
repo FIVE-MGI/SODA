@@ -118,7 +118,7 @@ python web/SpatialViewer/deid.py key                      # print the key: do no
 ## `deid.py check` as a gate
 
 ```bash
-python web/SpatialViewer/deid.py check demo/export/demo_visiumhd web/SpatialViewer/config.js
+python web/SpatialViewer/deid.py check export/my_dataset web/SpatialViewer/config.js
 ```
 
 It looks at:
@@ -153,14 +153,14 @@ exits with 0. So it can guard an upload:
 macOS / Linux:
 
 ```bash
-python web/SpatialViewer/deid.py check demo/export/demo_visiumhd && azcopy copy "demo/export/demo_visiumhd" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive
+python web/SpatialViewer/deid.py check export/my_dataset && azcopy copy "export/my_dataset" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive
 ```
 
 Windows PowerShell:
 
 ```powershell
-python web/SpatialViewer/deid.py check demo/export/demo_visiumhd
-if ($LASTEXITCODE -eq 0) { azcopy copy "demo/export/demo_visiumhd" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive }
+python web/SpatialViewer/deid.py check export/my_dataset
+if ($LASTEXITCODE -eq 0) { azcopy copy "export/my_dataset" "https://<account>.blob.core.windows.net/<container>?<UPLOAD-SAS>" --recursive }
 ```
 
 ## Limits
