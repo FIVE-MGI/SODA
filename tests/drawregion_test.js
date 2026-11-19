@@ -3,7 +3,7 @@
 //   worker  lasso_worker.js on a seeded synthetic region (2,400 bins in 2 shapes, 4 populations, 60 genes), built
 //           here, so the check does not hang on any export:
 //           - the exact path gives the stored layout and clusters (tests/fixtures/drawregion_exact.json, written by
-//             the worker as it was before its speed work, commit b7eb968): the same embedding to float noise
+//             the worker as it was before its speed work, commit 83d2bb0): the same embedding to float noise
 //             (max |difference| under 1e-4 of the layout's extent) and the same clusters;
 //           - a second worker gives the same bits; the same region again with only the resolution changed
 //             re-clusters the kept layout (timings.reusedLayout) and keeps its embedding;
@@ -18,7 +18,7 @@
 //           same result.
 //
 //   node tests/drawregion_test.js [--export demo/export] [--page web/SpatialViewer] [--shots <dir>]
-//   node tests/drawregion_test.js --write-fixture --page <a folder with b7eb968's lasso_worker.js, leiden.js, libs.js>
+//   node tests/drawregion_test.js --write-fixture --page <a folder with 83d2bb0's lasso_worker.js, leiden.js, libs.js>
 //
 // Playwright as for tests/browsers_test.js (NODE_PATH or --playwright; PLAYWRIGHT_BROWSERS_PATH). Without it, or
 // without the umap-js script from the CDN (no internet), the test says SKIPPED and exits 0.
@@ -152,7 +152,7 @@ async function workerChecks(browser, pageUrl, workerUrl) {
     const r6 = (x) => Math.round(x * 1e6) / 1e6;
     fs.mkdirSync(path.dirname(FIXTURE), { recursive: true });
     fs.writeFileSync(FIXTURE, JSON.stringify({
-      about: "tests/drawregion_test.js: lasso_worker.js on its synthetic region (seed 42, resolution auto), written by the worker before its speed work (commit b7eb968), in Chromium",
+      about: "tests/drawregion_test.js: lasso_worker.js on its synthetic region (seed 42, resolution auto), written by the worker before its speed work (commit 83d2bb0), in Chromium",
       written: new Date().toISOString().slice(0, 10), browser: browser.version(), n: R.n, nClusters: exact.info.nClusters, resolution: exact.info.resolution,
       nGenesUsed: exact.info.nGenesUsed, nPcs: exact.info.nPcs, rows: exact.rows, cluster: exact.cluster, emb: exact.emb.map(r6) }) + "\n");
     console.log(`  wrote ${FIXTURE}: ${R.n} bins, ${exact.info.nClusters} clusters at resolution ${exact.info.resolution}`);

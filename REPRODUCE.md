@@ -174,7 +174,7 @@ Python 3.13, headless Chromium (Playwright) on the real GPU, data on network sha
 served by a local server that answers like blob storage, and Chrome's network emulation for
 the "home connection" (50 Mbit/s down, 10 up, 20 ms). Other jobs sometimes ran on the same
 cores, so treat the times as an order of magnitude. The times in the paper were measured on
-commit 2a2c8ea (18 November 2026); section [10](#10-supplementary-table-2-times-and-memory)
+commit 57acd2f (18 November 2026); section [10](#10-supplementary-table-2-times-and-memory)
 has the command for every row.
 
 The scripts are in `tools/perf/`. `bench_prepare.py` needs `psutil`
@@ -446,7 +446,7 @@ local disk may be faster.
 ## 11. The figures
 
 **Figure 2** is the notebook `notebooks/SODA_pipeline.ipynb` run on `merscope_crop` (commit
-ce9510c, on the efficiency cores). Change only these settings, in a copy of the notebook:
+1ba11a5, on the efficiency cores). Change only these settings, in a copy of the notebook:
 
 | Setting | Value |
 |---|---|

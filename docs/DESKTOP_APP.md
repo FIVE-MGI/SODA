@@ -261,8 +261,8 @@ to read a warning in a log:
   make a universal app unless every wheel is universal (imagecodecs, llvmlite are not), and an
   Intel build would need the macos-13 runner (which FIVE Atlas found unusable) or an Intel Mac.
 - **Minimum macOS: 14 (Sonoma) or newer.** `LSMinimumSystemVersion` is 14.0 by default
-  (`SODA_MIN_MACOS`, in `SODA.spec` and `build_release_mac.sh`): the first GitHub build (run
-  44114170391, main b7eb968) found that SciPy's arm64 wheels in the lock file need macOS 14.0,
+  (`SODA_MIN_MACOS`, in `SODA.spec` and `build_release_mac.sh`): the first GitHub build (on
+  main 83d2bb0; its run log went with the repository it ran in) found that SciPy's arm64 wheels in the lock file need macOS 14.0,
   so the earlier 12.0 promised too much. `app/check_min_os.py` fails the CI build if any library
   inside needs newer, so the plist never promises an older macOS than the binaries support.
   Older wheels are not pinned to reach further back: the lock file stays as it is.
@@ -364,7 +364,7 @@ bytes, SHA-256 `8dc613d351ecb078dfe8460353b4694cae7f4171ddac1dbda0cb0a7e981eef28
 
 ## What is still open
 
-- **macOS build**: run once on GitHub (FIVE-MGI/SODA run 44114170391, main b7eb968): the Apple
+- **macOS build**: run once on GitHub (main 83d2bb0; the run log is no longer available): the Apple
   Silicon build succeeded, then "Check bundle minimum macOS and version" failed (Info.plist said
   12.0; SciPy's wheels need 14.0) and the app test was skipped. The minimum is now 14.0; the
   workflow needs a rerun (Actions tab -> "Build SODA app (macOS)" -> Run workflow; in FIVE-MGI

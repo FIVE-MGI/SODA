@@ -36,7 +36,7 @@ performance cores should be faster. Measured in November 2026.
 | SpatialData Xenium store, zarr v3 (sandbox Xenium rep1: 167,780 cells, 35,416 × 25,778 px, 34 M transcripts) | 3.2 min | 6.4 min | 1.1 GB | 0.45 GB, 2,343 files |
 
 <!-- RELEASE: fill the Visium HD and PhenoCycler rows, and refresh the others, from the paper's
-     timing run on 2a2c8ea (18 Nov 2026). Every row is a public dataset; the commands are in
+     timing run on 57acd2f (18 Nov 2026). Every row is a public dataset; the commands are in
      REPRODUCE.md, sections 9 and 10. -->
 
 - Every dataset in this table is public. For the ones in the paper,
@@ -86,7 +86,7 @@ Visium HD 8 µm layer, in the browser's web worker, timed from the run starting 
 The times below are on a tissue section that is not public; the paper's Draw a region times are on the public 10x
 colorectal cancer Visium HD dataset, with the command in
 [REPRODUCE.md](../REPRODUCE.md#10-supplementary-table-2-times-and-memory). These were measured on 17 November 2026 while other test runs shared the same 8 efficiency cores,
-so they are slower than an idle machine; the page before the speed-up (b7eb968) and now were run
+so they are slower than an idle machine; the page before the speed-up (83d2bb0) and now were run
 in turn, twice each (both runs shown):
 
 | Bins in the region | Leiden | Before | Now, every bin | Now, default |
