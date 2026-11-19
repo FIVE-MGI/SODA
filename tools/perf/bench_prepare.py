@@ -79,7 +79,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--label", required=True, help="dataset label for the report (no sample IDs)")
     ap.add_argument("--platform", default="")
-    ap.add_argument("--step", required=True, help="prepare, export, demo ...")
+    ap.add_argument("--step", required=True, help="the step timed, for the report: prepare, export, ...")
     ap.add_argument("--cond", default="", help="condition text for the CSV, e.g. 'cache=D: dest=C:'")
     ap.add_argument("--csv", required=True)
     ap.add_argument("--logdir", required=True)
