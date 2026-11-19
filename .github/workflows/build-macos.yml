@@ -130,9 +130,10 @@ jobs:
           got="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")"
           [ "$got" = "$VER" ] || { echo "::error::Info.plist says $got, expected $VER"; exit 1; }
 
-      # The built bundle, headless (SODA_NO_BROWSER): selftest, prepare the demo data through the
-      # app, the ID check, the viewer server, the home page. (The browser check, --browser, needs
-      # Playwright, which is not installed on the runner; it runs locally.)
+      # The built bundle, headless (SODA_NO_BROWSER): selftest and the python stand-in. Preparing data
+      # through the app, the ID check, the viewer server and the home page need the public raw data
+      # (tests/app_test.py --raw-data), which the runner does not have: app_test.py skips them with a
+      # line saying so; they run locally. (So does the browser check, --browser, which needs Playwright.)
       - name: Smoke-test the built app
         id: smoke
         continue-on-error: true

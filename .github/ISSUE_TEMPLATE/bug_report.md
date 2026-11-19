@@ -33,7 +33,7 @@ read an issue once the repository is public.
 **Data**
 
 - Data type (for example Visium HD, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, OME-TIFF / QPTIFF, Akoya folder, H&E, `.h5ad`, OME-Zarr, SpatialData):
-- Does it also happen with the synthetic demo (`python examples/make_demo.py --out demo/raw`)? yes / no / not tried
+- Does it also happen with one of the public example datasets (REPRODUCE.md section 9)? yes / no / not tried
 - Where the data was opened from: your own computer / a `?data=` link to storage (which: Azure, AWS, Google Cloud, a web server) / a password site / the desktop app
 
 **Log or report**
