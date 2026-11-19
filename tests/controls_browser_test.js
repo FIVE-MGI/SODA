@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// One control for each job, in the browser, on the synthetic demo_xenium_nt, in each browser of --browsers (chromium,
+// One control for each job, in the browser, on the public merscope_2 (cells; tests/test_data.js), in each browser of --browsers (chromium,
 // webkit, firefox): Show on slide and Clear selection once each (the chip above the picture, which also names a shape
 // picked in Draw a region, with or without a section UMAP), no "Image off" button
 // (Image opacity at 0 is off: the image is not drawn), one run button each for the volcano and the plots that shows the
 // last result again while nothing has changed (and runs anew once something has), and old links and Save JSON files
 // made while the image was off opening with it off.
 //
-//   node tests/controls_browser_test.js                   (needs demo/export: run tests/smoke_test.py first)
-//   node tests/controls_browser_test.js --export <dir> --page <dir> --shots <dir> --gpu --browsers chromium,webkit,firefox
+//   node tests/controls_browser_test.js                   (the public exports: SODA_TEST_DATA or --data-root, see tests/test_data.js)
+//   node tests/controls_browser_test.js --data-root <url or folder> --page <dir> --shots <dir> --gpu --browsers chromium,webkit,firefox
 //
 // Playwright is not a dependency of this repo. Install it anywhere (npm i playwright; npx playwright install chromium)
 // and point NODE_PATH or --playwright at its node_modules. Without it the test says so and exits 0; a browser that is
@@ -20,7 +20,7 @@ const { sendFile, preflight } = require("./static_files");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
+const D = require("./test_data");                              // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const SHOTS = arg("--shots", "");
 const GPU = process.argv.includes("--gpu");
@@ -31,7 +31,7 @@ const SOFT_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--
 // checked against a 404 when there is no vendor/, and deck.gl's WebAssembly probe refused by the page's CSP
 const FIREFOX_QUIET = [/integrity attribute match the content of the subresource at .[^ ]*\/vendor\//,
   /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
-const DS = "demo_xenium_nt";
+const DS = "merscope_2";                                       // a cells layer, small enough for three browsers
 
 let pw = null;
 for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").split(path.delimiter), path.join(REPO, "node_modules")].filter(Boolean)) {
@@ -39,15 +39,14 @@ for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").sp
 }
 if (!pw) { try { pw = require("playwright"); } catch (e) { /* none */ } }
 if (!pw) { console.log("SKIPPED: playwright is not installed (see the top of this file)"); process.exit(0); }
-if (!fs.existsSync(path.join(EXPORT, DS, "manifest.json"))) {
-  console.log(`SKIPPED: no ${DS} at ${EXPORT} (run tests/smoke_test.py first, or pass --export)`); process.exit(0);
-}
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream" };
+// root null: the data (tests/test_data.js: a folder, or passed on to a URL)
 function serve(root) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       const rel = decodeURIComponent(req.url.split("?")[0]);
+      if (!root) { if (req.method === "OPTIONS") { preflight(req, res); return; } D.serve(req, res, rel.slice(1), TYPES[path.extname(rel)]); return; }
       // config.js is each deployment's own file: the test brings its own
       if (rel === "/config.js") { res.writeHead(200, { "Content-Type": "text/javascript" }); res.end(`window.SpatialViewerConfig = { tokenEndpoint: "" };`); return; }
       const file = path.join(root, rel === "/" ? "index.html" : rel);
@@ -90,7 +89,8 @@ async function run(B, browser, DATA, URL0) {
   const setVal = (page, id, v, ev = "change") => page.evaluate(([id, v, ev]) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event(ev, { bubbles: true })); }, [id, v, ev]);
   const opacity = async (page, v) => { await setVal(page, "imgOpacity", String(v), "input"); await setVal(page, "imgOpacity", String(v), "change"); };
   const zoomTo = async (page, cellPx) => {
-    const zv = await page.evaluate((cp) => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey), i = S.m.image; return [i.width / 2, i.height / 2, Math.log2(cp / e.spotDiameterPx)]; }, cellPx);
+    // centred on the middle row's cell (a real section is not centred in its image: its middle can be bare slide)
+    const zv = await page.evaluate((cp) => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey), p = S.lasso.pos, r = Math.floor(p.length / 4); return [p[2 * r], p[2 * r + 1], Math.log2(cp / e.spotDiameterPx)]; }, cellPx);
     await page.evaluate(([x, y, z]) => { const sv = window.__spatialViewer; sv.deck.props.onViewStateChange({ viewState: { ...sv.state.viewState, target: [x, y, 0], zoom: z }, viewId: "ortho" }); }, zv);
     await settled(page);
   };
@@ -245,7 +245,9 @@ async function run(B, browser, DATA, URL0) {
 }
 
 (async () => {
-  const data = await serve(EXPORT), pageSrv = await serve(PAGE);
+  await D.need([DS]);
+  console.log(`data: ${D.describe()}`);
+  const data = await serve(null), pageSrv = await serve(PAGE);
   const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
   for (const name of BROWSERS) {
     if (!pw[name]) { console.log(`SKIPPED: ${name} is not in this Playwright`); continue; }

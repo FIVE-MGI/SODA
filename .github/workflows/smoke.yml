@@ -34,13 +34,15 @@ jobs:
           bash install.sh --python "$(command -v python)"
           .venv/bin/python -m pip freeze
 
-      - name: Smoke test (synthetic demo -> prepare -> export -> checks)
-        run: .venv/bin/python tests/smoke_test.py
+      # No raw data on the runner: the pipeline part (prepare + export on the public datasets) and the export
+      # checks say SKIPPED with one line each; everything that needs no data runs. No Playwright in this job,
+      # so the browser tests it starts say SKIPPED too: the browsers job below runs them.
+      - name: Smoke test (the page and the code; the pipeline needs raw data and is skipped here)
+        run: .venv/bin/python tests/smoke_test.py --root "$RUNNER_TEMP/smoke"
 
-      # The desktop app's launcher from source (app/soda_app.py, about 6 minutes): selftest, the python
-      # stand-in, Prepare on the demo data with the sample ID check as a gate, Check, the viewer server
-      # (Range, refused paths and Host headers, the app's config.js) and the home page's API. No browser
-      # opens (the test sets SODA_NO_BROWSER). Runs even if the smoke test failed, so both results show.
+      # The desktop app's launcher from source (app/soda_app.py): selftest and the python stand-in. Prepare,
+      # Check, the viewer server and the home page need the public raw data (--raw-data), which the runner
+      # does not have: SKIPPED with one line. Runs even if the smoke test failed, so both results show.
       - name: Desktop app test (tests/app_test.py, from source)
         if: success() || failure()
         run: .venv/bin/python tests/app_test.py --work "$RUNNER_TEMP/app-test"
@@ -51,6 +53,106 @@ jobs:
         with:
           name: smoke-test-log
           path: |
-            demo/smoke_test.log
-            demo/smoke_test_summary.json
+            ${{ runner.temp }}/smoke/smoke_test.log
+            ${{ runner.temp }}/smoke/smoke_test_summary.json
             ${{ runner.temp }}/app-test/app_test.log
+
+  # The browser tests on the hosted public exports (tests/test_data.js): xenium_pub, visiumhd_pub,
+  # phenocycler_pub and merscope_2 from https://fivestore.blob.core.windows.net/soda/examples/.
+  # cosmx_1, stereoseq_1 and geomx_1 may not be hosted publicly: their cases run only when the repository
+  # has a secret SODA_TEST_PRIVATE_DATA (the private container's folder URL with a read SAS), and are
+  # SKIPPED with one line each otherwise. The SAS is never printed (GitHub masks it, the tests leave it out).
+  browsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      SODA_TEST_DATA: https://fivestore.blob.core.windows.net/soda/examples/
+      SODA_TEST_PRIVATE_DATA: ${{ secrets.SODA_TEST_PRIVATE_DATA }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      # Playwright is not a dependency of the repo (see the top of tests/phone_browser_test.js): installed
+      # beside it, the tests find it through NODE_PATH. Its browsers: Chromium, WebKit, Firefox (Edge is not
+      # on the runner: SKIPPED by browsers_test.js).
+      - name: Install Playwright and its browsers
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium firefox webkit
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
+
+      # The tests say SKIPPED (and pass) when they cannot read their data: here that would hide a missing
+      # upload, so each hosted dataset's manifest must be readable first. With the secret set, so must the
+      # restricted ones (the query, the SAS, goes after the path; nothing of it is printed).
+      - name: The test data can be read
+        run: |
+          for id in xenium_pub visiumhd_pub phenocycler_pub merscope_2; do
+            curl -fsS -o /dev/null "${SODA_TEST_DATA}${id}/manifest.json" || { echo "::error::cannot read ${SODA_TEST_DATA}${id}/manifest.json"; exit 1; }
+          done
+          if [ -n "$SODA_TEST_PRIVATE_DATA" ]; then
+            base="${SODA_TEST_PRIVATE_DATA%%\?*}"; query="${SODA_TEST_PRIVATE_DATA#"$base"}"
+            for id in cosmx_1 stereoseq_1 geomx_1; do
+              curl -fsS -o /dev/null "${base%/}/${id}/manifest.json${query}" || { echo "::error::cannot read ${id} from SODA_TEST_PRIVATE_DATA"; exit 1; }
+            done
+            echo "restricted test data: readable"
+          else
+            echo "SODA_TEST_PRIVATE_DATA is not set: the cosmx_1, stereoseq_1 and geomx_1 cases will be SKIPPED"
+          fi
+
+      - name: browsers_test.js (Chromium, WebKit, Firefox; desktop and phone sizes)
+        if: success() || failure()
+        run: node tests/browsers_test.js --shots "$RUNNER_TEMP/shots/browsers"
+
+      - name: phone_browser_test.js (iPhone WebKit, Android Chromium)
+        if: success() || failure()
+        run: node tests/phone_browser_test.js
+
+      - name: compat_test.js (old exports, current packed ones)
+        if: success() || failure()
+        run: node tests/compat_test.js --python python
+
+      - name: stdformats_browser_test.js (SpatialData and instrument exports)
+        if: success() || failure()
+        run: node tests/stdformats_browser_test.js --browsers chromium,firefox
+
+      - name: outlines_browser_test.js
+        if: success() || failure()
+        run: node tests/outlines_browser_test.js --browsers chromium,webkit,firefox
+
+      - name: controls_browser_test.js
+        if: success() || failure()
+        run: node tests/controls_browser_test.js --browsers chromium,webkit,firefox
+
+      - name: ownres_browser_test.js
+        if: success() || failure()
+        run: node tests/ownres_browser_test.js --browsers chromium,webkit,firefox
+
+      - name: drawregion_test.js
+        if: success() || failure()
+        run: node tests/drawregion_test.js
+
+      - name: offline_test.js
+        if: success() || failure()
+        run: node tests/offline_test.js --python python
+
+      - name: diag_test.js and viewlink_test.js
+        if: success() || failure()
+        run: |
+          node tests/diag_test.js
+          node tests/viewlink_test.js
+
+      - name: Upload the screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-shots
+          path: ${{ runner.temp }}/shots

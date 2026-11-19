@@ -30,8 +30,7 @@ Thumbs.db
 # Agent tooling
 .claude/
 
-# Demo / smoke-test outputs (python examples/make_demo.py, python tests/smoke_test.py)
-demo/
+# python -m pytest tests/smoke_test.py
 .pytest_cache/
 
 # Desktop app builds (app/build_release.ps1, app/build_release_mac.sh write outside the repo;

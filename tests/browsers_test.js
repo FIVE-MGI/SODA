@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Browsers test: the page on the demo export in Chromium, WebKit (Safari's engine), Microsoft Edge and Firefox,
+// Browsers test: the page on the public example exports (tests/test_data.js) in Chromium, WebKit (Safari's engine), Microsoft Edge and Firefox,
 // plus an iPhone-sized WebKit and Chromium with touch, and a phone-sized Firefox (the size only: Playwright's
 // Firefox has no isMobile / hasTouch emulation, so it is a narrow desktop window, not a touch phone). The same
 // steps in each browser:
 //   probe     what the browser offers (WebGL2 and its limits, createImageBitmap, OffscreenCanvas, module
 //             workers, BigInt64Array, CSS dvh / :has / backdrop-filter, clipboard, the largest 2D canvas
 //             that still encodes a PNG); written to <shots>/<browser>/probe.json, a few must hold.
-//   datasets  one demo dataset of each kind (Visium HD, multiplex, tiled, Xenium, GeoMx, Stereo-seq,
-//             CosMx, MERSCOPE; --all for every one) opened with ?static=: tiles fetched, decoded and
+//   datasets  one public dataset of each kind (Visium HD visiumhd_pub, multiplex phenocycler_pub, Xenium
+//             xenium_pub, GeoMx geomx_1, Stereo-seq stereoseq_1, CosMx cosmx_1, MERSCOPE merscope_2) opened with ?static=: tiles fetched, decoded and
 //             drawn, one gene added from the search (from a gene pack: read with a Range request, 206), no
 //             console error, no page error, no failed request. The first view (fit, before the gene) is compared with Chromium's pixel by pixel
 //             on a 64 x 40 grid of the map (same JPEG / PNG tiles, same view: only rounding may differ).
-//   walk      demo_visiumhd: Tissue / UMAP / Side by side; Draw a region with the mouse (two circles)
+//   walk      visiumhd_pub: Tissue / UMAP / Side by side; Draw a region with the mouse (two circles)
 //             and Run UMAP (a worker that loads umap-js); Save JSON and Save CSV (file downloads);
 //             volcano (its worker) and its PNG (an SVG drawn on a canvas); heatmap / violin and the
 //             plot's PNG; Cell sets merge and its CSV; the QC filter; Save image at 1x, 2x and 4x (the
@@ -20,7 +20,7 @@
 //             only that the browser has BroadcastChannel, which they need (probe).
 //   links     ?data=<folder>/&ds=<id> (no datasets.json), and ?data=<folder>/ with a datasets.json
 //             carrying tags: the picker lists every dataset, a tag filter narrows the list, a row opens.
-//   outlines  a cells layer with segmentation boundaries (demo_xenium), Cell shapes on Outlines, zoomed in
+//   outlines  a cells layer with segmentation boundaries (xenium_pub), Cell shapes on Outlines, zoomed in
 //             until the outlines take over from the dots: tiles fetched and drawn, no error; compared with
 //             Chromium by pixels.
 //   phone     375 x 812, touch (WebKit as iPhone X, Chromium as a phone): tiles drawn, no sideways
@@ -30,15 +30,15 @@
 //             (clicked, not tapped); the touch-only checks (the page sees a touch screen, the phone's Save image
 //             limits) are left out there and the page is checked to use the desktop limits instead.
 //
-//   node tests/browsers_test.js                         (needs demo/export: run tests/smoke_test.py first)
-//   node tests/browsers_test.js --only webkit,msedge --shots <dir> --export <dir> --all --ports 8892,8893 (default: free ports)
-//        --ds demo_visiumhd,demo_xenium (only these datasets)  --skip probe,datasets,walk,links,outlines
+//   node tests/browsers_test.js                         (the public exports: SODA_TEST_DATA or --data-root, see tests/test_data.js)
+//   node tests/browsers_test.js --only webkit,msedge --shots <dir> --data-root <url or folder> --ports 8892,8893 (default: free ports)
+//        --ds visiumhd_pub,xenium_pub (only these datasets)  --skip probe,datasets,walk,links,outlines
 //   browsers: chromium, webkit, msedge (Edge; skipped when it is not installed), firefox (skipped when Playwright's
 //             Firefox is not installed), webkit-phone, chromium-phone, firefox-phone
 //
 // Playwright is not a dependency of this repo (see tests/phone_browser_test.js): install it anywhere and
 // point NODE_PATH or --playwright at its node_modules (PLAYWRIGHT_BROWSERS_PATH if its browsers are
-// elsewhere). Without it, or without the demo export, or without deck.gl from the CDN (no internet), the
+// elsewhere). Without it, or without the public exports, or without deck.gl from the CDN (no internet), the
 // test says SKIPPED and exits 0; a browser that cannot be launched is SKIPPED on its own (a line
 // "SKIPPED <browser>: cannot launch (...)"), so a machine without Edge or Firefox still passes.
 //
@@ -63,15 +63,15 @@ const path = require("path");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
+const D = require("./test_data");                                    // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const ONLY = arg("--only", "");
 const SHOTS = arg("--shots", "");
 const ALL = process.argv.includes("--all");
-const DS = arg("--ds", "");                                          // e.g. demo_visiumhd,demo_xenium: only these
+const DS = arg("--ds", "");                                          // e.g. visiumhd_pub,xenium_pub: only these
 const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, links, outlines
 const PORTS = arg("--ports", "0,0").split(",").map(Number);         // data server, page server; 0 = any free port
-const OPEN_MS = 45000;
+const OPEN_MS = 120000;                                             // the public exports are large, and may come over the internet
 
 let pw = null;
 for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").split(path.delimiter), path.join(REPO, "node_modules")].filter(Boolean)) {
@@ -79,34 +79,32 @@ for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").sp
 }
 if (!pw) { try { pw = require("playwright"); } catch (e) { /* none */ } }
 if (!pw) { console.log("SKIPPED: playwright is not installed (see the top of this file)"); process.exit(0); }
-if (!fs.existsSync(path.join(EXPORT, "demo_visiumhd", "manifest.json"))) {
-  console.log(`SKIPPED: no demo export at ${EXPORT} (run tests/smoke_test.py first, or pass --export)`); process.exit(0);
-}
-const readJson = (...p) => JSON.parse(fs.readFileSync(path.join(...p), "utf-8").replace(/\bNaN\b/g, "null"));
-const exists = (...p) => fs.existsSync(path.join(...p));
 
-// ---- the datasets: one of each kind (all with --all) --------------------------------------------------
-const allIds = fs.readdirSync(EXPORT).filter((id) => exists(EXPORT, id, "manifest.json")).sort();
-const KINDS = [["Visium HD", /^demo_visiumhd$/], ["multiplex protein", /^demo_multiplex$/], ["tiled", /^demo_tiled$/],
-  ["Xenium", /^demo_xenium$/], ["GeoMx", /^demo_geomx$/], ["Stereo-seq", /^demo_stereoseq$/], ["CosMx", /^demo_cosmx/], ["MERSCOPE", /^demo_merscope/]];
-const picked = (ALL ? allIds.map((id) => [id, id]) : KINDS.map(([k, re]) => [k, allIds.find((id) => re.test(id))]).filter((x) => x[1]))
+// ---- the datasets: one public export of each kind (each kind has one, so --all is the same list) ----------
+// GeoMx, Stereo-seq and CosMx are restricted (tests/test_data.js): without SODA_TEST_PRIVATE_DATA or a local copy, SKIPPED with a line
+const allIds = D.PUBLIC.slice();
+const KINDS = [["Visium HD", "visiumhd_pub"], ["multiplex protein", "phenocycler_pub"], ["Xenium", "xenium_pub"], ["GeoMx", "geomx_1"],
+  ["Stereo-seq", "stereoseq_1"], ["CosMx", "cosmx_1"], ["MERSCOPE", "merscope_2"]];
+let picked = (ALL ? allIds.map((id) => [id, id]) : KINDS)
   .filter(([, id]) => !DS || DS.split(",").includes(id));
 
 // ---- two small static servers: the export (with CORS, as blob storage) and the page ----------------
 // /plain/...  the export folder as it is;  /cat/...  the same, plus a datasets.json with tags (made here)
 const catDir = fs.mkdtempSync(path.join(os.tmpdir(), "soda-browsers-"));
-const CAT_IDS = picked.map((x) => x[1]).slice(0, 4);
-const tagOf = (id) => ({ platform: /visium/.test(id) ? "Visium HD" : /multiplex|tiled/.test(id) ? "multiplex" : "other", tissue: "demo" });
+const CAT_IDS = picked.map((x) => x[1]).filter((id) => D.HOSTED.includes(id)).slice(0, 4);   // all on the hosted copy
+const tagOf = (id) => ({ platform: /visium/.test(id) ? "Visium HD" : /phenocycler|multiplex/.test(id) ? "multiplex" : "other", tissue: "public" });
 fs.writeFileSync(path.join(catDir, "datasets.json"), JSON.stringify({ soda: 1, title: "Browsers test", default: CAT_IDS[0],
-  datasets: CAT_IDS.map((id) => ({ id, label: `Demo ${id.replace(/^demo_/, "")}`, group: "Demo", tags: { ...tagOf(id), slide: `S${id.length}` } })) }));
+  datasets: CAT_IDS.map((id) => ({ id, label: `Public ${id}`, group: "Public", tags: { ...tagOf(id), slide: `S${id.length}` } })) }));
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream", ".geojson": "application/json" };
 const inside = (root, rel) => { const f = path.join(root, rel); return f.startsWith(root + path.sep) || f === root ? f : null; };
 // served as blob storage serves them (tests/static_files.js): CORS, no caching, HTTP Range (206) for gene packs
 const { sendFile, preflight } = require("./static_files");
+// a route gives a local file, or { rel } for a file of the data root (tests/test_data.js: a folder or a URL)
 function handler(route) {
   return (req, res) => {
     if (req.method === "OPTIONS") { preflight(req, res); return; }
     const file = route(decodeURIComponent(req.url.split("?")[0]));
+    if (file && file.rel) { D.serve(req, res, file.rel, TYPES[path.extname(file.rel)]); return; }
     if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
     sendFile(req, res, file, TYPES[path.extname(file)]);
   };
@@ -114,8 +112,8 @@ function handler(route) {
 const dataRoute = (u) => {
   const m = u.match(/^\/(plain|cat)(\/.*)$/);
   if (!m) return null;
-  if (m[2] === "/datasets.json") return m[1] === "cat" ? path.join(catDir, "datasets.json") : null;
-  return inside(EXPORT, m[2]);
+  if (m[2] === "/datasets.json") return m[1] === "cat" ? path.join(catDir, "datasets.json") : null;   // /plain/: no datasets.json
+  return { rel: m[2].slice(1) };
 };
 const pageRoute = (u) => inside(PAGE, u === "/" ? "index.html" : u);
 function listen(h, port) {
@@ -161,7 +159,7 @@ const look = (page) => page.evaluate(() => {
   return out;
 });
 // every image tile on show has arrived and is drawn (as snapshot.js waitTiles: a few checks in a row)
-const tilesDone = (page, ms = 30000) => page.evaluate(async (ms) => {
+const tilesDone = (page, ms = 60000) => page.evaluate(async (ms) => {
   const deck = window.__spatialViewer.deck, t0 = performance.now();
   let calm = 0;
   while (performance.now() - t0 < ms) {
@@ -181,7 +179,7 @@ async function lookDrawn(page, min, ms = 15000) {
   return r;
 }
 const until = (page, fn, a, ms = OPEN_MS) => page.waitForFunction(fn, a, { timeout: ms, polling: 200 }).then(() => true, () => false);
-const settled = (page) => until(page, () => { const st = document.getElementById("status"); return !st || st.hidden || !/Loading|Opening/.test(st.textContent); }, null, 20000);
+const settled = (page) => until(page, () => { const st = document.getElementById("status"); return !st || st.hidden || !/Loading|Opening/.test(st.textContent); }, null, 60000);
 const pickFromSearch = (page, box, results, name) => page.evaluate(([box, results, name]) => {
   const el = document.getElementById(box);
   el.value = name; el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -195,13 +193,14 @@ const diffThumb = (a, b) => { if (!a || !b || a.length !== b.length) return null
 const pngSize = (buf) => (buf && buf.length > 24 && buf.readUInt32BE(12) === 0x49484452 ? { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) } : null);
 // the layer's gene with the most counts that has data, and its points: from its own file, or from its slice of a
 // gene pack (genepack.py: genes.json gives each gene's byte count `b`), as tests/compat_test.js reads them
-const geneOf = (id, key) => {
-  const L = (readJson(EXPORT, id, "manifest.json").expr || []).find((e) => e.key === key) || {};
-  const genes = readJson(EXPORT, id, "expr", key, "genes.json");
-  const file = (g) => path.join(EXPORT, id, "expr", key, "gene", `${encodeURIComponent(g.n)}.bin`);
-  const bytes = (g) => (L.genePack ? (g.b > 0 ? g.b : -1) : fs.existsSync(file(g)) ? fs.statSync(file(g)).size : -1);
-  const withFile = genes.filter((g) => bytes(g) > 0).sort((a, b) => b.t - a.t);
-  return withFile[0] ? { name: withFile[0].n, pts: bytes(withFile[0]) / 12, packed: !!L.genePack } : null;
+const geneOf = async (id, key) => {
+  const L = ((await D.manifest(id)).expr || []).find((e) => e.key === key) || {};
+  const genes = ((await D.json(`${id}/expr/${key}/genes.json`)) || []).slice().sort((a, b) => b.t - a.t);
+  for (const g of L.genePack ? genes : genes.slice(0, 20)) {               // loose files: asked for one at a time
+    const b = L.genePack ? (g.b > 0 ? g.b : -1) : await D.size(`${id}/expr/${key}/gene/${encodeURIComponent(g.n)}.bin`);
+    if (b > 0) return { name: g.n, pts: b / 12, packed: !!L.genePack };
+  }
+  return null;
 };
 
 // A form control as the browser drew it: its background (the most common luminance) must be dark, as on the
@@ -380,7 +379,7 @@ async function probe(browser, eng, urls) {
 
 // ---- one dataset: open, tiles, a gene ----------------------------------------------------------------
 async function checkDataset(browser, eng, urls, kind, id) {
-  const m = readJson(EXPORT, id, "manifest.json");
+  const m = await D.manifest(id);
   const feature = `open ${kind}`;
   const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, `${id}`, feature);
   try {
@@ -393,7 +392,7 @@ async function checkDataset(browser, eng, urls, kind, id) {
       await settled(t.page);
       const ms = await tilesDone(t.page);
       r = await lookDrawn(t.page, 0.005);
-      t.ok(tiles && ms >= 0, `image tiles fetched, decoded and all on show (${r.cached} kept, decoder: ${r.decoder}; ${ms >= 0 ? `settled in ${ms} ms` : "NOT all loaded after 30 s"})`, `tiles decode and draw`);
+      t.ok(tiles && ms >= 0, `image tiles fetched, decoded and all on show (${r.cached} kept, decoder: ${r.decoder}; ${ms >= 0 ? `settled in ${ms} ms` : "NOT all loaded after 60 s"})`, `tiles decode and draw`);
     } else { await settled(t.page); r = await lookDrawn(t.page, 0.005); }
     t.ok(r.lit > 0.005, `slide drawn (lit ${r.lit.toFixed(3)})`, hasImage ? "tiles decode and draw" : null);
     // the fit view, before anything is added: compared with Chromium
@@ -403,10 +402,10 @@ async function checkDataset(browser, eng, urls, kind, id) {
       await until(t.page, () => { const S = window.__spatialViewer.state; return S.exprKey && S.geneIndex && S.geneIndex.length; });
       await settled(t.page);
       r = await look(t.page);
-      const g = r.exprKey && geneOf(id, r.exprKey);
+      const g = r.exprKey && (await geneOf(id, r.exprKey));
       if (g) {
         const shown = await pickFromSearch(t.page, "geneSearch", "geneResults", g.name);
-        await until(t.page, () => window.__spatialViewer.state.genes.length > 0, null, 20000);
+        await until(t.page, () => window.__spatialViewer.state.genes.length > 0, null, 60000);
         await settled(t.page);
         await t.page.waitForTimeout(500);
         r = await look(t.page);
@@ -426,9 +425,9 @@ async function checkDataset(browser, eng, urls, kind, id) {
   finally { await t.ctx.close(); }
 }
 
-// ---- the walk through the features, on demo_visiumhd ---------------------------------------------------
+// ---- the walk through the features, on visiumhd_pub ---------------------------------------------------
 async function walk(browser, eng, urls) {
-  const id = "demo_visiumhd";
+  const id = "visiumhd_pub";
   const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, "walk", null);
   const P = t.page, ev = (f, a) => P.evaluate(f, a);
   const step = async (feature, fn) => {
@@ -441,9 +440,9 @@ async function walk(browser, eng, urls) {
     await until(P, () => window.__spatialViewer.diag().cached > 0);
     await settled(P);
     const key = await ev(() => window.__spatialViewer.state.exprKey);
-    const g = geneOf(id, key);
+    const g = await geneOf(id, key);
     await pickFromSearch(P, "geneSearch", "geneResults", g.name);
-    await until(P, () => window.__spatialViewer.state.genes.length > 0, null, 20000);
+    await until(P, () => window.__spatialViewer.state.genes.length > 0, null, 60000);
 
     // the page's dark form controls stay dark and readable (Layer drop-down, gene search box)
     await step("form controls readable (dark <select>)", async () => {
@@ -471,9 +470,15 @@ async function walk(browser, eng, urls) {
       await ev(() => window.__spatialViewer.fitView && window.__spatialViewer.fitView());
       await P.waitForTimeout(400);
       const box = await ev(() => { const r = document.getElementById("viewport").getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
-      for (const [fx, fy] of [[0.42, 0.45], [0.6, 0.55]]) {
+      // centred on two bins (a third and two thirds down the bin list), so each circle is over tissue whatever its shape
+      const at = await ev(() => { const sv = window.__spatialViewer, pos = sv.state.lasso.pos, n = pos.length / 2, vp = sv.deck.getViewports()[0];
+        return [0.37, 0.63].map((f) => { const r = Math.floor(n * f), p = vp.project([pos[2 * r], pos[2 * r + 1]]); return [p[0], p[1]]; }); });
+      for (const [px, py] of at) {
         await ev(() => { if (window.__spatialViewer.state.lasso.tool !== "circle") document.getElementById("lassoCircle").click(); });
-        const cx = box.x + box.w * fx, cy = box.y + box.h * fy, rad = Math.min(box.w, box.h) * 0.09;
+        // small enough that the two circles stay under Draw a region's fast-mode size (LASSO.fastAbove, 20,000 bins) on
+        // visiumhd_pub's 8 um layer (about 15,000 bins): the walk runs the exact path, as it did on the demo data
+        // (tests/drawregion_test.js runs fast mode)
+        const cx = box.x + px, cy = box.y + py, rad = Math.min(box.w, box.h) * 0.025;
         await P.mouse.move(cx, cy); await P.mouse.down();
         for (let i = 1; i <= 6; i++) await P.mouse.move(cx + (rad * i) / 6, cy);
         await P.mouse.up();
@@ -485,7 +490,7 @@ async function walk(browser, eng, urls) {
       await t.shot("walk_circles");
       const t0 = Date.now();
       await ev(() => document.getElementById("lassoRun").click());
-      const done = await until(P, () => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running; }, null, 240000);
+      const done = await until(P, () => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running; }, null, 600000);   // a real section: Firefox on software rendering takes minutes
       const R = await ev(() => { const L = window.__spatialViewer.state.lasso, R = L.result; return R ? { n: R.info && R.info.n, emb: R.emb ? R.emb.length : R.xy ? R.xy.length : null, k: R.info && R.info.nClusters, msg: document.getElementById("lassoMsg").textContent } : { msg: document.getElementById("lassoMsg").textContent }; });
       t.ok(done && R.emb > 0, `Run UMAP finished in ${((Date.now() - t0) / 1000).toFixed(1)} s: ${JSON.stringify(R).slice(0, 200)}`, "Run UMAP (worker, umap-js)");
       await P.waitForTimeout(600);
@@ -619,7 +624,7 @@ async function walk(browser, eng, urls) {
       // Load JSON: the shapes and the run again, then the saved merge on the same clusters
       if (saved) {
         await ev((o) => window.__spatialViewer.lassoLoad(o), saved);
-        const ok = await until(P, (id) => { const L = window.__spatialViewer.state.lasso, R = L.result; return R && R.id !== id && !L.running && R.sets && R.sets.length > 0 || (R && R.id !== id && !L.running && /not applied/.test(document.getElementById("lassoMsg").textContent)); }, r0.id, 240000);
+        const ok = await until(P, (id) => { const L = window.__spatialViewer.state.lasso, R = L.result; return R && R.id !== id && !L.running && R.sets && R.sets.length > 0 || (R && R.id !== id && !L.running && /not applied/.test(document.getElementById("lassoMsg").textContent)); }, r0.id, 600000);
         const r3 = await run();
         const m3 = await ev(() => document.getElementById("lassoMsg").textContent);
         t.ok(ok && r3 && r3.id !== r0.id && r3.sets.length === 1 && r3.sets[0].join() === `${lo},${hi}` && r3.sizes[lo] === r0.sizes[lo] + r0.sizes[hi]
@@ -649,12 +654,13 @@ async function walk(browser, eng, urls) {
     await step("Save image PNG 1x / 2x / 4x", async () => {
       // Headless Chromium draws with SwiftShader (a software GPU): a 4x picture there can exhaust its memory and
       // the map's context is lost (seen about one run in two). 4x is checked on the browsers with a real GPU.
+      // With visiumhd_pub's 516,880 bins a 2x picture lost it too (19 Nov 2026): on SwiftShader only 1x is saved.
       const soft = await ev(() => { const gl = window.__spatialViewer.deck.device.gl, d = gl.getExtension("WEBGL_debug_renderer_info"); return /SwiftShader|llvmpipe|softpipe|Software/i.test(d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)); });
-      if (soft) console.log(`        ${eng.name}: software renderer (SwiftShader): Save image 4x not run here`);
+      if (soft) console.log(`        ${eng.name}: software renderer (SwiftShader): Save image 2x and 4x not run here`);
       // the map's size at rest, read once before any save: after a 2x save deck puts the canvas back to its own size
       // on its next frame, which can come late under load (WebKit), so reading it again later can see the 2x canvas
       const base = await ev(() => { const c = document.getElementById("viewport").querySelector("canvas"); return { w: c.width, h: c.height, cw: c.clientWidth }; });
-      for (const s of soft ? [1, 2] : [1, 2, 4]) {
+      for (const s of soft ? [1] : [1, 2, 4]) {
         const want = await ev(({ s, base }) => { const sel = document.getElementById("snapScale"); const o = sel && [...sel.options].find((o) => o.value === String(s)); return { w: Math.round(base.w * s), h: Math.round(base.h * s), k: (base.w * s) / base.cw, off: !o || o.disabled, txt: o ? o.textContent : "" }; }, { s, base });
         if (want.off) { t.ok(true, `Save image ${s}x not offered here: ${want.txt}`); continue; }
         let said = "";
@@ -710,8 +716,8 @@ async function walk(browser, eng, urls) {
 }
 
 // ---- cell outlines (outlines.js): a cells layer with segmentation boundaries, zoomed in, Outlines on ------
-const hasShapes = (id) => exists(EXPORT, id, "expr", "cells", "shapes", "cell", "index.json");
-const OUTLINE_DS = ["demo_xenium"].concat(allIds).find(hasShapes);           // Xenium (cell + nucleus boundaries) first
+const hasShapes = (id) => D.exists(`${id}/expr/cells/shapes/cell/index.json`);
+let OUTLINE_DS = null;                                                        // xenium_pub first (found before the run)
 async function cellOutlines(browser, eng, urls) {
   const id = OUTLINE_DS, feature = "cell outlines (Outlines on, zoomed in)";
   const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, `${id} outlines`, feature);
@@ -797,7 +803,7 @@ const ev2 = (P, f, a) => P.evaluate(f, a);
 
 // ---- phone layout ----------------------------------------------------------------------------------------
 async function phone(browser, eng, urls) {
-  const id = "demo_visiumhd";
+  const id = "visiumhd_pub";
   const t = await openPage(browser, eng, `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`, "phone 375 x 812",
     eng.noTouch ? "phone-sized window 375 x 812, no touch" : "phone layout 375 x 812, touch");
   try {
@@ -875,6 +881,12 @@ async function phone(browser, eng, urls) {
 }
 
 (async () => {
+  await D.need(["visiumhd_pub"].concat(CAT_IDS));
+  const can = [];
+  for (const p of picked) if (await D.has(p[1])) can.push(p); else console.log(D.skipLine(p[1], `dataset ${p[0]}`));
+  picked = can;
+  for (const id of ["xenium_pub"].concat(allIds)) if ((await D.has(id)) && (await hasShapes(id))) { OUTLINE_DS = id; break; }
+  console.log(`data: ${D.describe()}`);
   const data = await listen(handler(dataRoute), PORTS[0]), pageSrv = await listen(handler(pageRoute), PORTS[1]);
   const urls = { data: `http://127.0.0.1:${data.address().port}`, page: `http://127.0.0.1:${pageSrv.address().port}` };
   LOCAL = [urls.data + "/", urls.page + "/"];

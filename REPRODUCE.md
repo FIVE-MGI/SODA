@@ -115,10 +115,13 @@ From the repository folder, with the environment active. It checks the tools and
 example exports of section [5](#5-the-public-example-exports), read by default from
 https://fivestore.blob.core.windows.net/soda/examples/: the tiles, the gene data, the sample
 ID check, and much more (the full list is at the top of `tests/smoke_test.py`). To use a
-local copy of the exports instead, pass <!-- TODO tests flag -->. It ends with
+local copy of the exports instead, pass `--exports <folder>` (or set `SODA_TEST_DATA` to the
+folder). With `--raw-data <folder>` (or `SODA_RAW_DATA`), the raw files laid out as in section
+[9](#9-the-public-datasets), it also runs the pipeline (prepare, export, ID check) on them;
+without it that part prints SKIPPED. It ends with
 **SMOKE TEST PASSED: N checks**.
 
-- `--root <dir>` sets the folder it writes to <!-- TODO tests flag: the default folder -->;
+- `--root <dir>` sets the folder it writes to (default: `soda-smoke` in the temp folder);
   `--reuse` keeps earlier outputs; `--checks-only` runs no commands and only checks the
   outputs already there.
 - The log is `smoke_test.log`, the summary `smoke_test_summary.json`, in that folder.
@@ -145,7 +148,10 @@ that cannot be started is reported as SKIPPED on its own.
 
 The browser tests open the public example exports of section
 [5](#5-the-public-example-exports), at https://fivestore.blob.core.windows.net/soda/examples/;
-to use a local copy, pass <!-- TODO tests flag -->. The smoke test already runs most of
+to use a local copy, pass `--data-root <folder>` (or set `SODA_TEST_DATA`). The three
+restricted datasets (`cosmx_1`, `geomx_1`, `stereoseq_1`) are tested only when
+`SODA_TEST_PRIVATE_DATA` (or `--private-data-root`) points at a copy of them; otherwise
+those cases print SKIPPED. The smoke test already runs most of
 them. To run one by itself:
 
 | Command | What it checks |

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Your own results (web/SpatialViewer/ownres.js) in the browser: a reader loads a table of results they already have
-// (UMAP, clusterings, cell types, numbers) from a file, with no re-export. On the demo's Visium HD export with barcode
-// lists (export_user/demo_visiumhd, 16 um layer; tests/smoke_test.py makes it with `prepare.py ids`), in each browser of
+// (UMAP, clusterings, cell types, numbers) from a file, with no re-export. On the public Visium HD export with its barcode
+// lists (visiumhd_pub, 16 um layer; tests/test_data.js: SODA_TEST_DATA or --data-root), in each browser of
 // --browsers (chromium, webkit, firefox; one that is not installed is SKIPPED with a line saying so):
 //   a Seurat-style CSV (write.csv: an empty first header cell, a sample prefix on the barcodes, a tenth of the bins
 //   dropped, seurat_clusters, cell_type with a colour column, a number, UMAP_1 / UMAP_2): roles guessed, the match rate,
@@ -11,13 +11,15 @@
 //   right in the table; DE (the volcano) on a loaded clustering; cell sets on it; Save JSON with the table in it and
 //   Load JSON on a fresh page; a link to the view (a fingerprint: it asks for the file, then the colouring comes back);
 //   drag and drop; junk files (each a clear message, no page error); a layer without a barcode list (how to add it, and
-//   a "# soda row order" file) and a layer without SODA's UMAP; and the section at 375 px phone width.
+//   a "# soda row order" file) and a layer without SODA's UMAP; and the section at 375 px phone width. The layers
+//   without a barcode list or without SODA's UMAP are the same export with those taken out of its manifest by this
+//   test's server (/noids/, /noumap/).
 //
-//   node tests/ownres_browser_test.js                         (needs demo/: run tests/smoke_test.py first)
-//   node tests/ownres_browser_test.js --root <demo dir> --page <dir> --shots <dir> --browsers chromium,webkit,firefox --gpu
+//   node tests/ownres_browser_test.js                         (the public exports: SODA_TEST_DATA or --data-root)
+//   node tests/ownres_browser_test.js --data-root <url or folder> --page <dir> --shots <dir> --browsers chromium,webkit,firefox --gpu
 //
 // Playwright is not a dependency of this repo (see tests/outlines_browser_test.js): without it the test says so and
-// exits 0. The fixtures are made here from the export's own ids.txt.gz and positions.bin; nothing is downloaded.
+// exits 0. The fixtures are made here from the export's own ids.txt.gz and positions.bin.
 "use strict";
 const http = require("http");
 const fs = require("fs");
@@ -27,14 +29,14 @@ const { sendFile, preflight } = require("./static_files");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const ROOT = path.resolve(arg("--root", path.join(REPO, "demo")));
+const D = require("./test_data");                              // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const SHOTS = arg("--shots", "");
 const GPU = process.argv.includes("--gpu");
 const BROWSERS = arg("--browsers", "chromium").split(",").map((s) => s.trim()).filter(Boolean);
 const GPU_ARGS = ["--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"];
 const SOFT_ARGS = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"];
-const DS = "demo_visiumhd", KEY = "016um";
+const DS = "visiumhd_pub", KEY = "016um";
 // Firefox's console lines that are not the page's faults (see tests/browsers_test.js): the vendor/ tag's SHA-384
 // checked against a 404 when there is no vendor/, and deck.gl's WebAssembly probe refused by the page's CSP
 const FIREFOX_QUIET = [/integrity attribute match the content of the subresource at .[^ ]*\/vendor\//,
@@ -46,26 +48,30 @@ for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").sp
 }
 if (!pw) { try { pw = require("playwright"); } catch (e) { /* none */ } }
 if (!pw) { console.log("SKIPPED: playwright is not installed (see the top of tests/outlines_browser_test.js)"); process.exit(0); }
-const EXP = path.join(ROOT, "export_user", DS, "expr", KEY);
-if (!fs.existsSync(path.join(EXP, "ids.txt.gz"))) { console.log(`SKIPPED: no ${DS} export with barcode lists under ${ROOT}/export_user (run tests/smoke_test.py first, or pass --root)`); process.exit(0); }
+const EXP = `${DS}/expr/${KEY}`;                                // inside the data root
 
-// ---- the fixtures, from the export's own ids and positions --------------------------------------------------------
-const f32 = (p) => { const b = fs.readFileSync(p); return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length)); };
-const IDS = zlib.gunzipSync(fs.readFileSync(path.join(EXP, "ids.txt.gz"))).toString("utf-8").split("\n").filter(Boolean);
-const POS = f32(path.join(EXP, "positions.bin"));
-const N = IDS.length;
-if (POS.length !== 2 * N) { console.log(`FAIL: ${KEY} ids ${N} vs positions ${POS.length / 2}`); process.exit(1); }
-// three bands across the tissue, by x: a known group per bin, far enough from the band edges to read by pixel
-const xs = Array.from({ length: N }, (_, r) => POS[2 * r]).sort((a, b) => a - b);
-const T1 = xs[Math.floor(N / 3)], T2 = xs[Math.floor((2 * N) / 3)], X0 = xs[0], X1 = xs[N - 1];
-let Y0 = Infinity, Y1 = -Infinity; for (let r = 0; r < N; r++) { Y0 = Math.min(Y0, POS[2 * r + 1]); Y1 = Math.max(Y1, POS[2 * r + 1]); }
+// ---- the fixtures, from the export's own ids and positions (read in fixtures(), before the run) ---------------------
+const f32 = (b) => new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.length));
+let IDS, POS, N, T1, T2, X0, X1, Y0, Y1, JUNK;
+const FIX = {};
+// each row's band, made-up UMAP and score (from the positions fixtures() reads)
 const band = (r) => (POS[2 * r] < T1 ? 0 : POS[2 * r] < T2 ? 1 : 2);
 const NAMES = ["Left band", "Middle band", "Right band"], COLORS = ["#ff2020", "#20e020", "#3050ff"];
 const jit = (r, k) => (((r * 7919 + k * 104729) % 1000) / 1000 - 0.5) * 2;
 const umapOf = (r) => [band(r) * 10 + jit(r, 1), ((POS[2 * r + 1] - Y0) / Math.max(1, Y1 - Y0)) * 8 + jit(r, 2) * 0.3];
 const scoreOf = (r) => ((POS[2 * r] - X0) / Math.max(1, X1 - X0)) * 100;
 const q = (s) => `"${s}"`;
-const FIX = {};
+async function fixtures() {
+const ids = await D.bytes(`${EXP}/ids.txt.gz`), posb = await D.bytes(`${EXP}/positions.bin`);
+if (!ids || !posb) { console.log(`SKIPPED: no barcode list or positions for ${EXP} under ${D.ROOT}`); process.exit(0); }
+IDS = zlib.gunzipSync(ids).toString("utf-8").split("\n").filter(Boolean);
+POS = f32(posb);
+N = IDS.length;
+if (POS.length !== 2 * N) { console.log(`FAIL: ${KEY} ids ${N} vs positions ${POS.length / 2}`); process.exit(1); }
+// three bands across the tissue, by x: a known group per bin, far enough from the band edges to read by pixel
+const xs = Array.from({ length: N }, (_, r) => POS[2 * r]).sort((a, b) => a - b);
+T1 = xs[Math.floor(N / 3)]; T2 = xs[Math.floor((2 * N) / 3)]; X0 = xs[0]; X1 = xs[N - 1];
+Y0 = Infinity; Y1 = -Infinity; for (let r = 0; r < N; r++) { Y0 = Math.min(Y0, POS[2 * r + 1]); Y1 = Math.max(Y1, POS[2 * r + 1]); }
 // Seurat: write.csv(cbind(obj@meta.data, Embeddings(obj, "umap")), "seurat.csv") of a merged object (slice1_ prefix),
 // a tenth of the bins dropped in QC
 {
@@ -97,7 +103,7 @@ const FIX = {};
   FIX.wrong = { name: "guess_me.csv", mimeType: "text/csv", buffer: Buffer.from(L.join("\n") + "\n", "utf-8") };
 }
 // junk: each must give a clear message and no page error
-const JUNK = [
+JUNK = [
   { name: "picture.png", mimeType: "image/png", buffer: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(200)]), want: /not a text table/ },
   { name: "empty.csv", mimeType: "text/csv", buffer: Buffer.from(""), want: /empty/ },
   { name: "one_column.csv", mimeType: "text/csv", buffer: Buffer.from("barcode\nA\nB\n"), want: /Only one column/ },
@@ -107,8 +113,10 @@ const JUNK = [
   { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Some notes about the run.\nNothing tabular here at all\n"), want: /Only one column|different number of fields/ },
   { name: "workbook.xlsx", mimeType: "application/octet-stream", buffer: Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(64)]), want: /zip or Excel/ },
 ];
+}
 
-// ---- the servers: the demo root as blob storage would answer it; /noids/ = export_user without its id lists -----------
+// ---- the servers: the data root as blob storage would answer it (/export_user/: the export as it is); /noids/: without
+// its id lists; /noumap/: without its id lists and SODA's UMAP (as an export made with --no-umap --no-ids) -------------
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream", ".gz": "application/gzip" };
 function serve(root, data) {
   return new Promise((resolve) => {
@@ -116,15 +124,23 @@ function serve(root, data) {
       let rel = decodeURIComponent(req.url.split("?")[0]);
       if (req.method === "OPTIONS") { preflight(req, res); return; }
       if (!data && rel === "/config.js") { res.writeHead(200, { "Content-Type": "text/javascript" }); res.end("window.SpatialViewerConfig = { tokenEndpoint: \"\" };"); return; }
-      let strip = false;
-      if (data && rel.startsWith("/noids/")) { strip = true; rel = "/export_user/" + rel.slice("/noids/".length); }
+      if (data) {
+        const m = rel.match(/^\/(export_user|noids|noumap)\/(.*)$/);
+        if (!m) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
+        if (m[1] !== "export_user" && /manifest\.json$/.test(m[2])) {
+          D.json(m[2]).then((orig) => {
+            if (!orig) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
+            const man = JSON.parse(JSON.stringify(orig));
+            for (const L of man.expr || []) { delete L.ids; if (m[1] === "noumap") delete L.umap; }
+            res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }); res.end(JSON.stringify(man));
+          }, (e) => { res.writeHead(502, { "Access-Control-Allow-Origin": "*" }); res.end(String(e.message)); });
+          return;
+        }
+        if (m[1] === "noumap" && /\/umap\//.test(m[2])) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
+        D.serve(req, res, m[2], TYPES[path.extname(m[2])]); return;
+      }
       const file = path.join(root, rel === "/" ? "index.html" : rel);
       if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
-      if (strip && /manifest\.json$/.test(file)) {
-        const m = JSON.parse(fs.readFileSync(file, "utf-8"));
-        for (const L of m.expr || []) delete L.ids;
-        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }); res.end(JSON.stringify(m)); return;
-      }
       sendFile(req, res, file, TYPES[path.extname(file)]);
     });
     srv.listen(0, "127.0.0.1", () => resolve(srv));
@@ -388,7 +404,7 @@ async function run(B, browser, URL0, DATA) {
   page = await open(`${DATA}/noids`, DS, KEY, "noids");
   await load(page, FIX.seurat);
   m = await ownMsg(page);
-  check(m.err && m.text.includes("prepare.py ids --id demo_visiumhd") && m.text.includes("soda row order"), `${B}: no id list: says how to add one and what else works`, m.text.slice(0, 260));
+  check(m.err && m.text.includes(`prepare.py ids --id ${DS}`) && m.text.includes("soda row order"), `${B}: no id list: says how to add one and what else works`, m.text.slice(0, 260));
   const order = Buffer.from(["# soda row order", "cell_type,score"].concat(Array.from({ length: N }, (_, rr) => `${NAMES[band(rr)]},${scoreOf(rr).toFixed(2)}`)).join("\n") + "\n");
   await load(page, { name: "in_order.csv", mimeType: "text/csv", buffer: order });
   m = await ownMsg(page); u = await um(page);
@@ -398,10 +414,10 @@ async function run(B, browser, URL0, DATA) {
   m = await ownMsg(page);
   check(m.err, `${B}: row order with a row count that is not the layer's: refused`, m.text.slice(0, 200));
   await page.close();
-  if (fs.existsSync(path.join(ROOT, "export_loose", DS, "manifest.json"))) {
-    page = await open(`${DATA}/export_loose`, DS, KEY, "noumap");
+  {
+    page = await open(`${DATA}/noumap`, DS, KEY, "noumap");
     const hadUmap = await page.evaluate(() => !document.getElementById("panelUmap").hidden);
-    const lpos = f32(path.join(ROOT, "export_loose", DS, "expr", KEY, "positions.bin"));
+    const lpos = f32(await D.bytes(`${EXP}/positions.bin`));
     const same = lpos.length === POS.length && lpos.every((v, i) => v === POS[i]);
     const rowFile = Buffer.from(["soda_row,cell_type,cell_type_color,UMAP_1,UMAP_2"].concat(Array.from({ length: N }, (_, rr) => { const [ux, uy] = umapOf(rr); return `${rr},${NAMES[band(rr)]},${COLORS[band(rr)]},${ux},${uy}`; })).join("\n") + "\n");
     await load(page, { name: "rows.csv", mimeType: "text/csv", buffer: rowFile });
@@ -438,7 +454,10 @@ async function run(B, browser, URL0, DATA) {
 }
 
 (async () => {
-  const data = await serve(ROOT, true), pageSrv = await serve(PAGE, false);
+  await D.need([DS]);
+  console.log(`data: ${D.describe()}`);
+  await fixtures();
+  const data = await serve(null, true), pageSrv = await serve(PAGE, false);
   const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
   for (const name of BROWSERS) {
     if (!pw[name]) { console.log(`${name}: not in this Playwright, skipped`); continue; }

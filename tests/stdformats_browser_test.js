@@ -1,18 +1,22 @@
 #!/usr/bin/env node
-// Standard formats in the browser: opens the exports made from the synthetic spatial AnnData, OME-Zarr and
-// SpatialData files (examples/make_stdformats_demo.py, web/SpatialViewer/stdformats.py) in Playwright's Chromium
-// (and each other browser of --browsers, e.g. firefox) and checks that each one is an ordinary SODA dataset to the page: the image tiles are drawn, the expression
-// layer loads and a gene from the search shows on the slide, the side panel matches the image (a photo shows
-// "Image", a fluorescence image or a density background its channels), the file's own clusterings are there,
-// the SpatialData cells have their outlines, and the page logs no error and no failed request.
+// Standard and instrument formats in the browser: opens the public exports made from a SpatialData store (xenium_pub,
+// web/SpatialViewer/stdformats.py) and from the CosMx, MERSCOPE, Stereo-seq and GeoMx outputs (cosmx_1, merscope_2,
+// stereoseq_1, geomx_1) in Playwright's Chromium (and each other browser of --browsers, e.g. firefox) and checks that
+// each one is an ordinary SODA dataset to the page: the image tiles are drawn, the expression layer loads with every
+// gene of its genes.json and a gene from the search shows on the slide, the side panel matches the image (a photo
+// shows "Image", a fluorescence image or a density background its channels), the file's own groupings are there,
+// cells have their outlines, transcripts are the molecules layer, and the page logs no error and no failed request.
+// The exports of spatial AnnData and OME-Zarr files have no public example: tests/smoke_test.py's synthetic ones went
+// with the demo data. cosmx_1, stereoseq_1 and geomx_1 are restricted (tests/test_data.js): without
+// SODA_TEST_PRIVATE_DATA or a local copy they are SKIPPED, each with a line saying so.
 //
-//   node tests/stdformats_browser_test.js                  (needs demo/export: run tests/smoke_test.py first)
-//   node tests/stdformats_browser_test.js --export <dir> --page <dir> --shots <dir> --ports 8868,8869 --gpu
+//   node tests/stdformats_browser_test.js                  (the public exports: SODA_TEST_DATA or --data-root, see tests/test_data.js)
+//   node tests/stdformats_browser_test.js --data-root <url or folder> --page <dir> --shots <dir> --ports 8868,8869 --gpu
 //        --browsers chromium,firefox   (default chromium; a browser other than Chromium that is not installed is
 //                                       SKIPPED on its own, with a "SKIPPED <browser>: ..." line)
 //
 // Playwright is not a dependency of this repo. Install it anywhere (npm i playwright; npx playwright install
-// chromium) and point NODE_PATH or --playwright at its node_modules. Without it, or without the exports, the
+// chromium) and point NODE_PATH or --playwright at its node_modules. Without it, or without any of the exports, the
 // test says SKIPPED and exits 0. Chromium draws with software rendering unless --gpu is given.
 "use strict";
 const http = require("http");
@@ -22,7 +26,7 @@ const { sendFile, preflight } = require("./static_files");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
+const DR = require("./test_data");                             // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const SHOTS = arg("--shots", "");
 const PORTS = arg("--ports", "0,0").split(",").map(Number);      // data server, page server; 0 = any free port
@@ -34,13 +38,13 @@ const FIREFOX_QUIET = [/integrity attribute match the content of the subresource
   /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 
 // id, what it is, the panel it must show (photo: "Image" without a channel list), its layer, what else to check
+// (channels: true = the side panel lists the manifest's channel names, in order)
 const DATASETS = [
-  { id: "demo_anndata_visium", what: "spatial AnnData (.h5ad, Visium)", photo: true, layer: "spots", user: "cluster" },
-  { id: "demo_anndata_cells", what: "AnnData-Zarr cells, no image", photo: false, layer: "cells" },
-  { id: "demo_omezarr", what: "OME-Zarr image", photo: false, layer: null, channels: ["DAPI", "CD45", "PanCK", "CD3"] },
-  { id: "demo_sdata_xenium", what: "SpatialData (Xenium-like)", photo: false, layer: "cells", outlines: true, molecules: true, user: "cell_type" },
-  { id: "demo_sdata_visiumhd", what: "SpatialData (Visium HD-like)", photo: true, layer: "016um" },
-  { id: "demo_omezarr_v3", what: "OME-Zarr image, OME-NGFF 0.5 (zarr v3, sharded)", photo: false, layer: null, channels: ["DAPI", "CD45", "PanCK", "CD3"] },
+  { id: "xenium_pub", what: "SpatialData (Xenium, zarr v3)", photo: false, layer: "cells", channels: true, outlines: true, molecules: true },
+  { id: "cosmx_1", what: "CosMx SMI flat files", photo: false, layer: "cells", channels: true, outlines: true, molecules: true },
+  { id: "merscope_2", what: "MERSCOPE, no images (density background)", photo: false, layer: "cells", channels: true, outlines: true, molecules: true },
+  { id: "stereoseq_1", what: "Stereo-seq GEF + cell bin GEF, H&E", photo: true, layer: "bin020" },
+  { id: "geomx_1", what: "GeoMx DSP (DCC, PKC, annotations, two scans)", photo: false, layer: "rois", user: "Tissue" },
 ];
 
 let pw = null;
@@ -49,18 +53,19 @@ for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").sp
 }
 if (!pw) { try { pw = require("playwright"); } catch (e) { /* none */ } }
 if (!pw) { console.log("SKIPPED: playwright is not installed (see the top of this file)"); process.exit(0); }
-const present = DATASETS.filter((d) => fs.existsSync(path.join(EXPORT, d.id, "manifest.json")));
-if (!present.length) { console.log(`SKIPPED: no standard-format export at ${EXPORT} (run tests/smoke_test.py first, or pass --export)`); process.exit(0); }
+let present = [];                                               // the datasets the data root has (found before the run)
 
 // files the page asks for that no export has to have (as in tests/compat_test.js): a lab's published gates, and the
 // page's markers/<file> named by a protein grid layer exported with a markers list the page does not ship
 // vendor/: deck.gl from the page's own site when `prepare.py vendor` put it there, else the CDN (libs.js)
 const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/vendor\//];
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream" };
+// root null: the data (tests/test_data.js: a folder, or passed on to a URL)
 function serve(root, port) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       const rel = decodeURIComponent(req.url.split("?")[0]);
+      if (!root) { if (req.method === "OPTIONS") { preflight(req, res); return; } DR.serve(req, res, rel.slice(1), TYPES[path.extname(rel)]); return; }
       if (rel === "/config.js") { res.writeHead(200, { "Content-Type": "text/javascript" }); res.end("window.SpatialViewerConfig = { tokenEndpoint: \"\" };"); return; }
       const file = path.join(root, rel === "/" ? "index.html" : rel);
       if (req.method === "OPTIONS") { preflight(req, res); return; }
@@ -115,7 +120,7 @@ async function run(B, browser, DATA, URL0) {
     check(st.chanHidden === D.photo, `${D.id}: the side panel shows ${D.photo ? "Image (a photo)" : "the channels"}`, { hidden: st.chanHidden, title: st.chanTitle });
     if (D.channels) check(JSON.stringify(st.channels) === JSON.stringify(D.channels), `${D.id}: channel names from the file`, st.channels);
     if (D.layer) {
-      check(st.exprKey === D.layer && st.genes === 20, `${D.id}: layer ${D.layer} with its 20 genes`, { exprKey: st.exprKey, genes: st.genes });
+      check(st.exprKey === D.layer && st.genes === D.nGenes, `${D.id}: layer ${D.layer} with its ${D.nGenes} genes (genes.json)`, { exprKey: st.exprKey, genes: st.genes });
       const gene = await page.evaluate(() => [...window.__spatialViewer.state.geneIndex].sort((a, b) => b.t - a.t)[0].n);
       await page.fill("#geneSearch", gene); await page.keyboard.press("Enter");
       let shown = false;
@@ -138,7 +143,17 @@ async function run(B, browser, DATA, URL0) {
 }
 
 (async () => {
-  const data = await serve(EXPORT, PORTS[0]), pageSrv = await serve(PAGE, PORTS[1]);
+  for (const d of DATASETS) {
+    if (!(await DR.has(d.id))) { console.log(DR.skipLine(d.id, d.what)); continue; }
+    if (d.layer) d.nGenes = ((await DR.json(`${d.id}/expr/${d.layer}/genes.json`)) || []).length;
+    // the channel names the export read from the file (the page must list them as they are, in order): a real export
+    // names them as its reader found them, which can change with the reader's version (xenium_pub: "0", later "DAPI")
+    if (d.channels === true) d.channels = (((await DR.manifest(d.id)).image || {}).channels || []).map((c) => c.name);
+    present.push(d);
+  }
+  if (!present.length) { console.log(`SKIPPED: none of ${DATASETS.map((d) => d.id).join(", ")} can be read from ${DR.ROOT}`); process.exit(0); }
+  console.log(`data: ${DR.describe()}`);
+  const data = await serve(null, PORTS[0]), pageSrv = await serve(PAGE, PORTS[1]);
   const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
   const ran = [];
   for (const B of BROWSERS) {
