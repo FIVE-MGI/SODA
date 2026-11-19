@@ -12,10 +12,21 @@ nothing to install.
 
 ## Quick start
 
-From instrument folder to shared link. You need Python 3.12 or 3.13 (64-bit), Git and an
-internet connection. Nothing leaves your computer until step 5.
+From instrument folder to shared link. Looking needs only a browser; preparing your own data
+needs Python 3.12 or 3.13 (64-bit), Git and an internet connection. Nothing leaves your
+computer until step 6.
 
-1. **Install** (once, a few minutes). In a terminal:
+1. **Look at the examples.** Seven public datasets (Xenium, Visium HD, PhenoCycler, CosMx,
+   MERSCOPE, Stereo-seq and GeoMx), prepared with SODA, open in Chrome with nothing to
+   install:
+
+   ```
+   https://soda.mgifive.org/index.html?data=https://fivestore.blob.core.windows.net/soda/examples/
+   ```
+
+   Pick a dataset, search a gene, then try **Tissue | Side by side | UMAP**. Where each one
+   comes from: [REPRODUCE.md, section 9](REPRODUCE.md#9-the-public-datasets).
+2. **Install** (once, a few minutes). In a terminal:
 
    ```bash
    git clone https://github.com/FIVE-MGI/SODA.git soda
@@ -32,32 +43,29 @@ internet connection. Nothing leaves your computer until step 5.
    pip install jupyter
    ```
 
-2. **Make the demo data.** It is synthetic: no tissue, no patient. Pick a work folder on a
-   big disk (here `D:\SODA_work`; on a Mac, for example `~/SODA_work`):
-
-   ```bash
-   python examples/make_demo.py --out D:\SODA_work\inputs
-   ```
-
-3. **Run the notebook.** `jupyter notebook notebooks/SODA_pipeline.ipynb`. In the
+3. **Put your data in a work folder.** Pick a work folder on a big disk (here `D:\SODA_work`;
+   on a Mac, for example `~/SODA_work`) and put each dataset in its own folder under its
+   `inputs/` (any name: SODA works out what each one is). To practise on public data first,
+   [REPRODUCE.md, section 9](REPRODUCE.md#9-the-public-datasets) downloads the datasets the
+   examples were made from.
+4. **Run the notebook.** `jupyter notebook notebooks/SODA_pipeline.ipynb`. In the
    *Settings* cell set `WORK` to the same work folder, leave `CLOUD_URL` empty, then
-   **Run > Run All Cells**. The demo takes a few minutes. The run stops at Section 7 with a
-   question: that is expected.
-4. **Open the preview.** Section 6 starts a small local server and the cell after it stops it
+   **Run > Run All Cells**. The run stops at Section 7 with a question: that is expected.
+   Measured times per kind of dataset: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+5. **Open the preview.** Section 6 starts a small local server and the cell after it stops it
    again, so after Run All click into Section 6's server cell and press **Shift+Enter**. Open
-   the first link it prints in Chrome. Search a gene (for example `MARKER_FASC1`), then try
+   the first link it prints in Chrome. Search a gene, then try
    **Tissue | Side by side | UMAP**. Run the next cell to stop the server.
-5. **Share your own data.** Use a new work folder. Put each dataset in its own folder under
-   its `inputs/` (any name: SODA works out what each one is), set `WORK` and your storage
-   folder's link (`CLOUD_URL`), and run the notebook again. Section 5 checks the export for
-   sample IDs when you have a key file. In Section 7 answer one question (is this data
-   public?), upload the `export/` folder as it is to your own storage (Azure, AWS, Google
-   Cloud or a web server; not Box, Google Drive or Dropbox; never `cache/` or `inputs/`),
-   allow the SODA page to read it once (CORS), and share the link the notebook prints:
+6. **Share it.** Set your storage folder's link (`CLOUD_URL`) and run the notebook again.
+   Section 5 checks the export for sample IDs when you have a key file. In Section 7 answer
+   one question (is this data public?), upload the `export/` folder as it is to your own
+   storage (Azure, AWS, Google Cloud or a web server; not Box, Google Drive or Dropbox;
+   never `cache/` or `inputs/`), allow the SODA page to read it once (CORS), and share the
+   link the notebook prints:
    `https://soda.mgifive.org/index.html?data=<your folder>`.
 
-Every step in detail: [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). The same demo from
-the command line, without the notebook: [Try it in 5 minutes](#try-it-in-5-minutes). A whole
+Every step in detail: [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). The same from the
+command line, without the notebook: [Use your own data](#use-your-own-data). A whole
 folder of datasets in one command:
 [ADVANCED.md, section 8](docs/ADVANCED.md#8-many-datasets-at-once-without-the-notebook).
 
@@ -255,17 +263,17 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
   `deid.py` for yours first (see [DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md)). Barcode and
   cell id lists are in an export by default and are checked for sample IDs; `--no-ids` leaves them out.
 
-![The synthetic demo section in Side by side mode: tissue on the left, its UMAP on the right, both coloured by Leiden cluster](docs/img/demo_side_by_side.jpg)
-
-*The synthetic demo dataset (below) in "Side by side" mode, coloured by Leiden cluster.*
+<!-- SCREENSHOT PLACEHOLDER: docs/img/side_by_side.png
+     A public example in Side by side mode: tissue on the left, its UMAP on the right, both
+     coloured by Leiden cluster. Lead adds the image. -->
 
 <!-- SCREENSHOT PLACEHOLDER: docs/img/circle_umap.png
      Draw a region (circle -> UMAP): two circles on the tissue and the resulting UMAP panel. -->
 
 ## Try it in 5 minutes
 
-This makes a small synthetic dataset (no real tissue or patient data), prepares it and
-opens it. You need Python 3.12 or 3.13 (64-bit), Git, and an internet connection.
+This installs SODA and opens the public examples from the page in your own copy. You need
+Python 3.12 or 3.13 (64-bit), Git, and an internet connection.
 
 **1. Get the code and install it with one command.**
 
@@ -303,50 +311,24 @@ environment's Python on every system.
 > That takes the newest versions the ranges allow, not the tested set; with Python 3.12 or
 > 3.13, `pip install -r web/SpatialViewer/requirements-lock.txt` gives the tested set.
 
-**2. Make the demo data, prepare and export it.** Same commands on every system:
-
-```bash
-python examples/make_demo.py --out demo/raw
-python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/visiumhd/image.tif --outs demo/raw/visiumhd/outs --out demo/cache
-python web/SpatialViewer/prepare.py tiff   --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
-python web/SpatialViewer/prepare.py export --id demo_visiumhd  --out demo/cache --dest demo/export --markers examples/demo_markers.json
-python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json
-```
-
-`make_demo.py` writes a Space Ranger-shaped Visium HD folder (`demo/raw/visiumhd/`: an
-H&E-like image and `outs/` with 8 µm and 16 µm bins), a small 9-channel fluorescence image
-(`demo/raw/multiplex.ome.tif`: six stains plus three test cases for the slide QC) and a
-tiled copy of it (`multiplex_tiled.ome.tif`, for the seam correction). Everything goes under
-`demo/`, which Git ignores.
-
-**3. Start two local web servers**, each in its own terminal window (activate the
-environment in each). One serves the data, one serves the page:
-
-```bash
-python web/SpatialViewer/static_serve.py demo/export 8765
-```
+**2. Serve the page** from your copy, in a terminal with the environment active:
 
 ```bash
 python -m http.server 8766 --directory web/SpatialViewer
 ```
 
-**4. Open** this address in Chrome:
+**3. Open** this address in Chrome:
 
 ```
-http://localhost:8766/index.html?static=http://localhost:8765&ds=demo_visiumhd
+http://localhost:8766/index.html?data=https://fivestore.blob.core.windows.net/soda/examples/
 ```
 
-Search a gene (for example `MARKER_FASC1`), then try the **Tissue | Side by side | UMAP**
-switch. Change `ds=demo_visiumhd` to `ds=demo_multiplex` for the fluorescence image.
-Press Ctrl+C in both terminals to stop.
+Pick a dataset, search a gene, then try the **Tissue | Side by side | UMAP** switch. Press
+Ctrl+C in the terminal to stop. To open your own export the same way, see
+[HOSTING.md, On your own computer](docs/HOSTING.md#a-on-your-own-computer).
 
-To check that everything above works without opening a browser:
-
-```bash
-python tests/smoke_test.py
-```
-
-It runs the same steps and then checks every output file.
+To test the code: `python tests/smoke_test.py`. What it runs and what it needs is in
+[REPRODUCE.md, section 6](REPRODUCE.md#6-the-smoke-test).
 
 ## Use your own data
 
@@ -410,10 +392,9 @@ email wbuchser@wustl.edu with any questions about hosting.
   `web/SpatialViewer/requirements-clustering.txt` (optional: whole-section UMAP and Leiden
   clusters with scikit-learn, umap-learn, igraph, leidenalg). Installing these by hand needs
   Python 3.10 or newer (NumPy 2, SciPy 1.14) and gets the newest versions they allow.
-- **Memory (RAM):** no minimum has been benchmarked. Measured peaks: the demo above (its
-  Visium HD part, on Windows) 0.6 GB; a CosMx slide's counts (26 million transcripts, without its images) 0.76 GB; a
-  whole mouse brain Stereo-seq chip 2.7 GB to prepare (3.9 GB from `tissue.gem.gz`) and
-  **8.5 GB to export, the largest measured so far**. For whole-section datasets, have more
+- **Memory (RAM):** no minimum has been benchmarked. Measured peaks: a CosMx slide's counts (26
+  million transcripts, without its images) 0.76 GB; a whole mouse brain Stereo-seq chip
+  2.7 GB to prepare (3.9 GB from `tissue.gem.gz`) and **8.5 GB to export, the largest measured so far**. For whole-section datasets, have more
   free memory than that. Visium HD is prepared with its 8 µm and 16 µm layers by default;
   its 2 µm layer (`--bins all`) has not been measured and is expected to need the most
   (see [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long)). The notebook
@@ -495,12 +476,6 @@ web/SpatialViewer/stdformats.py  spatial AnnData, OME-Zarr and SpatialData into 
 web/SpatialViewer/detect.py  says what kind of dataset a folder holds (prepare.py detect / auto, the notebook)
 deploy/azure/         Azure Static Web Apps config and the /api/token function
 docs/                 documentation
-examples/make_demo.py synthetic demo data
-examples/make_xenium_demo.py  synthetic Xenium output folder (cells, transcripts, stains)
-examples/make_geomx_demo.py   synthetic GeoMx DSP study (DCC, PKC, annotation sheets, scans with ROIs)
-examples/make_imaging_demo.py  synthetic CosMx and MERSCOPE folders (FOV images / mosaics, cells, transcripts)
-examples/make_stereoseq_demo.py  synthetic Stereo-seq output (bin GEF, cell bin GEF, GEM, registered image)
-examples/make_stdformats_demo.py  synthetic spatial AnnData (.h5ad, AnnData-Zarr), OME-Zarr and SpatialData stores
 tests/smoke_test.py   end-to-end test
 tests/stdformats_browser_test.js  the standard-format exports open in Chromium (needs Playwright; the smoke test runs it)
 tests/phone_browser_test.js  the image path in phone browsers, with each failure injected (needs Playwright)
