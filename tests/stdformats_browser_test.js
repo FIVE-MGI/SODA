@@ -38,10 +38,11 @@ const FIREFOX_QUIET = [/integrity attribute match the content of the subresource
   /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 
 // id, what it is, the panel it must show (photo: "Image" without a channel list), its layer, what else to check
+// (channels: true = the side panel lists the manifest's channel names, in order)
 const DATASETS = [
-  { id: "xenium_pub", what: "SpatialData (Xenium, zarr v3)", photo: false, layer: "cells", channels: ["0"], outlines: true, molecules: true },
-  { id: "cosmx_1", what: "CosMx SMI flat files", photo: false, layer: "cells", channels: ["CellComposite red", "CellComposite green", "CellComposite blue"], outlines: true, molecules: true },
-  { id: "merscope_2", what: "MERSCOPE, no images (density background)", photo: false, layer: "cells", channels: ["Transcript density (no image)"], outlines: true, molecules: true },
+  { id: "xenium_pub", what: "SpatialData (Xenium, zarr v3)", photo: false, layer: "cells", channels: true, outlines: true, molecules: true },
+  { id: "cosmx_1", what: "CosMx SMI flat files", photo: false, layer: "cells", channels: true, outlines: true, molecules: true },
+  { id: "merscope_2", what: "MERSCOPE, no images (density background)", photo: false, layer: "cells", channels: true, outlines: true, molecules: true },
   { id: "stereoseq_1", what: "Stereo-seq GEF + cell bin GEF, H&E", photo: true, layer: "bin020" },
   { id: "geomx_1", what: "GeoMx DSP (DCC, PKC, annotations, two scans)", photo: false, layer: "rois", user: "Tissue" },
 ];
@@ -145,6 +146,9 @@ async function run(B, browser, DATA, URL0) {
   for (const d of DATASETS) {
     if (!(await DR.has(d.id))) { console.log(DR.skipLine(d.id, d.what)); continue; }
     if (d.layer) d.nGenes = ((await DR.json(`${d.id}/expr/${d.layer}/genes.json`)) || []).length;
+    // the channel names the export read from the file (the page must list them as they are, in order): a real export
+    // names them as its reader found them, which can change with the reader's version (xenium_pub: "0", later "DAPI")
+    if (d.channels === true) d.channels = (((await DR.manifest(d.id)).image || {}).channels || []).map((c) => c.name);
     present.push(d);
   }
   if (!present.length) { console.log(`SKIPPED: none of ${DATASETS.map((d) => d.id).join(", ")} can be read from ${DR.ROOT}`); process.exit(0); }
