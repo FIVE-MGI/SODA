@@ -150,7 +150,7 @@
       if (!e || typeof e.key !== "string") continue;
       const dirs = [];
       if (e.hvg) dirs.push("hvg");
-      if (e.kind === "protein" && e.mat) dirs.push("mat");
+      if ((e.kind === "protein" || e.modality === "protein") && e.mat) dirs.push("mat");
       for (const dir of dirs) {
         const base = `${root}expr/${e.key}/${dir}/`;
         try {

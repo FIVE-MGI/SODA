@@ -36,7 +36,10 @@ The options file is the notebook's OPTIONS dictionary as JSON: one entry per dat
 same keys (kind, label, src, image, pixel_size, crop, flip, user_layer, no_transcripts ...):
 
     {"nerve_section1": {"label": "Normal nerve"},
-     "two_runs":       {"kind": "merscope", "cells_dir": "D:/data/two_runs/vpt-run-a"}}
+     "two_runs":       {"kind": "merscope", "cells_dir": "D:/data/two_runs/vpt-run-a"},
+     "tonsil_codex":   {"cells": "segmentation/tonsil_cp_masks.tif"}}
+
+("cells" / "nuclei" / "cells_units": a lab's own cell segmentation of a protein image, prepare.py --cells.)
 
 Relative paths in it are taken from the folder the options file is in (user_umap, user_obs and
 user_h5ad from the dataset's folder, as in the notebook).
@@ -85,7 +88,7 @@ FILE_OPTIONS = ("image", "outs", "gef", "gem", "cellbin", "tissue_mask", "dcc", 
                 # standard formats: choices, not files (detect.OVERRIDE_FLAGS)
                 "library", "series", "table", "region", "coordinate_system", "image_element")
 CHOICE_OPTIONS = {"images", "library", "series", "table", "region", "coordinate_system", "image_element"}
-# Options of the kind's own command, and the kinds that take them (the notebook's prepare_args):
+# Options of the kind's own command, and the kinds that take them (the notebook's prepare_args, notebooks/soda_notebook.py):
 KIND_OPTIONS = {"pixel_size": None, "channels": ("tiff", "omezarr"), "image_scale": ("visium", "anndata"),
                 "no_cells": ("xenium", "cosmx", "merscope"),
                 "no_transcripts": ("xenium", "cosmx", "merscope", "spatialdata"),
@@ -94,12 +97,16 @@ KIND_OPTIONS = {"pixel_size": None, "channels": ("tiff", "omezarr"), "image_scal
                 "layer_kind": ("anndata",), "coords_um": ("anndata", "spatialdata"), "points": ("spatialdata",),
                 "no_user_clusters": ("anndata", "spatialdata"),
                 "sheet": ("geomx",), "layout": ("geomx",), "keep_slide_names": ("geomx",),
-                "crop": ("tiff", "akoya", "visium"), "flip": ("tiff", "akoya", "visium")}
+                "crop": ("tiff", "akoya", "visium"), "flip": ("tiff", "akoya", "visium"),
+                # a lab's own cell segmentation of a protein image (protcells.py): a label mask TIFF or a GeoJSON
+                "cells": ("tiff", "akoya", "omezarr"), "nuclei": ("tiff", "akoya", "omezarr"),
+                "cells_units": ("tiff", "akoya", "omezarr")}
+SEGMENTATION_OPTIONS = ("cells", "nuclei")      # files, read relative to the options file like the others
 USER_OPTIONS = ("user_layer", "user_umap", "user_obs", "user_h5ad", "user_embedding", "user_columns",
                 "user_barcode_prefix", "user_barcode_suffix", "user_replace")
 OTHER_OPTIONS = ("kind", "label", "group", "src", "markers")
 KNOWN_OPTIONS = set(FILE_OPTIONS) | set(KIND_OPTIONS) | set(USER_OPTIONS) | set(OTHER_OPTIONS)
-PATH_OPTIONS = set(FILE_OPTIONS) - CHOICE_OPTIONS | {"src", "markers"}
+PATH_OPTIONS = set(FILE_OPTIONS) - CHOICE_OPTIONS | {"src", "markers"} | set(SEGMENTATION_OPTIONS)
 # the notebook's names for three kinds (also the folder names of its older inputs/<kind>/<id>/ layout)
 KIND_FOLDERS = {"visium", "xenium", "stereoseq", "cosmx", "merscope", "geomx", "proteomics_file",
                 "proteomics_markers", "scrnaseq"}
@@ -398,6 +405,17 @@ def check_dataset(ds_id: str, src: Path, options: dict, bins: str | None, hint: 
         d["hint"] = hint_lines(rep, ds_id)
         return [d]
     d["notes"] += list(c["notes"]) + list(rep["extras"])
+    for k in SEGMENTATION_OPTIONS:                      # a lab's own segmentation: protein images only, and it must exist
+        if o.get(k) and d["kind"] not in KIND_OPTIONS[k]:
+            d["problems"].append(f"{k}: a lab's own cell segmentation is read for protein images only "
+                                 f"({', '.join(KIND_OPTIONS[k])}), not for {d['kind']}")
+        elif o.get(k) and not Path(o[k]).is_file():
+            d["problems"].append(f"{k}: not found: {o[k]}")
+    if o.get("nuclei") and not o.get("cells"):
+        d["problems"].append('nuclei: needs "cells" too (the nucleus outlines belong to its cells)')
+    if o.get("cells"):
+        d["notes"].append(f"your own cell segmentation: {Path(o['cells']).name}"
+                          + (f", nuclei {Path(o['nuclei']).name}" if o.get("nuclei") else ""))
     if d["kind"] == "akoya" and "pixel_size" not in o:
         d["notes"].append("no pixel_size option: no scale bar or protein squares unless the files carry it")
     if d["kind"] == "visium":
@@ -476,7 +494,7 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
 
 
 # ---------------------------------------------------------------------------------------------
-# the commands (the notebook's prepare_args / rnaseq_args and its export cell)
+# the commands (the notebook's prepare_args / rnaseq_args / export_args, in notebooks/soda_notebook.py)
 # ---------------------------------------------------------------------------------------------
 def _flag(key: str) -> str:
     return "--" + key.replace("_", "-")

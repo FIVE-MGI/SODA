@@ -91,7 +91,8 @@ tile cache, how many molecules are drawn) are explained one by one in
 
 ## 4. Every notebook setting
 
-All in [`notebooks/SODA_pipeline.ipynb`](../notebooks/SODA_pipeline.ipynb). Only the first
+All in [`notebooks/SODA_pipeline.ipynb`](../notebooks/SODA_pipeline.ipynb) (the code behind its cells is
+[`notebooks/soda_notebook.py`](../notebooks/soda_notebook.py)). Only the first
 two need filling in; the rest have defaults, in the "Advanced settings (optional)" cell of
 Section 0. Run that cell even if you change nothing.
 
@@ -101,7 +102,7 @@ Section 0. Run that cell even if you change nothing.
 | `CLOUD_URL` | empty | your cloud folder's address, without any key or `?sv=...` pass. Needed before Section 7 |
 | `KEY_FILE` | the file named by the `SPATIALVIZ_KEY` environment variable, else `sample_id_key.csv` in `private/soda/` in your home folder | the de-identification key. Keep it outside `WORK` and the repository; never upload it. Section 5 checks for sample IDs only when it exists |
 | `ALWAYS_CHECK_IDS` | `False` | `True` runs the sample ID check even without a key file |
-| `SODA_PAGE` | a placeholder | the address of the SODA page your link opens: the shared page or your own copy. Section 7 builds the link from it |
+| `SODA_PAGE` | `"https://soda.mgifive.org/"` | the address of the SODA page your link opens: the shared SODA page, or your own copy's address. Section 7 builds the link from it |
 | `TITLE` | empty | the name of the whole collection at the top of the page (passed to `catalog.py`); empty keeps the title already in `datasets.json` |
 | `READ_PASS` | empty | private folder only: a read-only pass (Azure SAS, starts with `sv=`), added to the link. Never a write pass |
 | `TILE_FORMAT` | `"jpg"` | image tiles as JPEG (several times smaller) or `"png"` (lossless, for exact intensities) |
@@ -114,7 +115,8 @@ Section 0. Run that cell even if you change nothing.
 Two more, outside Section 0:
 
 - **`OPTIONS`** (Section 2): settings per dataset, such as `label`, `pixel_size`, `crop`,
-  `flip`, `channels` or `user_layer`. The notebook's Section 2 lists every key. For the
+  `flip`, `channels` or `user_layer`. Every key:
+  [PREPARING_DATA.md, Settings per dataset](PREPARING_DATA.md#settings-per-dataset-options). For the
   standard formats (spatial AnnData, OME-Zarr, SpatialData) there are also `library`,
   `matrix`, `spatial_key`, `image_res`, `layer_kind`, `coords_um`, `series`, `table`,
   `region`, `coordinate_system`, `image_element`, `points` and `no_user_clusters`, the

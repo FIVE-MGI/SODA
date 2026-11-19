@@ -521,28 +521,42 @@ def read_wkb_table(path, id_col=None, geom_col=None, z_col=None, z=None):
     return (*_from_ring_list(out_ids, rings), info)
 
 
-def read_geojson(path, id_prop=None):
+def read_geojson(path, id_prop=None, skip_types=None, number_missing=False, geometry="geometry"):
     """Polygons / MultiPolygons of a GeoJSON file; the cell id is the property `id_prop` (else
     the first of cell_id, cell, EntityID, id, label, name) or the feature's own "id".
-    Returns (ids per polygon, start, xy, info)."""
+    `skip_types`: features whose properties.objectType is one of these (lower case) are left out
+    (QuPath's annotations, tiles); `number_missing`: a feature without an id gets its number (1, 2 ...
+    over the features read) instead of being left out; `geometry`: the member holding the shape
+    (QuPath writes a cell's nucleus as "nucleusGeometry"). Returns (ids per polygon, start, xy, info)."""
     gj = json.loads(Path(path).read_text(encoding="utf-8"))
     feats = gj.get("features", []) if isinstance(gj, dict) and gj.get("type") == "FeatureCollection" else [gj]
-    ids, rings, holes, no_id = [], [], 0, 0
+    ids, rings, holes, no_id, skipped, numbered, k = [], [], 0, 0, 0, 0, 0
     for f in feats:
-        g = (f or {}).get("geometry") or {}
+        g = (f or {}).get(geometry) or {}
         p = f.get("properties") or {}
-        cid = p.get(id_prop) if id_prop else next((p[k] for k in ID_COLUMNS if k in p), f.get("id"))
+        if skip_types and str(p.get("objectType", "")).lower() in skip_types:
+            skipped += 1
+            continue
+        k += 1
+        cid = p.get(id_prop) if id_prop else next((p[c] for c in ID_COLUMNS if c in p), f.get("id"))
         polys = [g.get("coordinates")] if g.get("type") == "Polygon" else g.get("coordinates", []) if g.get("type") == "MultiPolygon" else []
         if polys and cid is None:
-            no_id += 1
-            continue
+            if not number_missing:
+                no_id += 1
+                continue
+            cid, numbered = k, numbered + 1
         for poly in polys:
             if not poly:
                 continue
             holes += len(poly) - 1
             ids.append(str(cid))
             rings.append(np.asarray(poly[0], np.float64)[:, :2])
-    return (*_from_ring_list(ids, rings), {"holes": holes, "featuresWithoutId": no_id})
+    info = {"holes": holes, "featuresWithoutId": no_id}
+    if skip_types:
+        info["featuresSkipped"] = skipped
+    if number_missing:
+        info["featuresNumbered"] = numbered
+    return (*_from_ring_list(ids, rings), info)
 
 
 def xenium_cell_ids(cell_id) -> list[str]:

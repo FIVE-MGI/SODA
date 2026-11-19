@@ -1732,9 +1732,15 @@
   // squares, each holding the mean intensity of every marker. Searching, colouring, the
   // section UMAP, clusters and suggested names all run on it exactly as on Visium bins;
   // only the words change ("squares", "markers", intensity instead of UMI).
-  const isProt = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "protein"); };
+  // A lab's own cells of a protein image (protcells.py: kind "cells", modality "protein") are marker means
+  // too: the protein machinery, said as cells, with their outlines (outlines.js, as any cells layer).
+  const isProtLayer = (e) => !!(e && (e.kind === "protein" || e.modality === "protein"));
+  const isProt = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return isProtLayer(e); };
   const WORDS_RNA = { bin: "bin", bins: "bins", Bins: "Bins", gene: "gene", genes: "genes", Gene: "Gene", Genes: "Genes" };
   const WORDS_PROT = { bin: "square", bins: "squares", Bins: "Squares", gene: "marker", genes: "markers", Gene: "Marker", Genes: "Markers" };
+  const WORDS_PROT_CELL = { ...WORDS_PROT, bin: "cell", bins: "cells", Bins: "Cells" };
+  const toCellUnit = (t) => t.replace(/\bsquares\b/g, "cells").replace(/\bsquare\b/g, "cell")
+    .replace(/\bSquares\b/g, "Cells").replace(/\bSquare\b/g, "Cell");
   // Cells of a segmented platform (Xenium "cells" layer): the bin machinery, said as cells, and
   // counts are transcripts rather than UMI.
   const isCells = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "cells"); };
@@ -1743,16 +1749,16 @@
   // vector each. Said as ROIs and counts; drawn as one disc per segment; no UMAP (roi.js).
   const isRois = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; return !!(e && e.kind === "rois" && window.SodaRoi); };
   const toRoiWords = (t) => window.SodaRoi.toWords(t);
-  const wd = () => (isProt() ? WORDS_PROT : isCells() ? WORDS_CELL : isRois() ? window.SodaRoi.WORDS : WORDS_RNA);
-  const countUnit = () => (isCells() ? "transcripts" : isRois() ? "counts" : "UMI");
+  const wd = () => (isProt() ? (isCells() ? WORDS_PROT_CELL : WORDS_PROT) : isCells() ? WORDS_CELL : isRois() ? window.SodaRoi.WORDS : WORDS_RNA);
+  const countUnit = () => (isCells() && !isProt() ? "transcripts" : isRois() ? "counts" : "UMI");
   const toCellWords = (t) => t.replace(/\bbins\b/g, "cells").replace(/\bbin\b/g, "cell")
     .replace(/\bBins\b/g, "Cells").replace(/\bBin\b/g, "Cell").replace(/\bUMI\b/g, "transcripts");
   // a marker's value in a square: mean intensity on the image's own 0-255 scale
   const protVal = (v) => (v ? (v >= 10 ? v.toFixed(0) : v.toFixed(1)) : "0");
   // Static labels in index.html are the sequencing wording. For a protein layer they are
   // swapped; the originals are kept so a Visium dataset opened afterwards reads exactly as before.
-  const toProtWords = (t) => t.replace(/\bbins\b/g, "squares").replace(/\bbin\b/g, "square")
-    .replace(/\bgenes\b/g, "markers").replace(/\bgene\b/g, "marker").replace(/\bUMI\b/g, "intensity");
+  const toProtWords = (t) => { const c = isCells(); return t.replace(/\bbins\b/g, c ? "cells" : "squares").replace(/\bbin\b/g, c ? "cell" : "square")
+    .replace(/\bgenes\b/g, "markers").replace(/\bgene\b/g, "marker").replace(/\bUMI\b/g, "intensity"); };
   const WORDING = [
     ["#geneTitle", "textContent", "Markers per square"],
     ["#geneSearch", "placeholder", "Search marker… (Enter adds top hit)"],
@@ -1771,6 +1777,8 @@
     ["#bqGrey + span", "textContent", null], ["#bqReset", "title", null],
     ["#lblVcMinPct", "textContent", null], ["#lblVcMinPct", "title", null], ["#vcCsv", "title", null],
     ["#plCsv", "title", null], ["#lblPlPts", "title", null],
+    ["#lpHint", "textContent", "Drag around dots to light the same squares on the slide"],
+    ["#lpMkVs button[data-v=shapes]", "textContent", "the other drawn squares"],
   ];
   const wordingOrig = new Map();
   function syncWording() {
@@ -1780,9 +1788,9 @@
       const k = sel + "|" + prop;
       if (!wordingOrig.has(k)) wordingOrig.set(k, el[prop]);
       const orig = wordingOrig.get(k);
-      el[prop] = prot ? (txt == null ? toProtWords(orig) : txt) : cells ? toCellWords(orig) : rois ? toRoiWords(orig) : orig;
+      el[prop] = prot ? (txt == null ? toProtWords(orig) : cells ? toCellUnit(txt) : txt) : cells ? toCellWords(orig) : rois ? toRoiWords(orig) : orig;
     }
-    if (cells) $("geneTitle").textContent = "Genes per cell";
+    if (cells) $("geneTitle").textContent = prot ? "Markers per cell" : "Genes per cell";
     if (rois) $("geneTitle").textContent = "Genes per ROI";
     // squares are always drawn as squares: the round-spot "Normal" view has no meaning here
     // (ROI segments are always one disc each: neither view applies)
@@ -2245,7 +2253,7 @@
     $("lassoPanel").hidden = true;
     if (window.SodaVolcano) window.SodaVolcano.reset();
     if (window.SodaPlots) window.SodaPlots.reset();
-    const prot = !!(e && e.kind === "protein" && e.mat);
+    const prot = !!(isProtLayer(e) && e.mat);
     const ok = S.src && S.src.kind === "static" && e && (e.hvg || prot) && S.mode !== "rna";
     $("panelLasso").hidden = !ok;
     if (!ok) { lassoSetTool(null); L.pos = null; L.hvg = null; L.prot = false; return; }
@@ -2827,19 +2835,20 @@
     box.hidden = !L.prot || !R || !R.rows.length;
     if (box.hidden) return;
     const nameOf = (i) => (i === -1 ? "All shapes together" : L.shapes[i] ? L.shapes[i].name : `Shape ${i + 1}`);
+    const u = isCells() ? "cell" : "square";       // a lab's own cells of the image, or the grid's squares
     const sel = $("lassoRoiPick");
     sel.innerHTML = "";
-    for (const r of R.rows) { const o = document.createElement("option"); o.value = r.shape; o.textContent = `${nameOf(r.shape)} (${r.n.toLocaleString()} squares)`; sel.appendChild(o); }
+    for (const r of R.rows) { const o = document.createElement("option"); o.value = r.shape; o.textContent = `${nameOf(r.shape)} (${r.n.toLocaleString()} ${u}s)`; sel.appendChild(o); }
     sel.value = L.roiPick;
     const r = R.rows.find((x) => x.shape === L.roiPick) || R.rows[0];
     const ord = R.channels.map((_, j) => j).sort((a, b) => r.z[b] - r.z[a]);
-    $("lassoRoiTable").innerHTML = `<table><thead><tr><th>Marker</th><th title="Mean intensity of the shape's squares (0-255, as the image)">Inside</th>` +
-      `<th title="Mean intensity of every other tissue square on the slide">Rest</th><th title="Inside / rest">Ratio</th>` +
+    $("lassoRoiTable").innerHTML = `<table><thead><tr><th>Marker</th><th title="Mean intensity of the shape's ${u}s (0-255, as the image)">Inside</th>` +
+      `<th title="Mean intensity of every other tissue ${u} on the slide">Rest</th><th title="Inside / rest">Ratio</th>` +
       `<th title="(inside - rest) in the slide's standard deviations, on the scaled values the UMAP uses">z</th></tr></thead><tbody>` +
       ord.map((j) => `<tr class="${Math.abs(r.z[j]) < 0.25 || !roiAgree(r, j) ? "dim" : r.z[j] > 0 ? "up" : "down"}"><td>${escHtml(R.channels[j])}</td>` +
         `<td>${protVal(r.raw[j])}</td><td>${protVal(r.rawRest[j])}</td><td>${r.fold[j] == null ? "–" : r.fold[j].toFixed(2)}</td>` +
         `<td>${r.z[j] >= 0 ? "+" : ""}${r.z[j].toFixed(2)}</td></tr>`).join("") + `</tbody></table>`;
-    $("lassoRoiNote").textContent = `${r.n.toLocaleString()} squares inside, ${(R.nSlide - r.n).toLocaleString()} in the rest of the slide` +
+    $("lassoRoiNote").textContent = `${r.n.toLocaleString()} ${u}s inside, ${(R.nSlide - r.n).toLocaleString()} in the rest of the slide` +
       (R.from === "chunks" ? " (slide averages worked out in this browser: the export predates them). " : ". ") +
       `Ratio = mean intensity inside / rest. z = the difference on the scale the UMAP uses (${L.hvg.normalize === "bg-asinh-v1" ? "background off, asinh" : "1st–99.5th percentile window"}), ` +
       "in the slide's standard deviations. Grey: under 0.25, or ratio and z disagree on the direction.";
@@ -4993,7 +5002,9 @@
     const G = S.gate, e = currentExpr();
     G.key = S.exprKey;
     G.markers = S.geneIndex.map((g) => g.n);
-    $("gateCaveat").textContent = `Squares are ${e.binSizeUm ? `${e.binSizeUm} µm` : "small"} and can mix cells: counts are approximate.`;
+    $("gateCaveat").textContent = e.kind === "cells"
+      ? "Cells from the lab's own segmentation: a cell's mean can take in a neighbour's signal at its edge."
+      : `Squares are ${e.binSizeUm ? `${e.binSizeUm} µm` : "small"} and can mix cells: counts are approximate.`;
     if (S.gateUi.open) await gateOpenPanel(S.gateUi.mode);
     // a lab can publish its cut-offs with the data: <dataset>/gates.json (absent = none, quietly)
     const j = await gateFetchPublished();
@@ -6512,7 +6523,7 @@
     // stains stay a marker list even with a cells / ROI layer.
     // a fluorescence image (S.m.imaging, standard formats) or a density background shows its channels, as Xenium does
     const isVisium = S.m.kind === "visium" || (!["xenium", "cosmx", "merscope", "geomx"].includes(S.m.kind) && !S.m.imaging
-      && !(S.m.image && S.m.image.background) && ex.some((e) => e.kind !== "protein"));
+      && !(S.m.image && S.m.image.background) && ex.some((e) => !isProtLayer(e)));
     const hasProt = !isVisium && ex.length > 0;
     $("panelGenes").hidden = !isVisium && !hasProt;
     $("chanList").hidden = isVisium;
@@ -6535,8 +6546,8 @@
     const sel = $("exprSelect"); sel.innerHTML = "";
     for (const e of shownEx) {
       const o = document.createElement("option"); o.value = e.key;
-      o.textContent = e.kind === "protein"
-        ? `${e.label} · ${e.nBins.toLocaleString()} squares · ${e.nGenes.toLocaleString()} markers`
+      o.textContent = isProtLayer(e)
+        ? `${e.label} · ${e.nBins.toLocaleString()} ${e.kind === "cells" ? "cells" : "squares"} · ${e.nGenes.toLocaleString()} markers`
         : `${e.label} · ${e.nBins.toLocaleString()} ${e.kind === "cells" ? "cells" : e.kind === "rois" ? "ROI segments" : "bins"} · ${e.nGenes.toLocaleString()} genes`;
       sel.appendChild(o);
     }
@@ -6901,7 +6912,7 @@
             ? `No datasets.json in ${DATA.root} — run catalog.py on the export folder (the notebook does this) and upload it, or check the link.`
             : /^40[13] /.test(e.message)
             ? `${DATA.root} is not readable (${e.message.slice(0, 3)}). The folder must allow public reading, or the link must carry a read pass.`
-            : `Could not reach ${DATA.root}. Check the link. If it is right, the storage must allow this page to read it (a CORS rule, see docs/HOSTING.md).`, true);
+            : `Could not reach ${DATA.root}. Check the link. If it is right, the storage must allow this page to read it (a CORS rule: docs/SHARE_YOUR_DATA.md, Step 4).`, true);
           return;
         }
       }

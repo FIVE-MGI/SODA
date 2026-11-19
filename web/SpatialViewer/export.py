@@ -17,6 +17,9 @@
     <dest>/<id>/expr/grid<NNN>um/...            image datasets (Akoya / multiplex TIFF): marker means per grid
                                                 square as a "protein" expr layer, with qc.json and umap/
                                                 (protgrid.py)
+    <dest>/<id>/expr/cells/...                  a protein image with the lab's own segmentation (prepare --cells):
+                                                marker means per cell by the grid's rules, mat/, umap/, outlines
+                                                (protcells.py)
     <dest>/<id>/molecules/index.json, genepack/   imaging platforms (Xenium): every transcript,
                                                 uint16 x, y per molecule, packed per gene like expr/ (molecules.py;
                                                 gene/<NAME>.bin files with --gene-files loose)
@@ -51,6 +54,7 @@ import genepack
 import hvgchunks
 import layerids
 import molecules
+import protcells
 import protgrid
 import regions
 import sectionumap
@@ -211,6 +215,8 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
     layer_pack: dict[str, dict] = {}
     packing, loose = gene_files in ("pack", "both"), gene_files in ("loose", "both")
     layer_ids: dict[str, dict] = {}
+    prot_cells = []                                  # a lab's own cells of a protein image: after the grid (protcells.py)
+    layer_prot: dict[str, dict] = {}
 
     # ---- expression --------------------------------------------------------
     for layer in m.get("expr", []):
@@ -234,6 +240,11 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
             if len(ids_plan[key]) != len(pos):
                 raise SystemExit(f"[ids] {key}: {len(ids_plan[key]):,} ids for {len(pos):,} rows of positions.bin")
             layer_ids[key] = layerids.write_ids(ids_plan[key], d, layer, log=log)
+        # a lab's own cells of a protein image: marker means, not counts. Written by the grid's rules once the grid
+        # layer has given the slide's background (below); no binqc / hvg / RNA UMAP
+        if protcells.is_layer(layer):
+            prot_cells.append((layer, er, d))
+            continue
         # GeoMx ROI segments (geomx.py): a few dozen rows. Their own QC values, every target in hvg/,
         # the annotation columns as groupings; no UMAP, Leiden, cell types or variable-gene selection.
         roi = layer.get("kind") == "rois"
@@ -318,11 +329,13 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
 
     # ---- protein grid layer (image datasets): marker means per square ----------
     grid_layer = None
+    grid_stats = {} if prot_cells else None
     if grid_um and grid_um > 0 and protgrid.applies_to(m):
         grid_layer = protgrid.write_grid_layer(r, m, out, grid_um=grid_um, markers=markers,
                                                umap=umap, celltypes=celltypes, log=log,
                                                tissue_smooth_um=tissue_smooth_um, umap_sample=umap_sample,
-                                               seam_correct=seam_correct, gene_files=gene_files, shard_mb=shard_mb)
+                                               seam_correct=seam_correct, gene_files=gene_files, shard_mb=shard_mb,
+                                               **({"stats": grid_stats} if prot_cells else {}))
         if grid_layer and region_feats is not None:
             gk = grid_layer["key"]
             pos = np.fromfile(out / "expr" / gk / "positions.bin", dtype="<f4").reshape(-1, 2)
@@ -332,6 +345,21 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
                 grid_layer = {**grid_layer, "regions": table, "regionOverlay": region_file}
                 log(f"[export] expr {gk}: {len(table)} regions, "
                     f"{int(np.count_nonzero(ids)):,}/{len(ids):,} squares assigned")
+
+    # ---- a lab's own cells of a protein image (protcells.py): the grid's rules on cells ----------
+    for layer, er, d in prot_cells:
+        key = layer["key"]
+        entry, u = protcells.export_layer(er, d, layer, layer.get("micronsPerPixel") or m.get("pixelSizeUm"),
+                                          grid_bg=(grid_stats or {}).get("background"), markers=markers, umap=umap,
+                                          celltypes=celltypes, umap_sample=umap_sample, gene_files=gene_files,
+                                          shard_mb=shard_mb, log=log)
+        u = userclusters.for_layer(user_clusters, er, d, ds_dir, u, log=log)
+        if u:
+            layer_umap[key] = u
+        pack = entry.pop("genePack", None)
+        if pack:
+            layer_pack[key] = pack
+        layer_prot[key] = entry
 
     # ---- overlays + manifest -----------------------------------------------
     for ov in m.get("overlays", []):
@@ -355,6 +383,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, 
         sm["expr"] = [({**layer, "regions": layer_regions[layer["key"]], "regionOverlay": region_file}
                        if layer["key"] in layer_regions else dict(layer))
                       for layer in m.get("expr", [])]
+    if layer_prot:
+        sm["expr"] = [({**layer, **layer_prot[layer["key"]]} if layer["key"] in layer_prot else layer)
+                      for layer in sm.get("expr", [])]
     if layer_hvg:
         sm["expr"] = [({**layer, "hvg": layer_hvg[layer["key"]]} if layer["key"] in layer_hvg else layer)
                       for layer in sm.get("expr", [])]

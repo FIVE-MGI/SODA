@@ -18,7 +18,7 @@ internet connection. Nothing leaves your computer until step 5.
 1. **Install** (once, a few minutes). In a terminal:
 
    ```bash
-   git clone <this repository's URL> soda
+   git clone https://github.com/FIVE-MGI/SODA.git soda
    cd soda
    bash install.sh                                        # macOS / Linux
    powershell -ExecutionPolicy Bypass -File install.ps1   # Windows
@@ -54,7 +54,7 @@ internet connection. Nothing leaves your computer until step 5.
    public?), upload the `export/` folder as it is to your own storage (Azure, AWS, Google
    Cloud or a web server; not Box, Google Drive or Dropbox; never `cache/` or `inputs/`),
    allow the SODA page to read it once (CORS), and share the link the notebook prints:
-   `<the SODA page>/index.html?data=<your folder>`.
+   `https://soda.mgifive.org/index.html?data=<your folder>`.
 
 Every step in detail: [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). The same demo from
 the command line, without the notebook: [Try it in 5 minutes](#try-it-in-5-minutes). A whole
@@ -272,7 +272,7 @@ opens it. You need Python 3.12 or 3.13 (64-bit), Git, and an internet connection
 macOS / Linux:
 
 ```bash
-git clone <this repository's URL> soda
+git clone https://github.com/FIVE-MGI/SODA.git soda
 cd soda
 bash install.sh
 source .venv/bin/activate
@@ -281,7 +281,7 @@ source .venv/bin/activate
 Windows (PowerShell or Command Prompt):
 
 ```powershell
-git clone <this repository's URL> soda
+git clone https://github.com/FIVE-MGI/SODA.git soda
 cd soda
 powershell -ExecutionPolicy Bypass -File install.ps1
 .venv\Scripts\Activate.ps1

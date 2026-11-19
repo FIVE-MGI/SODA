@@ -35,6 +35,13 @@
 //   region_ms   "Fetching N data chunk(s)" shown (the run started) to the UMAP panel drawn (two frames after)
 // with Leiden off and/or on (--leiden off,on).
 //
+// Mode "panzoom": opens the dataset (fresh browser, empty cache) and, from the fitted view, zooms in one level at a
+// time (--zooms, default 4), then jumps one screen width sideways at a time (--pans, default 4), timing each move
+//   sharp_ms    the camera moved to the view sharp again: every image tile on show loaded, no "Loading" status
+// then drags the view with the mouse (--drag-px 800 in about --drag-ms 1500) and records the frame times
+//   frame_median_ms / frame_p95_ms / frame_max_ms, long_frames (> 50 ms), sharp_after_ms (mouse up to sharp)
+// --stains all clicks "All stains on" first (every channel of a protein image drawn at once).
+//
 // Output: --out <dir>/<label>_<mode>_<stamp>.json (everything) and rows appended to --csv in the long format
 //   date,category,dataset,platform,step,condition,metric,value,unit,rep,cpu,notes
 //
@@ -79,6 +86,10 @@ const TIMEOUT = +arg("--timeout-s", 180) * 1000;
 // default for the region's size); --dump <dir> writes each run's rows, embedding and clusters there as JSON
 const SAMPLING = arg("--sampling", "");
 const DUMP = arg("--dump") && path.resolve(arg("--dump"));
+// panzoom mode: --zooms N one-level zoom steps from the fitted view, --pans N one-screen jumps sideways, then a
+// mouse drag of --drag-px pixels in about --drag-ms; --stains all clicks "All stains on" first
+const ZOOMS = +arg("--zooms", 4), PANS = +arg("--pans", 4), DRAG_PX = +arg("--drag-px", 800), DRAG_MS = +arg("--drag-ms", 1500);
+const STAINS = arg("--stains", "");
 if (!DATA_ROOT || !DS) { console.error("need --data-root and --ds"); process.exit(2); }
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -215,6 +226,56 @@ const ADD_GENE = async (name, ms) => {
     await new Promise((r) => setTimeout(r, 10));
   }
   return { ms: null, err: "timeout" };
+};
+// panzoom mode, in the page: zoom in one level at a time from the fitted view, then jump one screen width
+// sideways at a time, and time each move until the view is sharp again (every image tile on show loaded, no
+// "Loading" status, 3 frames in a row). The camera is moved the way the mouse moves it (deck's
+// onViewStateChange -> the viewer's setCamera).
+const PANZOOM = async ([zooms, pans, ms]) => {
+  const V = window.__spatialViewer, S = V.state, deck = V.deck;
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const tiles = () => deck.layerManager.getLayers().filter((l) => l.state && l.state.tileset);
+  const tilesDone = () => { const tl = tiles(); return tl.length > 0 && tl.every((l) => l.isLoaded && (l.state.tileset.selectedTiles || []).every((t) => t.isLoaded)); };
+  const busy = () => { const st = document.getElementById("status"); return !!(st && !st.hidden && /Loading|Opening/.test(st.textContent)); };
+  const nTiles = () => tiles().reduce((a, l) => a + (l.state.tileset.selectedTiles || []).length, 0);
+  const sharp = async (t0) => {
+    await frame(); await frame();                       // the layers have taken the new camera
+    let calm = 0, first = null;
+    while (performance.now() - t0 < ms) {
+      if (tilesDone() && !busy()) { if (!calm) first = performance.now(); if (++calm >= 3) return first - t0; } else calm = 0;
+      await frame();
+    }
+    return null;
+  };
+  const move = (vs) => deck.props.onViewStateChange({ viewState: vs, viewId: "ortho" });
+  const vs0 = { ...S.viewState }, W = window.innerWidth, out = [];
+  for (let i = 1; i <= zooms; i++) {
+    const t0 = performance.now();
+    move({ ...vs0, zoom: vs0.zoom + i });
+    const ms_ = await sharp(t0);
+    out.push({ step: `zoom +${i}`, zoom: +(vs0.zoom + i).toFixed(2), sharp_ms: ms_ == null ? null : Math.round(ms_), tiles: nTiles() });
+  }
+  const vz = { ...S.viewState }, dx = W / Math.pow(2, vz.zoom);
+  for (let i = 1; i <= pans; i++) {
+    const t0 = performance.now();
+    move({ ...vz, target: [vz.target[0] + i * dx, vz.target[1], 0] });
+    const ms_ = await sharp(t0);
+    out.push({ step: `pan ${i}`, zoom: +vz.zoom.toFixed(2), sharp_ms: ms_ == null ? null : Math.round(ms_), tiles: nTiles() });
+  }
+  return out;
+};
+// frame times while the mouse drags the view (rAF timestamps from mouse down to up), then the time until sharp
+const FRAMES_START = () => { const F = (window.__frames = { t: [], on: true }); const f = (t) => { if (!F.on) return; F.t.push(t); requestAnimationFrame(f); }; requestAnimationFrame(f); };
+const FRAMES_STOP = async (ms) => {
+  const F = window.__frames; F.on = false;
+  const d = []; for (let i = 1; i < F.t.length; i++) d.push(F.t[i] - F.t[i - 1]);
+  const s = [...d].sort((a, b) => a - b), q = (p) => (s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : null);
+  const deck = window.__spatialViewer.deck, frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const tilesDone = () => { const tl = deck.layerManager.getLayers().filter((l) => l.state && l.state.tileset); return tl.length > 0 && tl.every((l) => l.isLoaded && (l.state.tileset.selectedTiles || []).every((t) => t.isLoaded)); };
+  const t0 = performance.now(); let calm = 0, first = null, sharp = null;
+  while (performance.now() - t0 < ms) { if (tilesDone()) { if (!calm) first = performance.now(); if (++calm >= 3) { sharp = first - t0; break; } } else calm = 0; await frame(); }
+  return { frames: d.length, median_ms: q(0.5), p95_ms: q(0.95), max_ms: s.length ? s[s.length - 1] : null,
+           long_frames: d.filter((x) => x > 50).length, sharp_after_ms: sharp == null ? null : Math.round(sharp) };
 };
 
 // ---------------------------------------------------------------- one visit
@@ -370,6 +431,52 @@ async function regionRuns(ctx, url, profile, rec) {
   return out;
 }
 
+// ---------------------------------------------------------------- panzoom (zoom in, pan, drag)
+async function panzoomRuns(ctx, url) {
+  const page = await ctx.newPage();
+  page.on("dialog", (d) => d.dismiss().catch(() => {}));
+  const cdp = await ctx.newCDPSession(page);
+  const net = { bytes: 0 };
+  cdp.on("Network.loadingFinished", (e) => { net.bytes += e.encodedDataLength; });
+  await cdp.send("Network.enable");
+  if (NET !== "none") await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: LAT,
+    downloadThroughput: (DOWN * 1e6) / 8, uploadThroughput: (UP * 1e6) / 8 });
+  await page.goto(url, { waitUntil: "commit", timeout: TIMEOUT });
+  const v = await page.evaluate(VIEW_DONE, TIMEOUT);
+  if (v.view == null) throw new Error("dataset did not open: " + JSON.stringify(v));
+  const out = { stains: null, steps: [], drag: null };
+  if (STAINS === "all") {
+    out.stains = await page.evaluate(async (ms) => {
+      const b = document.getElementById("btnAllOn"); if (!b) return { err: "no All stains on button" };
+      b.click();
+      const t0 = performance.now(), frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+      await frame(); await frame();
+      const tl = () => window.__spatialViewer.deck.layerManager.getLayers().filter((l) => l.state && l.state.tileset);
+      let calm = 0;
+      while (performance.now() - t0 < ms) { if (tl().every((l) => l.isLoaded && (l.state.tileset.selectedTiles || []).every((t) => t.isLoaded))) { if (++calm >= 3) break; } else calm = 0; await frame(); }
+      const S = window.__spatialViewer.state, ch = (S.channels || S.m.channels || []);
+      return { on: Array.isArray(ch) ? ch.filter((c) => c && (c.on || c.visible)).length : null, of: Array.isArray(ch) ? ch.length : null,
+               sharp_ms: Math.round(performance.now() - t0) };
+    }, TIMEOUT);
+    log(`all stains on: ${JSON.stringify(out.stains)}`);
+  }
+  await sleep(2000);
+  const b0 = net.bytes;
+  out.steps = await page.evaluate(PANZOOM, [ZOOMS, PANS, TIMEOUT]);
+  out.bytes_steps = net.bytes - b0;
+  // the mouse drags the view across the middle of the window: DRAG_PX to the left in about DRAG_MS
+  const cx = Math.round(VIEW_W * 0.6), cy = Math.round(VIEW_H / 2), n = 60;
+  await page.mouse.move(cx, cy);
+  await page.evaluate(FRAMES_START);
+  await page.mouse.down();
+  for (let i = 1; i <= n; i++) { await page.mouse.move(cx - Math.round((DRAG_PX * i) / n), cy); await sleep(DRAG_MS / n); }
+  await page.mouse.up();
+  out.drag = await page.evaluate(FRAMES_STOP, TIMEOUT);
+  out.bytes_all = net.bytes;
+  await page.close();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   const pageSrv = await makeServer(PAGE_ROOT), dataSrv = await makeServer(DATA_ROOT);
@@ -383,14 +490,26 @@ async function regionRuns(ctx, url, profile, rec) {
     gpu: GPU, viewport: [VIEW_W, VIEW_H], cpu, started: new Date().toISOString(), runs: [] };
   const rec = {};
   const rows = [];
-  const add = (step, visit, metric, value, unit, rep, extra = "") => rows.push([res.started, MODE === "region" ? "region" : "open", LABEL, PLATFORM, step,
+  const add = (step, visit, metric, value, unit, rep, extra = "") => rows.push([res.started, MODE === "region" ? "region" : MODE === "panzoom" ? "panzoom" : "open", LABEL, PLATFORM, step,
     [visit, cond].filter(Boolean).join("; "), metric, value, unit, rep, cpu, [NOTES, extra].filter(Boolean).join("; ")]);
   for (let rep = 1; rep <= REPS; rep++) {
     const profile = path.join(OUT, "profiles", `${LABEL}_${MODE}_${stamp}_r${rep}_${crypto.randomBytes(3).toString("hex")}`);
     const ctx = await launch(profile);
     res.browser = ctx.browser() ? ctx.browser().version() : null;
     try {
-      if (MODE === "region") {
+      if (MODE === "panzoom") {
+        const r = await panzoomRuns(ctx, url);
+        res.runs.push({ rep, ...r });
+        log(`panzoom r${rep}: ` + r.steps.map((s) => `${s.step} ${s.sharp_ms} ms`).join(", ") +
+            `; drag median ${r.drag.median_ms && r.drag.median_ms.toFixed(1)} ms, p95 ${r.drag.p95_ms && r.drag.p95_ms.toFixed(1)} ms, ` +
+            `${r.drag.long_frames} of ${r.drag.frames} frames > 50 ms, sharp ${r.drag.sharp_after_ms} ms after; ${(r.bytes_all / 1e6).toFixed(2)} MB`);
+        if (r.stains) add("all stains on", "", "sharp_ms", r.stains.sharp_ms, "ms", rep, `${r.stains.on} of ${r.stains.of} channels on` + (r.stains.err ? `; ERROR ${r.stains.err}` : ""));
+        for (const s of r.steps) add(s.step, "", "sharp_ms", s.sharp_ms, "ms", rep, `zoom ${s.zoom}; ${s.tiles} tiles on show` + (STAINS ? `; stains ${STAINS}` : ""));
+        add("zoom and pan", "", "bytes", r.bytes_steps, "B", rep);
+        for (const k of ["median_ms", "p95_ms", "max_ms"]) add("drag", "", `frame_${k}`, r.drag[k] == null ? null : +r.drag[k].toFixed(1), "ms", rep, `${DRAG_PX} px in ~${DRAG_MS} ms; ${r.drag.frames} frames`);
+        add("drag", "", "long_frames", r.drag.long_frames, "frames > 50 ms", rep, `of ${r.drag.frames}`);
+        add("drag", "", "sharp_after_ms", r.drag.sharp_after_ms, "ms", rep);
+      } else if (MODE === "region") {
         rec.rep = rep;
         const runs = await regionRuns(ctx, url, profile, rec);
         res.runs.push({ rep, runs });

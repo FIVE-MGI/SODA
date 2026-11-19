@@ -1,20 +1,21 @@
 # Reproducing the paper's numbers and figures
 
 This page says how to rebuild what the SODA paper reports, with the version of SODA it used
-(0.9.0, see [CHANGELOG.md](CHANGELOG.md)). Every command below is in this repository.
+(0.9.0, see [CHANGELOG.md](CHANGELOG.md)). Every command below is in this repository, and
+every dataset in the paper is public: you need the repository and an internet connection.
 
 Three kinds of result, three kinds of promise:
 
 | Kind | Example | What you should get |
 |---|---|---|
 | Synthetic data and the files made from it | the demo dataset, its UMAP and clusters, the smoke test | the same files and the same checks passing, with the same package versions |
-| Times and memory | the tables in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | the same order of magnitude; they depend on the machine and on the data |
-| Results on real datasets | timings of real Visium HD, Xenium, CosMx ... sections | the same commands, on the same public or shared dataset (see [Real datasets](#real-datasets)) |
+| Times and memory | Supplementary Table 2, the tables in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | the same order of magnitude; they depend on the machine and on the data |
+| Results on real datasets | Supplementary Table 2, Figures 2 and 3 | the same commands on the same public datasets (sections [9](#9-the-public-datasets) to [11](#11-the-figures)) |
 
 ## 1. Get the version the paper used
 
 ```bash
-git clone <this repository's URL> soda
+git clone https://github.com/FIVE-MGI/SODA.git soda
 cd soda
 git checkout v0.9.0
 ```
@@ -172,7 +173,9 @@ In short: an Intel Core i7-13700KF using **only its 8 efficiency cores**, 32 GB 
 Python 3.13, headless Chromium (Playwright) on the real GPU, data on network shares, the page
 served by a local server that answers like blob storage, and Chrome's network emulation for
 the "home connection" (50 Mbit/s down, 10 up, 20 ms). Other jobs sometimes ran on the same
-cores, so treat the times as an order of magnitude.
+cores, so treat the times as an order of magnitude. The times in the paper were measured on
+commit 2a2c8ea (18 November 2026); section [10](#10-supplementary-table-2-times-and-memory)
+has the command for every row.
 
 The scripts are in `tools/perf/`. `bench_prepare.py` needs `psutil`
 (`pip install psutil`; it is not in the lock file). `bench_open.js` needs Playwright, as above.
@@ -192,22 +195,287 @@ python tools/perf/summarize.py perf.csv
 
 - **The same cores on Windows:** start the command under the same affinity, for example
   `cmd /c "start /affinity FF0000 /wait /b python tools/perf/bench_prepare.py ..."` (logical
-  CPUs 16-23, the efficiency cores of that CPU; another CPU needs its own mask). The affinity
+  CPUs 16-23, the efficiency cores of that CPU; another CPU needs its own mask; on Linux,
+  `taskset -c 16-23 <command>`). Child processes, Chromium included, inherit it. The affinity
   the command had is recorded in the output.
 - **Draw a region times:** `bench_open.js --mode region` with `--layer`, `--regions <circles.json>`
   and `--leiden off,on` (see the top of `tools/perf/bench_open.js`).
 - Each script's header lists every option and what each number means.
 
-## Real datasets
+## 9. The public datasets
 
-The performance tables use one real dataset per kind (listed in
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md#preparing-one-real-dataset-per-kind)). They are not
-in this repository. To repeat those rows, prepare the same dataset with
-`python web/SpatialViewer/prepare.py auto --src <folder> --id <id> --out cache` and export it
-with `--fmt jpg` (as in PERFORMANCE.md), under `bench_prepare.py` as above.
+Every real dataset in the paper is a public download. None of them is in this repository.
 
-<!-- RELEASE: name each real dataset and where to get it (public download or on request),
-     and map each figure panel of the paper to its dataset and view link. -->
+| Id | What | Source, licence | Download |
+|---|---|---|---|
+| `xenium_pub` | 10x Genomics Xenium, human breast cancer, replicate 1 (Janesick et al. 2023), as the SpatialData sandbox store (zarr v3, spatialdata 0.7.1) | SpatialData sandbox (s3.embl.de); 10x Genomics' terms for the original data | 3,616,589,814 B |
+| `visiumhd_pub` | 10x Genomics Visium HD, human colorectal cancer (FFPE), Space Ranger 4.0.1 | 10x Genomics, CC BY 4.0 | 15,912,158,814 B (binned outputs) + 11,098,424,743 B (full-resolution H&E) |
+| `phenocycler_pub` | HuBMAP HBM274.QXJB.759, human lung, PhenoCycler-Fusion QPTIFF, 46 channels, 36,480 × 37,440 px | HuBMAP, doi:10.35079/HBM274.QXJB.759, CC BY 4.0 | 14,154,986,909 B |
+| `cosmx_1` | NanoString CosMx SMI, non-small-cell lung cancer (FFPE), Lung9_Rep1 (2021 release), 20 FOVs | NanoString public data share; no dataset licence stated (Bruker Spatial Biology terms of use, research use only) | 2.95 GB |
+| `merscope_2` | Vizgen MERSCOPE, human fetal colon, sample AAN4, one whole region without images | Zenodo 19450420, CC BY 4.0 | 275,238,975 B |
+| `stereoseq_1` | STOmics Stereo-seq demo chip C04042E3, mouse whole brain (fresh frozen, H&E) | STOmics demo data (https://www.stomics.tech/col1317); no open licence stated, the site's terms apply (do not redistribute) | 4,497,528,479 B (3 files) |
+| `geomx_1` | NanoString GeoMx DSP Spatial Organ Atlas, mouse embryo E11 (2 scans, 84 AOIs, mouse whole transcriptome) | NanoString Spatial Organ Atlas; no licence stated (Bruker Spatial Biology terms of use, research use only) | 3,525,766,712 B (2 files) |
+| `merscope_crop` (Figure 2) | Vizgen MERSCOPE small data sample: a cropped region with its images (500 genes plus 50 blank control probes, 1,179 cells) | Zenodo 7852005, CC BY 4.0 | 129,368,282 B |
+| `demo_visiumhd`, `demo_multiplex` | synthetic, made by `examples/make_demo.py` (section 5) | this repository | none |
+
+The commands below put each dataset in its own folder under `data/`. `curl -C -` resumes a
+download that stopped; compare each file's size with the table afterwards. They run in bash
+and in the Windows command prompt (Windows 10 and later ship `curl` and `tar`).
+
+**xenium_pub.** Download, then unzip; this gives `data/xenium_pub/data.zarr`:
+
+```bash
+curl -fL -C - --create-dirs -o data/xenium_pub/xenium_rep1_io_spatialdata_0.7.1.zip https://s3.embl.de/spatialdata/spatialdata-sandbox/xenium_rep1_io_spatialdata_0.7.1.zip
+```
+
+```bash
+python -m zipfile -e data/xenium_pub/xenium_rep1_io_spatialdata_0.7.1.zip data/xenium_pub
+```
+
+**visiumhd_pub.** The binned outputs and the full-resolution H&E:
+
+```bash
+curl -fL -C - --create-dirs -o data/visiumhd_pub/Visium_HD_Human_Colon_Cancer_binned_outputs.tar.gz https://cf.10xgenomics.com/samples/spatial-exp/4.0.1/Visium_HD_Human_Colon_Cancer/Visium_HD_Human_Colon_Cancer_binned_outputs.tar.gz
+```
+
+```bash
+curl -fL -C - --create-dirs -o data/visiumhd_pub/Visium_HD_Human_Colon_Cancer_tissue_image.btf https://cf.10xgenomics.com/samples/spatial-exp/4.0.1/Visium_HD_Human_Colon_Cancer/Visium_HD_Human_Colon_Cancer_tissue_image.btf
+```
+
+Extract only the 8 µm and 16 µm bins (the default layers); this gives
+`data/visiumhd_pub/binned_outputs/square_008um` and `square_016um`:
+
+```bash
+tar -xzf data/visiumhd_pub/Visium_HD_Human_Colon_Cancer_binned_outputs.tar.gz -C data/visiumhd_pub binned_outputs/square_008um/filtered_feature_bc_matrix.h5 binned_outputs/square_008um/spatial binned_outputs/square_016um/filtered_feature_bc_matrix.h5 binned_outputs/square_016um/spatial
+```
+
+**phenocycler_pub.** The HuBMAP server refuses curl's default User-Agent; `-A` sends a client
+name instead (any honest name works):
+
+```bash
+curl -fL -C - --create-dirs -A "SODA-data-fetch/0.9" -o data/phenocycler_pub/D438-RLL-16B4-17_Scan1.qptiff https://assets.hubmapconsortium.org/be9e06cea900e49292b5668a6f3e1789/raw/images/D438-RLL-16B4-17_Scan1.qptiff
+```
+
+**cosmx_1.** From NanoString's public bucket: the flat files, the three per-FOV image folders
+(FOVs F001 to F020), and the one raw morphology image the timed folder also held (SODA uses the
+CellComposite images unless every FOV has a raw one, so it does not change the export):
+
+```bash
+curl -fL --create-dirs -o "data/cosmx_1/#1" "https://nanostring-public-share.s3.us-west-2.amazonaws.com/SMI/Lung9_Rep1/{Lung9_Rep1_exprMat_file.csv,Lung9_Rep1_metadata_file.csv,Lung9_Rep1_fov_positions_file.csv,Lung9_Rep1_tx_file.csv,SMI-ReadMe.html}"
+```
+
+```bash
+curl -fL --create-dirs -o "data/cosmx_1/CellComposite/CellComposite_F#1.jpg" "https://nanostring-public-share.s3.us-west-2.amazonaws.com/SMI/Lung9_Rep1/CellComposite/CellComposite_F[001-020].jpg"
+```
+
+```bash
+curl -fL --create-dirs -o "data/cosmx_1/CellLabels/CellLabels_F#1.tif" "https://nanostring-public-share.s3.us-west-2.amazonaws.com/SMI/Lung9_Rep1/CellLabels/CellLabels_F[001-020].tif"
+```
+
+```bash
+curl -fL --create-dirs -o "data/cosmx_1/CompartmentLabels/CompartmentLabels_F#1.tif" "https://nanostring-public-share.s3.us-west-2.amazonaws.com/SMI/Lung9_Rep1/CompartmentLabels/CompartmentLabels_F[001-020].tif"
+```
+
+```bash
+curl -fL --create-dirs -o data/cosmx_1/ResegmentationImages/20210706_105344_S1_C902_P99_N99_F001_Z001.TIF https://nanostring-public-share.s3.us-west-2.amazonaws.com/SMI/Lung9_Rep1/ResegmentationImages/20210706_105344_S1_C902_P99_N99_F001_Z001.TIF
+```
+
+**merscope_2.** Download, then unzip; this gives `data/merscope_2/AAN4`:
+
+```bash
+curl -fL -C - --create-dirs -o data/merscope_2/AAN4.zip https://zenodo.org/records/19450420/files/AAN4.zip
+```
+
+```bash
+python -m zipfile -e data/merscope_2/AAN4.zip data/merscope_2
+```
+
+**stereoseq_1.** The registered H&E, the bin GEF and the cell bin GEF:
+
+```bash
+curl -fL --create-dirs -o "data/stereoseq_1/#1" "https://demo.stomicsdb.tech/C04042E3_Mouse_Whole_Brain_Stereo-seq_FF_V1.3_HE/outs/{C04042E3_HE_regist.tif,C04042E3.raw.gef,C04042E3.cellbin.gef}"
+```
+
+**geomx_1.** The workflow-and-counts archive and the scan images, from the Spatial Organ Atlas
+bucket:
+
+```bash
+curl -fL --create-dirs -o "data/geomx_1/#1" "https://external-soa-downloads-p-1.s3.us-west-2.amazonaws.com/{mu_dev_E11_workflow_and_counts_files.tar.gz,mu_dev_E11_image_files.tar.gz}"
+```
+
+```bash
+tar -xzf data/geomx_1/mu_dev_E11_workflow_and_counts_files.tar.gz -C data/geomx_1
+```
+
+```bash
+tar -xzf data/geomx_1/mu_dev_E11_image_files.tar.gz -C data/geomx_1
+```
+
+The timed run read the DCC files and the probe kit unzipped (`prepare.py geomx` also takes the
+two .zip files as they are):
+
+```bash
+python -m zipfile -e data/geomx_1/mu_dev_E11_workflow_and_count_files/workflow/dcc/E9-E11-E15_DCC.zip data/geomx_1/mu_dev_E11_workflow_and_count_files/workflow/dcc/E9-E11-E15_DCC_unzipped
+```
+
+```bash
+python -m zipfile -e data/geomx_1/mu_dev_E11_workflow_and_count_files/workflow/pkc/Mm_R_NGS_WTA_v1.0.zip data/geomx_1/mu_dev_E11_workflow_and_count_files/workflow/pkc/Mm_R_NGS_WTA_v1.0_unzipped
+```
+
+**merscope_crop (Figure 2).** Download, then unzip into a folder named `merscope_crop`. That
+folder should hold `detected_transcripts.csv`, `images/` and `vpt-run/` directly; if they land
+in a subfolder, move them up:
+
+```bash
+curl -fL -C - --create-dirs -o data/vizgen_sample.zip https://zenodo.org/records/7852005/files/vizgen_sample.zip
+```
+
+```bash
+python -m zipfile -e data/vizgen_sample.zip data/merscope_crop
+```
+
+## 10. Supplementary Table 2: times and memory
+
+Every timed command runs on the 8 efficiency cores only (logical CPUs 16-23 of the
+i7-13700KF; section [8](#8-times-and-memory)), from the repository folder, with the environment
+active. Run them with the machine otherwise quiet. Each prepare or export step runs under
+`bench_prepare.py`, and the step itself is the part after `--`. The first one in full, on
+Windows:
+
+```bash
+start "" /affinity FF0000 /wait /b python tools/perf/bench_prepare.py --label xenium_pub --step prepare --csv perf.csv --logdir perf_logs --input data/xenium_pub/data.zarr --measure cache/xenium_pub -- python web/SpatialViewer/prepare.py spatialdata --src data/xenium_pub/data.zarr --id xenium_pub --out cache --pixel-size 0.2125 --label "Breast cancer, Xenium (10x public data)"
+```
+
+Every other step is the same line with its own `--label`, `--step` (`prepare` or `export`),
+`--input` (the files or folders the step reads; only recorded, for the input size) and
+`--measure` (`cache/<id>` for a prepare, `export/<id>` for an export).
+
+**The demo** (README demo rows), in this order. Steps 2-5 measure `demo/cache/<id>` or
+`demo/export/<id>`:
+
+```bash
+python examples/make_demo.py --out demo/raw
+```
+
+```bash
+python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/visiumhd/image.tif --outs demo/raw/visiumhd/outs --out demo/cache
+```
+
+```bash
+python web/SpatialViewer/prepare.py tiff --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
+```
+
+```bash
+python web/SpatialViewer/prepare.py export --id demo_visiumhd --out demo/cache --dest demo/export --markers examples/demo_markers.json
+```
+
+```bash
+python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json
+```
+
+**Prepare, one real dataset per kind.** The `--label` text is the name the page shows:
+
+```bash
+python web/SpatialViewer/prepare.py spatialdata --src data/xenium_pub/data.zarr --id xenium_pub --out cache --pixel-size 0.2125 --label "Breast cancer, Xenium (10x public data)"
+```
+
+```bash
+python web/SpatialViewer/prepare.py visium --id visiumhd_pub --image data/visiumhd_pub/Visium_HD_Human_Colon_Cancer_tissue_image.btf --outs data/visiumhd_pub --out cache --label "Colorectal cancer, Visium HD (10x public data)"
+```
+
+```bash
+python web/SpatialViewer/prepare.py tiff --src data/phenocycler_pub/D438-RLL-16B4-17_Scan1.qptiff --id phenocycler_pub --out cache --label "Lung, PhenoCycler (HuBMAP public data)"
+```
+
+```bash
+python web/SpatialViewer/prepare.py cosmx --src data/cosmx_1 --id cosmx_1 --out cache
+```
+
+```bash
+python web/SpatialViewer/prepare.py merscope --src data/merscope_2/AAN4 --id merscope_2 --out cache
+```
+
+```bash
+python web/SpatialViewer/prepare.py stereoseq --image data/stereoseq_1/C04042E3_HE_regist.tif --gef data/stereoseq_1/C04042E3.raw.gef --cellbin data/stereoseq_1/C04042E3.cellbin.gef --id stereoseq_1 --out cache
+```
+
+```bash
+python web/SpatialViewer/prepare.py geomx --dcc data/geomx_1/mu_dev_E11_workflow_and_count_files/workflow/dcc/E9-E11-E15_DCC_unzipped --pkc data/geomx_1/mu_dev_E11_workflow_and_count_files/workflow/pkc/Mm_R_NGS_WTA_v1.0_unzipped/Mm_R_NGS_WTA_v1.0.pkc --annotation data/geomx_1/mu_dev_E11_workflow_and_count_files/workflow/readout_package/E11E15readoutpackage/SZ021_20211213T1749_LabWorksheet.txt --annotation data/geomx_1/mu_dev_E11_workflow_and_count_files/count/Export1_InitialDataset.xlsx --image data/geomx_1/mu_dev_E11_image_files/mu_dev_E11_004.ome.tiff --image data/geomx_1/mu_dev_E11_image_files/mu_dev_E11_005.ome.tiff --id geomx_1 --out cache
+```
+
+**Export.** The same command for each of the seven ids (`xenium_pub`, `visiumhd_pub`,
+`phenocycler_pub`, `cosmx_1`, `merscope_2`, `stereoseq_1`, `geomx_1`), after its prepare:
+
+```bash
+python web/SpatialViewer/prepare.py export --id <id> --out cache --dest export --fmt jpg
+```
+
+**Opening.** For each of the nine exports (the two demo datasets with `--data-root demo/export`,
+the seven above with `--data-root export`), once unthrottled and once on the home connection.
+Chromium inherits the affinity:
+
+```bash
+start "" /affinity FF0000 /wait /b node tools/perf/bench_open.js --data-root export --ds <id> --net none --reps 3 --genes top,median --csv open.csv --out open_logs
+```
+
+```bash
+start "" /affinity FF0000 /wait /b node tools/perf/bench_open.js --data-root export --ds <id> --net home --reps 3 --genes top,median --csv open.csv --out open_logs
+```
+
+**Draw a region → Run UMAP**, on the 8 µm bins of `visiumhd_pub`. The regions are three circles
+around one centre (the median position of the bins with at least 10 UMI) that hold 1,000,
+10,000 and 50,000 such bins, each a 72-point polygon as the page's circle tool draws it, in a
+JSON file `{"regions": [{"target": 1000, "points": [[x, y], ...]}, ...]}` (image pixels).
+The script that chose them is not in this repository.
+<!-- RELEASE: add the circle-choosing script (select_regions.mjs) to tools/perf/, or publish the
+     regions file of visiumhd_pub, and give its command here. -->
+
+```bash
+start "" /affinity FF0000 /wait /b node tools/perf/bench_open.js --mode region --data-root export --ds visiumhd_pub --layer 008um --regions regions_visiumhd_pub.json --leiden off,on --reps 3 --timeout-s 1800 --csv region.csv --out region_logs
+```
+
+**The tables:**
+
+```bash
+python tools/perf/summarize.py perf.csv open.csv region.csv
+```
+
+The paper's runs read the data from, and wrote the cache and exports to, a network share; a
+local disk may be faster.
+
+## 11. The figures
+
+**Figure 2** is the notebook `notebooks/SODA_pipeline.ipynb` run on `merscope_crop` (commit
+ce9510c, on the efficiency cores). Change only these settings, in a copy of the notebook:
+
+| Setting | Value |
+|---|---|
+| `WORK` | a folder of your own (its `inputs` folder holds `merscope_crop`) |
+| `OPTIONS` | `merscope_crop`: label "MERSCOPE region (Vizgen sample data)" |
+| `TITLE` | "Public example data" |
+| `IS_THIS_DATA_PUBLIC` | "yes" |
+| `ALWAYS_CHECK_IDS` | `True` (so Section 5 prints the sample ID check) |
+| `CLOUD_URL`, `SODA_PAGE` | two local servers (`static_serve.py`) for the export and for `web/SpatialViewer`, so nothing is uploaded |
+
+The panels are screenshots, in headless Chromium, of the executed notebook, of the export
+folder and of the page opening the export with the link the notebook printed.
+
+**Figure 3** is the page on `xenium_pub`, `visiumhd_pub` and `phenocycler_pub`, exported as in
+section 10. Serve the exports and the page as in the README's
+[Try it in 5 minutes](README.md#try-it-in-5-minutes):
+
+```bash
+python web/SpatialViewer/static_serve.py export 8765
+```
+
+```bash
+python -m http.server 8766 --directory web/SpatialViewer
+```
+
+and open `http://localhost:8766/index.html?static=http://localhost:8765&ds=xenium_pub` (or
+`ds=visiumhd_pub`, `ds=phenocycler_pub`).
+
+<!-- RELEASE: give the view link of each Figure 3 panel (Save view link in the page). -->
 
 ## If your result differs
 

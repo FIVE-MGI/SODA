@@ -1,5 +1,34 @@
 # Share your data: two ways
 
+## Start here: who may see the data?
+
+This is the last step, after the export and the de-identification check.
+
+```mermaid
+flowchart TD
+    A["Your export folder is ready<br/>(export, then the de-identification check)"] --> Q{"Can anyone see this data?"}
+    Q -->|"Yes, public"| P1["Upload export/ to your own cloud storage, public-read"]
+    P1 --> P2["Allow https://soda.mgifive.org to read it:<br/>a CORS rule that also allows Range"]
+    P2 --> P3["A link on the shared page:<br/>soda.mgifive.org/?data=&lt;your folder&gt;<br/>(the link that goes in a paper)"]
+    P2 --> P4["Or your own copy of SODA:<br/>Use this template, then GitHub Pages"]
+    Q -->|"No, private"| W{"Who needs to see it?"}
+    W -->|"A few people, for a while"| V1["Private folder plus a read pass (SAS) on the link.<br/>Send it privately; never put it in a paper"]
+    W -->|"Your lab, long term"| V2["A password-protected SODA site on Azure<br/>(deploy/azure/README.md)"]
+    W -->|"Only you"| V3["Upload nothing: the notebook's preview (Section 6)<br/>or the desktop app (DESKTOP_APP.md)"]
+```
+
+- **Public, shared page:** [1. Share a link](#1-share-a-link) below.
+- **Public, your own copy:** [2. Make it your own](#2-make-it-your-own) below.
+- **Private:** the same upload and link steps with a private folder and a read pass;
+  for a password site see [deploy/azure/README.md](../deploy/azure/README.md) and
+  [HOSTING.md](HOSTING.md). Only you: [DESKTOP_APP.md](DESKTOP_APP.md).
+
+GitHub holds only the SODA page, never your data. Box, Google Drive and Dropbox cannot
+serve the data (no Range requests, no CORS rule), so use cloud storage that can (the table
+in Step 3).
+
+---
+
 You have prepared your data (one folder per dataset, from `prepare.py export` or the
 notebook). There are two ways to let other people look at it.
 
@@ -78,18 +107,18 @@ allow the `Range` request header (some browsers ask first, in a "preflight") and
 see the `Content-Range` answer header. The rules below do both:
 
 - **Azure:** Storage account → Resource sharing (CORS) → Blob service: Allowed origins
-  `<the SODA page's address, e.g. https://soda.example.org>`, Allowed methods `GET, HEAD, OPTIONS`,
+  `https://soda.mgifive.org` (the shared SODA page; you may add `https://five-mgi.github.io` too, its GitHub address, which redirects there; for your own copy of SODA, its address), Allowed methods `GET, HEAD, OPTIONS`,
   Allowed headers `*`, Exposed headers `*`, Max age `3600`. (`*` includes `Range` and
   `Content-Range`. If you list headers instead, allow at least `range` and expose
   `content-range, content-length`.) Blob storage answers Range requests by itself, also
   through a read pass (SAS) on the link.
 - **Amazon S3:** Bucket → Permissions → CORS:
   ```json
-  [{ "AllowedOrigins": ["https://soda.example.org"], "AllowedMethods": ["GET", "HEAD"],
+  [{ "AllowedOrigins": ["https://soda.mgifive.org"], "AllowedMethods": ["GET", "HEAD"],
      "AllowedHeaders": ["*"], "ExposeHeaders": ["Content-Range", "Content-Length"], "MaxAgeSeconds": 3600 }]
   ```
 - **Google Cloud Storage:** save the same rule as `cors.json`
-  (`[{"origin": ["https://soda.example.org"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
+  (`[{"origin": ["https://soda.mgifive.org"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
   and run `gcloud storage buckets update gs://<bucket> --cors-file=cors.json`.
 - **A web server:** see the nginx example in [HOSTING.md](HOSTING.md#host-notes). Apache,
   nginx and IIS answer Range requests for static files by default.
@@ -103,10 +132,11 @@ otherwise says the host does not support Range requests. For such a host, export
 ### Step 5. Make the link
 
 Take the web address of your export folder (the folder that holds `datasets.json`), and
-put it after `?data=` on the SODA page's address:
+put it after `?data=` on the address of the shared SODA page, https://soda.mgifive.org/
+(or of your own copy of SODA):
 
 ```
-https://<the SODA page>/index.html?data=https://yourstorage.blob.core.windows.net/soda/our-atlas/
+https://soda.mgifive.org/index.html?data=https://yourstorage.blob.core.windows.net/soda/our-atlas/
 ```
 
 Open it yourself first. You should see your title and every dataset in the list. Then
@@ -240,7 +270,7 @@ with `git add -f`).
 Your copy does not change when SODA does. To bring in a newer SODA, on your computer:
 
 ```bash
-git remote add soda <SODA's GitHub address>      # once
+git remote add soda https://github.com/FIVE-MGI/SODA.git      # once
 git pull soda main
 ```
 

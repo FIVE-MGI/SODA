@@ -26,20 +26,25 @@ performance cores should be faster. Measured in November 2026.
 | Dataset | Prepare | Export | Peak memory | Export size |
 |---|---|---|---|---|
 | README demo, end to end (make + prepare + export, both datasets) | 2.6 min in total | | 0.6 GB | 80 MB |
-| Visium HD section (345,179 bins of 8 µm + 89,525 of 16 µm, 18,132 genes) | 1.8 min | 8.2 min | 2.0 GB | 0.98 GB, 1,792 files |
-| Xenium mouse brain section (54,002 × 40,815 px, 155,754 cells, 209 M transcripts) | 16 min | 5.6 min | 1.7 GB | 1.75 GB, 12,032 files |
+| Visium HD, 10x human colorectal cancer (FFPE; 8 µm + 16 µm bins) | see Supplementary Table 2 | | | |
 | Stereo-seq whole mouse brain chip (bins 20/50/100 + 130,588 cells) | 5.2 min | 18 min | 8.0 GB | 6.5 GB, 3,541 files |
 | CosMx slide (20 FOVs, 91,972 cells, 26 M transcripts) | 3.8 min | 4.0 min | 0.9 GB | 0.48 GB, 1,750 files |
-| Akoya PhenoCycler section (34 markers, 14,080 × 9,600 px) | 4.5 min | 3.0 min | 0.8 GB | 0.23 GB, 6,650 files |
+| PhenoCycler-Fusion, HuBMAP human lung (46 channels, 36,480 × 37,440 px, whole slide) | see Supplementary Table 2 | | | |
 | GeoMx DSP study (2 scans, 84 AOIs, mouse whole transcriptome) | 4.1 min | 0.7 min | 0.4 GB | 0.15 GB, 2,922 files |
 | MERSCOPE region (65,029 cells, 2.35 M transcripts, no images) | 0.6 min | 1.9 min | 1.6 GB | 36 MB, 210 files |
 | Classic Visium section (10x V1_Adult_Mouse_Brain: 2,702 spots of 55 µm, 32,285 genes, 11,291 × 11,757 px H&E) | 0.9 min | 1.0 min | 0.7 GB | 0.29 GB, 657 files |
 | SpatialData Xenium store, zarr v3 (sandbox Xenium rep1: 167,780 cells, 35,416 × 25,778 px, 34 M transcripts) | 3.2 min | 6.4 min | 1.1 GB | 0.45 GB, 2,343 files |
 
+<!-- RELEASE: fill the Visium HD and PhenoCycler rows, and refresh the others, from the paper's
+     timing run on 2a2c8ea (18 Nov 2026). Every row is a public dataset; the commands are in
+     REPRODUCE.md, sections 9 and 10. -->
+
+- Every dataset in this table is public. For the ones in the paper,
+  [REPRODUCE.md](../REPRODUCE.md#9-the-public-datasets) says where to download each and gives
+  the exact commands.
 - Exports used `--fmt jpg` with UMAP and Leiden clustering on (the defaults otherwise).
-- Most of a large export is the whole-section UMAP and clustering. For the Visium HD 8 µm layer
-  that is 5.7 min of the 8.2; for Stereo-seq bin20 it is 10.6 min of the 18.
-- Most of the Xenium prepare is the image pyramid: 13.9 min of the 16.
+- Most of a large export is the whole-section UMAP and clustering: for Stereo-seq bin20 it is
+  10.6 min of the 18.
 - Classic Visium: `prepare.py visium` on Space Ranger 1.1.0's outputs as 10x hands them out
   (`V1_Adult_Mouse_Brain_filtered_feature_bc_matrix.h5`, `spatial/`, the 0.4 GB full-resolution
   TIFF), conditions as above: input and cache on the network share (`input=D: (network)
@@ -64,10 +69,12 @@ Times run from navigation start, as the median of 3 runs. *Cold* is a fresh brow
 | Downloaded for the open (deck.gl included) | 2.1-13 MB | same | none |
 | A gene drawn, timed from pressing Enter | 0.04-0.97 s | 0.08-2.0 s | 0.04-0.66 s |
 
-- Some datasets in detail:
-  - Visium HD: first tile 2.3 s, 9.3 MB, its most widely expressed gene (2.2 MB) in 0.45 s.
-  - Xenium: 3.0 s and 6.4 MB.
-  - Stereo-seq: 2.9 s and 13 MB, its most widely expressed gene (6.3 MB) in 0.97 s.
+- Stereo-seq in detail: first tile 2.9 s and 13 MB, its most widely expressed gene (6.3 MB)
+  in 0.97 s.
+
+<!-- RELEASE: these ranges include datasets that are no longer in the paper; refresh them from
+     the opening rows of the paper's timing run (REPRODUCE.md section 10). -->
+
 - Most of the cold time is the page starting up: the dataset is only asked for once the page
   is loaded (1.9-2.9 s cold, 1.3 s warm). Everything specific to the dataset takes 0.2-1.4 s after that.
 - The browser held 0.4-0.7 GB after a first open (all its processes, GPU process included). The
@@ -76,7 +83,9 @@ Times run from navigation start, as the median of 3 runs. *Cold* is a fresh brow
 ## Draw a region → Run UMAP
 
 Visium HD 8 µm layer, in the browser's web worker, timed from the run starting to the UMAP drawn.
-These were measured on 17 November 2026 while other test runs shared the same 8 efficiency cores,
+The times below are on a tissue section that is not public; the paper's Draw a region times are on the public 10x
+colorectal cancer Visium HD dataset, with the command in
+[REPRODUCE.md](../REPRODUCE.md#10-supplementary-table-2-times-and-memory). These were measured on 17 November 2026 while other test runs shared the same 8 efficiency cores,
 so they are slower than an idle machine; the page before the speed-up (b7eb968) and now were run
 in turn, twice each (both runs shown):
 
@@ -103,7 +112,6 @@ fast mode).
 ## What was not measured
 
 - Visium HD's 2 µm layer.
-- A whole Akoya slide (one section was cropped out of it).
 - Real hosting over the internet. Only deck.gl came from its CDN, and the data came from a local server.
 - Browsers other than Chromium, and phones.
 
