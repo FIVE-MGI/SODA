@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Phone browser test: opens the viewer on the demo export in Playwright's WebKit (iPhone
+// Phone browser test: opens the viewer on the public exports (visiumhd_pub, phenocycler_pub; tests/test_data.js) in Playwright's WebKit (iPhone
 // profile) and Chromium (phone emulation) and checks the image tile path, including what
 // happens when a step fails: createImageBitmap refusing or missing, tiles refused, dropped
 // or not pictures, no WebGL2, a lost graphics context. Also checks the ?diag=1 panel and
 // that it never prints a token or password.
 //
-//   node tests/phone_browser_test.js                      (needs demo/export: run tests/smoke_test.py first)
-//   node tests/phone_browser_test.js --export <dir> --page <dir> --only webkit --shots <dir> --ports 8864,8865
+//   node tests/phone_browser_test.js                      (the public exports: SODA_TEST_DATA or --data-root, see tests/test_data.js)
+//   node tests/phone_browser_test.js --data-root <url or folder> --page <dir> --only webkit --shots <dir> --ports 8864,8865
 //
 // Playwright is not a dependency of this repo. Install it anywhere (npm i playwright; npx
 // playwright install webkit chromium) and point NODE_PATH or --playwright at its node_modules.
@@ -22,7 +22,7 @@ const path = require("path");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
+const D = require("./test_data");                              // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const ONLY = arg("--only", "");
 const SHOTS = arg("--shots", "");
@@ -35,17 +35,16 @@ for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").sp
 }
 if (!pw) { try { pw = require("playwright"); } catch (e) { /* none */ } }
 if (!pw) { console.log("SKIPPED: playwright is not installed (see the top of this file)"); process.exit(0); }
-if (!fs.existsSync(path.join(EXPORT, "demo_visiumhd", "manifest.json"))) {
-  console.log(`SKIPPED: no demo export at ${EXPORT} (run tests/smoke_test.py first, or pass --export)`); process.exit(0);
-}
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream" };
 const { sendFile, preflight } = require("./static_files");
+// root null: the data root (tests/test_data.js), read from its folder or passed on to its URL
 function serve(root, port) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       if (req.method === "OPTIONS") { preflight(req, res); return; }
       const rel = decodeURIComponent(req.url.split("?")[0]);
+      if (!root) { D.serve(req, res, rel.slice(1), TYPES[path.extname(rel)]); return; }
       const file = path.join(root, rel === "/" ? "index.html" : rel);
       if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
       sendFile(req, res, file, TYPES[path.extname(file)]);            // with Range: gene packs are read by range
@@ -77,36 +76,36 @@ const look = async (page) => page.evaluate(() => {
 
 // each scenario: set up the fault, open the page, then say what must be true
 const SCENARIOS = [
-  { name: "normal", ds: "demo_visiumhd", check: (r, ok) => { ok(r.lit > 0.05, `image drawn (lit ${r.lit.toFixed(3)})`); ok(!r.err, `no error line (${r.status})`); ok(r.decoder === "createImageBitmap", `decoder ${r.decoder}`); } },
-  { name: "normal-jpeg", ds: "demo_multiplex", check: (r, ok) => { ok(r.lit > 0.02, `image drawn (lit ${r.lit.toFixed(3)})`); ok(!r.err, `no error line (${r.status})`); } },
-  { name: "createImageBitmap refuses the options", ds: "demo_visiumhd",
+  { name: "normal", ds: "visiumhd_pub", check: (r, ok) => { ok(r.lit > 0.05, `image drawn (lit ${r.lit.toFixed(3)})`); ok(!r.err, `no error line (${r.status})`); ok(r.decoder === "createImageBitmap", `decoder ${r.decoder}`); } },
+  { name: "normal-jpeg", ds: "phenocycler_pub", check: (r, ok) => { ok(r.lit > 0.02, `image drawn (lit ${r.lit.toFixed(3)})`); ok(!r.err, `no error line (${r.status})`); } },
+  { name: "createImageBitmap refuses the options", ds: "visiumhd_pub",
     init: () => { const real = window.createImageBitmap.bind(window); window.createImageBitmap = (src, o) => (o && o.premultiplyAlpha ? Promise.reject(new DOMException("options refused (test)", "InvalidStateError")) : real(src)); },
     check: (r, ok) => { ok(r.lit > 0.05, `image drawn through the fallback (lit ${r.lit.toFixed(3)})`); ok(r.decoder === "createImageBitmap without options", `decoder ${r.decoder}`); ok(!r.err, `no error line (${r.status})`); } },
-  { name: "createImageBitmap always refuses", ds: "demo_multiplex",
+  { name: "createImageBitmap always refuses", ds: "phenocycler_pub",
     init: () => { window.createImageBitmap = () => Promise.reject(new DOMException("refused (test)", "InvalidStateError")); },
     check: (r, ok) => { ok(r.lit > 0.02, `image drawn from img elements (lit ${r.lit.toFixed(3)})`); ok(r.decoder === "an img element", `decoder ${r.decoder}`); } },
-  { name: "createImageBitmap missing", ds: "demo_visiumhd",
+  { name: "createImageBitmap missing", ds: "visiumhd_pub",
     init: () => { delete window.createImageBitmap; window.createImageBitmap = undefined; },
     check: (r, ok) => { ok(r.lit > 0.05, `image drawn from img elements (lit ${r.lit.toFixed(3)})`); ok(r.decoder === "an img element", `decoder ${r.decoder}`); } },
-  { name: "?decode=img", ds: "demo_visiumhd", extra: "&decode=img",
+  { name: "?decode=img", ds: "visiumhd_pub", extra: "&decode=img",
     check: (r, ok) => { ok(r.lit > 0.05, `image drawn (lit ${r.lit.toFixed(3)})`); ok(r.decoder === "an img element", `decoder ${r.decoder}`); } },
-  { name: "tiles refused (403)", ds: "demo_visiumhd",
+  { name: "tiles refused (403)", ds: "visiumhd_pub",
     route: async (page) => page.route("**/tiles/**", (rt) => rt.fulfill({ status: 403, headers: { "Access-Control-Allow-Origin": "*" }, body: "denied" })),
     check: (r, ok) => { ok(r.err && /refused the image tiles \(403/.test(r.status), `status line says so: "${r.status}"`); ok(r.lit < 0.01, "map is black (nothing to draw)"); } },
-  { name: "tiles are not pictures", ds: "demo_visiumhd",
+  { name: "tiles are not pictures", ds: "visiumhd_pub",
     route: async (page) => page.route("**/tiles/**", (rt) => rt.fulfill({ status: 200, headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "text/html" }, body: "<html>sign in</html>" })),
     check: (r, ok) => { ok(r.err && /could not decode an image tile/.test(r.status), `status line says so: "${r.status}"`); } },
-  { name: "connection drops, then returns", ds: "demo_visiumhd", wait: 14000,
+  { name: "connection drops, then returns", ds: "visiumhd_pub", wait: 24000,
     route: async (page) => { const t0 = Date.now(); await page.route("**/tiles/**", (rt) => (Date.now() - t0 < 5000 ? rt.abort("connectionreset") : rt.continue())); },
     mid: 3500, midCheck: (r, ok) => { ok(r.err && /could not be downloaded/.test(r.status), `while down, the status line says so: "${r.status}"`); },
     check: (r, ok) => { ok(r.lit > 0.05, `image drawn once the connection is back, without a reload (lit ${r.lit.toFixed(3)})`); ok(!/could not/.test(r.status), `error line cleared ("${r.status}")`); } },
-  { name: "no WebGL2", ds: "demo_visiumhd",
+  { name: "no WebGL2", ds: "visiumhd_pub",
     init: () => { const real = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (t, ...a) { return /^webgl/.test(t) ? null : real.call(this, t, ...a); }; },
     check: (r, ok) => { ok(r.err && /WebGL2/.test(r.status), `status line says so: "${r.status}"`); } },
-  { name: "graphics context lost", ds: "demo_visiumhd",
+  { name: "graphics context lost", ds: "visiumhd_pub",
     after: async (page) => page.evaluate(() => { const gl = window.__spatialViewer.deck.device.gl; gl.getExtension("WEBGL_lose_context").loseContext(); return new Promise((r) => setTimeout(r, 800)); }),
     check: (r, ok) => { ok(r.err && /graphics memory/.test(r.status), `status line says so: "${r.status}"`); } },
-  { name: "diag panel", ds: "demo_multiplex", extra: "&diag=1", wait: 12000,
+  { name: "diag panel", ds: "phenocycler_pub", extra: "&diag=1", wait: 20000,
     check: (r, ok) => {
       ok(!!r.diag, "panel is on the page");
       const d = r.diag || "";
@@ -115,10 +114,10 @@ const SCENARIOS = [
       ok(/RESULT: these checks found no problem/.test(d), `result line: ${(d.match(/RESULT: [^\n]*/) || [""])[0]}`);
       ok(!/\?/.test(d.replace(/\? \(none yet\)/g, "")), "no address in the panel keeps its ?query");
     } },
-  { name: "diag panel behind the password (token flow)", ds: "demo_visiumhd", extra: "&diag=1", noStatic: true, wait: 12000,
+  { name: "diag panel behind the password (token flow)", ds: "visiumhd_pub", extra: "&diag=1", noStatic: true, wait: 20000,
     route: async (page, urls) => {
       await page.route("**/config.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript",
-        body: `window.SpatialViewerConfig = { tokenEndpoint: "/api/token", tileCacheSize: 400, datasets: { demo_visiumhd: { label: "demo" } } };` }));
+        body: `window.SpatialViewerConfig = { tokenEndpoint: "/api/token", tileCacheSize: 400, datasets: { visiumhd_pub: { label: "public" } } };` }));
       await page.route("**/api/token", (rt) => {
         const req = rt.request();
         const good = req.method() === "POST" && JSON.parse(req.postData() || "{}").password === TEST_PW;
@@ -140,7 +139,9 @@ const SCENARIOS = [
 ].filter((s) => !SCEN || s.name.includes(SCEN));
 
 (async () => {
-  const data = await serve(EXPORT, PORTS[0]), pageSrv = await serve(PAGE, PORTS[1]);
+  await D.need(["visiumhd_pub", "phenocycler_pub"]);
+  console.log(`data: ${D.describe()}`);
+  const data = await serve(null, PORTS[0]), pageSrv = await serve(PAGE, PORTS[1]);
   const urls = { data: `http://127.0.0.1:${data.address().port}`, page: `http://127.0.0.1:${pageSrv.address().port}` };
   const engines = [
     { name: "webkit-iphone", type: pw.webkit, device: pw.devices["iPhone 15"] },
@@ -161,7 +162,7 @@ const SCENARIOS = [
         await page.goto(`${urls.page}/index.html?${sc.noStatic ? "" : `static=${urls.data}&`}ds=${sc.ds}${sc.extra || ""}`, { waitUntil: "load" });
         if (sc.during) await sc.during(page);
         if (sc.mid) { await page.waitForTimeout(sc.mid); sc.midCheck(await look(page), ok); }
-        await page.waitForTimeout((sc.wait || 6000) - (sc.mid || 0));
+        await page.waitForTimeout((sc.wait || 12000) - (sc.mid || 0));     // the public exports are large
         if (sc.after) await sc.after(page);
         const r = await look(page);
         sc.check(r, ok);

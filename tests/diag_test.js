@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Unit checks for the pure parts of web/SpatialViewer/diag.js (the ?diag=1 panel): the
 // function that strips tokens and passwords from anything shown, the user-agent reader and
-// the tile sniffer. Needs only node.   node tests/diag_test.js [<export root>]
+// the tile sniffer. Needs only node.   node tests/diag_test.js [--data-root <url or folder>]
+// The tile sniffer is also tried on two real tiles of the public exports (tests/test_data.js: SODA_TEST_DATA or
+// --data-root, default the hosted copy); without them (no internet) that part is skipped.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -38,19 +40,21 @@ eq(`${u.device}|${u.browser}|${u.ios}`, "Mac|Safari 17.4|false", "Mac Safari");
 u = parseUA("Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.7390.37 Mobile Safari/537.36", 5);
 eq(`${u.device}|${u.browser}|${u.ios}`, "Android|Chrome 141.0.7390.37|false", "Android Chrome");
 
-// ---- imageInfo(): on made-up headers, and on real demo tiles when an export is at hand
+// ---- imageInfo(): on made-up headers, and on real tiles of the public exports when they can be read
 const png = new Uint8Array(33); png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 4, 0, 0, 0, 4, 0, 8, 0, 0, 0, 0]);
 eq(imageInfo(png), "PNG 1024 x 1024, 8-bit grey", "grey PNG header");
 eq(imageInfo(new TextEncoder().encode("<html><body>Sign in</body></html>")), "NOT an image: text (an error page?)", "an error page");
 eq(imageInfo(new Uint8Array([1, 2, 3, 4])), "NOT a PNG or JPEG", "junk");
-const root = process.argv[2] || path.join(__dirname, "..", "demo", "export");
-const tiles = [["demo_visiumhd/tiles/0/0/0/0.png", /^PNG \d+ x \d+, 8-bit grey$/], ["demo_multiplex/tiles/0/0/0/0.jpg", /^JPEG \d+ x \d+, 8-bit grey$/]];
-for (const [rel, want] of tiles) {
-  const p = path.join(root, rel);
-  if (!fs.existsSync(p)) { console.log(`  (no ${rel} under ${root}: skipped)`); continue; }
-  const got = imageInfo(new Uint8Array(fs.readFileSync(p).subarray(0, 4096)));
-  ok(want.test(got), `${rel}: read as ${JSON.stringify(got)}`);
-}
-
-console.log(fail ? `diag_test: ${fail} of ${n} checks FAILED` : `diag_test: ${n} checks passed`);
-process.exit(fail ? 1 : 0);
+const D = require("./test_data");
+const tiles = [["visiumhd_pub/tiles/0/0/0/0.jpg", /^JPEG \d+ x \d+, 8-bit grey$/], ["phenocycler_pub/tiles/0/0/0/0.jpg", /^JPEG \d+ x \d+, 8-bit grey$/]];
+(async () => {
+  for (const [rel, want] of tiles) {
+    let b = null;
+    try { b = await D.bytes(rel); } catch (e) { /* not reachable */ }
+    if (!b) { console.log(`  (no ${rel} under ${D.ROOT}: skipped)`); continue; }
+    const got = imageInfo(new Uint8Array(b.subarray(0, 4096)));
+    ok(want.test(got), `${rel}: read as ${JSON.stringify(got)}`);
+  }
+  console.log(fail ? `diag_test: ${fail} of ${n} checks FAILED` : `diag_test: ${n} checks passed`);
+  process.exit(fail ? 1 : 0);
+})();

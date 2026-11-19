@@ -13,7 +13,7 @@ const eq = (got, want, what) => ok(JSON.stringify(got) === JSON.stringify(want),
 
 // a typical state, as viewer.js's sessionState(false) + forLink gives it
 const typical = () => ({
-  dataset: "demo_visiumhd", layer: "008um",
+  dataset: "visiumhd_pub", layer: "008um",
   sectionClusters: { layer: "008um", resolution: 0.6, names: { "0.6": { 0: "Fascicle", 3: "Epineurium" } }, hidden: [5] },
   qcFilter: { layer: "008um", thresholds: { total: { min: 20, max: null }, pctMt: { min: null, max: 25 } } },
   view: {
@@ -52,7 +52,7 @@ const circle = (cx, cy, r, k) => Array.from({ length: k }, (_, i) => [cx + r * M
   for (const c of [true, false]) eq((await VL.decode(await VL.encode(uni, { compress: c }))).state.sectionClusters.names["1"]["0"], "Müller glia 視細胞 – β", `non-ASCII names survive (compress ${c})`);
 
   // ---- the budget: what is left out when the state is too big -----------------------------------------
-  const base = "https://example.org/SODA/index.html?ds=demo_visiumhd".length;
+  const base = "https://example.org/SODA/index.html?ds=visiumhd_pub".length;
   let r = await VL.fit(st, base, VL.BUDGET);
   ok(r.tier === 0 && !r.left.length && !r.over, `a typical state fits whole (payload ${r.payload.length} characters)`);
   ok(base + 3 + r.payload.length <= VL.BUDGET, `a typical link is within the ${VL.BUDGET} character budget (${base + 3 + r.payload.length})`);
