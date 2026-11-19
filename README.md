@@ -2,6 +2,9 @@
 
 > **Never done this before? [Start here](docs/GETTING_STARTED.md):** every click and command,
 > from downloading SODA to a link that shows your data, for people new to coding and the cloud.
+>
+> **Rather not use code at all?** [Download the SODA app](https://github.com/FIVE-MGI/SODA/releases/latest)
+> (Windows or Apple Silicon Mac): pick your data folder, click Prepare, and it writes the folder to upload.
 
 SODA turns what a spatial biology instrument writes into a link that opens the whole slide
 in a web browser. You run it once on your own computer, from a Python notebook; it writes

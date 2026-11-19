@@ -39,6 +39,13 @@ someone is looking.
   Box, Google Drive, Dropbox and OneDrive do **not** work.
 - About 1 to 2 hours the first time, most of it waiting.
 
+**Rather not use code at all?** The **SODA app** does Parts 1 and 2 for you: download it from
+https://github.com/FIVE-MGI/SODA/releases/latest (Windows: `SODA-<version>-setup.exe`; Apple Silicon
+Mac: the `.dmg`), open it, pick your data folder and an output folder, and click **Prepare**. It
+checks, prepares and exports every dataset, runs the sample-ID check, and shows the result. Then
+continue at [Part 3](#part-3-upload-and-share-public-data) with its `export` folder. More:
+[DESKTOP_APP.md](DESKTOP_APP.md). The notebook below does the same with more control.
+
 **No data of your own yet?** Practise with a small public dataset: the MERSCOPE human fetal
 colon sample (275 MB, Zenodo record 19450420, CC BY 4.0). Download link and command:
 [REPRODUCE.md, section 9](../REPRODUCE.md#9-the-public-datasets) (`merscope_2`). Unzipping it
