@@ -2,7 +2,7 @@
 // site published straight from the repository (GitHub Pages, .github/workflows/pages.yml) has it.
 //
 //   data: the link of an export folder (the one holding datasets.json, from catalog.py). Here the
-//         seven public example datasets (README, Quick start). Empty: the page opens nothing and
+//         four public example datasets (README, Quick start). Empty: the page opens nothing and
 //         says how to open a data link. This file is public: only a public-read folder, never a
 //         link with a read pass (?sv=…&sig=…).
 //
