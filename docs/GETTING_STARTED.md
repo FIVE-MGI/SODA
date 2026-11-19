@@ -120,7 +120,9 @@ Everything goes into the `.venv` folder inside `soda`; nothing else on your comp
 
 ### Step 4. Open the SODA notebook
 
-In the same terminal:
+Pick **one** of these two ways.
+
+**A. In your browser (JupyterLab).** In the same terminal:
 
 - **Windows:** `.venv\Scripts\jupyter lab`
 - **Mac:** `.venv/bin/jupyter lab`
@@ -128,7 +130,21 @@ In the same terminal:
 A browser tab called **JupyterLab** opens. (Keep the terminal open; closing it stops the
 notebook.) On the left, double-click **notebooks** → **SODA_pipeline.ipynb**.
 
-Run the first code cell (under **0. Setup**). ✅ No line says `MISSING` or `WRONG VERSION`.
+**B. In VS Code** (if you use it):
+
+1. **File → Open Folder…** → choose the `soda` folder.
+2. On the left, open **notebooks** → **SODA_pipeline.ipynb**. If VS Code offers to install
+   the **Python** and **Jupyter** extensions, say yes.
+3. Top right of the notebook: **Select Kernel** → **Python Environments** → the one marked
+   **`.venv`**. (Not listed? Close the notebook and open it again.)
+
+Either way: the text cells explain each step; the grey boxes with code are the ones you run.
+Commands that start with `powershell`, `bash` or `.venv` (like Step 3's) go in a **terminal**,
+never in the notebook. In VS Code, **Terminal → New Terminal** opens one already in the `soda`
+folder.
+
+Run the first code cell (under **0. Setup**): click in it, press **Shift + Enter**.
+✅ No line says `MISSING` or `WRONG VERSION`.
 
 ### Step 5. Make a work folder and put your data in it
 
