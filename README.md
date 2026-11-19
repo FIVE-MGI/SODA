@@ -422,9 +422,7 @@ Other desktop browsers (Edge, Firefox, Safari) have not been tested by hand; the
 support WebGL2. Automated tests (`tests/browsers_test.js`, `tests/offline_test.js`) run the page in
 Playwright's Chromium, WebKit, Edge and Firefox builds, Firefox also in a phone-sized window (the size
 only: Playwright cannot emulate a touch screen in Firefox). On an iPhone every browser runs on
-Safari's engine (WebKit); what was tested there is below. Password-encrypted dataset links
-(`links.py`, deprecated: they will be removed in a later version) need the page to be served over
-`https://` or from `localhost`.
+Safari's engine (WebKit); what was tested there is below.
 
 **Copy link to this view** and **Compare** were checked with automated tests in Chromium
 and in Playwright's WebKit build (the engine behind Safari), at desktop size and at

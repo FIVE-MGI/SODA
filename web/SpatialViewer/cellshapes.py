@@ -894,25 +894,6 @@ def attach(ds_dir: Path, meta: dict, sets, pixel_size_um=None, args=None, log=pr
         meta["shapes"] = block
 
 
-def read_set(d: Path):
-    """A set back as (index, rows per polygon, start, xy float64 image pixels); entries with no
-    polygon come back as empty rings. For tests and checks."""
-    d = Path(d)
-    index = json.loads((d / "index.json").read_text(encoding="utf-8"))
-    rows, cnts, xys = [], [], []
-    for c in index["chunks"]:
-        buf = (d / f"{c['tx']}_{c['ty']}.bin").read_bytes()
-        n, nv = np.frombuffer(buf, "<u4", 2)
-        o = np.frombuffer(buf, "<f4", 2, 8).astype(np.float64)
-        rows.append(np.frombuffer(buf, "<u4", n, 16))
-        cnts.append(np.frombuffer(buf, "<u2", n, 16 + 4 * n))
-        q = np.frombuffer(buf, "<u2", 2 * nv, 16 + 6 * n).reshape(-1, 2).astype(np.float64)
-        xys.append(o + q * index["step"])
-    cnt = np.concatenate(cnts).astype(np.int64) if cnts else np.zeros(0, np.int64)
-    return (index, np.concatenate(rows).astype(np.int64) if rows else np.zeros(0, np.int64),
-            np.concatenate([[0], np.cumsum(cnt)]), np.concatenate(xys) if xys else np.zeros((0, 2)))
-
-
 def export_shapes(ds_dir: Path, out: Path, m: dict, log=print) -> dict:
     """Copy the cache's shapes/ into the export (the cache format is the static format).
     Returns {layer key: manifest block} for the layers whose outlines were copied; a set whose

@@ -260,8 +260,9 @@ def zarr_genes(root) -> tuple[list[str], np.ndarray]:
             cat = np.asarray(root["gene_category"][:])
             if cat.ndim == 2 and cat.shape[0] == len(names) and "is_gene" in cols:
                 keep &= cat[:, cols.index("is_gene")].astype(bool)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[xenium] WARNING could not read gene_category ({type(e).__name__}: {e}); "
+                  "control probes are told apart by name only")
     return names, keep
 
 

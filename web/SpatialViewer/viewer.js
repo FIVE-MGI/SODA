@@ -463,43 +463,6 @@
     if (token && Date.now() > token.expires - 5 * 60000) ensureToken(true).catch(() => {});
   }, 60000);
 
-  async function resolveLink(path) {
-    // "<id>.link.txt" holds the real URL,
-    // either plain or encrypted with the shared password ("enc:v1:...", see links.py).
-    // Only used for datasets configured with `linkPath`: the no-server password option
-    // ("Encrypted link files" in deploy/azure/README.md). Production uses /api/token instead.
-    if (!/\.link\.txt$/i.test(path)) return path;
-    const r = await fetch(path, { cache: "no-cache" });
-    if (!r.ok) throw new Error(`${r.status} ${path}`);
-    const line = (await r.text()).trim().split(/\r?\n/)[0].trim();
-    if (!line.startsWith("enc:v1:")) return line;
-    return decryptLink(line);
-  }
-  // ---- encrypted links: PBKDF2-SHA256 (200k) -> AES-GCM, all in the browser ----
-  let linkPassword = null;
-  try { linkPassword = sessionStorage.getItem("spatialviewer.pw"); } catch (e) { /* ignore */ }
-  const b64 = (str) => Uint8Array.from(atob(str), (ch) => ch.charCodeAt(0));
-  async function tryDecrypt(payload, password) {
-    const [, , salt, iv, ct] = payload.split(":");
-    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
-    const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: b64(salt), iterations: 200000, hash: "SHA-256" },
-      base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
-    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(iv) }, key, b64(ct));
-    return new TextDecoder().decode(plain);
-  }
-  async function decryptLink(payload) {
-    if (!window.isSecureContext || !crypto.subtle) throw new Error("this page needs https (or localhost) to decrypt links");
-    for (let tries = 0; tries < 6; tries++) {
-      if (linkPassword) {
-        try { return await tryDecrypt(payload, linkPassword); } catch (e) { linkPassword = null; }
-      }
-      const pw = await askPassword(tries > 0, "This dataset is password protected.");
-      linkPassword = pw;
-      try { sessionStorage.setItem("spatialviewer.pw", pw); } catch (e) { /* ignore */ }
-    }
-    throw new Error("password not accepted");
-  }
-
   // ---- password (HTTP Basic) ----------------------------------------------------
   // Same-origin: the browser already asked once when the page loaded and sends
   // the credentials itself. Cross-origin (?api=...): browsers never show the
@@ -6455,12 +6418,11 @@
         src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
         S.keepInfo = { root: slash(`${staticRoot.replace(/\/$/, "")}/${id}/`), folder: slash(staticRoot) };
       }
-      else if (TOKEN_URL && !params.get("api") && !(d && (d.linkPath || d.base))) {   // ?api= wins: a local tile server
+      else if (TOKEN_URL && !params.get("api") && !(d && d.base)) {   // ?api= wins: a local tile server
         const t = await ensureToken();           // asks for the password once per session
         src = staticSource(`${t.base}${id}/`, tokenQuery);
         S.keepInfo = { why: "password" };
       }
-      else if (d && d.linkPath) { src = staticSource(await resolveLink(d.linkPath)); S.keepInfo = { why: "link" }; }
       else if (d && d.base) {
         src = staticSource(d.base, d.qs ? () => d.qs : undefined);   // d.qs: a ?data= link's read pass
         S.keepInfo = d.qs || /[?#]/.test(d.base) ? { why: "pass" }
@@ -6883,7 +6845,7 @@
       },
     });
     const cfgSets = cfg.datasets || {};
-    S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id, linkPath: cfgSets[id].linkPath,
+    S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id,
       group: cfgSets[id].group, base: cfgSets[id].base, tags: cfgSets[id].tags }));
     // ?static=<root>&ds=<id> can open an exported dataset that is not in config.js yet
     if (params.get("static") && params.get("ds") && !S.datasets.some((d) => d.id === params.get("ds")))

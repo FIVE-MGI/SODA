@@ -1098,7 +1098,7 @@ python web/SpatialViewer/prepare.py export --id tonsil_panel   --out cache --des
 | `--id` | the dataset to export |
 | `--out` | the cache folder `prepare.py` wrote into |
 | `--dest` | where to write `<dest>/<id>/` |
-| `--fmt png\|jpg` | tile format. `png` (default) is lossless. `jpg` is several times smaller and fine for viewing; it slightly shifts very dark pixels. Use `png` when exact intensities matter. |
+| `--fmt jpg\|png` | tile format. `jpg` (default) is several times smaller and fine for viewing; it slightly shifts very dark pixels. `png` is lossless: use it when exact intensities matter. |
 | `--workers` | parallel tile writers, default 8 |
 | `--gene-files pack\|loose\|both` | how the per-gene data is written. `pack` (default): each layer's genes (and the molecules) in a few packs of about 64 MB, which the viewer reads one gene at a time with HTTP Range requests; a Visium HD layer is 1-23 files instead of ~16,000. `loose`: one file per gene, as before the packs, for a host that ignores Range requests ([HOSTING.md](HOSTING.md#b-any-static-web-host-public-data)). `both`: the two side by side, readable by viewers from before the packs too. |
 | `--shard-mb` | pack size in MB, default 64. A gene is never split, so one larger than this gets a pack of its own. |

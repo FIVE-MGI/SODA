@@ -12,8 +12,8 @@ REPRODUCE.md section 9 instead. Its three parts:
 1. Always (no data needed): the built-in marker lists and the channel-name cleanup (celltypes.py = lasso_worker.js),
    the seam check on profiles with a known answer, the page's files (index.html, viewer.js tile path, diag.js, every
    .js parses), the BLAS / OpenMP thread cap (threadcap.py) and the PCA on one thread, the dataset picker, the tabbed
-   layout, the cell-outline controls, sharing (viewlink.js, compare.js), your own results (ownres.js), encrypted link
-   files (deprecated), offline use (libs.js, vendor.py, sw.js, offline.js) and the notebook.
+   layout, the cell-outline controls, sharing (viewlink.js, compare.js), your own results (ownres.js),
+   offline use (libs.js, vendor.py, sw.js, offline.js) and the notebook.
 
 2. The pipeline, only with the raw files: --raw-data <dir> or SODA_RAW_DATA=<dir>, laid out as REPRODUCE.md section 9
    downloads them (<dir>/xenium_pub/data.zarr, <dir>/visiumhd_pub/..., one folder per dataset id). For each public
@@ -1030,24 +1030,6 @@ def check_sharing(c: Checker, log_path: Path):
 
 
 
-def check_link_files(c: Checker):
-    """Encrypted link files (links.py, linkPath): marked deprecated in the docs, and still working."""
-    url = "https://example.org/data/visiumhd_pub/"
-    try:
-        sys.path.insert(0, str(APP))
-        import links as _links
-        payload = _links.encrypt("a long test password", url)
-        c.eq(_links.decrypt("a long test password", payload), url, "links.py: encrypt / decrypt still round-trip")
-    except ImportError as e:
-        print(f"    links.py round trip skipped ({e})")
-    finally:
-        sys.path.pop(0)
-    for doc, text in (("docs/HOSTING.md", "Encrypted link files are deprecated"), ("docs/ADVANCED.md", "(no server; **deprecated**)"),
-                      ("README.md", "deprecated: they will be removed"), ("deploy/azure/README.md", "> **Deprecated.**")):
-        c.ok(text in (REPO / doc).read_text(encoding="utf-8"), f"{doc}: encrypted link files marked deprecated ({text!r})")
-
-
-
 def check_offline(c: Checker, root: Path, log_path: Path):
     """Offline use: the pinned libraries agree everywhere, nothing widens the page's Content-Security-Policy, the
     service worker can find every file it must keep, and tests/offline_test.js passes in Chromium, WebKit and Firefox
@@ -1245,8 +1227,6 @@ def main(argv=None) -> int:
     check_sharing(c, log_path)
     print("checks: your own results (ownres.js: a reader's CSV / TSV matched in the browser)")
     check_ownres(c, root, log_path)
-    print("checks: encrypted link files (links.py, linkPath): deprecated, still working")
-    check_link_files(c)
     print("checks: offline use (libs.js, vendor.py, sw.js, offline.js)")
     check_offline(c, root, log_path)
     timings["checks"] = time.time() - t0

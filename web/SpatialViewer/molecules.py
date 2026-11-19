@@ -170,13 +170,6 @@ def write_molecules(ds_dir: Path, gene_names, batches, image_size, pixel_size_um
     return w.finish(ds_dir, meta=meta)
 
 
-def read_gene(path: Path, index: dict) -> np.ndarray:
-    """A gene file back as float32 (n, 2) image pixels (for tests and checks)."""
-    q = np.fromfile(str(path), dtype="<u2").reshape(-1, 2).astype(np.float64)
-    sx, sy = index["scale"]
-    return np.column_stack([q[:, 0] * sx, q[:, 1] * sy]).astype(np.float32)
-
-
 def export_molecules(ds_dir: Path, out: Path, log=print, gene_files: str = "pack",
                      shard_mb: float | None = None) -> tuple[int, dict | None]:
     """The cache's molecules/ into the export. gene_files "pack" (default): the gene files packed

@@ -481,8 +481,7 @@ class App:
                 """static_serve's GET / HEAD (Range included) on <root>/<rel>. Its translate_path
                 drops '..' and drive parts, so nothing outside <root> is reachable."""
                 low = "/" + urllib.parse.unquote(rel).lower()
-                if blocked and (low.endswith(_BLOCKED_SUFFIXES) and not low.endswith(".link.txt")
-                                or any(p in low for p in _BLOCKED_PARTS)):
+                if blocked and (low.endswith(_BLOCKED_SUFFIXES) or any(p in low for p in _BLOCKED_PARTS)):
                     return self._send(404, b"not found", "text/plain", head=head)
                 if rel and not rel.endswith("/") and (Path(root) / urllib.parse.unquote(rel)).is_dir():
                     return self._send(404, b"not found", "text/plain", head=head)   # no redirect: wrong prefix

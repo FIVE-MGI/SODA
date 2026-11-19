@@ -313,7 +313,8 @@ def main(argv=None):
     e.add_argument("--id", required=True)
     e.add_argument("--out", required=True, help="cache root that prepare wrote into")
     e.add_argument("--dest", required=True, help="folder to write <dest>/<id>/ into (then upload it)")
-    e.add_argument("--fmt", choices=["png", "jpg"], default="png")
+    e.add_argument("--fmt", choices=["jpg", "png"], default="jpg",
+                   help="image tiles: jpg (default, several times smaller) or png (lossless)")
     e.add_argument("--workers", type=int, default=8)
     e.add_argument("--markers", help="marker-list JSON for suggested cluster names. Default by what the dataset "
                                      "holds: markers/rna_generic.json (genes) for Visium / RNA layers, "

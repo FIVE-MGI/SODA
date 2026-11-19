@@ -49,7 +49,6 @@ from __future__ import annotations
 import gzip
 import json
 import shutil
-import sys
 import time
 from pathlib import Path
 
@@ -99,34 +98,6 @@ def parse_bins(text) -> list[int]:
     if not bins or min(bins) < 1:
         raise SystemExit(f"--bins wants whole numbers >= 1 (got {text!r})")
     return bins
-
-
-def peak_memory_mb() -> float | None:
-    """Peak resident memory of this process so far (None when the platform cannot say)."""
-    try:
-        if sys.platform == "win32":
-            import ctypes
-            from ctypes import wintypes
-
-            class PMC(ctypes.Structure):
-                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
-                    (n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
-                                                   "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
-                                                   "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
-            pmc = PMC()
-            pmc.cb = ctypes.sizeof(PMC)
-            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            k32.GetCurrentProcess.restype = wintypes.HANDLE
-            psapi = ctypes.WinDLL("psapi", use_last_error=True)
-            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
-            if psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
-                return pmc.PeakWorkingSetSize / 1e6
-            return None
-        import resource
-        r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        return r / 1e6 if sys.platform == "darwin" else r / 1e3
-    except Exception:
-        return None
 
 
 # ------------------------------------------------------------------------------ GEF basics
@@ -964,5 +935,4 @@ def build(args, ds_dir: Path, manifest: dict, log=print) -> None:
     elif not args.cellbin:
         log("[stereoseq] no --cellbin: no cells layer")
     manifest["stereoseq"] = block
-    pk = peak_memory_mb()
-    log(f"[stereoseq] layers done in {time.time() - t0:.0f}s" + (f"; peak memory {pk / 1000:.2f} GB" if pk else ""))
+    log(f"[stereoseq] layers done in {time.time() - t0:.0f}s")

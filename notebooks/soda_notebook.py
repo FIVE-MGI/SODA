@@ -190,10 +190,11 @@ def nb_text(s):
 
 def nb_row(r):
     # One dataset as batch.py found it, in this notebook's words: its kind name, the files found (d["found"],
-    # also your own UMAP / clusters as found["user"]), the prepare.py arguments (d["argv"]) and the To do list.
+    # also your own UMAP / clusters as found["user"]), batch.py's own row (d["row"], which the commands are built from)
+    # and the To do list.
     import detect
     rep = r["report"]
-    c = rep["candidates"][0] if rep["candidates"] else {"args": {}, "argv": [], "variant": "", "notes": []}
+    c = rep["candidates"][0] if rep["candidates"] else {"args": {}, "variant": "", "notes": []}
     found = {k: [Path(x) for x in v] if isinstance(v, list) else Path(v) for k, v in c["args"].items()}
     if r["user"]:
         found["user"] = r["user"]
@@ -203,7 +204,7 @@ def nb_row(r):
     else:
         todo, notes = r["problems"], r["notes"]
     return dict(id=r["id"], src=r["src"], report=rep, kind=NB_KIND.get(rep["kind"], rep["kind"]) or "?",
-                variant=c["variant"], found=found, argv=list(c["argv"]),
+                variant=c["variant"], found=found, row=r,
                 problems=[nb_text(p) for p in todo], notes=[nb_text(n) for n in notes])
 
 
@@ -381,52 +382,19 @@ def run(args, logfile=None):
     return p.returncode == 0
 
 
+def _batch_settings():
+    """The notebook's settings in the form batch.py's command builders take (the same builders as
+    `prepare.py batch` and the desktop app, so the three cannot drift apart)."""
+    m = state.markers
+    return SimpleNamespace(out=state.cache, dest=state.export, bins=state.visium_bins or "all",
+                           fmt=state.tile_format, workers=state.workers, no_ids=not state.include_ids,
+                           markers_genes=m.get("visium") or None, markers_proteins=m.get("proteomics") or None)
+
+
 def prepare_args(d):
-    """The prepare.py command for one dataset: Section 2 found the files (d["argv"] is the kind and its
-    file arguments); OPTIONS add the rest."""
-    o, k = state.options.get(d["id"], {}), d["kind"]
-    a = [PY, SV / "prepare.py"] + d["argv"] + ["--id", d["id"], "--out", state.cache, "--label", o.get("label", d["id"])]
-
-    def opt(key, *kinds):
-        v = o.get(key)
-        if (not kinds or k in kinds) and v is not None and v is not False and v != "":
-            a.extend(["--" + key.replace("_", "-")] + ([] if v is True else [v]))
-    opt("pixel_size")
-    opt("channels", "proteomics_file", "omezarr")
-    if k == "visium" and d["variant"] == "visium-hd":
-        a += ["--bins", state.visium_bins or "all"]      # "" = every layer (prepare.py alone keeps 8 and 16 um)
-    opt("image_scale", "visium")
-    opt("no_cells", "xenium", "cosmx", "merscope")
-    opt("no_transcripts", "xenium", "cosmx", "merscope", "spatialdata")
-    opt("qv_min", "xenium")
-    opt("images", "cosmx", "merscope")
-    opt("z", "cosmx", "merscope", "omezarr", "spatialdata")
-    # standard formats (stdformats.py)
-    opt("image_scale", "anndata")
-    for key in ("library", "spatial_key", "image_res", "layer_kind"):
-        opt(key, "anndata")
-    for key in ("matrix", "coords_um", "no_user_clusters"):
-        opt(key, "anndata", "spatialdata")
-    for key in ("table", "region", "coordinate_system", "image_element", "points"):
-        opt(key, "spatialdata")
-    opt("series", "omezarr")
-    opt("bins", "stereoseq")
-    for key in ("sheet", "layout", "keep_slide_names"):
-        opt(key, "geomx")
-    for key in ("crop", "flip"):
-        opt(key, "proteomics_file", "proteomics_markers", "visium")
-    for key in ("cells", "nuclei", "cells_units"):   # a lab's own cell segmentation of a protein image (--cells)
-        opt(key, "proteomics_file", "proteomics_markers", "omezarr")
-    return a
-
-
-def rnaseq_args(d):
-    """The prepare.py command for single-cell RNA-seq: straight into export/ (no cache)."""
-    o = state.options.get(d["id"], {})
-    a = [PY, SV / "prepare.py"] + d["argv"] + ["--id", d["id"], "--label", o.get("label", d["id"]), "--dest", state.export]
-    if o.get("embedding"):                             # OPTIONS: which obsm key is the map (else X_umap, a t-SNE, then PCA)
-        a += ["--embedding", o["embedding"]]
-    return a
+    """The prepare.py command for one dataset (single-cell RNA-seq goes straight into export/)."""
+    import batch
+    return [PY, SV / "prepare.py"] + batch.prepare_argv(d["row"], _batch_settings())
 
 
 def prepare_all():
@@ -440,7 +408,7 @@ def prepare_all():
         if d["kind"] == "scrnaseq":
             if (state.export / d["id"] / "manifest.json").exists() and not state.rebuild:
                 print(f"skip {d['id']}: already in export/"); results[d["id"]] = True; continue  # noqa: E702
-            results[d["id"]] = run(rnaseq_args(d), log)
+            results[d["id"]] = run(prepare_args(d), log)
         else:
             if (state.cache / d["id"] / "manifest.json").exists() and not state.rebuild:
                 print(f"skip {d['id']}: already in cache/"); results[d["id"]] = True; continue  # noqa: E702
@@ -454,27 +422,8 @@ def prepare_all():
 # ---------------------------------------------------------------------------------------------
 def export_args(d):
     """The prepare.py export command for one prepared dataset."""
-    a = [PY, SV / "prepare.py", "export", "--id", d["id"], "--out", state.cache, "--dest", state.export,
-         "--fmt", state.tile_format, "--workers", state.workers]
-    # gene data (Visium, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx) takes the gene list,
-    # protein images the protein list
-    group = "proteomics" if d["kind"].startswith("proteomics") or d["kind"] == "omezarr" else "visium"
-    if state.markers.get(group):
-        a += ["--markers", state.markers[group]]
-    if not state.include_ids:                    # barcode / cell id lists: written unless turned off
-        a += ["--no-ids"]
-    u, opt = d["found"].get("user"), state.options.get(d["id"], {})
-    if u:                                        # your own UMAP / clusters (Section 1)
-        a += ["--user-layer", opt["user_layer"]]
-        a += ["--user-umap", u["umap"]] if u["umap"] else []
-        for p in u["obs"]:
-            a += ["--user-obs", p]
-        a += ["--user-h5ad", u["h5ad"]] if u["h5ad"] else []
-        for k in ("user_embedding", "user_columns", "user_barcode_prefix", "user_barcode_suffix"):
-            if opt.get(k):
-                a += ["--" + k.replace("_", "-"), opt[k]]
-        a += ["--user-replace"] if opt.get("user_replace") else []
-    return a
+    import batch
+    return [PY, SV / "prepare.py"] + batch.export_argv(d["row"], _batch_settings())
 
 
 def export_all():

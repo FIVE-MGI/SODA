@@ -89,7 +89,7 @@ FILE_OPTIONS = ("image", "outs", "gef", "gem", "cellbin", "tissue_mask", "dcc", 
                 "library", "series", "table", "region", "coordinate_system", "image_element",
                 "embedding")                    # single-cell .h5ad: which obsm key is the map (default X_umap)
 CHOICE_OPTIONS = {"images", "library", "series", "table", "region", "coordinate_system", "image_element", "embedding"}
-# Options of the kind's own command, and the kinds that take them (the notebook's prepare_args, notebooks/soda_notebook.py):
+# Options of the kind's own command, and the kinds that take them:
 KIND_OPTIONS = {"pixel_size": None, "channels": ("tiff", "omezarr"), "image_scale": ("visium", "anndata"),
                 "no_cells": ("xenium", "cosmx", "merscope"),
                 "no_transcripts": ("xenium", "cosmx", "merscope", "spatialdata"),
@@ -495,7 +495,7 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
 
 
 # ---------------------------------------------------------------------------------------------
-# the commands (the notebook's prepare_args / rnaseq_args / export_args, in notebooks/soda_notebook.py)
+# the commands: the only place they are built (the notebook and the desktop app call these too)
 # ---------------------------------------------------------------------------------------------
 def _flag(key: str) -> str:
     return "--" + key.replace("_", "-")

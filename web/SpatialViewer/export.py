@@ -30,7 +30,7 @@
     <dest>/<id>/overlays/<file>.geojson
 
 Upload the <id> folder to any static host (Azure blob, S3, a web server) and
-point config.js (or a `<id>.link.txt` in web/SpatialViewer) at its URL. Re-running skips tiles (and loose gene
+point config.js at its URL. Re-running skips tiles (and loose gene
 files) that already exist, so an interrupted export can be resumed; a layer's packs are rewritten whole (one
 sequential write per shard). The host must answer HTTP Range requests for the packs (blob storage, S3, nginx
 and static_serve.py do); for one that cannot, export with --gene-files loose.
@@ -129,7 +129,7 @@ def load_region_overlay(ds_dir: Path, m: dict, outline_names=regions.DEFAULT_OUT
     return None, None, None, None
 
 
-def export_static(ds_dir: Path, dest: Path, fmt: str = "png", workers: int = 8, log=print,
+def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, log=print,
                   verify: bool = True, outline_names=regions.DEFAULT_OUTLINE_NAMES, hvg: bool = True,
                   umap: bool = True, celltypes: bool = True, markers: Path | None = None,
                   grid_um: float = protgrid.DEFAULT_GRID_UM,

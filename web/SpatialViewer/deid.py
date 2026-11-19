@@ -240,8 +240,6 @@ def check_paths(paths) -> list[str]:
                     problems.append(f"content {q}  ->  {len(hits) - _GZ_SHOW:,} more line(s) that look like sample IDs (not shown)")
                 continue
             if q.is_file() and q.suffix.lower() in _TEXT_EXT and q.stat().st_size < 50_000_000:
-                if q.name.endswith(".link.txt"):
-                    continue                      # encrypted payloads are random base64
                 try:
                     txt = q.read_text(encoding="utf-8", errors="ignore")
                 except OSError:

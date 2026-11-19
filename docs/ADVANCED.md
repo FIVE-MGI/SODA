@@ -41,7 +41,6 @@ Please put `soda` in your site's name, for example `yourlab-soda`.
 |---|---|---|
 | **Password site on Azure** (what runs in production) | The data stays in a private blob container. A small function, `/api/token`, checks one shared password and gives the browser a read-only pass that expires after an hour by default (`TOKEN_HOURS`, at most 24). The storage key stays on the server. In `config.js`: `tokenEndpoint: "/api/token"`. | [HOSTING.md C](HOSTING.md#c-azure-private-data-with-a-password), then [deploy/azure/README.md](../deploy/azure/README.md) |
 | **A link with a read pass** | The folder stays private; the link carries a read-only pass (an Azure SAS, an S3 pre-signed link). In the notebook: `READ_PASS`. Anyone holding the link can read the data until the pass expires, so treat the link like a password. | [SHARE_YOUR_DATA.md Step 5](SHARE_YOUR_DATA.md#step-5-make-the-link) |
-| **Encrypted link files** (no server; **deprecated**) | `links.py` encrypts each dataset's address with a password; `linkPath` in `config.js` names the file. Changing the password does not lock anyone out. They still work, but will be removed in a later version: use the password site or a link with a read pass instead. | [deploy/azure/README.md, "Without a server"](../deploy/azure/README.md#b-encrypted-link-files-a-password-no-server) |
 | **AWS or another cloud** | Your own token endpoint that behaves like the Azure one. A design, not built or tested. | [HOSTING.md D](HOSTING.md#d-aws-s3--cloudfront-or-another-backend) |
 
 Keep in mind:
@@ -472,9 +471,8 @@ a region needs (each layer's `hvg/` chunks), at most 500 MB per dataset (`offlin
 copy** and **Remove every offline copy** take it off again. Offline, a dataset that was not
 kept says so instead of opening.
 
-Never kept: a dataset of a password-protected site (`tokenEndpoint`), one opened through a
-password-encrypted link file (`linkPath`), one whose `?data=` link carries a read pass, and one
-from `server.py`. Nothing decrypted with a password is written to disk.
+Never kept: a dataset of a password-protected site (`tokenEndpoint`), one whose `?data=` link
+carries a read pass, and one from `server.py`.
 
 Settings in `config.js`:
 

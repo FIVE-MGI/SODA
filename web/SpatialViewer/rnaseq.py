@@ -119,8 +119,8 @@ def read_h5ad(path: Path, embedding: str = "X_umap"):
             continue
         try:
             obs[name] = _h5_column(og, name)
-        except Exception:
-            pass
+        except Exception as e:                    # a column type this reader does not know: said, not hidden
+            print(f"[rnaseq] WARNING obs column {name!r} left out ({type(e).__name__}: {e})")
     return X.tocsr(), genes, emb, obs
 
 
@@ -482,24 +482,6 @@ def _safe_max(v) -> float:
     v = np.asarray(v, dtype=np.float64)
     v = v[np.isfinite(v)]
     return round(float(v.max()), 3) if v.size else 0.0
-
-
-def repair_gene_listing(ds_dir: Path, log=print) -> int:
-    """Recompute any non-finite "m" in genes.json from the gene files (or the pack) themselves."""
-    p = Path(ds_dir) / "genes.json"
-    listing = json.loads(p.read_text(encoding="utf-8").replace(":NaN", ":null").replace(":Infinity", ":null"))
-    man = json.loads((Path(ds_dir) / "manifest.json").read_text(encoding="utf-8"))
-    group = genepack.groups(man)[0]
-    fixed = 0
-    for e in listing:
-        if not isinstance(e.get("m"), (int, float)):
-            b = genepack.gene_bytes(ds_dir, group, e)
-            k = int(np.frombuffer(b, np.uint32, 1)[0])
-            e["m"] = _safe_max(np.frombuffer(b, np.float32, k, 4 + 4 * k))
-            fixed += 1
-    p.write_text(json.dumps(listing, separators=(",", ":"), allow_nan=False), encoding="utf-8")
-    log(f"[rnaseq] genes.json: {fixed} entr{'y' if fixed == 1 else 'ies'} repaired")
-    return fixed
 
 
 def _row_chunks(indptr: np.ndarray, chunk_nnz: int):

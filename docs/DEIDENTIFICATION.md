@@ -132,8 +132,7 @@ It looks at:
   file, then a count).
 
 It skips `soda-env`, `.venv`, `__pycache__`, `.git`, `tiles` and `gene` folders (image tiles and
-per-gene files: binary, named by numbers and gene symbols), and `*.link.txt` files
-(encrypted, random-looking text). A line containing the marker `deid:ok` is skipped: it is
+per-gene files: binary, named by numbers and gene symbols). A line containing the marker `deid:ok` is skipped: it is
 meant for documented, made-up examples in source code. Do not use it to silence a real hit.
 
 Gene packs (`genepack/*.pack`, the per-gene data of an export, see

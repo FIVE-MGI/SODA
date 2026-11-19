@@ -201,12 +201,8 @@ kept in memory only (not in the address, not in browser storage). A link made wi
 to this view** holds neither: whoever opens it is asked for the password first, then sees
 the view.
 
-**Encrypted link files are deprecated.** The same file also describes a password without any
-server: encrypted link files made by `links.py`, named per dataset by `linkPath` in `config.js`
-(a `<id>.link.txt` file). They still work in this version (the viewer still reads them), but
-they will be removed in a later version. Use
-the password service above (`/api/token`) instead, or keep the data in a private container and
-share a link with a read pass (an Azure SAS; [SHARE_YOUR_DATA.md, Step 5](SHARE_YOUR_DATA.md#step-5-make-the-link)).
+Without a server, keep the data in a private container and share a link with a read pass
+(an Azure SAS; [SHARE_YOUR_DATA.md, Step 5](SHARE_YOUR_DATA.md#step-5-make-the-link)).
 
 ## D. AWS S3 + CloudFront, or another backend
 

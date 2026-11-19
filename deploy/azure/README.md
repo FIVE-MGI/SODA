@@ -371,47 +371,8 @@ Both skip the function. Neither can revoke access by changing a password.
 The page itself can then live anywhere: a Static Web App without the API, GitHub Pages,
 or your lab's web server (see [docs/HOSTING.md](../../docs/HOSTING.md)).
 
-### B. Encrypted link files (a password, no server)
+### B. Private container, a link with a read pass
 
-> **Deprecated.** Encrypted link files still work in this version, but they will be removed in a
-> later one. For a password, use the token function above (`/api/token`, steps 1 to 6); without a
-> server, keep the data in a private container and share a link with a read pass (a SAS; see
-> [docs/SHARE_YOUR_DATA.md, Step 5](../../docs/SHARE_YOUR_DATA.md#step-5-make-the-link)).
-
-The data sits in a public-read container under a long random folder name, and the page
-holds that address only in encrypted form. The browser decrypts it with the password
-(PBKDF2-SHA256, 200,000 rounds, then AES-GCM).
-
-```bash
-python web/SpatialViewer/links.py secret
-```
-
-prints a random folder name, for example `Qx7...`. Upload each dataset to
-`<container>/<random name>/<id>/` in a container with access level *Blob* (as in A).
-Then, for each dataset:
-
-```bash
-python web/SpatialViewer/links.py encrypt --password "<password>" --url "https://<account>.blob.core.windows.net/<container>/<random name>/my_dataset/" --out web/SpatialViewer/my_dataset.link.txt
-```
-
-and in `config.js`:
-
-```js
-tokenEndpoint: "",
-datasets: {
-  my_dataset: { label: "My dataset", linkPath: "my_dataset.link.txt" },
-},
-```
-
-Commit the `.link.txt` files with the page. Check a link with
-`python web/SpatialViewer/links.py decrypt --password "<password>" --file web/SpatialViewer/my_dataset.link.txt`.
-
-Know the limits before you choose this:
-
-- Anyone who has decrypted the address once can keep using it, and share it, for as long
-  as the data stays at that address. Changing the password does not lock them out; you
-  must move the data to a new random folder and encrypt new link files.
-- The link files are public, so a weak password can be guessed offline. Use a long one.
-- Decryption needs `https://` (or `http://localhost`).
-- `links.py` takes the password on the command line, so it lands in your shell history.
-  Clear it afterwards, or run the command in a session that does not keep history.
+Keep the data in a private container and share a link that carries a read pass (a SAS); see
+[docs/SHARE_YOUR_DATA.md, Step 5](../../docs/SHARE_YOUR_DATA.md#step-5-make-the-link). Anyone who
+holds the link can read the data until the pass expires, so treat the link like a password.

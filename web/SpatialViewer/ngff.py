@@ -104,15 +104,6 @@ def is_group(n) -> bool:
     return isinstance(n, (zarr.hierarchy.Group, zarrv3.Group))
 
 
-def check_v3(folder, what: str):
-    """A zarr v3 store: refused when an array in it is outside what zarrv3.py reads (the codec / data type is named)."""
-    if zarr_version(folder) == 3:
-        import zarrv3
-        why = zarrv3.check_store(folder)
-        if why:
-            raise NgffError(f"[{what}] {why.replace('[zarr v3] ', 'zarr v3 store: ', 1)}")
-
-
 def _axis(a) -> dict:
     if isinstance(a, str):
         return {"name": a.lower(), "type": {"t": "time", "c": "channel", "z": "space", "y": "space", "x": "space"}.get(a.lower(), ""),
