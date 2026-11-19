@@ -1,5 +1,8 @@
 # SODA: Spatial Omics Data Annex
 
+> **Never done this before? [Start here](docs/GETTING_STARTED.md):** every click and command,
+> from downloading SODA to a link that shows your data, for people new to coding and the cloud.
+
 SODA turns what a spatial biology instrument writes into a link that opens the whole slide
 in a web browser. You run it once on your own computer, from a Python notebook; it writes
 plain files that you upload to your own storage, and anyone with the link can look, with
