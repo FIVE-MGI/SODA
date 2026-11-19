@@ -330,10 +330,14 @@ async function selectionChecks(B, browser, DATA, URL0) {
     const box = await page.evaluate(() => { const r = document.getElementById("viewport").getBoundingClientRect(); return [r.left, r.top]; });
     // the pointer first, then the click once the hover's frame is drawn: deck counts a press as a click only when it is
     // short, and with software rendering a frame drawn in between can make it too long
-    await page.mouse.move(box[0] + right.c[0], box[1] + right.c[1]); await page.waitForTimeout(800);
-    await page.mouse.click(box[0] + right.c[0], box[1] + right.c[1]);
-    // deck holds a click back a moment (it might be the first of a double-click)
-    await page.waitForFunction(() => window.__spatialViewer.state.region.selected === 2, null, { timeout: 8000 }).catch(() => {});
+    // (up to three tries: on a slow software renderer a press can still come out too long to count as a click)
+    for (let i = 0; i < 3; i++) {
+      await page.mouse.move(box[0] + right.c[0], box[1] + right.c[1]); await page.waitForTimeout(800);
+      await page.mouse.click(box[0] + right.c[0], box[1] + right.c[1]);
+      // deck holds a click back a moment (it might be the first of a double-click)
+      const got = await page.waitForFunction(() => window.__spatialViewer.state.region.selected === 2, null, { timeout: 8000 }).then(() => true, () => false);
+      if (got) break;
+    }
     check(over && (await page.evaluate(() => window.__spatialViewer.state.region.selected)) === 2, `${B}: with the outlines drawn over the regions (something lit), clicking a cell picks the region under it`, { over });
     await page.evaluate(() => { const U = window.__spatialViewer.state.umap; U.sel = null; U.selN = 0; U.ver++; window.__spatialViewer.render(); });
   }

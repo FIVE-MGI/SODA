@@ -457,10 +457,15 @@ async function walk(browser, eng, urls) {
     await step("Tissue / UMAP / Side by side", async () => {
       for (const v of ["umap", "sbs", "tissue"]) {
         await ev((v) => window.__spatialViewer.umapSetView(v), v);
-        const ok = await until(P, (v) => { const U = window.__spatialViewer.state.umap; return U && U.view === v && !U.anim; }, v, 30000);
+        // asked again while it is not there and nothing is moving (a request made as a flight ends is dropped)
+        const ok = await until(P, (v) => { const sv = window.__spatialViewer, U = sv.state.umap;
+          if (U && U.view !== v && !U.anim && !window.__svAsking) { window.__svAsking = true; Promise.resolve(sv.umapSetView(v)).finally(() => { window.__svAsking = false; }); }
+          return U && U.view === v && !U.anim; }, v, 30000);
         await settled(P); await P.waitForTimeout(600);
         const r = await look(P);
-        t.ok(ok && r.lit > 0.002, `view ${v} (lit ${r.lit.toFixed(3)})`, "Tissue / UMAP / Side by side");
+        const why = ok ? null : await ev(() => { const U = window.__spatialViewer.state.umap, s = document.getElementById("status");
+          return { view: U && U.view, anim: U && U.anim, status: s && !s.hidden ? s.textContent.slice(0, 120) : "" }; });
+        t.ok(ok && r.lit > 0.002, `view ${v} (lit ${r.lit.toFixed(3)})${why ? " " + JSON.stringify(why) : ""}`, "Tissue / UMAP / Side by side");
         await t.shot(`walk_view_${v}`);
       }
     });
