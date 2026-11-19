@@ -155,6 +155,8 @@ echo
 echo "Next, from the repository folder, turn the environment on in your window:"
 echo "  source $rel/bin/activate"
 echo
-echo "Then make and prepare the demo data (README, 'Try it in 5 minutes', step 2):"
-echo "  python examples/make_demo.py --out demo/raw"
+echo "Then open the public examples (README, 'Try it in 5 minutes', step 2):"
+echo "  python -m http.server 8766 --directory web/SpatialViewer"
+echo "  and in Chrome: http://localhost:8766/index.html?data=https://fivestore.blob.core.windows.net/soda/examples/"
+echo "For your own data: notebooks/SODA_pipeline.ipynb, or docs/PREPARING_DATA.md."
 exit 0
