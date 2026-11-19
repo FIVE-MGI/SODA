@@ -1,17 +1,19 @@
 #!/usr/bin/env node
-// Cell outlines in the browser: opens the synthetic demo exports in Playwright's Chromium and
+// Cell outlines in the browser: opens the public exports (tests/test_data.js) in Playwright's Chromium and
 // checks what outlines.js draws for a cells layer with segmentation boundaries: nothing fetched
 // until zoomed in, outlines taking over from the dots, the colouring (gene, cluster, selection of
 // a cluster, quality filter), hover and click answering as the dot does, nucleus outlines, the
-// Dots choice, Fit, a dataset without outlines, and that the page logs no error and no
-// Content-Security-Policy violation that it does not also log without outlines.
-// Then, in each browser of --browsers (chromium, webkit, firefox), what draws a subset of the cells, on demo_xenium_nt: Colour by
+// Dots choice, Fit, a dataset without outlines (visiumhd_pub's bins), and that the page logs no error and no
+// Content-Security-Policy violation that it does not also log without outlines. The cells are xenium_pub's (it has cell
+// boundaries only, so the nucleus-outline check runs only on an export that has them); cosmx_1, merscope_2 and stereoseq_1
+// then show their outlines (cosmx_1 and stereoseq_1 are restricted: SKIPPED without SODA_TEST_PRIVATE_DATA or a local copy).
+// Then, in each browser of --browsers (chromium, webkit, firefox), what draws a subset of the cells, on merscope_2: Colour by
 // a value (one value, two genes, a gene set score), the region click-filter, Draw a region (and a picked shape), the
 // Dots choice bringing the dots back, Save image (its PNG and legend) and a link to the view, checked by pixel where it
 // matters: a selected cell's polygon is coloured inside, also where its dot would not reach.
 //
-//   node tests/outlines_browser_test.js                   (needs demo/export: run tests/smoke_test.py first)
-//   node tests/outlines_browser_test.js --export <dir> --page <dir> --shots <dir> --ports 8866,8867 --gpu --browsers chromium,webkit
+//   node tests/outlines_browser_test.js                   (the public exports: SODA_TEST_DATA or --data-root, see tests/test_data.js)
+//   node tests/outlines_browser_test.js --data-root <url or folder> --page <dir> --shots <dir> --ports 8866,8867 --gpu --browsers chromium,webkit
 //
 // Playwright is not a dependency of this repo. Install it anywhere (npm i playwright; npx
 // playwright install chromium) and point NODE_PATH or --playwright at its node_modules.
@@ -24,7 +26,7 @@ const { sendFile, preflight } = require("./static_files");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
+const D = require("./test_data");                              // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const SHOTS = arg("--shots", "");
 const PORTS = arg("--ports", "0,0").split(",").map(Number);      // data server, page server; 0 = any free port
@@ -46,19 +48,18 @@ for (const base of [arg("--playwright", ""), ...(process.env.NODE_PATH || "").sp
 }
 if (!pw) { try { pw = require("playwright"); } catch (e) { /* none */ } }
 if (!pw) { console.log("SKIPPED: playwright is not installed (see the top of this file)"); process.exit(0); }
-if (!fs.existsSync(path.join(EXPORT, "demo_xenium", "expr", "cells", "shapes", "cell", "index.json"))) {
-  console.log(`SKIPPED: no demo export with outlines at ${EXPORT} (run tests/smoke_test.py first, or pass --export)`); process.exit(0);
-}
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream" };
 const asked = [];
+// root null: the data (tests/test_data.js: a folder, or passed on to a URL)
 function serve(root, port, log) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       const rel = decodeURIComponent(req.url.split("?")[0]);
       if (log) asked.push(rel);
-      // config.js is each deployment's own file: the test brings its own. The demo sections are small (a cell is
-      // ~16 px across with the whole section in view), so the hand-over is moved up to 24 - 30 px for the test.
+      if (!root) { if (req.method === "OPTIONS") { preflight(req, res); return; } D.serve(req, res, rel.slice(1), TYPES[path.extname(rel)]); return; }
+      // config.js is each deployment's own file: the test brings its own. The hand-over from dots to outlines is
+      // set to 24 - 30 px (the checks below zoom to 27 px and 40 px cells).
       if (rel === "/config.js") { res.writeHead(200, { "Content-Type": "text/javascript" }); res.end(`window.SpatialViewerConfig = { tokenEndpoint: "", outlineFromPx: ${FROM_PX}, outlineFullPx: ${FULL_PX} };`); return; }
       const file = path.join(root, rel === "/" ? "index.html" : rel);
       if (req.method === "OPTIONS") { preflight(req, res); return; }
@@ -127,8 +128,8 @@ const share = (list, f) => (list.length ? list.filter(f).length / list.length : 
 // Draw a region, the region click-filter, Colour by a value, Save image and a link to the view, with the cells drawn as
 // their outlines, in one browser (chromium, webkit or firefox): the selected cells' polygons are filled, not only dotted.
 async function selectionChecks(B, browser, DATA, URL0) {
-  const DS = "demo_xenium_nt";
-  if (!fs.existsSync(path.join(EXPORT, DS, "expr", "cells", "shapes", "cell", "index.json"))) { console.log(`${B}: no ${DS} with outlines, selection checks skipped`); return; }
+  const DS = "merscope_2";                                         // a cells layer with outlines, small enough for three browsers
+  if (!(await D.has(DS)) || !(await D.exists(`${DS}/expr/cells/shapes/cell/index.json`))) { console.log(D.skipLine(DS, `${B}: selection checks (outlines)`)); return; }
   console.log(`${B}: ${DS} (what draws a subset of the cells)`);
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block", acceptDownloads: true });
   const errors = [];
@@ -167,7 +168,8 @@ async function selectionChecks(B, browser, DATA, URL0) {
   await ready(page);
   // the image off: the map is black where nothing is drawn, so a coloured pixel is a cell's colour
   await page.evaluate(() => { if (window.__spatialViewer.state.imgOn) { const o = document.getElementById("imgOpacity"); o.value = 0; o.dispatchEvent(new Event("input")); o.dispatchEvent(new Event("change")); } });
-  const zv = await page.evaluate(() => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey), i = S.m.image; return [i.width / 2, i.height / 2, Math.log2(40 / e.spotDiameterPx)]; });
+  // centred on the middle row's cell (real sections are not centred in their image: its middle can be bare slide)
+  const zv = await page.evaluate(() => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey), p = S.lasso.pos || S.umap.pos, r = Math.floor(p.length / 4); return [p[2 * r], p[2 * r + 1], Math.log2(40 / e.spotDiameterPx)]; });
   await page.evaluate(([x, y, z]) => { const sv = window.__spatialViewer; sv.deck.props.onViewStateChange({ viewState: { ...sv.state.viewState, target: [x, y, 0], zoom: z }, viewId: "ortho" }); }, zv);
   // dots at half size: a point inside a cell's polygon but outside its dot then tells the two apart
   await setVal(page, "pointScale", "0.5", "input");
@@ -379,8 +381,13 @@ async function selectionChecks(B, browser, DATA, URL0) {
   col = await colOf(page);
   check(inShape.every((r) => col.fill[4 * r + 3] === 235 && col.line[4 * r + 3] === 255), `${B}: the shape picked: its cells' outlines filled at the dots' lit alpha (235), their line in its colour`,
     inShape.slice(0, 3).map((r) => [col.fill[4 * r + 3], col.line[4 * r + 3]]));
-  const pinLit = await px(page, sm.map((q) => q.s));
-  check(share(pinLit, (p) => reddish(p) && p[0] >= 150) >= 0.9, `${B}: pixels: the picked shape's cells are bright inside`, pinLit.slice(0, 4));
+  // the new alpha reaches the screen a frame or two after the colours: read again for a few seconds
+  let pinLit = await px(page, sm.map((q) => q.s));
+  for (let i = 0; i < 10 && share(pinLit, (p) => reddish(p) && p[0] >= 150) < 0.9; i++) { await page.waitForTimeout(500); pinLit = await px(page, sm.map((q) => q.s)); }
+  const lit = (pp) => share(pp, (p) => reddish(p) && p[0] >= 150);
+  let redrawn = null;                          // on a failure: the same pixels after a forced redraw (is the frame stale?)
+  if (lit(pinLit) < 0.9) { await page.evaluate(() => window.__spatialViewer.deck.redraw(true)); await page.waitForTimeout(500); redrawn = lit(await px(page, sm.map((q) => q.s))); }
+  check(lit(pinLit) >= 0.9, `${B}: pixels: the picked shape's cells are bright inside`, { bright: lit(pinLit), afterForcedRedraw: redrawn, sample: pinLit.slice(0, 4) });
   await shotB(page, "select_drawn_region_picked.png");
   await page.evaluate(() => document.querySelector("#lassoShapes .lshape").click());
   await settled(page);
@@ -450,7 +457,9 @@ async function selectionChecks(B, browser, DATA, URL0) {
 }
 
 (async () => {
-  const data = await serve(EXPORT, PORTS[0], true), pageSrv = await serve(PAGE, PORTS[1], false);
+  await D.need(["visiumhd_pub", "xenium_pub"]);
+  console.log(`data: ${D.describe()}`);
+  const data = await serve(null, PORTS[0], true), pageSrv = await serve(PAGE, PORTS[1], false);
   const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
   const browser = await pw.chromium.launch({ args: GPU ? GPU_ARGS : SOFT_ARGS });
   // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
@@ -479,9 +488,12 @@ async function selectionChecks(B, browser, DATA, URL0) {
     await page.waitForTimeout(300);
   };
   const st = (page) => page.evaluate(() => window.__spatialViewer.outlines.stats());
-  // the zoom at which the layer's median cell is `px` screen pixels across, at the image's centre
+  // the zoom at which the layer's median cell is `px` screen pixels across, at the middle row's cell (real sections are
+  // not centred in their image: its middle can be bare slide)
   const zoomIn = async (page, px = 40) => {
-    const v = await page.evaluate((px) => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey), i = S.m.image; return [i.width / 2, i.height / 2, Math.log2(px / e.spotDiameterPx)]; }, px);
+    // the rows' positions: Draw a region's copy (read when the layer opens) or the UMAP panel's
+    await page.waitForFunction(() => { const S = window.__spatialViewer.state, p = (S.lasso && S.lasso.pos) || (S.umap && S.umap.pos); return p && p.length > 0; }, null, { timeout: 120000 });
+    const v = await page.evaluate((px) => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey), p = (S.lasso && S.lasso.pos) || S.umap.pos, r = Math.floor(p.length / 4); return [p[2 * r], p[2 * r + 1], Math.log2(px / e.spotDiameterPx)]; }, px);
     await view(page, v[0], v[1], v[2]); await settled(page);
   };
   const shot = async (page, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, name) }); } };
@@ -496,16 +508,16 @@ async function selectionChecks(B, browser, DATA, URL0) {
   }, n);
 
   // ---- a dataset with no cells layer: the baseline for console and CSP messages
-  console.log("demo_xenium_pq (no cells layer)");
-  let page = await open("demo_xenium_pq");
+  console.log("visiumhd_pub (no cells layer)");
+  let page = await open("visiumhd_pub");
   check(await page.evaluate(() => document.getElementById("rowCellShapes").hidden && !window.__spatialViewer.outlines.available()), "no cells layer: the Cell shapes control is hidden");
   const cspBase = [...new Set(await page.evaluate(() => window.__csp))].sort();
   await page.close();
 
-  // ---- the Xenium fixture: cells + nuclei, clusters
-  console.log("demo_xenium (cell and nucleus boundaries)");
+  // ---- Xenium: cells (and nuclei when the export has them), clusters
+  console.log("xenium_pub (cell boundaries)");
   asked.length = 0;
-  page = await open("demo_xenium");
+  page = await open("xenium_pub");
   check(!asked.some((u) => u.includes("/shapes/")), "the first, zoomed-out view asks for nothing under shapes/", asked.filter((u) => u.includes("/shapes/")));
   check(await page.evaluate(() => !document.getElementById("rowCellShapes").hidden && document.getElementById("cellShapes").value === "outlines"), "the Cell shapes control shows, on Outlines");
   let s = await st(page);
@@ -541,8 +553,11 @@ async function selectionChecks(B, browser, DATA, URL0) {
     await page.mouse.move(box[0] + t[1], box[1] + t[2]); await page.waitForTimeout(500);
     const tip = await page.evaluate(() => { const e = document.querySelector(".deck-tooltip"); return e && e.style.display !== "none" ? e.textContent : ""; });
     check(/Cluster|\w/.test(tip) && tip.length > 0, "hovering an outline shows the cell's tooltip", tip);
+    const under = await page.evaluate(([x, y]) => { const i = window.__spatialViewer.deck.pickObject({ x, y, radius: 0 }); return i ? i.layer.id : null; }, [t[1], t[2]]);
+    const before = await page.evaluate(() => window.__spatialViewer.state.umap.pick);
     await page.mouse.click(box[0] + t[1], box[1] + t[2]); await page.waitForTimeout(700);
-    check((await page.evaluate(() => window.__spatialViewer.state.umap.pick)) === want, "clicking an outline highlights its cluster, as its dot does", want);
+    const picked = await page.evaluate(() => window.__spatialViewer.state.umap.pick);
+    check(picked === want, "clicking an outline highlights its cluster, as its dot does", { want, picked, before, under });
     c = await page.evaluate(() => { const sv = window.__spatialViewer, col = sv.outlines._debug().col, U = sv.state.umap, N = U.pos.length / 2; let f = 0, k = 0; for (let r = 0; r < N; r++) { if (col.fill[4 * r + 3] > 0) f++; if (U.cl[r] === U.pick) k++; } return { lit: f, inCluster: k, over: col.over }; });
     check(c.lit === c.inCluster && c.over, "a highlighted cluster: only its cells are filled, above the dimmed slide", c);
     await shot(page, "outlines_xenium_cluster_picked.png");
@@ -575,11 +590,14 @@ async function selectionChecks(B, browser, DATA, URL0) {
     check(q > 0 && c === q, "quality filter: the removed cells are grey", { removed: q, grey: c });
     await page.evaluate(() => window.__spatialViewer.binQc.setState(null));
   }
-  await page.evaluate(() => window.__spatialViewer.outlines.setNuclei(true)); await settled(page);
-  s = await st(page);
-  check(s.sets.length === 2 && s.sets[1].polygons > 100 && asked.some((u) => u.includes("/shapes/nucleus/")), "Nucleus outlines: the second set is fetched and drawn", s.sets[1]);
-  await shot(page, "outlines_xenium_nuclei.png");
-  await page.evaluate(() => window.__spatialViewer.outlines.setNuclei(false));
+  const nucleus = ((((await D.manifest("xenium_pub")).expr || []).find((e) => e.key === "cells") || {}).shapes || { sets: [] }).sets.some((x) => x.key === "nucleus");
+  if (nucleus) {
+    await page.evaluate(() => window.__spatialViewer.outlines.setNuclei(true)); await settled(page);
+    s = await st(page);
+    check(s.sets.length === 2 && s.sets[1].polygons > 100 && asked.some((u) => u.includes("/shapes/nucleus/")), "Nucleus outlines: the second set is fetched and drawn", s.sets[1]);
+    await shot(page, "outlines_xenium_nuclei.png");
+    await page.evaluate(() => window.__spatialViewer.outlines.setNuclei(false));
+  } else console.log("  (xenium_pub has no nucleus boundaries: the Nucleus outlines check is not run)");
   await page.click("#tabView"); await page.selectOption("#cellShapes", "dots"); await page.waitForTimeout(400);
   s = await st(page);
   check(s.alpha === 0 && s.dot === 1 && s.layers === 0, "Cell shapes: Dots brings the dots back", { alpha: s.alpha, dot: s.dot });
@@ -593,8 +611,8 @@ async function selectionChecks(B, browser, DATA, URL0) {
   await page.close();
 
   // ---- the other platforms' fixtures: outlines appear
-  for (const ds of ["demo_cosmx", "demo_merscope", "demo_stereoseq"]) {
-    if (!fs.existsSync(path.join(EXPORT, ds, "manifest.json"))) { console.log(`${ds}: not in this export, skipped`); continue; }
+  for (const ds of ["cosmx_1", "merscope_2", "stereoseq_1"]) {
+    if (!(await D.has(ds))) { console.log(D.skipLine(ds, `${ds} outlines`)); continue; }
     console.log(ds);
     page = await open(ds);
     if ((await page.evaluate(() => window.__spatialViewer.state.exprKey)) !== "cells") {
@@ -609,10 +627,10 @@ async function selectionChecks(B, browser, DATA, URL0) {
     await page.close();
   }
   // ---- a layer of bins: no outlines, nothing asked for
-  if (fs.existsSync(path.join(EXPORT, "demo_visiumhd", "manifest.json"))) {
-    console.log("demo_visiumhd (bins)");
+  if (await D.has("visiumhd_pub")) {
+    console.log("visiumhd_pub (bins)");
     asked.length = 0;
-    page = await open("demo_visiumhd");
+    page = await open("visiumhd_pub");
     await page.evaluate(() => { const sv = window.__spatialViewer, i = sv.state.m.image; sv.deck.props.onViewStateChange({ viewState: { ...sv.state.viewState, target: [i.width / 2, i.height / 2, 0], zoom: 1 }, viewId: "ortho" }); });
     await page.waitForTimeout(800);
     check(await page.evaluate(() => document.getElementById("rowCellShapes").hidden) && !asked.some((u) => u.includes("/shapes/")), "bins: no Cell shapes control, nothing asked for under shapes/");
