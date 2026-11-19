@@ -150,7 +150,10 @@ function serve(req, res, rel, type, opts = {}) {
   }
   const h = {};
   if (req.headers.range && opts.range !== false) h.Range = req.headers.range;
-  upstream(x, req.method === "HEAD" ? "HEAD" : "GET", h).then((up) => {
+  // a dropped connection to the storage is tried twice more before the page sees a 502
+  const tries = (n) => upstream(x, req.method === "HEAD" ? "HEAD" : "GET", h)
+    .catch((e) => (n > 0 ? new Promise((r) => setTimeout(r, 400)).then(() => tries(n - 1)) : Promise.reject(e)));
+  tries(2).then((up) => {
     if (up.statusCode >= 400) { up.resume(); if (up.statusCode === 404) return notFound(); res.writeHead(up.statusCode, { "Access-Control-Allow-Origin": "*" }); return res.end(); }
     const hd = { ...CORS, "Content-Type": type || up.headers["content-type"] || "application/octet-stream", "Cache-Control": "no-store" };
     for (const k of ["content-length", "content-range", "content-encoding"]) if (up.headers[k]) hd[k.replace(/(^|-)\w/g, (m) => m.toUpperCase())] = up.headers[k];
