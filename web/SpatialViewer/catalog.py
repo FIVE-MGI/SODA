@@ -21,10 +21,10 @@ text editor; this script keeps it):
      "title": "Our nerve atlas",                    # optional: the page title
      "byline": "Smith lab, 2026",                   # optional: the line under the title
      "paper": "https://doi.org/...",                # optional: the "Link to paper" button
-     "default": "demo_visiumhd",                    # optional: the dataset opened first
+     "default": "nerve_s12",                        # optional: the dataset opened first
      "datasets": [
-       {"id": "demo_visiumhd",                      # the folder name; do not change
-        "label": "Demo section",                    # what the list shows
+       {"id": "nerve_s12",                          # the folder name; do not change
+        "label": "Injured nerve, slide S12",        # what the list shows
         "group": "Spatial transcriptomics",         # the heading it sits under
         "kind": "visium",                           # filled in by this script
         "tags": {"tissue": "nerve", "condition": "injured", "slide": "S12"},
