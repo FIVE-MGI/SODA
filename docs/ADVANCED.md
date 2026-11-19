@@ -330,8 +330,9 @@ When you change the page:
 - The service worker (`sw.js`) keeps every file `index.html` loads with a `?v=` string, and every
   `"name.js?v=..."` a script names (the workers). Name a new worker the same way, with its
   `?v=`, or it will be missing offline.
-- Test before you share: `python tests/smoke_test.py` runs the whole demo and checks every
-  output file (and `tests/diag_test.js` when Node is installed). Then open your own data.
+- Test before you share: `python tests/smoke_test.py` checks the tools and the public example
+  exports ([REPRODUCE.md, section 6](../REPRODUCE.md#6-the-smoke-test); and `tests/diag_test.js`
+  when Node is installed). Then open your own data.
 
 ## 8. Many datasets at once, without the notebook
 
@@ -405,9 +406,9 @@ dataset or `catalog.py` failed, 2 when there was nothing to do or an option was 
 the sample ID check is a gate and found something.
 
 **Memory.** `--jobs` (default 1) runs that many datasets at once, and each needs its own
-memory: the demo datasets well under 1 GB, whole-section data such as a big Visium HD section
-or a whole Stereo-seq chip about 8.5 GB (the largest measured, see the
-[README](../README.md#requirements)). Keep `--jobs 1` for whole sections unless the computer
+memory: small datasets under 1 GB (a CosMx slide's counts 0.76 GB), whole-section data such
+as a big Visium HD section or a whole Stereo-seq chip about 8.5 GB (the largest measured, see
+the [README](../README.md#requirements)). Keep `--jobs 1` for whole sections unless the computer
 has the number of jobs times 8.5 GB free. The batch prints the free memory at the start and
 warns. With more than one job the BLAS threads are split between them (`--threads` sets them).
 

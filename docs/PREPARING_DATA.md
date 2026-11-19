@@ -212,14 +212,6 @@ You need Space Ranger's `outs/` folder and **the same full-resolution microscope
 you gave `spaceranger count --image`** (H&E or immunofluorescence). The bin positions in
 `outs` are in that image's pixel grid.
 
-The demo command (see the [README](../README.md#try-it-in-5-minutes)):
-
-```bash
-python web/SpatialViewer/prepare.py visium --id demo_visiumhd --image demo/raw/visiumhd/image.tif --outs demo/raw/visiumhd/outs --out demo/cache
-```
-
-For your data:
-
 ```bash
 python web/SpatialViewer/prepare.py visium --id mouse_brain_hd --label "Mouse brain" --image path/to/microscope_image.tif --outs path/to/spaceranger/outs --out cache
 ```
@@ -793,12 +785,6 @@ Then:
 python web/SpatialViewer/prepare.py tiff --id tonsil_panel --src path/to/slide.ome.tif --out cache
 ```
 
-The demo uses the same command:
-
-```bash
-python web/SpatialViewer/prepare.py tiff   --id demo_multiplex --src demo/raw/multiplex.ome.tif --out demo/cache
-```
-
 - Channel names come from the file. If they are missing or wrong, set them in order with
   `--channels "DAPI,CD3,CD8,CD20,PanCK,Ki67"`.
 - Any non-spatial axis (C, I, Z, Q) is taken as the channel axis. 8-bit and 16-bit images
@@ -1101,8 +1087,8 @@ de-identification as your own clusters.
 ## Export
 
 ```bash
-python web/SpatialViewer/prepare.py export --id demo_visiumhd  --out demo/cache --dest demo/export --markers examples/demo_markers.json
-python web/SpatialViewer/prepare.py export --id demo_multiplex --out demo/cache --dest demo/export --fmt jpg --markers examples/demo_protein_markers.json
+python web/SpatialViewer/prepare.py export --id mouse_brain_hd --out cache --dest export
+python web/SpatialViewer/prepare.py export --id tonsil_panel   --out cache --dest export --fmt jpg
 ```
 
 | Option | Meaning |

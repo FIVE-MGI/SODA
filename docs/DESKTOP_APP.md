@@ -183,8 +183,8 @@ macOS (on an Apple Silicon Mac, after `install.sh`):
 
 **CI.** Besides the two build workflows (run by hand, or on a `v*` tag in a copy of SODA), the
 `smoke` workflow (every push and pull request, Ubuntu) runs `tests/app_test.py` from source after
-`tests/smoke_test.py`: the launcher's selftest, Prepare on the demo data with the sample ID
-check, Check, the viewer server and the home page's API, in about 6 minutes, with no browser.
+`tests/smoke_test.py`: the launcher's selftest, Prepare with the sample ID check, Check, the
+viewer server and the home page's API, in about 6 minutes, with no browser.
 
 Then `python tests/app_test.py --exe <...>/SODA/SODA.exe` (or
 `.../SODA.app/Contents/MacOS/SODA`) checks the built app without opening a window (it sets
@@ -214,7 +214,6 @@ comparison are from its handoff notes.
 | `SODA.exe version` | 1.1 s first time, 0.3 s after | |
 | double-click to home page served | 0.4 to 0.6 s (then the browser opens) | about 2 s |
 | `selftest` (every library + a UMAP) | 91 s the first time (numba compiles UMAP's code into its cache), seconds after | |
-| Prepare the README demo (Visium HD + 6-channel OME-TIFF, two datasets), through the app | 132 to 180 s; from source with python, 144 to 146 s | |
 
 Notes: the first UMAP on a new computer is slow once while numba compiles (the cache then
 lives in `%LOCALAPPDATA%\SODA\numba-cache`). Each dataset Prepare runs in its own copy of

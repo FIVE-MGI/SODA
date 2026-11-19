@@ -25,7 +25,6 @@ performance cores should be faster. Measured in November 2026.
 
 | Dataset | Prepare | Export | Peak memory | Export size |
 |---|---|---|---|---|
-| README demo, end to end (make + prepare + export, both datasets) | 2.6 min in total | | 0.6 GB | 80 MB |
 | Visium HD, 10x human colorectal cancer (FFPE; 8 µm + 16 µm bins) | see Supplementary Table 2 | | | |
 | Stereo-seq whole mouse brain chip (bins 20/50/100 + 130,588 cells) | 5.2 min | 18 min | 8.0 GB | 6.5 GB, 3,541 files |
 | CosMx slide (20 FOVs, 91,972 cells, 26 M transcripts) | 3.8 min | 4.0 min | 0.9 GB | 0.48 GB, 1,750 files |
