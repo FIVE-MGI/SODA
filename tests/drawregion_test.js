@@ -10,14 +10,15 @@
 //           - fast mode (its threshold lowered to 1,000 bins, a 1,000-bin sample): every bin comes back, placed and
 //             clustered, the sample marked; seeded (a second worker gives the same bits); its clusters agree with
 //             the exact path's (ARI).
-//   page    demo_visiumhd from the smoke test's export (skipped without it): a region over the whole section with
+//   page    the public merscope_2 (65,029 cells: small enough to run on every bin; tests/test_data.js, SODA_TEST_DATA or
+//           --data-root; skipped without it): a region over the whole section with
 //           fast mode's threshold lowered from the console (window.__spatialViewer.lassoFast): the panel, the message
 //           and Save image's legend say it is a sample; Save JSON records the mode (sampling, result.sampling,
 //           result.fast with the sample's rows) and Save CSV marks the sampled bins; Run on every bin re-runs on
 //           every bin; a link to the view keeps the choice, and opens with it; the saved JSON loads back to the
 //           same result.
 //
-//   node tests/drawregion_test.js [--export demo/export] [--page web/SpatialViewer] [--shots <dir>]
+//   node tests/drawregion_test.js [--data-root <url or folder>] [--page web/SpatialViewer] [--shots <dir>]
 //   node tests/drawregion_test.js --write-fixture --page <a folder with 83d2bb0's lasso_worker.js, leiden.js, libs.js>
 //
 // Playwright as for tests/browsers_test.js (NODE_PATH or --playwright; PLAYWRIGHT_BROWSERS_PATH). Without it, or
@@ -30,7 +31,7 @@ const { sendFile, preflight } = require("./static_files");
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 const REPO = path.resolve(__dirname, "..");
-const EXPORT = path.resolve(arg("--export", path.join(REPO, "demo", "export")));
+const D = require("./test_data");                              // the public exports: SODA_TEST_DATA / --data-root
 const PAGE = path.resolve(arg("--page", path.join(REPO, "web", "SpatialViewer")));
 const FIXTURE = path.join(__dirname, "fixtures", "drawregion_exact.json");
 const WRITE = process.argv.includes("--write-fixture");
@@ -105,6 +106,7 @@ function serve(route) {
       const u = decodeURIComponent(req.url.split("?")[0]);
       if (u === "/__drawregion_test.html") { res.writeHead(200, { "Content-Type": "text/html" }); res.end("<!doctype html><title>Draw a region test</title>"); return; }
       const file = route(u);
+      if (file && file.rel !== undefined) { D.serve(req, res, file.rel, TYPES[path.extname(file.rel)]); return; }
       if (!file || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404, { "Access-Control-Allow-Origin": "*" }); res.end("not found"); return; }
       sendFile(req, res, file, TYPES[path.extname(file)]);
     });
@@ -199,8 +201,8 @@ async function workerChecks(browser, pageUrl, workerUrl) {
 
 // ---- the page: fast mode as the user meets it -------------------------------------------------------------
 async function pageChecks(browser, pageUrl, dataUrl) {
-  const id = "demo_visiumhd";
-  if (!fs.existsSync(path.join(EXPORT, id, "manifest.json"))) { console.log(`  page checks SKIPPED: no ${id} in ${EXPORT} (run tests/smoke_test.py first, or pass --export)`); return; }
+  const id = "merscope_2";
+  if (!(await D.has(id))) { console.log(`  page checks ${D.skipLine(id, "(Draw a region on a dataset)")}`); return; }
   const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();
   const errs = [];
@@ -225,7 +227,7 @@ async function pageChecks(browser, pageUrl, dataUrl) {
   // thresholds well under the section's bins
   const above = Math.max(100, Math.floor(nPos / 4)), sample = Math.max(60, Math.floor(nPos / 8));
   await ev(([a, s]) => window.__spatialViewer.lassoFast(a, s), [above, sample]);
-  const runDone = (prev) => until((p) => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running && L.result.id !== p; }, 240000, prev || 0);
+  const runDone = (prev) => until((p) => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running && L.result.id !== p; }, 900000, prev || 0);   // every bin of a real section
   await ev((pts) => window.__spatialViewer.lassoLoad({ shapes: [{ name: "Whole section", kind: "free", points: pts }], seed: 42, resolution: "auto", mode: "bins" }), box);
   if (!check(await runDone(0), `Run UMAP on the whole section (${nPos} bins; fast mode above ${above}, a ${sample}-bin sample)`,
     { msg: await ev(() => document.getElementById("lassoMsg").textContent), console: cons.filter((c) => /^wait:|rror/.test(c)).slice(-4) })) { await ctx.close(); return; }
@@ -236,8 +238,9 @@ async function pageChecks(browser, pageUrl, dataUrl) {
              button: !!document.getElementById("lpExact"), msg: document.getElementById("lassoMsg").textContent }; });
   if (!check(A.fast && A.fast.sample === sample && A.fast.of === A.nIn && A.n === A.nIn, `fast mode: the UMAP of a ${sample}-bin sample, all ${A.nIn} bins in the result`, A.fast)) { await ctx.close(); return; }
   check(/fast mode/.test(A.title), `the panel's title says fast mode: "${A.title}"`);
-  check(!A.warnHidden && /sample; other bins placed by nearest neighbours/.test(A.warn) && A.button, `the panel says it is a sample, with a Run on every bin button: "${A.warn.slice(0, 120)}"`);
-  check(/Fast mode: UMAP/.test(A.msg) && /use every bin/.test(A.msg), "the run's message says fast mode, and that markers, Save CSV and volcano plots use every bin");
+  // the page says "cell" on a cells layer (merscope_2), "bin" on a bin layer
+  check(!A.warnHidden && /sample; other (bins|cells) placed by nearest neighbours/.test(A.warn) && A.button, `the panel says it is a sample, with a Run on every bin button: "${A.warn.slice(0, 120)}"`);
+  check(/Fast mode: UMAP/.test(A.msg) && /use every (bin|cell)/.test(A.msg), `the run's message says fast mode, and that markers, Save CSV and volcano plots use every bin: "${A.msg.slice(0, 160)}"`);
   if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, "drawregion_fast.png") }); }
   const leg = await ev(() => window.__spatialViewer.snapLegend());
   const dr = leg.find((x) => /^Drawn (region|shapes)/.test(x.title));
@@ -306,7 +309,7 @@ async function pageChecks(browser, pageUrl, dataUrl) {
 
 (async () => {
   const pageSrv = await serve((u) => inside(PAGE, u === "/" ? "index.html" : u));
-  const dataSrv = await serve((u) => inside(EXPORT, u));
+  const dataSrv = await serve((u) => ({ rel: u.slice(1) }));
   const pageUrl = `http://127.0.0.1:${pageSrv.address().port}`, dataUrl = `http://127.0.0.1:${dataSrv.address().port}`;
   let browser;
   try { browser = await pw.chromium.launch(); } catch (e) { console.log(`SKIPPED: Chromium could not be launched: ${e.message.split("\n")[0]}`); process.exit(0); }
