@@ -1,6 +1,6 @@
 r"""Time one SODA preparing step (prepare.py <kind> / auto / export / rnaseq ...) and record its peak memory.
 
-    python tools/perf/bench_prepare.py --label visiumhd_1 --platform "Visium HD" --step export \
+    python tools/perf/bench_prepare.py --label visiumhd_pub --platform "Visium HD" --step export \
         --csv results.csv --logdir logs [--input PATH ...] [--measure DIR] [--cond "dest=local"] \
         -- <python> web/SpatialViewer/prepare.py export --id x --out cache --dest export
 
