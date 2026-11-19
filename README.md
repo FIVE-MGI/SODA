@@ -16,9 +16,8 @@ From instrument folder to shared link. Looking needs only a browser; preparing y
 needs Python 3.12 or 3.13 (64-bit), Git and an internet connection. Nothing leaves your
 computer until step 6.
 
-1. **Look at the examples.** Seven public datasets (Xenium, Visium HD, PhenoCycler, CosMx,
-   MERSCOPE, Stereo-seq and GeoMx), prepared with SODA, open in Chrome with nothing to
-   install:
+1. **Look at the examples.** Four public datasets (Xenium, Visium HD, PhenoCycler and
+   MERSCOPE), prepared with SODA, open in Chrome with nothing to install:
 
    ```
    https://soda.mgifive.org/index.html?data=https://fivestore.blob.core.windows.net/soda/examples/
