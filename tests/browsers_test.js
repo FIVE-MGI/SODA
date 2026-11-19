@@ -475,7 +475,10 @@ async function walk(browser, eng, urls) {
         return [0.37, 0.63].map((f) => { const r = Math.floor(n * f), p = vp.project([pos[2 * r], pos[2 * r + 1]]); return [p[0], p[1]]; }); });
       for (const [px, py] of at) {
         await ev(() => { if (window.__spatialViewer.state.lasso.tool !== "circle") document.getElementById("lassoCircle").click(); });
-        const cx = box.x + px, cy = box.y + py, rad = Math.min(box.w, box.h) * 0.09;
+        // small enough that the two circles stay under Draw a region's fast-mode size (LASSO.fastAbove, 20,000 bins) on
+        // visiumhd_pub's 8 um layer (about 15,000 bins): the walk runs the exact path, as it did on the demo data
+        // (tests/drawregion_test.js runs fast mode)
+        const cx = box.x + px, cy = box.y + py, rad = Math.min(box.w, box.h) * 0.025;
         await P.mouse.move(cx, cy); await P.mouse.down();
         for (let i = 1; i <= 6; i++) await P.mouse.move(cx + (rad * i) / 6, cy);
         await P.mouse.up();
@@ -487,7 +490,7 @@ async function walk(browser, eng, urls) {
       await t.shot("walk_circles");
       const t0 = Date.now();
       await ev(() => document.getElementById("lassoRun").click());
-      const done = await until(P, () => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running; }, null, 240000);
+      const done = await until(P, () => { const L = window.__spatialViewer.state.lasso; return L.result && !L.running; }, null, 600000);   // a real section: Firefox on software rendering takes minutes
       const R = await ev(() => { const L = window.__spatialViewer.state.lasso, R = L.result; return R ? { n: R.info && R.info.n, emb: R.emb ? R.emb.length : R.xy ? R.xy.length : null, k: R.info && R.info.nClusters, msg: document.getElementById("lassoMsg").textContent } : { msg: document.getElementById("lassoMsg").textContent }; });
       t.ok(done && R.emb > 0, `Run UMAP finished in ${((Date.now() - t0) / 1000).toFixed(1)} s: ${JSON.stringify(R).slice(0, 200)}`, "Run UMAP (worker, umap-js)");
       await P.waitForTimeout(600);
@@ -621,7 +624,7 @@ async function walk(browser, eng, urls) {
       // Load JSON: the shapes and the run again, then the saved merge on the same clusters
       if (saved) {
         await ev((o) => window.__spatialViewer.lassoLoad(o), saved);
-        const ok = await until(P, (id) => { const L = window.__spatialViewer.state.lasso, R = L.result; return R && R.id !== id && !L.running && R.sets && R.sets.length > 0 || (R && R.id !== id && !L.running && /not applied/.test(document.getElementById("lassoMsg").textContent)); }, r0.id, 240000);
+        const ok = await until(P, (id) => { const L = window.__spatialViewer.state.lasso, R = L.result; return R && R.id !== id && !L.running && R.sets && R.sets.length > 0 || (R && R.id !== id && !L.running && /not applied/.test(document.getElementById("lassoMsg").textContent)); }, r0.id, 600000);
         const r3 = await run();
         const m3 = await ev(() => document.getElementById("lassoMsg").textContent);
         t.ok(ok && r3 && r3.id !== r0.id && r3.sets.length === 1 && r3.sets[0].join() === `${lo},${hi}` && r3.sizes[lo] === r0.sizes[lo] + r0.sizes[hi]
