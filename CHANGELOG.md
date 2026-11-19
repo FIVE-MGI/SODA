@@ -38,6 +38,8 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
 - One-command install (`install.sh`, `install.ps1`) from a lock file of tested package versions.
 - Share a `?data=` link to your own storage folder, or copy SODA on GitHub as your own site.
   `datasets.json` sets names, groups, tags and which stains show.
+- `site.js` names the data folder a copy of SODA opens when the link names none (empty by
+  default: the page then says how to open a data link). A link's `?data=` or `config.js` wins.
 - Gene data packed into a few large files per layer, read one gene at a time with HTTP Range
   requests (far fewer files to upload). `--gene-files loose` for hosts without Range.
 - A password-protected site on Azure, with a small token function.
@@ -88,6 +90,8 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
   now comes from the map's resting pixel ratio.
 - Offline use: the service worker no longer re-creates an app cache that a publish deleted,
   and keeps the page only while its own worker is in charge.
+- Whole-section UMAP: umap-learn 0.6 is asked for its compatibility layout, the same embedding
+  as before, so every export no longer prints a FutureWarning.
 
 ### Deprecated
 
