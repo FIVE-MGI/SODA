@@ -2,9 +2,10 @@
 
 What is in each version of SODA, in plain words. The details are in the [docs](README.md#documentation).
 
-## 0.9.0 (17 November 2026)
+## 0.9.0 (19 November 2026)
 
 The first version for release, frozen for the bioRxiv preprint. It is what the paper describes.
+New to SODA? Start with [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
 ### Input: what SODA reads
 
@@ -22,7 +23,8 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
 - A lab's own cell segmentation of a protein image (`--cells`: a label mask from Cellpose, Mesmer,
   StarDist or QuPath, or QuPath GeoJSON) becomes a cells layer with outlines, marker means per
   cell, UMAP and clusters, beside the grid of squares.
-- Single-cell RNA-seq from `.h5ad` or 10x output.
+- Single-cell RNA-seq from `.h5ad` or 10x output. A file without a UMAP is shown with its t-SNE
+  (or another 2-D layout, else its PCA), and SODA says which.
 - Standard formats: spatial AnnData (`.h5ad` or AnnData-Zarr), OME-Zarr images (OME-NGFF 0.4
   and 0.5) and SpatialData stores, in zarr v2 or v3, without installing anndata or
   spatialdata.
@@ -35,11 +37,12 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
   settings, a check of the inputs, a memory warning, a local preview, the upload command, and
   a test that the storage lets the page read it.
 - `prepare.py batch`: a whole folder of datasets in one command, with a log of any that fail.
-- One-command install (`install.sh`, `install.ps1`) from a lock file of tested package versions.
+- One-command install (`install.sh`, `install.ps1`) from a lock file of tested package versions,
+  into its own environment, `soda-env`, which VS Code and JupyterLab list as the kernel **SODA**.
 - Share a `?data=` link to your own storage folder, or copy SODA on GitHub as your own site.
   `datasets.json` sets names, groups, tags and which stains show.
-- `site.js` names the data folder a copy of SODA opens when the link names none (empty by
-  default: the page then says how to open a data link). A link's `?data=` or `config.js` wins.
+- `site.js` names the data folder a copy of SODA opens when the link names none (by default the
+  four public example datasets). A link's `?data=` or `config.js` wins.
 - Gene data packed into a few large files per layer, read one gene at a time with HTTP Range
   requests (far fewer files to upload). `--gene-files loose` for hosts without Range.
 - A password-protected site on Azure, with a small token function.
