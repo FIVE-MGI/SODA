@@ -4,15 +4,19 @@ r"""Test the SODA desktop app (app/soda_app.py) without opening any window.
     python tests/app_test.py                       the app from source (app/soda_app.py)
     python tests/app_test.py --exe <SODA.exe | SODA.app/Contents/MacOS/SODA>
                                                    a built app (app/build_release.ps1 / _mac.sh)
-           [--work <folder>] [--full-selftest] [--browser] [--keep]
+           [--raw-data <folder>] [--ids merscope_2] [--work <folder>] [--full-selftest] [--browser] [--keep]
 
 What it checks, through the app's command line and its local server only:
   1. `SODA version` and `SODA selftest` (every packaged library loads and does one real thing).
   2. The python stand-in batch.py relies on: `SODA deid.py text ...`, `SODA prepare.py detect ...`.
-  3. `SODA prepare`: the README's demo data (examples/make_demo.py: a Visium HD folder and an
-     OME-TIFF) as a folder of datasets -> <out>/export with datasets.json and both datasets, the
+  3. `SODA prepare`: public data (REPRODUCE.md section 9), copied from --raw-data <folder> or
+     SODA_RAW_DATA (laid out as that section downloads it: <folder>/merscope_2/AAN4, ...) into a
+     folder of datasets, one per id of --ids (default merscope_2, the smallest: about 0.5 GB and a few
+     minutes; phenocycler_pub also works) -> <out>/export with datasets.json and each dataset, the
      batch log, and the sample ID check run as a gate (--check-ids) and clean. An output folder
      inside the data folder is refused.
+     Without a raw-data folder, steps 3 to 6 (they need an export made here) are SKIPPED with one
+     line; 1, 2 and the exit code still count.
   4. `SODA check <export>`: clean.
   5. `SODA view <export> --no-browser`: the viewer page, its scripts as JavaScript, the app's
      config.js, the export's files; the tools (.py) and paths outside the folder are not served,
@@ -27,7 +31,7 @@ What it checks, through the app's command line and its local server only:
      and the viewer must still load deck.gl (from the app); without it deck.gl needs internet.
      The viewer offers no "Keep this dataset" (offlineKeep: false from the app's config.js).
 
-Every dataset name here is a made-up demo name. Exit code 0 = every check passed.
+Exit code 0 = every check passed.
 """
 from __future__ import annotations
 
@@ -50,7 +54,14 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-DATASETS = ("demo_visiumhd", "demo_multiplex")
+# the public datasets this test can prepare (REPRODUCE.md section 9): what is copied from the raw-data folder into
+# <work>/inputs/<id> (a folder: its contents; a file: into the dataset's folder)
+APP_INPUTS = {"merscope_2": "merscope_2/AAN4", "phenocycler_pub": "phenocycler_pub/D438-RLL-16B4-17_Scan1.qptiff"}
+DATASETS: tuple = ("merscope_2",)
+
+
+class NoData(Exception):
+    """No raw-data folder: the steps that need an export are skipped."""
 
 
 class Checker:
@@ -116,13 +127,21 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--exe", help="a built SODA (default: python app/soda_app.py)")
     ap.add_argument("--work", help="scratch folder (default: a new temporary folder)")
-    ap.add_argument("--python", default=sys.executable, help="python with SODA's packages, for make_demo.py")
+    ap.add_argument("--raw-data", default=os.environ.get("SODA_RAW_DATA", ""),
+                    help="the public datasets' raw files, laid out as REPRODUCE.md section 9 (default SODA_RAW_DATA); "
+                         "without it steps 3 to 6 are SKIPPED")
+    ap.add_argument("--ids", default="merscope_2", help=f"the public datasets to prepare ({', '.join(APP_INPUTS)})")
     ap.add_argument("--full-selftest", action="store_true", help="selftest with umap (slower)")
     ap.add_argument("--browser", action="store_true", help="also open the pages in headless Chromium")
     ap.add_argument("--keep", action="store_true", help="keep the scratch folder")
     ap.add_argument("--expect-vendor", action="store_true",
                     help="fail unless the app serves vendor/ (deck.gl, umap-js) with the pinned hashes")
     a = ap.parse_args()
+    global DATASETS
+    DATASETS = tuple(x for x in a.ids.split(",") if x)
+    if not DATASETS or any(x not in APP_INPUTS for x in DATASETS):
+        print(f"--ids: one or more of {', '.join(APP_INPUTS)}")
+        return 2
 
     soda = [str(Path(a.exe).resolve())] if a.exe else [sys.executable, str(REPO / "app" / "soda_app.py")]
     work = Path(a.work).resolve() if a.work else Path(tempfile.mkdtemp(prefix="soda_app_test_"))
@@ -165,21 +184,28 @@ def main() -> int:
         c.ok(p.returncode == 2, "an unknown script is refused (exit 2)")
 
         # 3. prepare ---------------------------------------------------------------------------
-        print("[3] SODA prepare on the demo data", flush=True)
-        raw, inputs = work / "raw", work / "inputs"
-        if not (raw / "visiumhd" / "outs").is_dir():
-            q = subprocess.run([a.python, str(REPO / "examples" / "make_demo.py"), "--out", str(raw)],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO))
-            if not c.ok(q.returncode == 0, "examples/make_demo.py made the demo data"):
-                print(q.stdout[-2000:], q.stderr[-2000:])
-                return 1
+        print(f"[3] SODA prepare on public data: {', '.join(DATASETS)}", flush=True)
+        if not a.raw_data:
+            print("SKIPPED [3]-[6] (SODA prepare, check, view, the home page): no raw-data folder "
+                  "(--raw-data or SODA_RAW_DATA, laid out as REPRODUCE.md section 9)", flush=True)
+            raise NoData
+        raw, inputs = Path(a.raw_data), work / "inputs"
+        missing = [ds for ds in DATASETS if not (raw / APP_INPUTS[ds]).exists()]
+        if missing:
+            print(f"SKIPPED [3]-[6]: {', '.join(f'{raw / APP_INPUTS[ds]}' for ds in missing)} not there", flush=True)
+            raise NoData
         if inputs.exists():
             shutil.rmtree(inputs)
-        shutil.copytree(raw / "visiumhd", inputs / "demo_visiumhd")
-        (inputs / "demo_multiplex").mkdir()
-        shutil.copy2(raw / "multiplex.ome.tif", inputs / "demo_multiplex" / "multiplex.ome.tif")
+        for ds in DATASETS:                          # a copy: the raw-data folder is never written to
+            src = raw / APP_INPUTS[ds]
+            if src.is_dir():
+                shutil.copytree(src, inputs / ds)
+            else:
+                (inputs / ds).mkdir(parents=True)
+                shutil.copy2(src, inputs / ds / src.name)
         p, _ = run(["prepare.py", "detect", str(inputs)])
-        c.ok(p.returncode == 0 and p.stdout.count("CERTAIN") >= 2, "SODA prepare.py detect: both demo datasets CERTAIN")
+        c.ok(p.returncode == 0 and p.stdout.count("CERTAIN") >= len(DATASETS),
+             f"SODA prepare.py detect: {len(DATASETS)} dataset(s) CERTAIN")
 
         out = work / "out"
         if out.exists():
@@ -252,7 +278,7 @@ def main() -> int:
             s, _, _ = get(base + f"/data/1/{DATASETS[0]}")
             c.ok(s == 404, "a folder is not listed")
             for path in ("/viewer/prepare.py", "/viewer/deid.py", "/viewer/requirements-lock.txt",
-                         "/data/1/../../out/logs/", "/data/1/%2e%2e/%2e%2e/raw/multiplex.ome.tif", "/data/2/datasets.json"):
+                         "/data/1/../../out/logs/", "/data/1/%2e%2e/%2e%2e/app_test.log", "/data/2/datasets.json"):
                 s, _, _ = get(base + path)
                 c.ok(s == 404, f"not served: {path} ({s})")
             s, _, _ = get(base + "/viewer/index.html", host="evil.example:80")
@@ -353,6 +379,8 @@ def main() -> int:
         logs_ = [str(q) for q in (work / "appdata").glob("*.log")] + [str(out / "logs"), str(out2 / "logs")]
         deid_hits = run(["check", *logs_])[0]
         c.ok(deid_hits.returncode == 0, "no sample ID in the app's own logs or the batch logs")
+    except NoData:
+        pass
     finally:
         for pr in procs:
             if pr.poll() is None:
