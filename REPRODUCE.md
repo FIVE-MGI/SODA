@@ -215,7 +215,7 @@ Every real dataset in the paper is a public download. None of them is in this re
 | `merscope_2` | Vizgen MERSCOPE, human fetal colon, sample AAN4, one whole region without images | Zenodo 19450420, CC BY 4.0 | 275,238,975 B |
 | `stereoseq_1` | STOmics Stereo-seq demo chip C04042E3, mouse whole brain (fresh frozen, H&E) | STOmics demo data (https://www.stomics.tech/col1317); no open licence stated, the site's terms apply (do not redistribute) | 4,497,528,479 B (3 files) |
 | `geomx_1` | NanoString GeoMx DSP Spatial Organ Atlas, mouse embryo E11 (2 scans, 84 AOIs, mouse whole transcriptome) | NanoString Spatial Organ Atlas; no licence stated (Bruker Spatial Biology terms of use, research use only) | 3,525,766,712 B (2 files) |
-| `merscope_crop` (Figure 2) | Vizgen MERSCOPE small data sample: a cropped region with its images (550 genes, 1,179 cells) | Zenodo 7852005, CC BY 4.0 | 129,368,282 B |
+| `merscope_crop` (Figure 2) | Vizgen MERSCOPE small data sample: a cropped region with its images (500 genes plus 50 blank control probes, 1,179 cells) | Zenodo 7852005, CC BY 4.0 | 129,368,282 B |
 | `demo_visiumhd`, `demo_multiplex` | synthetic, made by `examples/make_demo.py` (section 5) | this repository | none |
 
 The commands below put each dataset in its own folder under `data/`. `curl -C -` resumes a
