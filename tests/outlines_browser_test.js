@@ -381,12 +381,14 @@ async function selectionChecks(B, browser, DATA, URL0) {
   col = await colOf(page);
   check(inShape.every((r) => col.fill[4 * r + 3] === 235 && col.line[4 * r + 3] === 255), `${B}: the shape picked: its cells' outlines filled at the dots' lit alpha (235), their line in its colour`,
     inShape.slice(0, 3).map((r) => [col.fill[4 * r + 3], col.line[4 * r + 3]]));
+  // the points again: picking a shape adds the "Drawn region" bar, which can wrap the toolbar and move the map down
+  const smLit = await samples(page, inShape, 40);
   // the new alpha reaches the screen a frame or two after the colours: read again for a few seconds
-  let pinLit = await px(page, sm.map((q) => q.s));
-  for (let i = 0; i < 10 && share(pinLit, (p) => reddish(p) && p[0] >= 150) < 0.9; i++) { await page.waitForTimeout(500); pinLit = await px(page, sm.map((q) => q.s)); }
+  let pinLit = await px(page, smLit.map((q) => q.s));
+  for (let i = 0; i < 10 && share(pinLit, (p) => reddish(p) && p[0] >= 150) < 0.9; i++) { await page.waitForTimeout(500); pinLit = await px(page, smLit.map((q) => q.s)); }
   const lit = (pp) => share(pp, (p) => reddish(p) && p[0] >= 150);
   let redrawn = null;                          // on a failure: the same pixels after a forced redraw (is the frame stale?)
-  if (lit(pinLit) < 0.9) { await page.evaluate(() => window.__spatialViewer.deck.redraw(true)); await page.waitForTimeout(500); redrawn = lit(await px(page, sm.map((q) => q.s))); }
+  if (lit(pinLit) < 0.9) { await page.evaluate(() => window.__spatialViewer.deck.redraw(true)); await page.waitForTimeout(500); redrawn = lit(await px(page, smLit.map((q) => q.s))); }
   check(lit(pinLit) >= 0.9, `${B}: pixels: the picked shape's cells are bright inside`, { bright: lit(pinLit), afterForcedRedraw: redrawn, sample: pinLit.slice(0, 4) });
   await shotB(page, "select_drawn_region_picked.png");
   await page.evaluate(() => document.querySelector("#lassoShapes .lshape").click());

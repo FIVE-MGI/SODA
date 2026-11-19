@@ -329,8 +329,11 @@ async function run(browserType, eng, urls) {
 
   // ---- remove ----------------------------------------------------------------------------------------------
   await offline(A.ctx, false);
-  await showOffline(page);
-  await until(page, () => !document.getElementById("offDrop").hidden, null, 10000);
+  // the Offline section can still be hidden just after the reload (show() then does nothing): ask until the button is on screen
+  const dropShown = await until(page, () => { if (window.SodaLayout) window.SodaLayout.show("panelOffline");
+    const b = document.getElementById("offDrop"); return !!b && !b.hidden && b.getClientRects().length > 0; }, null, 15000);
+  if (!dropShown) console.log(`  debug ${eng}: Remove not shown: ${JSON.stringify(await page.evaluate(() => { const S = window.SodaOffline.state(), $ = (i) => document.getElementById(i);
+    return { state: S.state, busy: S.busy, kept: (S.kept || []).length, online: navigator.onLine, box: $("offDsBox").hidden, drop: $("offDrop").hidden, ds: $("offDs").textContent.slice(0, 120) }; }))}`);
   await page.click("#offDrop");
   const gone = await until(page, () => !window.SodaOffline.state().kept.length, null, 10000);
   ok(gone && !(await cacheInfo(page)).data.length, "Remove offline copy: the kept data is gone", "remove a kept dataset");
