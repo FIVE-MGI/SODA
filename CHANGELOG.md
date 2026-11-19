@@ -77,7 +77,7 @@ The first version for release, frozen for the bioRxiv preprint. It is what the p
 ### Testing
 
 - No demo data: the synthetic demo datasets and their generators are removed; the examples are
-  the seven public datasets at https://fivestore.blob.core.windows.net/soda/examples/.
+  four public datasets at https://fivestore.blob.core.windows.net/soda/examples/.
 - `tests/smoke_test.py` checks the tools and the public example exports. It runs on Linux on
   every push.
 - Browser tests in Chromium, WebKit (Safari's engine), Firefox and Edge, including phone-sized
