@@ -210,7 +210,7 @@ def nb_row(r):
 
 def find_datasets():
     # Every dataset under inputs/: batch.find_datasets, the one finder that `prepare.py batch` and the desktop
-    # app use too. Names starting with _ or . are left out; x.zip beside a folder x/ becomes a second dataset, x_zip.
+    # app use too. Names starting with _ or . are left out; x.zip beside a folder x/ is left out.
     import batch
     rows, warnings = batch.find_datasets(state.inputs, state.options, state.visium_bins)
     for w in warnings:
@@ -714,8 +714,7 @@ def range_test(root, qs, cat, origin, page, timeout=30):
         st, h, body = get(f"{root}/{path}{q}", {"Range": "bytes=0-11"})
         if st == 200:
             return [f"{shown} came back whole (HTTP 200): this host ignores Range requests, so the page cannot read "
-                    "one gene out of a pack. Use blob storage / S3 / a web server that answers Range, or export again "
-                    "with --gene-files loose for this host."]
+                    "one gene out of a pack. Use blob storage / S3 / GitHub Pages / a web server that answers Range."]
         if st != 206 or len(body) != 12:
             return [f"A Range request for {shown} answered HTTP {st} with {len(body)} bytes (want 206 and 12 bytes)."]
         expose = (h.get("Access-Control-Expose-Headers") or "").lower()
@@ -727,7 +726,7 @@ def range_test(root, qs, cat, origin, page, timeout=30):
             return [f"Browsers that ask before sending a Range header would be refused (CORS preflight: HTTP {st}, "
                     f"allowed headers {allow or 'none'}). Fix:\n  " + cors_fix(root, origin if page else None)]
         return []
-    return []                                  # nothing packed (exports with --gene-files loose): nothing to test
+    return []                                  # nothing packed (an older export): nothing to test
 
 
 def cors_test(link, origin, page, timeout=30):

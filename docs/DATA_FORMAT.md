@@ -38,7 +38,7 @@ General rules:
   expr/<key>/genes.json
   expr/<key>/positions.bin
   expr/<key>/genepack/<hash>-<i>.pack    every gene's points, packed (exports from 16 Nov 2026; see "Gene packs")
-  expr/<key>/gene/<NAME>.bin             the same, one file per gene (older exports, or --gene-files loose / both)
+  expr/<key>/gene/<NAME>.bin             the same, one file per gene (exports before 16 Nov 2026)
   expr/<key>/region.bin                  only if an overlay has polygons
   expr/<key>/binqc/{total.bin, genes.bin, pct_mt.bin}   per-bin QC values (RNA layers, exports from 11 Nov 2026)
   expr/<key>/hvg/{genes.json, index.json, <tx>_<ty>.bin}
@@ -252,12 +252,11 @@ A packed layer holds exactly these bytes per gene, end to end (next section).
 Since 16 November 2026 an export writes each group of per-gene files (an expression layer,
 the molecules, an RNA-seq set) as a few **packs** instead of one file per gene: a Visium HD
 layer of ~16,000 genes becomes 1-23 files of about 64 MB instead of ~16,000 small ones
-(written by `genepack.py`; `prepare.py export --gene-files loose` writes the old layout,
-`--gene-files both` the two side by side).
+(written by `genepack.py`; the viewer still reads the old layout).
 
 - A shard holds the payloads of the group's genes **end to end, byte for byte what
   `gene/<NAME>.bin` would hold**, in listing order. A gene is never split across shards; a new
-  shard starts when the next gene would take it past the size (`--shard-mb`, default 64), so a
+  shard starts when the next gene would take it past the size (64 MB), so a
   gene larger than that has a shard of its own.
 - `<hash>` (16 hex digits) is a hash over every name and payload of the group: shards of one
   export run share it, and a listing can never point into shards of another run.
@@ -277,8 +276,8 @@ records have a header). The viewer reads one gene with **one HTTP Range request*
 bytes (and, when the host exposes `Content-Range`, the range asked for out of a shard of the
 manifest's size). A host that ignores Range answers `200` with the whole shard: the viewer then
 keeps the shard and cuts genes out of it if it is at most `packWholeMaxMB` (config.js, default
-160 MB), and otherwise says the host does not support Range requests. Export with
-`--gene-files loose` for such a host.
+160 MB), and otherwise says the host does not support Range requests. Use a host that
+answers Range requests (blob storage, S3, GitHub Pages, nginx).
 
 `python genepack.py check <export>/<id>` checks a dataset's packs against its listings (every
 byte accounted for); `python genepack.py repack <export>/<id> [--delete-loose]` packs the gene
@@ -723,8 +722,7 @@ Written by `prepare.py xenium` (`molecules.py`, platform-neutral; `xenium.py` re
 `transcripts.parquet` when present, else `transcripts.zarr.zip` level 0). The cache holds one
 file per gene (`gene/<NAME>.bin`, which `server.py` serves as it is); `export` packs them in
 `index.json` order (`molecules/genepack/`, each gene's `s`, `o`, `b` on its `index.json` entry and
-`genePack` on the manifest's `molecules` block, as described under "Gene packs") or, with
-`--gene-files loose`, copies the files unchanged. A gene is fetched only when it is picked in
+`genePack` on the manifest's `molecules` block, as described under "Gene packs"). A gene is fetched only when it is picked in
 the Molecules panel.
 
 - Kept: transcripts with quality value (`qv` / `quality_score`) ≥ 20 (`qvMin`; Xenium's own
@@ -829,18 +827,9 @@ them and repeats the headline numbers (`everythingBright`, `saturatedSquares`, `
   (tissue mask only). Values are in the 8-bit units of the gene files. `seams`: per axis, the
   channels whose full-resolution column (row) means step sharply at one repeated spacing - a
   camera tile edge - and that spacing; `flagged` when at least two channels share it. `grid`
-  ({x0, y0, w, h} in px) when the edges sit in the same place in both halves of the slide;
-  `correction` when the square means were corrected for the seams: `corrected` / `notCorrectable`
-  markers, the median excess step at tile edges before / after (percentage points), and
-  `file` = `qc_seams.json`.
-- `qc_seams.json` (only when a correction was made): `grid`, `tiles` ({rows, cols, row0, col0}:
-  tile (r, c) of the grid is entry (r - row0) * cols + (c - col0)), per marker with steps a record
-  (`method` = `gain`, `gain+offset` or `none`, `excessBefore` / `excessAfter`, `controlBefore` /
-  `controlAfter`, `borderLine` (the factors of the pixels next to each edge), `shading` (per
-  orientation the share of edges whose step goes up, and the median step), the reason when not
-  corrected), and `factors`: per corrected marker `g` and `c`
-  per tile (corrected = raw / g - c, in raw image units) and the tiles that were `fitted`. The
-  gene files and `mat/` hold the corrected means; the image tiles are not changed.
+  ({x0, y0, w, h} in px) when the edges sit in the same place in both halves of the slide. The
+  seams are reported only; nothing is corrected. (Exports made with the seam correction, removed
+  in 0.10.0, also have `correction` here and a `qc_seams.json`.)
 - `qc_flags.bin`: one uint8 per row of `positions.bin`. Bit 1: everything bright (more
   than 80% of the UMAP channels above their 95th percentile over the tissue: folds,
   bubbles, bright edges). Bit 2: more than half of the square's pixels at the detector's
@@ -927,7 +916,7 @@ The viewer keys a clustering by `id` when present, else by `resolution`; it list
 <id>/obs/<NN>.bin
 <id>/genes.json
 <id>/genepack/<hash>-<i>.pack          every gene's record (below) end to end ("Gene packs"); s, o, b in genes.json
-<id>/gene/<NAME>.bin                   the same, one file per gene (older exports, or --gene-files loose)
+<id>/gene/<NAME>.bin                   the same, one file per gene (exports before 16 Nov 2026)
 ```
 
 `manifest.json`:

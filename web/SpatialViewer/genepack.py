@@ -39,8 +39,6 @@ from urllib.parse import quote
 VERSION = 1
 DIR = "genepack"
 SHARD_MB = 64
-MODES = ("pack", "loose", "both")
-DEFAULT_MODE = "pack"
 # fields a listing entry may carry, per kind of group (anything else in a published listing is
 # refused by `check`: a listing holds gene names and numbers, nothing about a sample)
 FIELDS = {"expr": {"n", "t", "s", "o", "b"}, "molecules": {"n", "c", "s", "o", "b"},

@@ -383,9 +383,6 @@ python web/SpatialViewer/prepare.py batch --src D:/SODA_work/inputs --out D:/SOD
   Without one it only warns.
 - The notebook's export settings: `--fmt` (default `jpg`), `--bins`, `--workers`,
   `--markers-genes`, `--markers-proteins`.
-- `--gene-files loose` (or `both`) and `--shard-mb`, passed to every export: the per-gene data
-  as one file per gene, for a host that ignores HTTP Range requests (default: packs, see
-  [PREPARING_DATA.md](PREPARING_DATA.md)).
 
 **The log** goes to `logs/` next to the export folder (`--logs` to change it; never inside
 the export, as it holds local paths): `batch_<date>_<time>.md`, a table to read, and the same

@@ -1,4 +1,4 @@
-"""Xenium Onboard Analysis output folder (or a zip of it) -> cells layer + molecules layer.
+"""Xenium Onboard Analysis output folder -> cells layer + molecules layer.
 
 Reads, when present (each part is optional; a folder with stains only still works, and so does one with
 cells and / or transcripts but no stain images):
@@ -12,11 +12,6 @@ cells and / or transcripts but no stain images):
 
 --src may also be a Xenium transcripts store on its own (transcripts.zarr.zip, or <name>_transcripts.zarr.zip):
 its molecules are drawn on a transcript-density background, as for a folder without stain images or cells.
-
---src may be the folder, or a zip of it (Xenium's output bundle, or a zip of the whole output folder, with
-the dataset folder at the top of the zip or a few folders down): zipinput.py reads the members in place
-where that is cheap and copies out only the stain images (and a compressed transcripts.zarr.zip) into a
-work folder beside the cache (<out>/_unzipped/<id>/, --unzip-to), never beside the zip.
 
 Xenium coordinates are µm in the frame of the morphology images, origin at the top-left
 corner of the full-resolution image, so pixel = µm / pixel_size (the same transform Xenium
@@ -67,19 +62,12 @@ def is_transcripts_store(name: str) -> bool:
     return str(name).lower().endswith("transcripts.zarr.zip")
 
 
-# A dataset folder is a Path or a zipinput.ZipInput; a file in it a Path or a zipinput.Member (both have
-# .name and .suffix). These helpers read either.
 def _child(folder, name: str):
-    if isinstance(folder, Path):
-        return folder / name
-    from zipinput import Member
-    if isinstance(folder, Member):                     # a folder inside the zip
-        return folder.zi.member(f"{folder.rel}/{name}")
-    return folder.member(name)
+    return Path(folder) / name
 
 
 def _exists(p) -> bool:
-    return p is not None and (p.exists() if isinstance(p, Path) else True)
+    return p is not None and p.exists()
 
 
 def _is_dir(p) -> bool:
@@ -95,20 +83,19 @@ def _first(folder, *names):
 
 
 def _rand(p):
-    """Something pyarrow / h5py can seek in."""
-    return str(p) if isinstance(p, Path) else p.random_access()
+    return str(p)
 
 
 def _stream(p):
-    return open(p, "rb") if isinstance(p, Path) else p.open()
+    return open(p, "rb")
 
 
 def _read_text(p) -> str:
-    return p.read_text(encoding="utf-8") if isinstance(p, Path) else p.read_bytes().decode("utf-8")
+    return p.read_text(encoding="utf-8")
 
 
 def find_inputs(folder) -> dict:
-    """The Xenium files present under `folder` (a Path or a zipinput.ZipInput; None for each one that is missing)."""
+    """The Xenium files present under `folder` (None for each one that is missing)."""
     folder = Path(folder) if isinstance(folder, str) else folder
     mtx_dir = _child(folder, "cell_feature_matrix")
     has_mtx = _is_dir(mtx_dir) and (_first(mtx_dir, "matrix.mtx.gz", "matrix.mtx") is not None)
@@ -142,13 +129,8 @@ def _table(path, columns: list[str]) -> dict:
         have = set(pf.schema_arrow.names)
         t = pf.read(columns=[c for c in columns if c in have])
     else:
-        import pyarrow as pa
         import pyarrow.csv as pcsv
-        if isinstance(path, Path):
-            t = pcsv.read_csv(str(path))
-        else:                                             # a member of a zip, read in order
-            with path.open() as f:
-                t = pcsv.read_csv(pa.input_stream(f, compression="gzip" if path.suffix == ".gz" else None))
+        t = pcsv.read_csv(str(path))
     out = {}
     for c in columns:
         if c in t.column_names:
@@ -240,10 +222,6 @@ def _attr_list(v):
 def _open_zarr(path, log=print):
     """(root group, a function that closes the store)."""
     import zarr
-    if not isinstance(path, Path):                     # inside a zip (zipinput.py)
-        import zipinput
-        store, close = zipinput.zarr_store(path, log=log)
-        return zarr.open(store, mode="r"), close
     if path.is_dir():
         return zarr.open(str(path), mode="r"), (lambda: None)
     store = zarr.ZipStore(str(path), mode="r")
@@ -406,7 +384,7 @@ def finish_transcripts(w, ds_dir: Path) -> dict:
 # ---------------------------------------------------------------------------------- plan
 def add_args(p) -> None:
     p.add_argument("--src", required=True, help="the Xenium output folder (the one holding morphology_focus/, or "
-                                                "cells / transcripts without stain images), or a zip of it, or a "
+                                                "cells / transcripts without stain images), or a "
                                                 "Xenium transcripts store on its own (<name>_transcripts.zarr.zip)")
     p.add_argument("--no-cells", action="store_true", help="skip the cells layer")
     p.add_argument("--no-transcripts", action="store_true", help="skip the molecules layer")
@@ -415,11 +393,6 @@ def add_args(p) -> None:
     p.add_argument("--background-um", type=float,
                    help=f"no stain images: about this many µm per pixel of the density background (default "
                         f"{BACKGROUND_UM:g}; rounded to a whole number of morphology pixels)")
-    p.add_argument("--unzip-to", help="a zipped --src: the work folder for the files copied out of the zip (default "
-                                      "<out>/_unzipped/<id>; never next to the zip)")
-    p.add_argument("--keep-unzipped", action="store_true",
-                   help="a zipped --src: keep the files copied out of the zip after a successful prepare (default: "
-                        "they are removed; the zip itself is never changed)")
 
 
 def resolve_folder(src: Path) -> Path:
@@ -443,7 +416,6 @@ class Plan:
         self.pixel_size_um = None
         self.manifest_source = {}
         self.background = None
-        self.zip = None
         self.folder = None
         self.inp = {}
         self.cells = None
@@ -483,40 +455,16 @@ class Plan:
                 manifest["molecules"] = mol
 
     def cleanup(self, args, log=print):
-        if self.zip is not None:
-            self.zip.cleanup(keep=getattr(args, "keep_unzipped", False))
-            self.zip.close()
+        pass
 
 
 def outline_sets(folder, um: float, log=print) -> list:
-    """cellshapes.xenium_sets for a folder, or for a zip (the boundary files it would read copied out first)."""
     import cellshapes
-    if isinstance(folder, Path):
-        return cellshapes.xenium_sets(folder, um, log=log)
-    want = []
-    for key in ("cell", "nucleus"):
-        m = _first(folder, f"{key}_boundaries.parquet", f"{key}_boundaries.csv.gz", f"{key}_boundaries.csv")
-        if m is not None:
-            want.append(m.rel)
-    if len(want) < 2:
-        m = _first(folder, "cells.zarr.zip")
-        if m is not None and not m.is_dir():
-            want.append(m.rel)
-    if want:
-        folder.extract(want, why="the cell outlines")
-    return cellshapes.xenium_sets(folder.work, um, log=log)
-
-
-def open_zip(path: Path, work: Path, log=print):
-    import zipinput
-    zi = zipinput.ZipInput(path, work, log=log, root_test=is_root, tag="xenium")
-    log(f"[xenium] reading the zip {path.name} as it is ({zipinput._fmt_gb(path.stat().st_size)}; {len(zi._files):,} "
-        f"files in the dataset folder, which is {zi.where()})")
-    return zi
+    return cellshapes.xenium_sets(folder, um, log=log)
 
 
 def plan(args, log=print) -> Plan:
-    """Find the files (folder or zip), the stain images or a density background, and the pixel size."""
+    """Find the files, the stain images or a density background, and the pixel size."""
     import pyramid
     P = Plan()
     src = Path(args.src)
@@ -529,10 +477,8 @@ def plan(args, log=print) -> Plan:
         P.inp = inp = {"experiment": None, "cells": None, "matrix_h5": None, "matrix_mtx": None,
                        "transcripts": src, "cell_boundaries": None}
         stains, xpx = [], None
-    elif src.is_file():
-        work = Path(args.unzip_to) if getattr(args, "unzip_to", None) else Path(args.out) / "_unzipped" / args.id
-        P.zip = folder = open_zip(src, work, log=log)
-        P.manifest_source = {"zip": str(src), "folder": str(src)}
+    elif src.is_file() and src.suffix.lower() == ".zip":
+        raise SystemExit(f"[xenium] {src.name} is a zip: unzip it into a folder, then give that folder as --src")
     elif src.is_dir():
         folder = resolve_folder(src)
         P.manifest_source = {"folder": str(folder)}
@@ -541,18 +487,12 @@ def plan(args, log=print) -> Plan:
     P.folder = folder
     if folder is not None:
         P.inp = inp = find_inputs(folder)
-        if isinstance(folder, Path):
-            stains = sorted((folder / "morphology_focus").glob("*.ome.tif*"))
-        else:
-            stains = folder.glob("morphology_focus", r"\.ome\.tiff?$")
+        stains = sorted((folder / "morphology_focus").glob("*.ome.tif*"))
         xpx = pixel_size(folder)
 
     if stains:
         import re as _re
         import tifffile as _tf
-        if not isinstance(folder, Path):               # random access into big compressed TIFFs: copy them out
-            P.manifest_source["files"] = [m.rel for m in stains]       # in the zip's dataset folder (copies go)
-            stains = folder.extract([m.rel for m in stains], why="the stain images, read tile by tile")
         with _tf.TiffFile(str(stains[0])) as tf0:           # the OME block lists every channel
             ome = tf0.ome_metadata or ""
         names = _re.findall(r'<Channel[^>]*?\sName="([^"]*)"', ome)
@@ -574,7 +514,7 @@ def plan(args, log=print) -> Plan:
         P.pixel_size_um = um
         ann = _first(folder, "Custom_annotation.geojson")
         if ann is not None and not args.geojson:
-            args.geojson = [f"Annotations={ann if isinstance(ann, Path) else ann.local()}"]
+            args.geojson = [f"Annotations={ann}"]
         P.manifest_source.setdefault("files", [str(p) for _, p in pairs])
         return P
 

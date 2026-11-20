@@ -2,6 +2,30 @@
 
 What is in each version of SODA, in plain words. The details are in the [docs](README.md#documentation).
 
+## 0.10.0 (not released yet): simpler
+
+Fewer ways to do the same thing, so there is less to learn and less that can break.
+
+### Changed
+
+- The notebook, the desktop app and `prepare.py batch` now build their commands with the same
+  code, so a setting works the same way in all three.
+- Exports make JPEG image tiles by default everywhere (it was PNG for `prepare.py export` on its
+  own). `--fmt png` still gives lossless tiles.
+- Two places that skipped data without a word now print a warning: an `.h5ad` column of a type
+  SODA cannot read, and an unreadable Xenium `gene_category`.
+
+### Removed
+
+- Encrypted link files (`links.py`, `linkPath` in `config.js`), deprecated in 0.9.0. Use the
+  password site or a link with a read pass.
+- Reading a zipped dataset folder as it is. Unzip it first. (Xenium's own `transcripts.zarr.zip`
+  and `cells.zarr.zip` inside a folder are still read.)
+- `--seam-correct`. Tile seams are still found and listed in the slide QC.
+- `--gene-files loose / both` and `--shard-mb`. Exports always use gene packs, which need a host
+  that answers HTTP Range requests (blob storage, S3, GitHub Pages, nginx). The page still opens
+  older exports with one file per gene.
+
 ## 0.9.0 (19 November 2026)
 
 The first version for release, frozen for the bioRxiv preprint. It is what the paper describes.

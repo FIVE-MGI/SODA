@@ -258,8 +258,8 @@ python web/SpatialViewer/prepare.py xenium --src path/to/xenium_output_folder --
 ```
 
 `--src` is the Xenium Onboard Analysis output folder (the one holding `morphology_focus/`;
-if you unpacked an archive with a `data/` folder inside, either folder works), or a zip of it
-(see *A zipped output* below). What is read, when present:
+if you unpacked an archive with a `data/` folder inside, either folder works; a zip must be
+unzipped first, see *A zipped output* below). What is read, when present:
 
 | File | Becomes |
 |---|---|
@@ -312,22 +312,9 @@ cells. No protein grid is built on it. Example: a whole hemisphere's `transcript
 (1.7 GB, 84 million transcripts, no cells, no images) prepared in 70 s and exported in 14 s
 (300 MB, mostly the molecules).
 
-**A zipped output.** `--src` may be a `.zip` of the output folder: Xenium's own output
-bundle (files at the top of the zip) or a zip of the whole folder (the dataset folder a few
-folders down, e.g. `<run>/data/`). Nothing is unzipped by hand and the zip is never changed.
-Each file is read the cheapest way that works: the tables, the matrix and `experiment.xenium`
-straight from the zip (a stored member in place, a compressed `.parquet` / `.h5` /
-`transcripts.zarr.zip` in memory up to 256 MB, `SODA_ZIP_MEMORY_MB`); what needs random
-access and is bigger, the stain images always and a compressed `transcripts.zarr.zip`, is
-copied out into a work folder beside the cache, `<out>/_unzipped/<id>/` (`--unzip-to <folder>`
-for another place; never next to the zip), and the log says so. Before copying, the free
-space there is checked (the files' size plus 2 GB, `SODA_UNZIP_RESERVE_GB`). After a
-successful prepare the copies are removed (`--keep-unzipped` keeps them); after a failure they
-stay and the next run reuses them. A zip is refused as a whole, before anything is read, when
-a name inside is absolute or has a `..` part (zip slip), when the sizes it declares are above
-2 TB in all (`SODA_ZIP_MAX_GB`), above 1100:1 for one file, or overlap, and while reading when
-a file holds more or less than it declares; copying more than 1 TB out is refused too
-(`SODA_UNZIP_MAX_GB`). `prepare.py outlines` reads a zipped source the same way.
+**A zipped output.** Unzip it first and give the folder as `--src`: SODA reads folders, not
+zips. (Xenium's own `transcripts.zarr.zip` and `cells.zarr.zip` inside the folder are ordinary
+files and are read as they are.)
 
 For scale: a whole coronal mouse brain section (morphology_focus 54,002 × 40,815 px, 4 stains;
 155,754 cells; 480 genes; 209 million transcripts) took 43 min to prepare on a loaded
@@ -847,17 +834,9 @@ Everything after that is automatic, so a slide needs no hand-tuning:
   (fields of 960 x 720 px) there are three parts: a dark line along the last pixel column / row
   of every field; shading shared by every field (one side of every field brighter than the
   other, so the step goes the same way at most edges); and brightness / background differences
-  between fields. The seams are always detected and reported. With `--seam-correct`, when the
-  field grid is found, the border line is measured and left out, the
-  shared shading is measured and reported, and every marker with steps gets one brightness
-  factor (and, if it helps, a background offset) per field, fitted from the pixels on both sides
-  of each field edge. It is kept only if it at least halves the step at field edges without
-  raising it inside the fields; the squares are then recomputed from corrected values. Shared
-  shading is **not** corrected (that needs a flat-field correction, not built yet): markers
-  dominated by it are listed as not correctable, with the reason, and stay in the UMAP. The
-  image itself is shown as recorded. The correction is off by default: on s48 it removed the
-  steps at field edges in 11 of 24 markers but made no measurable difference to the squares,
-  because most of the seam there is the shared shading. Details: `web/SpatialViewer/seams.py`.
+  between fields. The seams are detected and reported in the slide QC; nothing is corrected
+  (the correction, removed in 0.10.0, made no measurable difference to the squares on s48,
+  because most of the seam there is the shared shading). Details: `web/SpatialViewer/seams.py`.
 - **Large slides.** Above 200,000 tissue squares the UMAP is fitted on a seeded random
   sample of 200,000 and the other squares are placed into it (`--umap-sample N`; 0 = fit on
   every square, slower).
@@ -1100,8 +1079,6 @@ python web/SpatialViewer/prepare.py export --id tonsil_panel   --out cache --des
 | `--dest` | where to write `<dest>/<id>/` |
 | `--fmt jpg\|png` | tile format. `jpg` (default) is several times smaller and fine for viewing; it slightly shifts very dark pixels. `png` is lossless: use it when exact intensities matter. |
 | `--workers` | parallel tile writers, default 8 |
-| `--gene-files pack\|loose\|both` | how the per-gene data is written. `pack` (default): each layer's genes (and the molecules) in a few packs of about 64 MB, which the viewer reads one gene at a time with HTTP Range requests; a Visium HD layer is 1-23 files instead of ~16,000. `loose`: one file per gene, as before the packs, for a host that ignores Range requests ([HOSTING.md](HOSTING.md#b-any-static-web-host-public-data)). `both`: the two side by side, readable by viewers from before the packs too. |
-| `--shard-mb` | pack size in MB, default 64. A gene is never split, so one larger than this gets a pack of its own. |
 | `--threads` | threads numpy and scipy may use for linear algebra. Default: 8, or the number of CPUs the process may use if that is fewer. The `SODA_THREADS` environment variable does the same. (The PCA before the UMAP always runs on one.) |
 
 What it writes, per dataset (layout in [DATA_FORMAT.md](DATA_FORMAT.md)):
@@ -1109,7 +1086,7 @@ What it writes, per dataset (layout in [DATA_FORMAT.md](DATA_FORMAT.md)):
 1. Image tiles for every channel and zoom level, then a check that one tile per channel
    matches the cache (`[export] verified N channel(s)`).
 2. Per expression layer: the gene list, bin positions, every gene's points packed into a few
-   files of about 64 MB (`genepack/`; one file per gene with `--gene-files loose`), and, if a
+   files of about 64 MB (`genepack/`; read with HTTP Range requests), and, if a
    region overlay exists, a region id per bin. Layers of 8 µm or more (and classic spots) also get
    per-bin QC values (`binqc/`: total counts, genes detected, % mitochondrial) for the
    viewer's Quality filter.
@@ -1117,7 +1094,7 @@ What it writes, per dataset (layout in [DATA_FORMAT.md](DATA_FORMAT.md)):
    tool (`hvg/`) and the whole-section UMAP with Leiden clusters (`umap/`). See below.
 4. Overlays and the manifest, without your local file paths.
 
-**Re-running** skips tiles (and, with `--gene-files loose`, gene files) that already exist, so
+**Re-running** skips tiles that already exist, so
 an interrupted export can simply be started again; a layer's gene packs are written again whole,
 one sequential write per pack, under new names only if the data changed. A `gene/` folder left
 by an earlier export in the old layout is not read once the layer is packed (the log says so):
@@ -1425,8 +1402,8 @@ formats:
   fluorescence tiles are small; JPEG is smaller than PNG.
 - **Expression**, per layer: 8 bytes per bin for positions, 12 bytes per non-zero
   (bin, gene) pair across the genes, in packs of about 64 MB: 1 to 23 files for the Visium HD
-  layers measured (37 MB to 1.46 GB). With `--gene-files loose` it is one file per expressed
-  gene instead, often 15,000-20,000 files a layer and 50,000-70,000 for a Visium HD dataset
+  layers measured (37 MB to 1.46 GB). Before the packs it was one file per expressed
+  gene, often 15,000-20,000 files a layer and 50,000-70,000 for a Visium HD dataset
   of three layers; 100 such datasets were about 6 million files, against about 3,000 packs.
   Measured on one Visium HD section (layers 2, 8 and 16 µm, ~16,200 genes each, 1.32 GB of
   gene data; `--no-umap --no-hvg`, onto a local disk): packed, 1,405 files in 44-46 s, the
@@ -1436,7 +1413,7 @@ formats:
   in one file per 500 µm square of tissue.
 - **`umap/`**: 8 bytes per bin, plus 2 bytes per bin for each of the three clusterings.
 - **Molecules** (Xenium): 4 bytes per transcript kept, packed like the genes of a layer (one
-  file per gene in the cache and with `--gene-files loose`). A mouse brain
+  file per gene in the cache). A mouse brain
   section with a 480-gene panel (209 million transcripts, 167 million of them quality ≥ 20)
   gave 667 MB in 480 files, the largest gene 37 MB; the viewer downloads only the genes
   someone picks. Reading its `transcripts.zarr.zip` took about 6 minutes.

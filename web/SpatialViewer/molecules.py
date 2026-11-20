@@ -24,7 +24,7 @@ Molecules outside the image are dropped and counted. Same input, same bytes.
 That is the cache's layout (server.py serves it as it is). The static export packs the gene
 files like expr/ (genepack.py): molecules/genepack/<hash>-<i>.pack, each gene's place as
 "s", "o", "b" on its index.json entry and the shard list as "genePack" on the manifest's
-"molecules" block; --gene-files loose copies the files instead.
+"molecules" block.
 """
 from __future__ import annotations
 
@@ -170,13 +170,9 @@ def write_molecules(ds_dir: Path, gene_names, batches, image_size, pixel_size_um
     return w.finish(ds_dir, meta=meta)
 
 
-def export_molecules(ds_dir: Path, out: Path, log=print, gene_files: str = "pack",
-                     shard_mb: float | None = None) -> tuple[int, dict | None]:
-    """The cache's molecules/ into the export. gene_files "pack" (default): the gene files packed
-    in index order (genepack.py), index.json with each gene's s / o / b; "loose": the files copied
-    (skipping those already there with the same size, like the rest of the export); "both": both.
-    Returns (genes written, the genePack block or None)."""
-    import shutil
+def export_molecules(ds_dir: Path, out: Path, log=print) -> tuple[int, dict | None]:
+    """The cache's molecules/ into the export: the gene files packed in index order (genepack.py),
+    index.json with each gene's s / o / b. Returns (genes written, the genePack block)."""
     import genepack
     src = Path(ds_dir) / DIR
     if not (src / "index.json").exists():
@@ -184,35 +180,22 @@ def export_molecules(ds_dir: Path, out: Path, log=print, gene_files: str = "pack
     dst = Path(out) / DIR
     dst.mkdir(parents=True, exist_ok=True)
     index = json.loads((src / "index.json").read_text(encoding="utf-8"))
-    n = 0
-    if gene_files in ("loose", "both"):
-        (dst / "gene").mkdir(exist_ok=True)
-        for f in sorted((src / "gene").glob("*.bin")):
-            t = dst / "gene" / f.name
-            if t.exists() and t.stat().st_size == f.stat().st_size:
-                continue
-            shutil.copyfile(f, t)
-            n += 1
-        log(f"[export] molecules: {n:,} gene files copied")
-    pack = None
-    if gene_files in ("pack", "both"):
-        w = genepack.PackWriter(dst, shard_mb=shard_mb or genepack.SHARD_MB, unit=4, log=log)
-        where = {}
-        try:
-            for g in index["genes"]:
-                f = src / "gene" / f"{encode(g['n'])}.bin"
-                if g.get("c") and f.exists() and g["n"] not in where:
-                    where[g["n"]] = w.add(g["n"], f.read_bytes())
-        except BaseException:
-            w.abort()
-            raise
-        pack = w.finish()
-        index = {**index, "genes": genepack.with_index(index["genes"], where)}
-        n = len(where)
-        if gene_files == "pack":
-            genepack.note_loose(dst, log=log)
-        log(f"[export] molecules: {n:,} genes -> "
-            + (f"{len(pack['shards'])} pack shard(s), {pack['bytes'] / 1e6:.1f} MB" if pack else "no pack (no molecules)"))
+    w = genepack.PackWriter(dst, unit=4, log=log)
+    where = {}
+    try:
+        for g in index["genes"]:
+            f = src / "gene" / f"{encode(g['n'])}.bin"
+            if g.get("c") and f.exists() and g["n"] not in where:
+                where[g["n"]] = w.add(g["n"], f.read_bytes())
+    except BaseException:
+        w.abort()
+        raise
+    pack = w.finish()
+    index = {**index, "genes": genepack.with_index(index["genes"], where)}
+    n = len(where)
+    genepack.note_loose(dst, log=log)
+    log(f"[export] molecules: {n:,} genes -> "
+        + (f"{len(pack['shards'])} pack shard(s), {pack['bytes'] / 1e6:.1f} MB" if pack else "no pack (no molecules)"))
     deid.assert_clean([g["n"] for g in index["genes"]], "molecules gene names")
     genepack.atomic_json(dst / "index.json", index, allow_nan=False)
     return n, pack

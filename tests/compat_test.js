@@ -492,7 +492,7 @@ async function checkPacked(browser, urls, id) {
       await until(t.page, (id) => { const sv = window.__spatialViewer; return sv && sv.state && sv.state.m && sv.state.m.id === id; }, id);
       const a = await addLayerGene(t, dir, m);
       if (a) {
-        t.ok(!a.r.genes.length && a.r.err && /Range/.test(a.r.status) && /--gene-files loose/.test(a.r.status), `gene refused with a message: "${a.r.status}"`);
+        t.ok(!a.r.genes.length && a.r.err && /Range/.test(a.r.status) && /blob storage/.test(a.r.status), `gene refused with a message: "${a.r.status}"`);
         const r = await look(t.page);
         t.ok(r.lit > 0.01, `slide still drawn (lit ${r.lit.toFixed(3)})`);
       }

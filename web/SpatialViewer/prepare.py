@@ -17,9 +17,9 @@ r"""Build the viewer cache for one dataset.
            (akoya / tiff / omezarr + --cells <label mask .tif | cells.geojson> [--nuclei ...] [--cells-units um]:
             a lab's own cell segmentation as a "cells" layer with outlines; SODA segments nothing. protcells.py)
     python prepare.py visium --image <hires.tif> --outs <spaceranger outs> --id sample1_visiumhd --out <cache folder>
-    python prepare.py xenium --src <xenium output folder, or a zip of it> --id x1 --out <cache folder>
+    python prepare.py xenium --src <xenium output folder> --id x1 --out <cache folder>
            (stains; cells -> a "cells" expression layer; transcripts -> the molecules layer; without stain
-            images a density background; a zip is read as it is, xenium.py / zipinput.py)
+            images a density background; xenium.py)
     python prepare.py geomx  --dcc <folder of .dcc> --pkc <panel.pkc ...> --annotation <xlsx|csv|LabWorksheet.txt>
            [--image <scan.ome.tiff> ...] --id g1 --out <cache folder>
            (GeoMx DSP: one row per ROI segment in a "rois" layer, ROI outlines, annotation columns as groups)
@@ -57,9 +57,7 @@ UMAP and clusterings (Seurat / scanpy, matched by barcode) to one spatial layer 
 
 Gene files: by default each expression layer's (and the molecules', and an RNA-seq set's) per-gene
 arrays are written as a few packs of about 64 MB that the viewer reads with HTTP Range requests
-(genepack.py): a Visium HD layer is a handful of files instead of ~16,000. --gene-files loose
-writes one file per gene as before (for a host that ignores Range requests); --gene-files both
-writes the two side by side (a viewer older than the packs reads that too).
+(genepack.py): a Visium HD layer is a handful of files instead of ~16,000.
 Barcodes / cell ids: export writes each layer's barcodes / cell ids by default (expr/<key>/ids.txt.gz, for the
 viewer's "Save barcodes"), as Loupe Browser and Xenium Explorer keep them. Each list must hold no sample ID (and
 fit its platform's id format where layerids.py knows one), else that layer's list is left out with a message and the export goes on. --no-ids
@@ -163,17 +161,6 @@ def parse_geojson_args(items, ds_dir: Path):
         shutil.copyfile(src, dst)
         out.append({"key": dst.stem, "label": label, "file": dst.name})
     return out
-
-
-def gene_file_args(p):
-    import genepack
-    p.add_argument("--gene-files", choices=genepack.MODES, default=genepack.DEFAULT_MODE,
-                   help="pack (default): each layer's per-gene arrays in a few ~64 MB packs, read with HTTP Range "
-                        "requests (a handful of files per layer instead of ~16,000); loose: one file per gene, "
-                        "for a host that ignores Range requests; both: the two side by side")
-    p.add_argument("--shard-mb", type=float, default=genepack.SHARD_MB,
-                   help=f"pack shard size in MB (default {genepack.SHARD_MB}; a gene is never split, so one "
-                        f"bigger than this gets a shard of its own)")
 
 
 # exit codes of `prepare.py auto` when it does not run a command
@@ -330,10 +317,6 @@ def main(argv=None):
                    help="grid layer: the tissue mask thresholds the DAPI square means after a moving average "
                         "over this many µm (default 100 = 7x7 squares of 16 µm); 0 = threshold the raw means "
                         "(keeps only nucleus-dense squares).")
-    e.add_argument("--seam-correct", action="store_true",
-                   help="grid layer: where camera-tile seams are found, correct the square means for "
-                        "brightness / background differences between tiles (seams.py). Seams are always "
-                        "detected and reported in the slide QC; shading shared by every tile is not corrected.")
     e.add_argument("--umap-sample", type=int, default=None,
                    help="grid layer: above this many tissue squares the section UMAP is fitted on a seeded random "
                         "sample of this size and the other squares are placed into it (default 200000; 0 = always "
@@ -341,7 +324,6 @@ def main(argv=None):
     e.add_argument("--no-celltypes", action="store_true", help="skip the suggested cell types")
     e.add_argument("--no-umap", action="store_true", help="skip the whole-section UMAP + Leiden clusters (and so the cell types)")
     e.add_argument("--no-hvg", action="store_true", help="skip the gene chunks the circle -> UMAP tool reads")
-    gene_file_args(e)
     idg = e.add_mutually_exclusive_group()
     idg.add_argument("--no-ids", action="store_true",
                      help="write no barcode / cell id list. By default each layer's ids go to expr/<key>/ids.txt.gz so the "
@@ -378,10 +360,9 @@ def main(argv=None):
     r.add_argument("--umap", help="CSV: barcode, UMAP1, UMAP2 (with --mtx)")
     r.add_argument("--obs", action="append", default=[], help="CSV: barcode, column... (repeatable, with --mtx)")
     r.add_argument("--tmp", help="local folder for the temporary gene-major arrays of big files (needs ~8 bytes per non-zero)")
-    gene_file_args(r)
     i = sub.add_parser("inspect", help="print channels / levels / dtype of a TIFF or qptiff without building")
     i.add_argument("--src", required=True)
-    x = sub.add_parser("xenium", help="Xenium output folder, or a zip of it: morphology_focus stains (else a "
+    x = sub.add_parser("xenium", help="Xenium output folder: morphology_focus stains (else a "
                                       "transcript / cell density background), cells (cells.csv.gz + "
                                       "cell_feature_matrix) as a 'cells' expression layer, transcripts as the "
                                       "molecules layer (+ Custom_annotation.geojson if present; xenium.py)")
@@ -466,8 +447,7 @@ def main(argv=None):
         import rnaseq
         if args.h5ad and Path(args.h5ad).stat().st_size > 2e9:          # large files: stream, never load
             rnaseq.export_h5ad_streaming(Path(args.h5ad), Path(args.dest), args.id, args.label or args.id,
-                                         embedding=args.embedding, tmpdir=args.tmp, log=log,
-                                         gene_files=args.gene_files, shard_mb=args.shard_mb)
+                                         embedding=args.embedding, tmpdir=args.tmp, log=log)
             return
         if args.h5ad:
             X, genes, emb, obs = rnaseq.read_h5ad(Path(args.h5ad), args.embedding)
@@ -475,8 +455,7 @@ def main(argv=None):
             X, genes, emb, obs = rnaseq.read_10x(Path(args.mtx), Path(args.umap), [Path(p) for p in args.obs])
         else:
             sys.exit("rnaseq needs --h5ad, or --mtx together with --umap")
-        rnaseq.export_rnaseq(X, genes, emb, obs, Path(args.dest), args.id, args.label or args.id, log=log,
-                             gene_files=args.gene_files, shard_mb=args.shard_mb)
+        rnaseq.export_rnaseq(X, genes, emb, obs, Path(args.dest), args.id, args.label or args.id, log=log)
         return
 
     if args.kind == "export":
@@ -486,8 +465,7 @@ def main(argv=None):
                       hvg=not args.no_hvg, umap=not args.no_umap,
                       celltypes=not (args.no_celltypes or args.no_umap), markers=Path(args.markers) if args.markers else None,
                       grid_um=args.grid_um, tissue_smooth_um=args.tissue_smooth_um, umap_sample=args.umap_sample,
-                      seam_correct=args.seam_correct, user_clusters=userclusters.specs_from_args(args),
-                      gene_files=args.gene_files, shard_mb=args.shard_mb,
+                      user_clusters=userclusters.specs_from_args(args),
                       write_ids=not args.no_ids, ids_strict=args.ids)
 
         return

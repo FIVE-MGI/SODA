@@ -15,7 +15,6 @@ Output  <dest>/<id>/   (upload like the image datasets)
     genepack/<hash>-<i>.pack   every gene's  uint32 k, uint32[k] cell index, float32[k] value
                        (expressing cells only) end to end; s / o / b in genes.json say where
                        (genepack.py, read with one HTTP Range request per gene)
-    gene/<NAME>.bin    the same, one file per gene: only with gene_files "loose" / "both"
 
 Values: if the matrix holds integer counts they are normalised to log1p(counts per 10k);
 otherwise they are exported as provided (already normalised).
@@ -233,16 +232,12 @@ def write_obs(out: Path, obs: dict, ds_id: str, colors: dict | None = None, log=
     return obs_meta
 
 
-def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=print,
-                  gene_files: str = genepack.DEFAULT_MODE, shard_mb: float = genepack.SHARD_MB) -> Path:
+def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=print) -> Path:
     t0 = time.time()
     ds_id = deid.anonymize(ds_id, form="slug", context=f"rnaseq id")
     label = deid.anonymize(label, form="text", context=f"rnaseq label {ds_id}")
     out = Path(dest) / ds_id
     out.mkdir(parents=True, exist_ok=True)
-    loose = gene_files in ("loose", "both")
-    if loose:
-        (out / "gene").mkdir(exist_ok=True)
     (out / "obs").mkdir(exist_ok=True)
     n_cells, n_genes = X.shape
     log(f"[rnaseq] {n_cells:,} cells x {n_genes:,} genes -> {out}")
@@ -268,7 +263,7 @@ def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=pr
 
     # ---- genes -----------------------------------------------------------------------
     listing = []
-    pw = genepack.PackWriter(out, shard_mb=shard_mb, log=log) if gene_files in ("pack", "both") else None
+    pw = genepack.PackWriter(out, log=log)
     where = {}
     for gi, name in enumerate(genes):
         a, b = X.indptr[gi], X.indptr[gi + 1]
@@ -280,16 +275,14 @@ def export_rnaseq(X, genes, emb, obs, dest: Path, ds_id: str, label: str, log=pr
         payload = np.uint32(k).tobytes() + idx.tobytes() + val.tobytes()
         if pw is not None and name not in where:
             where[name] = pw.add(name, payload)
-        if loose:
-            (out / "gene" / f"{_encode(name)}.bin").write_bytes(payload)
         listing.append({"n": name, "p": round(k / n_cells, 4), "m": _safe_max(val)})
     pack = pw.finish() if pw is not None else None
-    if pack and not loose:
+    if pack:
         genepack.note_loose(out, log=log)
     listing.sort(key=lambda d: -d["p"])
     genepack.atomic_json(out / "genes.json", genepack.with_index(listing, where), allow_nan=False)
     log(f"[rnaseq] {len(listing):,} genes" + (f" -> {len(pack['shards'])} pack shard(s)" if pack else "")
-        + (" + one file each" if loose else "") + f"  ({time.time() - t0:.0f}s)")
+        + f"  ({time.time() - t0:.0f}s)")
 
     lo, hi = np.nanmin(emb, axis=0), np.nanmax(emb, axis=0)
     manifest = {"id": ds_id, "label": label, "kind": "rnaseq", "static": True,
@@ -311,12 +304,11 @@ QC_COLUMNS = {"n_genes", "n_genes_by_counts", "total_counts", "pct_counts_mt", "
 
 def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedding: str = "X_umap",
                           tmpdir: Path | None = None, min_cells: int = 3, chunk_nnz: int = 20_000_000,
-                          log=print, gene_files: str = genepack.DEFAULT_MODE,
-                          shard_mb: float = genepack.SHARD_MB) -> Path:
+                          log=print) -> Path:
     """Two passes over the sparse matrix (raw/X if present, else X):
     1) count non-zeros per gene;  2) normalise each cell (log1p counts-per-10k when the values
     are integer counts) and scatter every entry into a gene-major memmap on local disk.
-    Then each gene's arrays into the pack (or one small file per gene, gene_files "loose").
+    Then each gene's arrays into the pack.
     Peak RAM ~1 GB per 20M non-zeros."""
     import tempfile
     t0 = time.time()
@@ -344,9 +336,6 @@ def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedd
     label = deid.anonymize(label, form="text", context=f"rnaseq label {ds_id}")
     out = Path(dest) / ds_id
     out.mkdir(parents=True, exist_ok=True)
-    loose = gene_files in ("loose", "both")
-    if loose:
-        (out / "gene").mkdir(exist_ok=True)
     pw, where, pack = None, {}, None
     log(f"[rnaseq] {n_cells:,} cells x {n_genes:,} genes, {nnz:,} non-zeros (source {src.name}) -> {out}")
 
@@ -426,9 +415,9 @@ def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedd
             log(f"[rnaseq]   pass 2 {done / nnz:5.1%}  ({time.time() - t0:.0f}s)")
         mm_idx.flush(); mm_val.flush()
 
-        # ---- each gene into the pack (or one file per gene) -----------------------------------
+        # ---- each gene into the pack ----------------------------------------------------------
         listing = []
-        pw = genepack.PackWriter(out, shard_mb=shard_mb, log=log) if gene_files in ("pack", "both") else None
+        pw = genepack.PackWriter(out, log=log)
         for gi, name in enumerate(genes):
             a, b = int(offsets[gi]), int(offsets[gi + 1])
             k = b - a
@@ -438,14 +427,12 @@ def export_h5ad_streaming(path: Path, dest: Path, ds_id: str, label: str, embedd
             payload = np.uint32(k).tobytes() + np.array(mm_idx[a:b], dtype="<u4").tobytes() + v.tobytes()
             if pw is not None and name not in where:
                 where[name] = pw.add(name, payload)
-            if loose:
-                (out / "gene" / f"{_encode(name)}.bin").write_bytes(payload)
             listing.append({"n": name, "p": round(k / n_cells, 4), "m": _safe_max(v)})
             if len(listing) % 5000 == 0:
                 log(f"[rnaseq]   {len(listing):,} genes ({time.time() - t0:.0f}s)")
         pack = pw.finish() if pw is not None else None
         pw = None
-        if pack and not loose:
+        if pack:
             genepack.note_loose(out, log=log)
     finally:
         if pw is not None:                                 # failed half way: no half-written shards left

@@ -10,7 +10,7 @@ rules: protcells.py; SODA segments nothing):
     expr/grid<NNN>um/positions.bin     float32 x,y  square centres in full-res image px (tissue squares only)
     expr/grid<NNN>um/genes.json        [{n, t}]     one per marker channel written; t = mean over the squares
     expr/grid<NNN>um/genepack/         the per-channel float32 x,y,v arrays packed (genepack.py; s/o/b in
-                                       genes.json); gene/<NAME>.bin one file each with --gene-files loose:
+                                       genes.json):
     expr/grid<NNN>um/gene/<NAME>.bin   float32 x,y,v  EVERY square, in positions.bin order (v may be 0;
                                                     the viewer treats v <= 0 as "nothing here", as for RNA)
     expr/grid<NNN>um/umap/...          as sectionumap.py (index.json, coords.bin, clusters_r*.bin)
@@ -374,70 +374,6 @@ def square_means(r, grid_um: float, px_um: float, log=print, workers: int = 4) -
             "npx": npx.ravel(), "tops": tops, "profiles": prof, "ye": ye, "xe": xe}
 
 
-def correct_seams(r, g: dict, seam: dict, keep: np.ndarray, cand: list[int], names: list[str], log=print,
-                  workers: int = 4) -> dict | None:
-    """Tile-seam correction of the square means (seams.py): a second full-resolution pass over the
-    channels `cand` (those with steps), a per-tile factor / offset fit per channel, kept only where
-    it works. Replaces the corrected channels' columns of g["V"] / g["V64"] in place and returns
-    the record for qc.json / qc_seams.json (None without a grid)."""
-    grid = seam.get("grid")
-    if not grid or not cand:
-        return None
-    t0 = time.time()
-    a = r._arrays[0]
-    ye, xe, ny, nx = g["ye"], g["xe"], g["ny"], g["nx"]
-    W, H = int(xe[-1]), int(ye[-1])
-    ev, mv = seams.edge_lines(W, grid["w"], grid["x0"])
-    eh, mh = seams.edge_lines(H, grid["h"], grid["y0"])
-    vlines, is_ev = np.r_[ev, mv].astype(np.int64), np.r_[np.ones(len(ev), bool), np.zeros(len(mv), bool)]
-    hlines, is_eh = np.r_[eh, mh].astype(np.int64), np.r_[np.ones(len(eh), bool), np.zeros(len(mh), bool)]
-    ye_r = seams.fine_edges(ye, np.arange(grid["y0"] % grid["h"], H, grid["h"]))
-    xe_r = seams.fine_edges(xe, np.arange(grid["x0"] % grid["w"], W, grid["w"]))
-    sr, sc, tid = seams.piece_maps(ye, xe, ye_r, xe_r, grid)
-    ntr = int(seams.tile_index(H - 1, grid["h"], grid["y0"]) - seams.tile_index(0, grid["h"], grid["y0"])) + 1
-    ntc = int(seams.tile_index(W - 1, grid["w"], grid["x0"]) - seams.tile_index(0, grid["w"], grid["x0"])) + 1
-    nt = ntr * ntc
-    keep2 = np.asarray(keep, bool).reshape(ny, nx)
-    npx = g["npx"].reshape(ny, nx)
-    top = g["tops"][0]
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        passes = list(ex.map(lambda c: seams.channel_pieces(a, c, ye, xe, ye_r, xe_r, top, vlines, hlines), cand))
-    out = {"grid": grid, "tiles": {"rows": ntr, "cols": ntc, "row0": int(seams.tile_index(0, grid["h"], grid["y0"])),
-                                   "col0": int(seams.tile_index(0, grid["w"], grid["x0"]))},
-           "channels": [], "factors": {}}
-    for c, P in zip(cand, passes):
-        Vp, A, B, E, O = seams.segments(P, keep2, ye, xe, grid, vlines, hlines, is_ev, is_eh)
-        fr = seams.choose(seams.fit_channel(Vp, A, B, E, O, nt, (ntr, ntc)))
-        cor = {}
-        if fr["method"] != "none":
-            gg_, cc = (fr["_g_only"], np.zeros(nt)) if fr["method"] == "gain" else (fr["_g"], fr["_c"])
-            cor[fr["method"]] = np.maximum(seams.corrected_sums(P["S"], ye_r, xe_r, sr, sc, tid, gg_, cc, ny, nx)
-                                           / npx, 0.0)
-        gg, cc, g1 = fr.pop("_g", None), fr.pop("_c", None), fr.pop("_g_only", None)
-        if fr["method"] == "gain":
-            gg = g1
-        rec = {"name": names[c], **fr}
-        if fr["method"] != "none":
-            mean = to_8bit(cor[fr["method"]].ravel(), r.channels[c], a.dtype)
-            g["V"][:, c] = mean
-            g["V64"][:, c] = mean
-            used = np.zeros(nt, bool)
-            used[np.unique(np.r_[A, B])] = True
-            rec["gainSdPct"] = round(float(np.std(np.log(gg[used])) * 100), 1)
-            out["factors"][names[c]] = {"method": fr["method"], "fitted": np.flatnonzero(used).tolist(),
-                                        "g": [round(float(v), 4) for v in gg],
-                                        "c": [round(float(v), 3) for v in (cc if fr["method"] == "gain+offset" else np.zeros(nt))]}
-        out["channels"].append(rec)
-    done = [x["name"] for x in out["channels"] if x["method"] != "none"]
-    out["seconds"] = round(time.time() - t0, 1)
-    log(f"[grid] tile seams ({grid['w']} x {grid['h']} px tiles at {grid['x0']}, {grid['y0']}): corrected "
-        f"{len(done)} of {len(cand)} channels with steps  {out['seconds']:.0f}s")
-    for x in out["channels"]:
-        log(f"[grid]   {x['name']}: {x['method']}, excess step {x['excessBefore']:.2f} -> "
-            f"{x.get('excessAfter', x['excessBefore']):.2f} points" + (f" ({x['reason']})" if x.get("reason") else ""))
-    return out
-
-
 MAT_SCALE = 100              # mat/ chunks store round(v * MAT_SCALE) as uint16 (0.01 of an 8-bit unit)
 MAT_CHUNK_UM = 500.0         # = hvgchunks.DEFAULT_CHUNK_UM
 
@@ -510,8 +446,7 @@ def _atomic(p: Path, buf: bytes):
 def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, markers: Path | None = None,
                      umap: bool = True, celltypes: bool = True, log=print, force: bool = False,
                      tissue_smooth_um: float = DEFAULT_TISSUE_SMOOTH_UM, umap_sample: int | None = None,
-                     seam_correct: bool = False, gene_files: str = genepack.DEFAULT_MODE,
-                     shard_mb: float = genepack.SHARD_MB, stats: dict | None = None) -> dict | None:
+                     stats: dict | None = None) -> dict | None:
     """Write expr/<key>/ for an image dataset (PyramidReader `r`, manifest `m`) into export folder `out`.
 
     `stats`: a dict to fill with {"background": {channel name: background}} for every channel (protcells.py
@@ -520,11 +455,7 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     `tissue_smooth_um`: moving-average window (µm) over the square means before the tissue
     threshold; 0 = threshold the raw means (the old, lacy mask). `umap_sample`: fit the section
     UMAP on this many squares and place the rest (None = sectionumap.UMAP_SAMPLE, 0 = fit on all).
-    `seam_correct`: correct the square means for per-tile differences where tile seams are found
-    (seams.py). Off by default: the seams are always detected and reported, but on s48 the per-tile
-    correction removed the steps at tile edges (11 of 24 markers) without a measurable change in
-    the squares (their dependence on the position within a tile: median 1.64% -> 1.64%), because
-    most of the seam there is shading shared by every tile, which it cannot remove.
+    Tile seams are found and reported in qc.json (seams.py); the square means are not corrected.
 
     Returns the manifest's expr entry, or None when the dataset has no pixel size.
     """
@@ -567,15 +498,11 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     log(f"[grid] tissue mask: {sm_txt} > {thr:.2f} (Otsu on log1p over {len(src):,} squares), "
         f"+ {n_filled} squares in {n_holes} enclosed holes of <= {HOLE_MAX} squares: keeps {n:,} ({n / len(src):.0%})")
 
-    # ---- 2b. tile seams: the camera grid, and the square means corrected where that works -----
+    # ---- 2b. tile seams: the camera grid (found and reported in qc.json; nothing is corrected) ---
     seam = seams.find_grid([g["profiles"][j] for j in written], [names[j] for j in written], float(px_um))
-    with_steps = set(seam["columns"].get("channels", [])) | set(seam["rows"].get("channels", []))
-    cand = [j for j in written if names[j] in with_steps and not NUCLEAR.match(names[j])]
-    seam_fix = correct_seams(r, g, seam, keep, cand, names, log=log) if seam["flagged"] and seam_correct else None
-    if seam["flagged"] and seam.get("grid") and not seam_correct:
-        seam["correctionSkipped"] = "the export did not run the seam correction (prepare.py export --seam-correct)"
-    if seam["flagged"] and not seam.get("grid"):
-        log(f"[grid] tile seams flagged, not corrected: {seam.get('gridProblem')}")
+    if seam["flagged"]:
+        log("[grid] possible tile seams (camera-tile edges) found: listed in the slide QC; the square means are not "
+            "corrected" + (f" ({seam['gridProblem']})" if seam.get("gridProblem") else ""))
     V, V64 = g["V"], g["V64"]
 
     # ---- 3. per channel: background, p99.5 above it, signal, saturation --------------------
@@ -634,21 +561,6 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     flags[bright] |= FLAG_BRIGHT
     sat_sq = (g["sat"][rows][:, written] / g["npx"][rows][:, None]) > SAT_SQUARE
     flags[sat_sq.any(1)] |= FLAG_SAT
-    if seam_fix:
-        fixed = {x["name"]: x for x in seam_fix["channels"]}
-        seam["correction"] = {
-            "corrected": [x["name"] for x in seam_fix["channels"] if x["method"] != "none"],
-            "notCorrectable": [{"name": x["name"], "reason": x.get("reason", "")} for x in seam_fix["channels"]
-                               if x["method"] == "none"],
-            "excessBeforeMedian": round(float(np.median([x["excessBefore"] for x in seam_fix["channels"]])), 2),
-            "excessAfterMedian": round(float(np.median([x.get("excessAfter", x["excessBefore"])
-                                                        for x in seam_fix["channels"]])), 2),
-            "file": "qc_seams.json", "imageCorrected": False,
-            "rule": "per tile and marker, a factor (and offset) fitted from the tissue on both sides of every tile "
-                    "edge, kept only if it at least halves the excess step at tile edges without moving mid-tile "
-                    "lines or whole regions (seams.py); the displayed image is not changed"}
-    else:
-        fixed = {}
     seams_qc = seam
     qc_ch = []
     for k, nm in enumerate(wnames):
@@ -657,9 +569,7 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
         qc_ch.append({"name": nm, "inUmap": k in embed, "status": status,
                       "background": round(float(bg[k]), 3), "p99_5AboveBg": round(float(hi[k]), 3),
                       "signalToBackground": round(float(snr[k]), 2), "saturatedPct": round(float(sat[k]) * 100, 3),
-                      "weak": bool(snr[k] < WEAK_SNR), "saturated": bool(sat[k] > SAT_SHARE),
-                      **({"seams": (f"corrected ({fixed[nm]['method']})" if fixed[nm]["method"] != "none"
-                                    else "not correctable")} if nm in fixed else {})})
+                      "weak": bool(snr[k] < WEAK_SNR), "saturated": bool(sat[k] > SAT_SHARE)})
     n_bright, n_sat = int((flags & FLAG_BRIGHT).astype(bool).sum()), int((flags & FLAG_SAT).astype(bool).sum())
     qc = {"channels": qc_ch,
           "dropped": [{"name": dr["name"], "reason": dr["reason"]} for dr in dropped],
@@ -696,37 +606,29 @@ def write_grid_layer(r, m: dict, out: Path, grid_um: float = DEFAULT_GRID_UM, ma
     pos[:, 1] = (iy + 0.5) * step_full
     d = Path(out) / "expr" / key
     d.mkdir(parents=True, exist_ok=True)
-    loose = gene_files in ("loose", "both")
-    if loose:
-        (d / "gene").mkdir(exist_ok=True)
     _atomic(d / "positions.bin", np.ascontiguousarray(pos, dtype="<f4").tobytes())
     genes = [{"n": nm, "t": round(float(Vt[:, k].mean()), 4)} for k, nm in enumerate(wnames)]
     deid.assert_clean(genes, "grid genes.json")
     xyv = np.empty((n, 3), np.float32)
     xyv[:, :2] = pos
-    pw = genepack.PackWriter(d, shard_mb=shard_mb, unit=12, log=log) if gene_files in ("pack", "both") else None
+    pw = genepack.PackWriter(d, unit=12, log=log)
     where = {}
     for k, nm in enumerate(wnames):
         xyv[:, 2] = Vt[:, k]
         buf = np.ascontiguousarray(xyv, dtype="<f4")
         if pw is not None and n and nm not in where:
             where[nm] = pw.add(nm, buf)
-        if loose:
-            _atomic(d / "gene" / f"{_encode(nm)}.bin", buf.tobytes())
     pack = pw.finish() if pw is not None else None
-    if pack and not loose:
+    if pack:
         genepack.note_loose(d, log=log)
     _atomic(d / "genes.json", json.dumps(genepack.with_index(genes, where), separators=(",", ":")).encode("utf-8"))
     log(f"[grid] {key}: {n:,} squares, {len(wnames)} channels -> {d}"
-        + (f" ({len(pack['shards'])} pack shard(s))" if pack else "") + (" + one file each" if loose else ""))
+        + (f" ({len(pack['shards'])} pack shard(s))" if pack else ""))
     deid.assert_clean(qc, "grid qc.json")
     _atomic(d / "qc.json", json.dumps(qc, separators=(",", ":")).encode("utf-8"))
     _atomic(d / "qc_flags.bin", flags.tobytes())
-    if seam_fix:
-        deid.assert_clean(seam_fix, "grid qc_seams.json")
-        _atomic(d / "qc_seams.json", json.dumps(seam_fix, separators=(",", ":")).encode("utf-8"))
-    elif (d / "qc_seams.json").exists():
-        (d / "qc_seams.json").unlink()                 # a re-export without a correction: no stale factors
+    if (d / "qc_seams.json").exists():
+        (d / "qc_seams.json").unlink()                 # from an older export that ran the seam correction
     mat = write_mat_chunks(d, pos, Vt[:, embed], [wnames[k] for k in embed], bg[embed], hi[embed],
                            float(px_um), log=log) if embed else None
 

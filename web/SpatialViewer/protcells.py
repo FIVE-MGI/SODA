@@ -651,7 +651,7 @@ def is_layer(layer: dict) -> bool:
 
 def export_layer(er, d: Path, layer: dict, px_um: float, grid_bg: dict | None = None, markers: Path | None = None,
                  umap: bool = True, celltypes: bool = True, umap_sample: int | None = None, force: bool = False,
-                 gene_files: str = "pack", shard_mb: float = 64.0, log=print) -> tuple[dict, dict | None]:
+                 log=print) -> tuple[dict, dict | None]:
     """expr/cells/: gene files, mat/, umap/ (+ suggested names) of a protein cells layer, by the grid's rules.
     `grid_bg` {channel name: background} from the grid layer of the same export (protgrid.write_grid_layer's
     `stats`), None without one. Returns (fields for the manifest entry, the umap entry or None)."""
@@ -717,22 +717,17 @@ def export_layer(er, d: Path, layer: dict, px_um: float, grid_bg: dict | None = 
     x = pg.normalise_bg_asinh(Vt, bg, hi)
     log(f"[cells] {key}: {len(wnames)} channels written, {len(embed)} embedded; background: {bg_rule}")
     # gene files: every cell, in positions.bin order (as the grid's squares)
-    loose = gene_files in ("loose", "both")
-    if loose:
-        (d / "gene").mkdir(parents=True, exist_ok=True)
     xyv = np.empty((n, 3), np.float32)
     xyv[:, :2] = pos
-    pw = genepack.PackWriter(d, shard_mb=shard_mb, unit=12, log=log) if gene_files in ("pack", "both") else None
+    pw = genepack.PackWriter(d, unit=12, log=log)
     where = {}
     for k, nm in enumerate(wnames):
         xyv[:, 2] = Vt[:, k]
         buf = np.ascontiguousarray(xyv, dtype="<f4")
         if pw is not None and nm not in where:
             where[nm] = pw.add(nm, buf)
-        if loose:
-            (d / "gene" / f"{genepack.encode(nm)}.bin").write_bytes(buf.tobytes())
     pack = pw.finish() if pw is not None else None
-    if pack and not loose:
+    if pack:
         genepack.note_loose(d, log=log)
     genes = [{"n": nm, "t": round(float(Vt[:, k].mean()), 4)} for k, nm in enumerate(wnames)]
     deid.assert_clean(genes, "cells genes.json")

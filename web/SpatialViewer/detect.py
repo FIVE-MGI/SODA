@@ -18,8 +18,8 @@ stereoseq.py, geomx.py, rnaseq.py, expr.find_visium_layers):
                next to it (its pixel size is checked against tissue_hires_image.png / scale factor)
     xenium     morphology_focus/*.ome.tif; experiment.xenium, cells + cell_feature_matrix,
                transcripts.parquet / .zarr.zip (each optional; without the stain images, cells or
-               transcripts are drawn on a density background). Also a zip of the output folder: read as
-               it is (xenium.py, zipinput.py); and a transcripts store on its own (<name>_transcripts.zarr.zip,
+               transcripts are drawn on a density background); a zip of the output folder is named but
+               not read (unzip it first); and a transcripts store on its own (<name>_transcripts.zarr.zip,
                not in an output folder): its molecules on a transcript-density background
     cosmx      *_exprMat_file, *_metadata_file, *_fov_positions_file, *_tx_file (csv / csv.gz /
                parquet) and the FOV image folders (Morphology2D, CellComposite ...)
@@ -78,7 +78,7 @@ KIND_WORDS = {"visium": "Visium (Space Ranger output)", "xenium": "Xenium output
 NEEDS = {
     "visium": "Space Ranger's outs folder (binned_outputs/square_NNNum/ for Visium HD, or filtered_feature_bc_matrix.h5 "
               "+ spatial/tissue_positions for classic Visium) and the full-resolution image given to spaceranger",
-    "xenium": "a Xenium output folder (or a zip of it) with morphology_focus/*.ome.tif, or with cells "
+    "xenium": "a Xenium output folder with morphology_focus/*.ome.tif, or with cells "
               "(cells table + cell_feature_matrix) and / or transcripts without the stain images",
     "cosmx": "CosMx flat files: *_exprMat_file + *_metadata_file and / or *_tx_file (csv, csv.gz or parquet)",
     "merscope": "a MERSCOPE region folder: detected_transcripts, cell_by_gene + cell_metadata and / or images/mosaic_*.tif",
@@ -289,14 +289,6 @@ def zip_tree(path: Path, max_names: int = MAX_ENTRIES) -> Tree | None:
         return None
     t = Tree(None, inside=Path(path).name)
     t._ensure("")
-    t.refused = None                    # the zip-slip / zip-bomb checks the readers make (zipinput.check_list)
-    try:
-        import zipinput
-        zipinput.check_list(infos, Path(path).stat().st_size, Path(path).name)
-    except SystemExit as e:             # zipinput.ZipRefused
-        t.refused = str(e).removeprefix("[zip] ")
-    except (ImportError, OSError):
-        pass
     for i in infos[:max_names]:
         name = i.filename.replace("\\", "/").strip("/")
         if not name or name.startswith("__MACOSX/"):
@@ -1737,7 +1729,7 @@ def _zip_listing(path: Path) -> dict | None:
         return None
     names = [n.lower() for f in zt.files.values() for n in f]
     out = {"dcc": bool(names) and sum(n.endswith(".dcc") for n in names) >= max(1, 0.5 * len(names)),
-           "pkc": any(n.endswith(".pkc") for n in names), "files": zt.n_files, "refused": zt.refused}
+           "pkc": any(n.endswith(".pkc") for n in names), "files": zt.n_files}
     zc = Ctx(zt)
     best, n_xen = None, 0
     for kind in ("xenium", "visium", "cosmx", "merscope", "stereoseq", "geomx"):
@@ -2002,7 +1994,7 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
                 extras_of.setdefault(root, []).append(f"{n_h5} .h5ad file(s) in this folder are not used; one can be prepared "
                                                       f"on its own with --src <file>")
 
-    # ---- zipped instrument output (a Xenium zip is read as it is: xenium.py / zipinput.py; the others must be unzipped)
+    # ---- zipped instrument output: named, never read (unzip it first)
     zipped = []
     for (rel, n), z in sorted(zips.items()):
         if z.get("kind") and not z["dcc"]:
@@ -2012,22 +2004,8 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
             c["zipped"] = t.path(rel, n)
             _ev(c, "zip file list", _join(rel, n), f"{_mb(t.f(rel)[n])}, {z['files']:,} files inside; holds {z['label']}")
             where = (f" (the dataset is in {z['inner']}/ inside it)" if z.get("inner") else "")
-            if z["kind"] == "xenium" and z.get("refused"):
-                _miss(c, z["refused"], None, "check where the zip came from; unzip a copy you trust and point at the folder")
-            elif z["kind"] == "xenium" and not z.get("missing") and not z.get("several"):
-                c["args"]["src"] = t.path(rel, n)
-                c["notes"].append("read from the zip as it is: the stain images (and a compressed transcripts.zarr.zip) are "
-                                  "copied out into <cache>/_unzipped/<id>/ while it is prepared, never next to the zip")
-                c["notes"] += z.get("notes", [])
-            elif z["kind"] == "xenium" and z.get("several"):
-                _miss(c, f"{n} holds more than one Xenium output folder", None,
-                      f"unzip {n} and point at the folder you want")
-            elif z["kind"] == "xenium":
-                _miss(c, "inside " + n + ": " + "; ".join(z["missing"]), None,
-                      f"unzip {n}, add what is missing, then point at that folder" + where)
-            else:
-                _miss(c, f"the files are inside {n}: prepare.py reads a zipped Xenium output as it is, but not a zipped "
-                         f"{KIND_WORDS[z['kind']]}", None, f"unzip {n} into a folder, then point at that folder" + where)
+            _miss(c, f"the files are inside {n}: SODA reads folders, not zips", None,
+                  f"unzip {n} into a folder, then point at that folder" + where)
             zipped.append(_finish(c, {}))
     other_archives = sorted(n for f in t.files.values() for n in f
                             if n.lower().endswith((".tar.gz", ".tgz", ".tar", ".7z", ".rar")))
@@ -2042,23 +2020,12 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
         units.setdefault(home if home is not None else c["root"], []).append(c)
     real_units = bool(units)
     notes = []
-    xen_roots = [c["root"] for c in cands if c["kind"] == "xenium"]
 
-    def unzipped_copy(c):                                # X.zip with the folder X/ beside it, or a zip inside a Xenium folder
-        rel, n = c["root"].rpartition("/")[0], c["root"].rpartition("/")[2]
-        stem = _join(rel, n[:-4] if n.lower().endswith(".zip") else n)
-        return any(r == rel or _under(r, stem) for r in xen_roots)
     for c in zipped:
-        if c["status"] == "complete" and not unzipped_copy(c):           # a zipped Xenium output: a dataset of its own
+        if not real_units:
             units.setdefault(c["root"], []).append(c)
-        elif not real_units:
-            units.setdefault(c["root"], []).append(c)
-        elif c["status"] == "complete":
-            notes.append(f"{Path(c['zipped']).name} holds a zipped {KIND_WORDS[c['kind']]}; not prepared on its own, as "
-                         f"the unzipped Xenium folder beside it (or around it) is (to prepare the zip itself: --src "
-                         f"{_quote(c['zipped'])})")
         else:
-            notes.append(f"{Path(c['zipped']).name} holds a zipped {KIND_WORDS[c['kind']]} (not looked into further)")
+            notes.append(f"{Path(c['zipped']).name} holds a zipped {KIND_WORDS[c['kind']]} (not read: unzip it to prepare it)")
     if other_archives:
         notes.append(f"{len(other_archives)} archive(s) were not looked into (only .zip file lists are read): "
                      + ", ".join(other_archives[:4]) + (" ..." if len(other_archives) > 4 else ""))

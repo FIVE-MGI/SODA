@@ -6,8 +6,6 @@
     <dest>/<id>/expr/<key>/positions.bin        float32 [x,y]*
     <dest>/<id>/expr/<key>/genepack/<hash>-<i>.pack   every gene's float32 [x,y,v]* end to end, in shards of
                                                 ~64 MB, read with one HTTP Range request per gene (genepack.py)
-    <dest>/<id>/expr/<key>/gene/<NAME>.bin      the same per gene, one file each (NAME percent-encoded like
-                                                encodeURIComponent): only with --gene-files loose / both
     <dest>/<id>/expr/<key>/hvg/...              bin-major top-variable genes in spatial chunks (hvgchunks.py)
     <dest>/<id>/expr/<key>/binqc/...            per-bin total counts, genes detected, % MT (binqc.py)
     <dest>/<id>/expr/<key>/umap/...             whole-section UMAP + Leiden clusters (sectionumap.py)
@@ -21,8 +19,7 @@
                                                 marker means per cell by the grid's rules, mat/, umap/, outlines
                                                 (protcells.py)
     <dest>/<id>/molecules/index.json, genepack/   imaging platforms (Xenium): every transcript,
-                                                uint16 x, y per molecule, packed per gene like expr/ (molecules.py;
-                                                gene/<NAME>.bin files with --gene-files loose)
+                                                uint16 x, y per molecule, packed per gene like expr/ (molecules.py)
     <dest>/<id>/expr/<key>/shapes/<set>/...     cell (and nucleus) outlines in spatial tiles (cellshapes.py)
     <dest>/<id>/expr/rois/...                   GeoMx ROI segments (geomx.py): gene files, binqc/ with the GeoMx
                                                 QC values, hvg/ with every target, umap/ with the annotation
@@ -30,10 +27,9 @@
     <dest>/<id>/overlays/<file>.geojson
 
 Upload the <id> folder to any static host (Azure blob, S3, a web server) and
-point config.js at its URL. Re-running skips tiles (and loose gene
-files) that already exist, so an interrupted export can be resumed; a layer's packs are rewritten whole (one
-sequential write per shard). The host must answer HTTP Range requests for the packs (blob storage, S3, nginx
-and static_serve.py do); for one that cannot, export with --gene-files loose.
+point config.js at its URL. Re-running skips tiles that already exist, so an interrupted export can be
+resumed; a layer's packs are rewritten whole (one sequential write per shard). The host must answer HTTP
+Range requests for the packs (blob storage, S3, GitHub Pages, nginx and static_serve.py do).
 """
 from __future__ import annotations
 
@@ -134,9 +130,8 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
                   umap: bool = True, celltypes: bool = True, markers: Path | None = None,
                   grid_um: float = protgrid.DEFAULT_GRID_UM,
                   tissue_smooth_um: float = protgrid.DEFAULT_TISSUE_SMOOTH_UM,
-                  umap_sample: int | None = None, seam_correct: bool = False,
-                  user_clusters: list[dict] | None = None, gene_files: str = genepack.DEFAULT_MODE,
-                  shard_mb: float = genepack.SHARD_MB,
+                  umap_sample: int | None = None,
+                  user_clusters: list[dict] | None = None,
                   write_ids: bool = True, ids_strict: bool = False) -> Path:
     """`markers`: the marker list for suggested cluster names. Default by modality:
     markers/rna_generic.json for RNA (Visium) layers, markers/protein_generic.json for the
@@ -144,18 +139,13 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
     in µm for the protein layer; 0 = no grid layer. `tissue_smooth_um`: moving-average window
     (µm) over the square means before the grid's tissue threshold; 0 = raw means.
     `umap_sample`: the grid layer's UMAP is fitted on a sample of this many squares above it
-    (None = sectionumap.UMAP_SAMPLE, 0 = all). `seam_correct`: correct the grid layer's square
-    means for per-tile differences where tile seams are found (off: detected and reported only).
+    (None = sectionumap.UMAP_SAMPLE, 0 = all).
     `user_clusters`: the lab's own UMAP / clusterings per layer (userclusters.make_spec).
-    `gene_files`: "pack" (default) = each layer's genes in shards read with HTTP Range requests
-    (genepack.py); "loose" = one file per gene, for a host that cannot answer Range requests;
-    "both" = the two side by side (either viewer version reads it). `shard_mb`: pack shard size.
+    Each layer's genes go in shards read with HTTP Range requests (genepack.py).
     `write_ids`: write each layer's barcodes / cell ids (expr/<key>/ids.txt.gz, layerids.py); on by default,
     False (--no-ids) writes none. `ids_strict` (--ids, the lists asked for explicitly): a layer whose ids fail the
     allow-list or the sample-ID check stops the export before anything is written; otherwise that layer's list is
     left out with a message and the export goes on."""
-    if gene_files not in genepack.MODES:
-        raise ValueError(f"gene_files must be one of {genepack.MODES}, not {gene_files!r}")
     ds_dir = Path(ds_dir)
     m = json.load(open(ds_dir / "manifest.json", encoding="utf-8"))
     if m.get("userObs"):            # obs columns / X_umap a standard-format prepare kept (stdformats.py)
@@ -213,7 +203,6 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
     layer_umap: dict[str, dict] = {}
     layer_binqc: dict[str, dict] = {}
     layer_pack: dict[str, dict] = {}
-    packing, loose = gene_files in ("pack", "both"), gene_files in ("loose", "both")
     layer_ids: dict[str, dict] = {}
     prot_cells = []                                  # a lab's own cells of a protein image: after the grid (protcells.py)
     layer_prot: dict[str, dict] = {}
@@ -224,8 +213,6 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
         er = ExprReader(ds_dir / "expr" / f"{key}.zarr")
         d = out / "expr" / key
         d.mkdir(parents=True, exist_ok=True)
-        if loose:
-            (d / "gene").mkdir(exist_ok=True)
         # genes.json is written after the gene loop, with each gene's place in the pack
         pos = er.positions()                         # same bins, same order, as region.bin below
         (d / "positions.bin").write_bytes(np.ascontiguousarray(pos, dtype="<f4").tobytes())
@@ -287,12 +274,9 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
         xy = er.xy
         n = 0
         t_genes = time.time()
-        pw = genepack.PackWriter(d, shard_mb=shard_mb, unit=12, log=log) if packing else None
+        pw = genepack.PackWriter(d, unit=12, log=log)
         where: dict[str, dict] = {}
         for gi, name in enumerate(er.genes):
-            p = d / "gene" / f"{_encode(name)}.bin"
-            if pw is None and p.exists():
-                continue                             # loose only: resume an interrupted export
             a, b = int(indptr[gi]), int(indptr[gi + 1])
             if b <= a:
                 continue
@@ -304,25 +288,22 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
             if len(xyv) == 0:
                 continue
             buf = np.ascontiguousarray(xyv, dtype="<f4")
-            if pw is not None and name not in where:
+            if name not in where:
                 where[name] = pw.add(name, buf)
-            if loose and not p.exists():
-                p.write_bytes(buf.tobytes())
             n += 1
-        pack = pw.finish() if pw is not None else None
+        pack = pw.finish()
         genepack.atomic_json(d / "genes.json", genepack.with_index(er.gene_list(), where))
         if pack:
             layer_pack[key] = pack
-            if not loose:
-                genepack.note_loose(d, log=log)
+            genepack.note_loose(d, log=log)
         log(f"[export] expr {key}: {n:,} genes"
             + (f" -> {len(pack['shards'])} pack shard(s), {pack['bytes'] / 1e6:.1f} MB" if pack else "")
-            + (" + one file each" if loose else "") + f"  ({time.time() - t_genes:.0f}s)")
+            + f"  ({time.time() - t_genes:.0f}s)")
 
     # ---- molecules (Xenium ...): per-gene point files, already in their static format ----
     mol_pack = None
     if m.get("molecules"):
-        _, mol_pack = molecules.export_molecules(ds_dir, out, log=log, gene_files=gene_files, shard_mb=shard_mb)
+        _, mol_pack = molecules.export_molecules(ds_dir, out, log=log)
 
     # ---- cell outlines (cellshapes.py): tiles of polygons, already in their static format ----
     layer_shapes = cellshapes.export_shapes(ds_dir, out, m, log=log)
@@ -334,7 +315,6 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
         grid_layer = protgrid.write_grid_layer(r, m, out, grid_um=grid_um, markers=markers,
                                                umap=umap, celltypes=celltypes, log=log,
                                                tissue_smooth_um=tissue_smooth_um, umap_sample=umap_sample,
-                                               seam_correct=seam_correct, gene_files=gene_files, shard_mb=shard_mb,
                                                **({"stats": grid_stats} if prot_cells else {}))
         if grid_layer and region_feats is not None:
             gk = grid_layer["key"]
@@ -351,8 +331,7 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
         key = layer["key"]
         entry, u = protcells.export_layer(er, d, layer, layer.get("micronsPerPixel") or m.get("pixelSizeUm"),
                                           grid_bg=(grid_stats or {}).get("background"), markers=markers, umap=umap,
-                                          celltypes=celltypes, umap_sample=umap_sample, gene_files=gene_files,
-                                          shard_mb=shard_mb, log=log)
+                                          celltypes=celltypes, umap_sample=umap_sample, log=log)
         u = userclusters.for_layer(user_clusters, er, d, ds_dir, u, log=log)
         if u:
             layer_umap[key] = u

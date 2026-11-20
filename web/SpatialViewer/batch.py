@@ -13,7 +13,7 @@ This is the notebook (notebooks/SODA_pipeline.ipynb, Sections 2 to 5) without th
    _ and -; anything else becomes _). One image file or .h5ad, a zipped Xenium output or a Xenium
    transcripts store (<name>_transcripts.zarr.zip) on its own counts too; other loose files are ignored,
    and so is any name starting with _ or . (a place to keep what is not a dataset). x.zip beside a folder
-   x/ is a second dataset, x_zip, when it can be read as it is (the log says they may be the same data).
+   x/ is left out (the folder is taken to be its unzipped copy); SODA reads folders, not zips.
    The notebook's older inputs/<kind>/<id>/ layout works as well. The notebook (Section 2) and the
    desktop app find datasets with this same code (find_datasets). Each one is
    looked at with detect.py (`prepare.py detect`). Only a "certain" verdict is run. Anything else
@@ -429,17 +429,12 @@ def check_dataset(ds_id: str, src: Path, options: dict, bins: str | None, hint: 
     return [d]
 
 
-ZIP_SUFFIX = "_zip"      # the id of x.zip when the folder x/ beside it is a dataset too
-
-
 def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict], list[str]]:
     """Every dataset under `src`: batch.py's, the notebook's (Section 2 calls this) and the desktop app's one
     finder. Returns (datasets, warnings).
 
     Names starting with "." or "_" are left out (a place to keep what is not a dataset), and so is README.txt.
-    x.zip beside a folder x/: both are datasets when the zip can be prepared as it is (a zipped Xenium output), the
-    zip with the id x_zip, and a warning says they may be the same data; a zip that cannot (it must be unzipped
-    first) is left out with a warning, as the folder beside it is taken to be its unzipped copy."""
+    x.zip beside a folder x/ is left out: the folder is taken to be its unzipped copy."""
     rows, warn = [], []
 
     def is_kind_folder(p: Path) -> bool:              # inputs/visium/<id>/ ... of the older layout
@@ -453,19 +448,8 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
     for p in entries:
         if p.name.startswith((".", "_")) or p.name == "README.txt":
             continue
-        if (p.is_file() and p.suffix.lower() == ".zip" and p.stem.lower() in folders
-                and safe_id(p.stem) in {r["id"] for r in rows}):          # x/ sorts before x.zip
-            zid = safe_id(p.stem) + ZIP_SUFFIX
-            got = check_dataset(zid, p, options, bins)
-            if got and all(r["verdict"] == "certain" for r in got):
-                rows += got
-                warn.append(f"{p.name} and the folder {p.stem} beside it are prepared as two datasets, "
-                            f"{safe_id(p.stem)} and {zid}: they may be the same data (the folder an unzipped copy of "
-                            f"the zip). If they are, keep one: move the other out of the inputs folder")
-            else:
-                warn.append(f"{p.name} is not prepared: it cannot be read as it is, and the folder {p.stem} beside it "
-                            f"is prepared (an unzipped copy, it seems)")
-            continue
+        if p.is_file() and p.suffix.lower() == ".zip" and p.stem.lower() in folders:
+            continue                                    # x.zip beside x/: the folder is its unzipped copy
         if p.is_dir() and is_kind_folder(p):
             for sub in sorted(q for q in p.iterdir() if q.is_dir()):
                 rows += check_dataset(safe_id(sub.name), sub, options, bins, hint=p.name)
@@ -501,13 +485,6 @@ def _flag(key: str) -> str:
     return "--" + key.replace("_", "-")
 
 
-def gene_file_argv(a) -> list[str]:
-    """--gene-files / --shard-mb as given to the batch (genepack.py): for every export, and for
-    single-cell RNA-seq, which is written straight to the export by its prepare step."""
-    out = ["--gene-files", a.gene_files] if getattr(a, "gene_files", None) else []
-    return out + (["--shard-mb", str(a.shard_mb)] if getattr(a, "shard_mb", None) else [])
-
-
 def prepare_argv(d: dict, a) -> list[str]:
     o, k = d["opts"], d["kind"]
     argv = ["auto", "--src", str(d["src"]), "--id", d["id"], "--out", str(a.out), "--dest", str(a.dest),
@@ -533,8 +510,6 @@ def prepare_argv(d: dict, a) -> list[str]:
             argv += [_flag(key)] + ([] if v is True else [str(v)])
     if k == "visium" and d["variant"] == "visium-hd" and a.bins:
         argv += ["--bins", a.bins]
-    if k == "rnaseq":
-        argv += gene_file_argv(a)
     return argv
 
 
@@ -545,7 +520,7 @@ def export_argv(d: dict, a) -> list[str]:
     options file cannot add either (only KNOWN_OPTIONS pass)."""
     o = d["opts"]
     argv = ["export", "--id", d["id"], "--out", str(a.out), "--dest", str(a.dest), "--fmt", a.fmt,
-            "--workers", str(a.workers)] + gene_file_argv(a) + (["--no-ids"] if getattr(a, "no_ids", False) else [])
+            "--workers", str(a.workers)] + (["--no-ids"] if getattr(a, "no_ids", False) else [])
     markers = o.get("markers") or (a.markers_proteins if d["kind"] in PROTEIN_KINDS else a.markers_genes)
     if markers:
         argv += ["--markers", str(markers)]
@@ -758,10 +733,6 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--fmt", choices=["jpg", "png"], default="jpg",
                     help="image tiles: jpg (default, as the notebook: several times smaller) or png (lossless)")
     ap.add_argument("--workers", type=int, default=8, help="tile writers per export (default 8)")
-    ap.add_argument("--gene-files", choices=["pack", "loose", "both"],
-                    help="per-gene data: pack (prepare.py's default: a few ~64 MB packs per layer, read with HTTP "
-                         "Range requests), loose (one file per gene, for a host that ignores Range) or both")
-    ap.add_argument("--shard-mb", type=float, help="gene pack size in MB (prepare.py's default 64)")
     ap.add_argument("--bins", help="Visium HD layers to build, e.g. 008um,016um (the default) or all")
     ap.add_argument("--markers-genes", help="marker list for gene data (default markers/rna_generic.json)")
     ap.add_argument("--markers-proteins", help="marker list for protein images (default markers/protein_generic.json)")

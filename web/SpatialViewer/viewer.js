@@ -258,9 +258,9 @@
         if (sh.bytes > PACK_WHOLE_MAX) {
           try { if (r.body) r.body.cancel(); } catch (err) { /* already closed */ }
           throw new Error(`this host ignores HTTP Range requests, so one gene would cost the whole ${(sh.bytes / 1e6).toFixed(0)} MB gene pack. ` +
-            "Host the folder where Range works (blob storage, S3, nginx, static_serve.py), or export it with --gene-files loose");
+            "Host the folder where Range works (blob storage, S3, GitHub Pages, nginx, static_serve.py)");
         }
-        if (!warnedNoRange) { warnedNoRange = true; console.warn(`SODA: ${base.replace(/\?.*$/, "")} ignores HTTP Range requests: whole gene packs are downloaded and kept (slower; export with --gene-files loose for this host)`); }
+        if (!warnedNoRange) { warnedNoRange = true; console.warn(`SODA: ${base.replace(/\?.*$/, "")} ignores HTTP Range requests: whole gene packs are downloaded and kept (slower; a host that answers Range requests is faster)`); }
         const pr = r.arrayBuffer();
         whole.set(path, pr);
         pr.catch(() => whole.delete(path));

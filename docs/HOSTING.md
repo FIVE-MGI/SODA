@@ -123,8 +123,8 @@ the de-identification key file.
   files. Do not let the host or a proxy compress the `.pack` files (`Content-Encoding`): a
   compressed file cannot be read by range. A host that ignores Range sends the whole pack;
   the page then manages with packs up to 160 MB (`packWholeMaxMB` in `config.js`), slowly,
-  and refuses larger ones with a message. For such a host, export with
-  `prepare.py export ... --gene-files loose` (one file per gene, as before the packs).
+  and refuses larger ones with a message. Use a host that answers Range requests
+  (blob storage, S3, GitHub Pages, nginx).
 - **Allow cross-origin reads, if the data is on a different site than the page.**
   The data host must answer `GET` with `Access-Control-Allow-Origin: <page origin>`
   (or `*` for public data), allow the `Range` request header in a CORS preflight
@@ -139,8 +139,8 @@ the de-identification key file.
 - **Cope with many files.** An imaging dataset is mostly image tiles: hundreds to tens of
   thousands of files (tiles grow with channels × image area; see
   [PREPARING_DATA.md](PREPARING_DATA.md#how-big-and-how-long)); its genes add only a few packs
-  per layer. (Exports made before the packs, or with `--gene-files loose`, add one file per
-  gene and layer: 50,000-70,000 more for a Visium HD dataset.) Check your host's limits on
+  per layer. (Exports made before the packs add one file per gene and layer: 50,000-70,000
+  more for a Visium HD dataset.) Check your host's limits on
   file count, file size (packs are about 64 MB; a single very abundant gene can make one
   larger) and total size before you start.
 - **Keep names exact.** File names are case-sensitive on most hosts. Do not let a

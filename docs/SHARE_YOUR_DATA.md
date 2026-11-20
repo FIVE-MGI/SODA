@@ -126,8 +126,8 @@ see the `Content-Range` answer header. The rules below do both:
 If you skip this, the page says it "could not reach" your folder and points here. If the
 storage does not answer Range requests at all (a few file-sharing services and proxies), a
 gene comes back as its whole pack: the page copes with packs up to 160 MB, slowly, and
-otherwise says the host does not support Range requests. For such a host, export with
-`--gene-files loose` (one file per gene, the layout before the packs).
+otherwise says the host does not support Range requests. Use storage that answers Range
+requests (blob storage, S3, GitHub Pages, nginx).
 
 ### Step 5. Make the link
 
