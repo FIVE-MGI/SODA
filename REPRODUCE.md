@@ -97,7 +97,7 @@ https://fivestore.blob.core.windows.net/soda/examples/
 ```
 
 Open them on the shared page, or from your own copy as in the README's
-[Try it in 5 minutes](README.md#try-it-in-5-minutes), with
+[Try it in 5 minutes](docs/REFERENCE.md#try-it-in-5-minutes), with
 `index.html?data=https://fivestore.blob.core.windows.net/soda/examples/`. The tests open these
 exports (sections [6](#6-the-smoke-test) and [7](#7-the-browser-tests)).
 
@@ -168,7 +168,7 @@ them. To run one by itself:
 
 Each file's header lists its options (`--only`, `--shots <dir>`, `--export <dir>` ...).
 Playwright's WebKit is the WebKit engine, not Safari on an iPhone or a Mac; see
-[Browser support](README.md#browser-support) for what was tested on real devices.
+[Browser support](docs/REFERENCE.md#browser-support) for what was tested on real devices.
 
 ## 8. Times and memory
 

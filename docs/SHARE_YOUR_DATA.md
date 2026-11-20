@@ -58,6 +58,11 @@ your storage if it is missing.
 
 ## 1. Share a link
 
+**Used the SODA app or the notebook?** They have done Steps 1 and 2 for you (they write
+`datasets.json` and run the sample ID check: the app's green banner, the notebook's Section 5).
+Start at [Step 3](#step-3-upload-the-whole-export-folder). Steps 1 and 2 are for an export made
+from the command line.
+
 ### Step 1. List your datasets
 
 From the repository folder, with the environment active:

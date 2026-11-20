@@ -16,7 +16,7 @@ Each kind of data has its own command below. If you would rather not pick one,
 [let SODA look at the folder](#not-sure-what-you-have-let-soda-look).
 
 All commands below are run from the repository folder, with the virtual environment
-active (see the [README](../README.md#try-it-in-5-minutes)). Forward slashes in paths
+active (see [REFERENCE.md](REFERENCE.md#try-it-in-5-minutes)). Forward slashes in paths
 work on Windows too. Each command is one line; paste it as is.
 
 > **Before your first real dataset**, decide where the de-identification key lives and

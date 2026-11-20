@@ -22,6 +22,11 @@ Fewer ways to do the same thing, so there is less to learn and less that can bre
   (the flight between the tissue and the UMAP) is behind the **…** beside Tissue / Side by
   side / UMAP. A link or browser that remembered the Clusters or Save tab opens Analyze or
   Share.
+- The docs start with the SODA app: the README is one page (see the examples, the app in four
+  steps, the notebook for more control), and [GETTING_STARTED.md](docs/GETTING_STARTED.md)
+  has the app as Part A before the notebook. What the README held beyond that (features,
+  installing from the code, the command line, requirements, browsers and phones, the
+  repository) is in [docs/REFERENCE.md](docs/REFERENCE.md).
 
 ### Removed
 

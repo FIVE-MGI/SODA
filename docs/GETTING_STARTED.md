@@ -39,12 +39,10 @@ someone is looking.
   Box, Google Drive, Dropbox and OneDrive do **not** work.
 - About 1 to 2 hours the first time, most of it waiting.
 
-**Rather not use code at all?** The **SODA app** does Parts 1 and 2 for you: download it from
-https://github.com/FIVE-MGI/SODA/releases/latest (Windows: `SODA-<version>-setup.exe`; Apple Silicon
-Mac: the `.dmg`), open it, pick your data folder and an output folder, and click **Prepare**. It
-checks, prepares and exports every dataset, runs the sample-ID check, and shows the result. Then
-continue at [Part 3](#part-3-upload-and-share-public-data) with its `export` folder. More:
-[DESKTOP_APP.md](DESKTOP_APP.md). The notebook below does the same with more control.
+**Two ways to prepare.** Both run the same code and make the same export:
+- **The SODA app** (easiest, no code): [Part A](#part-a-the-soda-app-no-code), then Part 3.
+- **The notebook** (more control: every setting, in a page you can read and change): Parts 1
+  and 2, then Part 3.
 
 **No data of your own yet?** Practise with a small public dataset: the MERSCOPE human fetal
 colon sample (275 MB, Zenodo record 19450420, CC BY 4.0). Download link and command:
@@ -71,7 +69,50 @@ public: published or example data, with nothing that identifies a patient or don
 
 ---
 
-## Part 1. Install (once, about 15 minutes)
+## Part A. The SODA app (no code)
+
+### Step A1. Download and install
+
+Open https://github.com/FIVE-MGI/SODA/releases/latest and download, **on the computer that will
+run it**:
+- **Windows 10 or 11:** `SODA-<version>-setup.exe`. Double-click it. The first time, Windows says
+  "Windows protected your PC": click **More info**, then **Run anyway**. No administrator rights
+  are needed. ✅ SODA is in the Start menu.
+- **Mac with Apple Silicon (M1 or newer), macOS 14 or newer:** `SODA-<version>-macos-arm64.dmg`.
+  Double-click it and drag SODA onto **Applications**. The first time, macOS refuses it once
+  ("damaged" or "could not verify"): follow **README.txt** in the .dmg (one Terminal line, or
+  System Settings → Privacy & Security → **Open Anyway**). There is no Intel Mac version.
+
+### Step A2. Put your data in one folder
+
+Make one folder for your data (for example `D:\SODA_data`) and put **each dataset in its own
+folder** inside it, as your instrument wrote it (any names). Make a second, empty folder for the
+output on a disk with room (about 3 times the data).
+
+### Step A3. Prepare
+
+Start SODA (Start menu, or Applications). After a few seconds its page opens in your browser at
+`http://127.0.0.1:8770/app/` (a black window opens too on Windows: leave it open, it is SODA).
+Under **Prepare a folder of datasets**, pick the data folder and the output folder (**Browse...**
+or paste the path) and click **Prepare**. Progress shows on the page; large datasets take a while.
+
+✅ A table lists each dataset as ok, and a **green** banner says "clean: the export folder can
+be shared". A dataset marked failed or skipped says why and what to add. A **red** "NOT clean"
+banner means sample IDs were found: do not upload; see
+[DEIDENTIFICATION.md](DEIDENTIFICATION.md).
+
+### Step A4. Look at it
+
+Click **Open viewer**: your datasets open in a new tab, **only on your computer**. ✅ every
+dataset looks right. To stop SODA: close its black window (Windows) or press **Quit SODA** on its
+page (Mac).
+
+Then go to [Part 3](#part-3-upload-and-share-public-data) with the `export` folder inside your
+output folder. More about the app: [DESKTOP_APP.md](DESKTOP_APP.md).
+
+---
+
+## Part 1. Or the notebook: install (once, about 15 minutes)
 
 ### Step 1. Install Python
 
@@ -287,7 +328,7 @@ row from Step 8.4.
 
 ## If your data must stay private
 
-Do Parts 1 and 2 the same way. Then, instead of Part 3:
+Prepare the same way (Part A, or Parts 1 and 2). Then, instead of Part 3:
 - **A few people, for a while:** keep the container **Private**, and share a link carrying a
   read-only pass (Azure SAS, set as `READ_PASS` in the notebook's advanced settings). Anyone with
   that link can read the data until the pass expires: send it like a password, never put it in a paper.

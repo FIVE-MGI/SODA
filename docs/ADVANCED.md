@@ -402,6 +402,6 @@ the sample ID check is a gate and found something.
 **Memory.** `--jobs` (default 1) runs that many datasets at once, and each needs its own
 memory: small datasets under 1 GB (a CosMx slide's counts 0.76 GB), whole-section data such
 as a big Visium HD section or a whole Stereo-seq chip about 8.5 GB (the largest measured, see
-the [README](../README.md#requirements)). Keep `--jobs 1` for whole sections unless the computer
+[REFERENCE.md](REFERENCE.md#requirements)). Keep `--jobs 1` for whole sections unless the computer
 has the number of jobs times 8.5 GB free. The batch prints the free memory at the start and
 warns. With more than one job the BLAS threads are split between them (`--threads` sets them).

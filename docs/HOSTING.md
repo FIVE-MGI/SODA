@@ -32,7 +32,7 @@ umap-js from `cdn.jsdelivr.net`, or from a `vendor/` folder next to `index.html`
 viewer needs a browser with WebGL2. It is developed in Chrome on desktop; automated tests
 run it in Playwright's Chromium, WebKit (Safari's engine) and Firefox, and the image path was
 also tested on an iPhone. The same link works on phones and tablets: the page lays itself
-out for the screen. What was tested where: [Browser support](../README.md#browser-support).
+out for the screen. What was tested where: [Browser support](REFERENCE.md#browser-support).
 
 Before anything leaves your computer, go through the
 [checklist at the end](#before-you-upload-checklist).
