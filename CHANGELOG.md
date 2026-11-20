@@ -25,6 +25,10 @@ Fewer ways to do the same thing, so there is less to learn and less that can bre
 - `--gene-files loose / both` and `--shard-mb`. Exports always use gene packs, which need a host
   that answers HTTP Range requests (blob storage, S3, GitHub Pages, nginx). The page still opens
   older exports with one file per gene.
+- The older inputs layout with a folder per kind (`inputs/visium/<id>/`). Put each dataset's
+  folder straight in the inputs folder; a folder holding several datasets is still split into
+  one dataset each. The notebook now shows the same kind names as `prepare.py` (`tiff`, `akoya`,
+  `rnaseq`); the old names still work in `OPTIONS`.
 
 ## 0.9.0 (19 November 2026)
 

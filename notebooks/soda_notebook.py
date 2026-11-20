@@ -63,10 +63,8 @@ state = SimpleNamespace(
     rebuild=False, include_ids=True,
     options={}, datasets=None, ready=None, results=None, deid_status=None, servers=[], link=None)
 
-# this notebook's names for three of prepare.py's kinds (also the folder names of the older inputs/<kind>/ layout)
-NB_KIND = {"tiff": "proteomics_file", "akoya": "proteomics_markers", "rnaseq": "scrnaseq"}
-GROUP = {"proteomics_file": "proteomics", "proteomics_markers": "proteomics", "visium": "transcriptomics",
-         "xenium": "transcriptomics", "stereoseq": "transcriptomics", "cosmx": "transcriptomics", "merscope": "transcriptomics", "scrnaseq": "scrnaseq", "geomx": "transcriptomics",
+GROUP = {"tiff": "proteomics", "akoya": "proteomics", "visium": "transcriptomics",
+         "xenium": "transcriptomics", "stereoseq": "transcriptomics", "cosmx": "transcriptomics", "merscope": "transcriptomics", "rnaseq": "scrnaseq", "geomx": "transcriptomics",
          "anndata": "transcriptomics", "spatialdata": "transcriptomics", "omezarr": "proteomics"}   # picker headings (Section 7)
 HOW_SURE = {"certain": "certain", "ambiguous": "NOT SURE: pick one (see To do)",
             "incomplete": "recognised, but something is missing", "unknown": "not recognised"}
@@ -203,7 +201,7 @@ def nb_row(r):
         notes = list(c["notes"]) + list(rep["extras"])
     else:
         todo, notes = r["problems"], r["notes"]
-    return dict(id=r["id"], src=r["src"], report=rep, kind=NB_KIND.get(rep["kind"], rep["kind"]) or "?",
+    return dict(id=r["id"], src=r["src"], report=rep, kind=rep["kind"] or "?",
                 variant=c["variant"], found=found, row=r,
                 problems=[nb_text(p) for p in todo], notes=[nb_text(n) for n in notes])
 
@@ -276,7 +274,7 @@ def _ready():
 def inspect_images():
     """Section 2, optional: axes, size, levels and channel names of each proteomics / H&E file. Writes nothing."""
     for d in _ready():
-        if d["kind"] == "proteomics_file":
+        if d["kind"] == "tiff":
             subprocess.run([PY, str(SV / "prepare.py"), "inspect", "--src", str(d["found"]["src"])])
 
 
@@ -405,7 +403,7 @@ def prepare_all():
     state.results = results = {}
     for d in ready:
         log = state.work / "logs" / f"{d['id']}_prepare.log"
-        if d["kind"] == "scrnaseq":
+        if d["kind"] == "rnaseq":
             if (state.export / d["id"] / "manifest.json").exists() and not state.rebuild:
                 print(f"skip {d['id']}: already in export/"); results[d["id"]] = True; continue  # noqa: E702
             results[d["id"]] = run(prepare_args(d), log)
@@ -432,7 +430,7 @@ def export_all():
     results = _need(state.results, "Run Section 3 (Prepare) first: it skips the datasets that are already in cache/.")
     exported = {}
     for d in ready:
-        if d["kind"] == "scrnaseq" or not results.get(d["id"]):
+        if d["kind"] == "rnaseq" or not results.get(d["id"]):
             continue
         log = state.work / "logs" / f"{d['id']}_export.log"
         before = log.stat().st_size if log.exists() else 0      # run() appends: read only this run's lines

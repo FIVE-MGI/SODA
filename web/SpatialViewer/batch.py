@@ -14,7 +14,7 @@ This is the notebook (notebooks/SODA_pipeline.ipynb, Sections 2 to 5) without th
    transcripts store (<name>_transcripts.zarr.zip) on its own counts too; other loose files are ignored,
    and so is any name starting with _ or . (a place to keep what is not a dataset). x.zip beside a folder
    x/ is left out (the folder is taken to be its unzipped copy); SODA reads folders, not zips.
-   The notebook's older inputs/<kind>/<id>/ layout works as well. The notebook (Section 2) and the
+   The notebook (Section 2) and the
    desktop app find datasets with this same code (find_datasets). Each one is
    looked at with detect.py (`prepare.py detect`). Only a "certain" verdict is run. Anything else
    is skipped and the log says why and what to add to the options file (or the --kind ... flag of
@@ -108,9 +108,6 @@ USER_OPTIONS = ("user_layer", "user_umap", "user_obs", "user_h5ad", "user_embedd
 OTHER_OPTIONS = ("kind", "label", "group", "src", "markers")
 KNOWN_OPTIONS = set(FILE_OPTIONS) | set(KIND_OPTIONS) | set(USER_OPTIONS) | set(OTHER_OPTIONS)
 PATH_OPTIONS = set(FILE_OPTIONS) - CHOICE_OPTIONS | {"src", "markers"} | set(SEGMENTATION_OPTIONS)
-# the notebook's names for three kinds (also the folder names of its older inputs/<kind>/<id>/ layout)
-KIND_FOLDERS = {"visium", "xenium", "stereoseq", "cosmx", "merscope", "geomx", "proteomics_file",
-                "proteomics_markers", "scrnaseq"}
 PROTEIN_KINDS = ("tiff", "akoya", "omezarr")   # these get the protein marker list, every other kind the gene list
 
 _print_lock = threading.Lock()
@@ -378,27 +375,26 @@ def _user_files(d: dict, o: dict) -> None:
                       + ", ".join(p.name for p in [u["umap"], u["h5ad"], *u["obs"]] if p))
 
 
-def check_dataset(ds_id: str, src: Path, options: dict, bins: str | None, hint: str | None = None,
-                  expand: bool = True) -> list[dict]:
+def check_dataset(ds_id: str, src: Path, options: dict, bins: str | None, expand: bool = True) -> list[dict]:
     """One folder (or file): detect.py's report, then the checks of the notebook's Section 2."""
     o = options.get(ds_id, {})
     src = Path(o["src"]) if "src" in o else Path(src)
     ov = {k: o[k] for k in FILE_OPTIONS if k in o}
     try:
-        rep = detect.detect(src, kind=o.get("kind"), hint=hint, overrides=ov)
+        rep = detect.detect(src, kind=o.get("kind"), overrides=ov)
     except ValueError as e:                              # a "kind" that is not one of the kinds
-        rep = detect.detect(src, hint=hint)
+        rep = detect.detect(src)
         rep.update(verdict="ambiguous", reason="kind-mismatch", message=str(e))
     if rep["reason"] == "several-datasets" and expand:   # a folder of datasets: one row each, never merged
         subs = [Path(s["path"]) for s in rep["datasets"]]
         return [r for s in subs for r in check_dataset(safe_id(s.name if s.is_dir() else s.stem), s, options, bins,
-                                                        hint, expand=False)]
+                                                        expand=False)]
     c = rep["candidates"][0] if rep["candidates"] else None
     kinds = list(dict.fromkeys(x["kind"] for x in rep["candidates"]))
     d = {"id": ds_id, "src": src, "path": Path(rep["datasets"][0]["path"]) if rep.get("datasets") else src,
          "verdict": rep["verdict"], "kind": rep["kind"] or ("/".join(kinds) + "?" if kinds else "?"),
          "variant": rep["variant"] or "", "label": o.get("label", ds_id), "opts": o,
-         "forceKind": bool(o.get("kind") or hint), "problems": [], "hint": [], "notes": [],
+         "forceKind": bool(o.get("kind")), "problems": [], "hint": [], "notes": [],
          "user": None, "status": None, "reason": "", "steps": {},
          "report": rep}                                  # detect.py's report (the notebook shows it; not in the logs)
     if rep["verdict"] != "certain":
@@ -437,9 +433,6 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
     x.zip beside a folder x/ is left out: the folder is taken to be its unzipped copy."""
     rows, warn = [], []
 
-    def is_kind_folder(p: Path) -> bool:              # inputs/visium/<id>/ ... of the older layout
-        return p.name in KIND_FOLDERS and not any(s["root"] == "" for s in detect.detect(p)["datasets"])
-
     entries = sorted(src.iterdir(), key=lambda q: q.name.lower())
     folders = {q.name.lower() for q in entries if q.is_dir()}
     parked = sum(1 for p in entries if p.name.startswith("_"))
@@ -450,10 +443,7 @@ def find_datasets(src: Path, options: dict, bins: str | None) -> tuple[list[dict
             continue
         if p.is_file() and p.suffix.lower() == ".zip" and p.stem.lower() in folders:
             continue                                    # x.zip beside x/: the folder is its unzipped copy
-        if p.is_dir() and is_kind_folder(p):
-            for sub in sorted(q for q in p.iterdir() if q.is_dir()):
-                rows += check_dataset(safe_id(sub.name), sub, options, bins, hint=p.name)
-        elif p.is_dir():
+        if p.is_dir():
             rows += check_dataset(safe_id(p.name), p, options, bins)
         else:                                    # a file on its own; stray files are not datasets
             rows += [r for r in check_dataset(safe_id(p.stem), p, options, bins) if r["verdict"] != "unknown"]

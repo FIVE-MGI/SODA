@@ -124,9 +124,6 @@ inputs/
   `my_clusters.csv` (`barcode,seurat_clusters,cell_type,...`) or `my_analysis.h5ad` next to
   `outs/` and set `user_layer` (e.g. `"008um"`) in `OPTIONS`; see
   [Your own UMAP and clusters](#your-own-umap-and-clusters-seurat-scanpy).
-- The layout of earlier versions, `inputs/<kind>/<dataset_id>/` (`inputs/visium/...`,
-  `inputs/xenium/...`, `inputs/proteomics_file/...`), still works: the kind folder's name is
-  then taken as what you say the data is.
 
 ### Settings per dataset (OPTIONS)
 
@@ -156,7 +153,7 @@ OPTIONS = {
 | `group` | picker heading: `"proteomics"`, `"transcriptomics"` or `"scrnaseq"` (set automatically) |
 | `src` | use files from another place instead of the `inputs/` subfolder (file or folder, same layout) |
 | `pixel_size` | µm per full-resolution pixel, when the file does not carry it |
-| `channels` | proteomics_file only: channel names in order, comma-separated |
+| `channels` | `tiff` only: channel names in order, comma-separated |
 | `crop` | `"x0,y0,x1,y1"` in full-resolution pixels: keep only that rectangle (not Xenium, CosMx or MERSCOPE) |
 | `flip` | `"h"`, `"v"` or `"hv"`: mirror the image (not Xenium, CosMx or MERSCOPE) |
 | `cells`, `nuclei`, `cells_units` | protein images only: your own cell segmentation, a label mask TIFF (Cellpose, Mesmer, StarDist, QuPath) or a GeoJSON (QuPath), as a full path; `cells_units` `"um"` when the GeoJSON is in µm. SODA reads it, it does not segment: see [Your own cell segmentation](#your-own-cell-segmentation-a-cells-layer) |

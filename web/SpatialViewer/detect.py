@@ -63,7 +63,7 @@ PLATFORM_KINDS = ("visium", "xenium", "cosmx", "merscope", "stereoseq", "geomx")
 GENERIC_KINDS = ("akoya", "tiff", "rnaseq", "anndata", "omezarr", "spatialdata")
 STD_KINDS = ("anndata", "omezarr", "spatialdata")          # standard formats (stdformats.py)
 KINDS = PLATFORM_KINDS + GENERIC_KINDS
-# other names people (and the notebook's older input folders) use for a kind
+# other names people use for a kind (OPTIONS "kind", --kind)
 ALIASES = {"proteomics_file": "tiff", "proteomics_markers": "akoya", "scrnaseq": "rnaseq", "qptiff": "tiff",
            "ome-tiff": "tiff", "ometiff": "tiff", "he": "tiff", "h&e": "tiff", "visiumhd": "visium",
            "visium-hd": "visium", "visium_hd": "visium", "h5ad": "rnaseq", "10x": "rnaseq", "codex": "tiff",
@@ -1871,14 +1871,12 @@ def _unit(cands: list[dict], extras: list[str]) -> dict:
     return rep
 
 
-def detect(path, kind: str | None = None, hint: str | None = None, overrides: dict | None = None,
+def detect(path, kind: str | None = None, overrides: dict | None = None,
            max_depth: int = MAX_DEPTH, max_entries: int = MAX_ENTRIES, max_seconds: float = MAX_SECONDS) -> dict:
     """Look at `path` (a folder or one file) and report what dataset(s) it holds.
 
     kind       only that kind is considered (the "someone selects it" path); the report is
                `incomplete` / `unknown` with the reason when its files are not there
-    hint       a kind suggested by where the folder sits (inputs/visium/...): used when the files
-               agree with it; a clash is reported as `ambiguous`, never silently resolved
     overrides  options the user already gave ({"image": path, "cells_dir": path, "images": "none",
                "embedding": "X_tsne" ...}): they settle the matching missing file or open choice
 
@@ -1893,9 +1891,8 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
         want = norm_kind(kind)
         if want is None:
             raise ValueError(f"unknown kind {kind!r}: one of {', '.join(KINDS)}")
-    hint = norm_kind(hint)
     rep = {"path": str(p), "verdict": "unknown", "reason": "", "message": "", "kind": None, "variant": None, "label": None,
-           "candidates": [], "datasets": [], "extras": [], "suggestions": [], "forcedKind": want, "hint": hint,
+           "candidates": [], "datasets": [], "extras": [], "suggestions": [], "forcedKind": want,
            "scan": {"files": 0, "folders": 0, "seconds": 0.0, "truncated": None, "unreadable": []}}
 
     def done(**kw):
@@ -2044,20 +2041,7 @@ def detect(path, kind: str | None = None, hint: str | None = None, overrides: di
 
     datasets = []
     for root, cs in sorted(units.items(), key=lambda kv: (_depth(kv[0]), kv[0].lower())):
-        extras = list(extras_of.get(root, []))
-        clash = False
-        if hint and not want:                            # the folder's own name as a hint (inputs/visium/<id>/)
-            keep = [c for c in cs if c["kind"] == hint]
-            if keep and len(keep) != len(cs):
-                extras.append(f"the folder name says {hint}: files of other kinds here were left out")
-            clash = not keep
-            cs = keep or cs
-        d = _unit(cs, extras)
-        if clash:
-            d.update(verdict="ambiguous", reason="kind-mismatch",
-                     message=f"the folder name says {KIND_WORDS[hint]}, but the files look like "
-                             + (d["label"] or ", ".join(sorted({c["label"] for c in d["candidates"]}))) + ": say which it is",
-                     suggestions=[f"--kind {k}" for k in sorted({c["kind"] for c in d["candidates"]})])
+        d = _unit(cs, list(extras_of.get(root, [])))
         d["path"] = t.path(root) if not cs[0]["_file"] or root != cs[0]["root"] else t.path(cs[0]["root"])
         datasets.append(d)
     rep["datasets"] = datasets
