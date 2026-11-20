@@ -82,7 +82,7 @@ const check = (cond, what, got) => { what = TAG + what; results.push({ ok: !!con
 
 // every dataset in one browser (B: its name)
 async function run(B, browser, DATA, URL0) {
-  // the service worker (sw.js) is tested by tests/offline_test.js; here the page as it loads
+  // no service worker (an old one of the removed offline use must not answer requests here)
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block" });
   const errors = [];
   for (const D of present) {

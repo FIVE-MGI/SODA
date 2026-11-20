@@ -100,9 +100,8 @@
     L.shapes.forEach((s, i) => { if (s.bins > 0) out.shapes.push({ v: `s:${i}`, t: `${s.name} (${s.bins.toLocaleString()} bins)` }); });
     const Rr = L.result;
     if (Rr && Rr.cluster && Rr.info.mode === "bins" && Rr.layer === S.exprKey) {
-      // merged clusters (cellsets.js, Merge clusters of the run): a set in its lowest member's place, the others gone
-      const n = Rr.info.nClusters || 0, sizes = Rr.setSizes || Rr.info.clusterSizes || [], gone = Rr.setGone || null;
-      for (let c = 0; c < n; c++) if (!(gone && gone.has(c))) out.run.push({ v: `c:${c}`, t: `${(L.clNames && L.clNames[c]) || `Cluster ${c}`} of the UMAP run${sizes[c] ? ` (${sizes[c].toLocaleString()} bins)` : ""}` });
+      const n = Rr.info.nClusters || 0, sizes = Rr.info.clusterSizes || [];
+      for (let c = 0; c < n; c++) out.run.push({ v: `c:${c}`, t: `${(L.clNames && L.clNames[c]) || `Cluster ${c}`} of the UMAP run${sizes[c] ? ` (${sizes[c].toLocaleString()} bins)` : ""}` });
     }
     const sec = api.sectionClusters();
     if (sec) for (let c = 0; c < sec.n; c++) if (!(sec.gone && sec.gone.includes(c))) out.section.push({ v: `k:${c}`, t: `${sec.names[c] || `Cluster ${c}`} of the section (${sec.label || `res ${sec.res}`}${sec.sizes && sec.sizes[c] ? `, ${sec.sizes[c].toLocaleString()} bins` : ""})` });
@@ -152,7 +151,7 @@
   // what a result depends on: layer, shapes, run, section clustering
   function sigNow(a, b) {
     const S = api.state(), L = S.lasso, sec = api.sectionClusters();
-    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? `${L.result.id}.${L.result.setsVer || 0}` : "", sec ? `${sec.res}${sec.sets || ""}` : "", a, b, q3Scale() ? "q3" : ""].join("|");
+    return [S.exprKey, L.shapes.map((s) => `${s.id}:${s.bins}`).join(","), L.result ? `${L.result.id}` : "", sec ? `${sec.res}${sec.sets || ""}` : "", a, b, q3Scale() ? "q3" : ""].join("|");
   }
   // GeoMx ROI layer: GeomxTools' Q3 normalisation instead of CP10k when the layer has factors and Q3 is chosen (roi.js)
   const curExpr = () => { const S = api.state(); return ((S.m && S.m.expr) || []).find((e) => e.key === S.exprKey) || null; };

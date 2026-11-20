@@ -341,19 +341,9 @@ button:disabled:hover { border-color: var(--line); }
 .ct-badge.medium { color: #e6c86b; border-color: #7a6a2f; background: rgba(122,106,47,.16); }
 .ct-badge.low { color: #e0a070; border-color: #7a5233; background: rgba(122,82,51,.16); }
 .ct-badge.none { color: var(--muted); border-color: var(--line); }
-/* slide QC box (marker squares) */
-.qc-box { margin-top: 8px; }
-.qc-sum div { margin-top: 3px; word-break: normal; }
+/* the "check" badge of a cluster's suggested cell type (and its "Artefact?" flag) */
 .qc-warn { color: #e0a070; font-weight: 600; }
-.qc-ok { color: #7fd48a; font-weight: 600; }
-.qc-tab td.qc-warnc { color: #e0a070; }
 .ct-badge.qc-warn { color: #ffb44d; border-color: #a0662a; }
-.qc-det summary { cursor: pointer; font-size: 11px; color: var(--muted); margin-top: 4px; }
-.qc-tab { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }
-.qc-tab th, .qc-tab td { text-align: left; padding: 1px 4px; border-bottom: 1px solid var(--line); }
-.qc-tab th { color: var(--muted); font-weight: 600; }
-.qc-tab tr.qc-weak td, .qc-tab tr.qc-saturated td { color: #e0a070; }
-.qc-tab tr.qc-flat td, .qc-tab tr.qc-nuclear td { color: var(--muted); }
 .ct-pop { position: fixed; z-index: 50; max-height: 70vh; overflow-y: auto; padding: 8px 12px 10px; font-size: 12px; line-height: 1.45;
   background: rgba(14,17,23,.98); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
 .ct-pop .ct-pop-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -366,63 +356,6 @@ button:disabled:hover { border-color: var(--line); }
 .ct-pop .found { color: var(--text); }
 .ct-pop .miss { color: var(--muted); }
 
-/* ---- counting tools for marker squares: % positive per marker, counts per cluster, combined rules ---- */
-.gate-head { display: flex; justify-content: space-between; align-items: center; }
-.gate-head h2 { margin: 0; }
-.gate-x { background: none; border: 0; color: var(--muted); font-size: 18px; line-height: 1; padding: 0 4px; }
-.gate-x:hover { color: var(--text); }
-  color: var(--muted); font-size: 12px; padding: 4px 2px; }
-.gate-note { word-break: normal; line-height: 1.45; }
-.gate-lead { margin: 8px 0 6px; font-size: 12px; color: var(--muted); line-height: 1.45; }
-  border-radius: 4px; }
-.gate-edit { margin: 2px 0 8px; padding: 8px; background: var(--panel2); border-radius: 6px; }
-.gate-hist { display: block; width: 100%; height: 96px; cursor: ew-resize; touch-action: none; outline: none; }
-.gate-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 2px; }
-.gate-sentence { margin: 6px 0 0; font-size: 12px; line-height: 1.45; }
-.gate-nogap { margin: 4px 0 0; font-size: 12px; color: #e6c86b; }
-.gate-ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
-.gate-ctl button { padding: 2px 10px; font-size: 12px; }
-.gate-ctl .linkish, .gate-add .linkish { margin: 0; font-size: 12px; }
-.gate-ctl label.check, label.gate-colour { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
-.gate-rules { display: flex; flex-direction: column; gap: 2px; }
-.gr-row { display: grid; grid-template-columns: 14px 1fr auto; gap: 6px; align-items: start; padding: 4px; border-radius: 4px; font-size: 12px; }
-.gr-row:hover { background: var(--panel2); }
-.gr-row.off { opacity: .55; }
-.gr-row input[type=color] { width: 12px; height: 12px; margin-top: 4px; border-radius: 2px; }
-.gr-row .gr-txt { line-height: 22px; min-width: 0; }
-.gr-row input.nm { width: 9.5em; padding: 1px 4px; font-size: 12px; background: transparent; border: 1px solid transparent; }
-.gr-row input.nm:hover, .gr-row input.nm:focus { border-color: var(--line); background: var(--bg); }
-.gr-row .eq { color: var(--muted); margin: 0 4px; }
-.gr-row .cond { white-space: nowrap; }
-.gr-row .cond .sg { background: none; border: 0; padding: 0 2px; font: inherit; color: var(--accent); cursor: pointer; }
-.gr-row .cond .rmc { background: none; border: 0; padding: 0 2px; color: var(--muted); visibility: hidden; font-size: 11px; }
-.gr-row .cond:hover .rmc { visibility: visible; }
-.gr-row .and { color: var(--muted); margin: 0 3px; }
-.gr-row select.addc { width: auto; padding: 0 2px; font-size: 11px; height: 20px; margin-left: 4px; color: var(--muted); }
-.gr-row .gr-btns { display: flex; gap: 1px; visibility: hidden; }
-.gr-row:hover .gr-btns, .gr-row:focus-within .gr-btns { visibility: visible; }
-.gr-row .gr-btns button { background: none; border: 0; color: var(--muted); padding: 0 3px; font-size: 12px; }
-.gr-row .gr-btns button:hover { color: var(--text); }
-.gr-row .gr-n { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.gr-row .gr-skip { display: block; color: var(--muted); font-size: 11px; line-height: 15px; }
-.gate-add { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
-.gate-more { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.gate-more button { font-size: 12px; padding: 3px 8px; }
-.gate-counts { overflow-x: auto; max-height: 320px; overflow-y: auto; margin-top: 8px; }
-.gate-counts table { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; min-width: 100%; }
-.gate-counts th, .gate-counts td { padding: 2px 6px; border-bottom: 1px solid #222a38; text-align: right; white-space: nowrap; }
-.gate-counts th:first-child, .gate-counts td:first-child { text-align: left; position: sticky; left: 0; background: var(--panel); }
-.gate-counts thead th { color: var(--muted); font-weight: 400; position: sticky; top: 0; background: var(--panel); }
-.gate-counts td small { color: var(--muted); margin-left: 4px; }
-.gate-counts tr.ph td:first-child { cursor: pointer; }
-.gate-counts tr.ph:hover td { background: var(--panel2); }
-.gate-counts tr.ph.sel td:first-child { color: var(--accent); }
-.gate-counts tr.tot td { color: var(--muted); border-bottom: 0; }
-.gate-counts i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
-#panelGate .row.slim { margin-top: 8px; }
-.gate-counts td.lbl { cursor: default; }
-#gatePub { margin-top: 6px; word-break: normal; }
 
 /* ---- phones: the map on top, the controls in a sheet under it ----------------------------
    The sheet has three heights (a strip, half the screen, nearly all of it). The map shrinks
@@ -462,8 +395,6 @@ label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
 @media not all and (pointer: coarse) { .touch-only { display: none !important; } }
 @media (pointer: coarse) {
   .mouse-only { display: none !important; }
-  /* shown on hover on a computer; a finger never hovers */
-  .gr-row .gr-btns, .gr-row .cond .rmc { visibility: visible; }
   /* targets a fingertip can hit: about 34px where a mouse needs 24 */
   button:not(.linkish):not(.sg):not(.rmc), select { min-height: 34px; }
   .linkish { padding: 6px 0; }
@@ -473,7 +404,7 @@ label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
   .rs input[type=range]::-moz-range-thumb { width: 18px; height: 18px; }
   .results div { padding: 10px 8px; }
   .chan { padding: 6px; }
-  .cl-row, .lasso-shapes .lshape, .gr-row { padding: 6px 4px; }
+  .cl-row, .lasso-shapes .lshape { padding: 6px 4px; }
   .view-switch .seg button { padding-top: 9px; padding-bottom: 9px; }
   .lasso-panel .lp-btns button { padding: 4px 10px; }
 }
@@ -492,21 +423,10 @@ label.gate-colour { margin-top: 10px; font-size: 12px; color: var(--muted); }
   select, input[type=text], .login input { font-size: 16px; }
 }
 
-/* ---- Circle -> UMAP: each shape vs the rest of the slide ---------------------------- */
-.lasso-shapes .lshape small.roi { color: #cfe3ff; }
-.lasso-roi { margin-top: 8px; }
-.lasso-roi .btnrow select { flex: 1; min-width: 0; }
-.roi-table { max-height: 260px; overflow-y: auto; margin-top: 4px; }
-.roi-table table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
-.roi-table th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; text-align: right; padding: 2px 4px; }
-.roi-table td { text-align: right; padding: 1px 4px; border-top: 1px solid var(--line); }
-.roi-table th:first-child, .roi-table td:first-child { text-align: left; }
-.roi-table tr.up td:last-child { color: #8fe3a0; }
-.roi-table tr.down td:last-child { color: #ff9f9f; }
-.roi-table tr.dim td { color: var(--muted); }
+/* ---- Circle -> UMAP: markers against the slide or the shapes --------------------------- */
 .lasso-panel .lp-mkvs { padding: 4px 10px 0; font-size: 11px; color: var(--muted); }
 .lasso-panel .lp-mkvs .seg button { padding: 1px 8px; font-size: 11px; }
-#lassoRun, #lassoCompare, #lassoRoiCsv { white-space: nowrap; }
+#lassoRun { white-space: nowrap; }
 
 /* ---- per-bin QC filter (qc.js) ---------------------------------------------------- */
 .bq-metric { margin: 6px 0 10px; }

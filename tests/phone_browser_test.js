@@ -153,7 +153,7 @@ const SCENARIOS = [
     let browser;
     try { browser = await eng.type.launch(); } catch (e) { console.log(`SKIPPED ${eng.name}: cannot launch (${String(e.message).split("\n")[0]})`); continue; }
     for (const sc of SCENARIOS) {
-      const ctx = await browser.newContext({ ...eng.device, serviceWorkers: "block" });   // sw.js: tests/offline_test.js
+      const ctx = await browser.newContext({ ...eng.device, serviceWorkers: "block" });   // no old service worker answering
       const page = await ctx.newPage();
       const ok = (cond, what) => { if (cond) pass++; else fail++; console.log(`${cond ? "  ok  " : "  FAIL"} ${eng.name} | ${sc.name} | ${what}`); };
       try {

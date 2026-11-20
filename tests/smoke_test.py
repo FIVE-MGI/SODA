@@ -12,8 +12,8 @@ REPRODUCE.md section 9 instead. Its three parts:
 1. Always (no data needed): the built-in marker lists and the channel-name cleanup (celltypes.py = lasso_worker.js),
    the seam check on profiles with a known answer, the page's files (index.html, viewer.js tile path, diag.js, every
    .js parses), the BLAS / OpenMP thread cap (threadcap.py) and the PCA on one thread, the dataset picker, the tabbed
-   layout, the cell-outline controls, sharing (viewlink.js, compare.js), your own results (ownres.js),
-   offline use (libs.js, vendor.py, sw.js, offline.js) and the notebook.
+   layout, the cell-outline controls, sharing (viewlink.js), your own results (ownres.js), the pinned libraries
+   (libs.js, vendor.py, sw.js removing the old offline use) and the notebook.
 
 2. The pipeline, only with the raw files: --raw-data <dir> or SODA_RAW_DATA=<dir>, laid out as REPRODUCE.md section 9
    downloads them (<dir>/xenium_pub/data.zarr, <dir>/visiumhd_pub/..., one folder per dataset id). For each public
@@ -39,7 +39,7 @@ https://fivestore.blob.core.windows.net/soda/examples/) and SODA_TEST_PRIVATE_DA
 (cosmx_1, stereoseq_1, geomx_1). When part 2 made all four hosted exports, they run on those instead
 (SODA_TEST_DATA=<root>/export). They are: tests/diag_test.js, compat_test.js (old exports and the current packed
 ones), browsers_test.js, drawregion_test.js, stdformats_browser_test.js, outlines_browser_test.js,
-controls_browser_test.js, ownres_browser_test.js, offline_test.js and viewlink_test.js.
+controls_browser_test.js, ownres_browser_test.js and viewlink_test.js.
 
 What the synthetic data checked and nothing checks now (no public dataset has a known answer): the export against
 the generator's ground truth (counts per bin, clusters against drawn regions, suggested cell-type names), the
@@ -610,7 +610,7 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     """The page's files hang together, and the tile path keeps its fallbacks and its error reports."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     refs = re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)
-    # vendor/ holds the libraries only after `prepare.py vendor` (git-ignored, version in the path): check_offline
+    # vendor/ holds the libraries only after `prepare.py vendor` (git-ignored, version in the path): check_libs
     local = [r for r in refs if not re.match(r"https?:", r) and not r.startswith("vendor/")]
     for r in local:
         name, _, query = r.partition("?")
@@ -856,15 +856,16 @@ def check_layout(c: Checker):
     for sid, tab in secs:
         c.ok(tab in tabs and sid != "(no id)", f"index.html: section #{sid} has an id and names its tab (data-tab={tab!r})")
     made = re.findall(r'newSection\("(\w+)", "(\w+)"', js["layout.js"])
-    c.ok(len(made) >= 4 and all(tab in tabs for _, tab in made), f"layout.js: the sections it makes name a tab: {made}")
+    c.ok({i for i, _ in made} == {"panelSave", "panelVolcano"} and all(tab in tabs for _, tab in made),
+         f"layout.js: the sections it makes (Save and load, Volcano plot) name a tab: {made}")
     c.ok('sec.dataset.tab = "analyze"' in js["plots.js"] and "SodaLayout.adopt(sec)" in js["plots.js"],
          "plots.js: its section names its tab and is handed to the layout")
     c.ok("SodaLayout.adopt(block)" in js["volcano.js"], "volcano.js: its block is handed to the layout")
     c.ok('sec.dataset.tab = "save"' in js["snapshot.js"] and "SodaLayout.adopt(sec)" in js["snapshot.js"],
          "snapshot.js: its Save image section names its tab and is handed to the layout")
     c.ok("sec.dataset.tab = cfg.tab" in js["cellsets.js"] and "SodaLayout.adopt(sec)" in js["cellsets.js"]
-         and 'id: "panelSets", tab: "clusters"' in js["cellsets.js"] and 'id: "panelRunSets", tab: "analyze"' in js["cellsets.js"],
-         "cellsets.js: its Cell sets (Clusters) and Merge clusters of the run (Analyze) sections name their tab and are handed to the layout")
+         and 'id: "panelSets", tab: "clusters"' in js["cellsets.js"] and "panelRunSets" not in js["cellsets.js"],
+         "cellsets.js: its Cell sets section (Clusters tab) names its tab and is handed to the layout")
     c.ok('sec.dataset.tab = "view"' in js["binpaint.js"] and "SodaLayout.adopt(sec)" in js["binpaint.js"],
          "binpaint.js: its Colour by a value section names its tab and is handed to the layout")
     c.ok("binpaint.js" in names and not re.search(r"\bInt(8|16|32)Array\b", js["binpaint.js"]),
@@ -873,7 +874,7 @@ def check_layout(c: Checker):
          and names.index("measure.js") < names.index("viewer.js") and not re.search(r"\bInt(8|16|32)Array\b", js["measure.js"]),
          "measure.js: its Measure section names its tab and is handed to the layout, loaded before viewer.js, unsigned arrays only")
     c.ok('sec.dataset.tab = "analyze"' in js["selections.js"] and "SodaLayout.adopt(sec)" in js["selections.js"],
-         "selections.js: its Combine and export shapes section names its tab and is handed to the layout")
+         "selections.js: its Export shapes section names its tab and is handed to the layout")
     # ids the layout makes must be new; ids it moves must exist (in the page or in the script that builds them)
     new_ids = set(i for i, _ in made) | set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
     clash = sorted(new_ids & set(ids))
@@ -882,14 +883,13 @@ def check_layout(c: Checker):
     block = js["layout.js"][js["layout.js"].index("const SECTIONS = {"):js["layout.js"].index("const ORDER = {")]
     moved = set(re.findall(r'"(\w+)"', " ".join(re.findall(r'(?:more|notes): \[([^\]]*)\]', block))))
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
-    order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const NESTED")]
+    order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const KEY = ")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
-    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelRunSets", "panelPaint", "panelShapes", "panelMeasure",
-                                                               "panelOffline", "panelOwn"}
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint", "panelShapes", "panelMeasure",
+                                                               "panelOwn"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
                             ("SodaLayout.wording", "viewer.js", "hands its wording function to the layout"),
-                            ('addEventListener("soda:shown"', "viewer.js", "redraws the gate histogram when its section is shown"),
                             ('addEventListener("soda:shown"', "qc.js", "redraws the QC histograms when their section is shown"),
                             ("#panelLasso h2 .sec-name", "roi.js", "finds the section title inside the layout's heading button"),
                             ('"role", "note"', "layout.js", "the ? notes carry role=note"),
@@ -952,69 +952,47 @@ def check_ownres(c: Checker, root: Path, log_path: Path):
 
 
 def check_sharing(c: Checker, log_path: Path):
-    """The link that restores a view (viewlink.js) and linked windows (compare.js, compare.css): wired into
-    the page, their ids, the hooks in viewer.js and layout.js, the page's Content-Security-Policy, and the
-    node unit test of the link's encoding."""
+    """The link that restores a view (viewlink.js): wired into the page, its ids, the hooks in viewer.js and
+    layout.js, the page's Content-Security-Policy, and the node unit test of the link's encoding."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
-    for f in ("viewlink.js", "compare.js", "compare.css"):
-        c.ok(f in names and (APP / f).exists(), f"index.html loads {f}")
-    for f in ("viewlink.js", "compare.js"):
-        c.ok(f in names and names.index("layout.js") < names.index(f) < names.index("viewer.js")
-             and names.index("dspicker.js") < names.index(f),
-             f"{f} loads after layout.js and dspicker.js and before viewer.js (which hands it its functions)")
-    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("viewlink.js", "compare.js", "viewer.js", "layout.js")}
+    c.ok("viewlink.js" in names and (APP / "viewlink.js").exists(), "index.html loads viewlink.js")
+    c.ok("viewlink.js" in names and names.index("layout.js") < names.index("viewlink.js") < names.index("viewer.js")
+         and names.index("dspicker.js") < names.index("viewlink.js"),
+         "viewlink.js loads after layout.js and dspicker.js and before viewer.js (which hands it its functions)")
+    c.ok(not any(n in names for n in ("compare.js", "compare.css", "offline.js")) and not (APP / "compare.js").exists()
+         and not (APP / "offline.js").exists(), "index.html loads no compare.js / compare.css / offline.js (removed in 0.10.0)")
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("viewlink.js", "viewer.js", "layout.js")}
     page_ids = set(re.findall(r'\bid="(\w+)"', html))
-    made = set(re.findall(r'\bid="(\w+)"', js["compare.js"])) | set(re.findall(r'\.id = "(\w+)"', js["compare.js"] + js["viewlink.js"]))
-    want = {"panelCompare", "cmpOpenLabel", "cmpPicker", "cmpBlocked", "cmpBlockedLink", "cmpPeers", "cmpLink", "cmpAlign",
-            "cmpCentre", "cmpState", "cmpGenes", "cmpColorBy", "cmpMode", "cmpMsg", "btnCompare", "saveLinkBox"}
-    c.ok(want <= made, f"compare.js / viewlink.js build their controls: missing {sorted(want - made)}")
-    c.ok(not (made & page_ids), f"ids built by compare.js / viewlink.js that index.html already has: {sorted(made & page_ids)}")
+    made = set(re.findall(r'\.id = "(\w+)"', js["viewlink.js"]))
+    c.ok("saveLinkBox" in made, f"viewlink.js builds the box for a link the browser would not copy: {sorted(made)}")
+    c.ok(not (made & page_ids), f"ids built by viewlink.js that index.html already has: {sorted(made & page_ids)}")
+    c.ok(".save-link-box" in (APP / "layout.css").read_text(encoding="utf-8"), "layout.css styles the link box")
     lay_ids = set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
     c.ok({"btnCopyLink", "saveMsg"} <= lay_ids and not (made & lay_ids),
          "layout.js still builds the Copy link button and its message line (viewlink.js takes the button over)")
     c.ok('$("btnCopyLink")' in js["viewlink.js"] and "Copy link to this view" in js["viewlink.js"],
          "viewlink.js re-labels and re-wires the Copy link button")
-    c.ok('sec.dataset.tab = "save"' in js["compare.js"] and "SodaLayout.adopt(sec)" in js["compare.js"],
-         "compare.js: its section names its tab and is handed to the layout")
-    c.ok("panelCompare: { help:" in js["layout.js"] and "panelCompare: () =>" in js["layout.js"],
-         "layout.js: the Compare section's ? note and its summary")
     for needle, what in (("function sessionState(full)", "one serialiser for Save JSON and the link"),
                          ("JSON.stringify(sessionState(true), null, 1)", "Save JSON writes sessionState(true)"),
                          ("async function sessionApply(j, run)", "Load JSON and a link go back in through one function"),
                          ("window.SodaViewLink.capture()", "the view block is captured into the saved state"),
                          ("window.SodaViewLink.apply(j.view, j)", "the view block is applied from a file and from a link"),
-                         ("function setCamera(viewState, viewId)", "one function moves the camera (mouse, link, linked window)"),
+                         ("function setCamera(viewState, viewId)", "one function moves the camera (mouse, link)"),
                          ("window.SodaViewLink.init(share)", "viewlink.js is handed viewer.js's functions"),
-                         ("window.SodaCompare.init(share)", "compare.js is handed viewer.js's functions"),
-                         ('new CustomEvent("soda:opened"', "the scripts are told when a dataset has opened"),
-                         ("window.SodaCompare.askToken(", "a private site's new window asks its group for the token before the password box")):
+                         ('new CustomEvent("soda:opened"', "the scripts are told when a dataset has opened")):
         c.ok(needle in js["viewer.js"], f"viewer.js: {what} ({needle!r} not found)")
-    # the page's Content-Security-Policy (no inline script, no handler attributes, no eval): nothing in the new files needs more
-    for f in ("viewlink.js", "compare.js"):
-        t = js[f]
-        c.ok(not re.search(r"""<[a-z][^>`]*\son[a-z]+\s*=""", t) and "javascript:" not in t
-             and not re.search(r"""\beval\(|new Function\(|setTimeout\(\s*["'`]""", t),
-             f"{f}: no inline handler attribute, no eval, no javascript: address")
-        c.ok(not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),  # deid:ok (type names)
-             f"{f}: only unsigned typed arrays (the de-identification check reads the signed names as sample IDs)")
-        lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
-        c.ok(all("try" in ln for ln in lines), f"{f}: a storage access outside try / catch: {[ln.strip()[:60] for ln in lines if 'try' not in ln]}")
-    # the access token: memory only. What compare.js remembers for a tab is exactly this, and no address is built from a token
-    saved = re.search(r"sessionStorage\.setItem\(KEY, JSON\.stringify\(\{([^}]*)\}\)\)", js["compare.js"])
-    c.ok(bool(saved) and [k.strip() for k in saved.group(1).split(",")] == ["group", "claim", "linked", "off", "follow"],
-         "compare.js remembers the group, the link state and the offset for a tab: no token, no password")
-    c.ok(js["compare.js"].count("sessionStorage.setItem") == 1 and "localStorage" not in js["compare.js"],
-         "compare.js writes to storage in one place only")
-    c.ok("m.url !== H.tokenUrl || m.path !== location.pathname" in js["compare.js"] and "peers.has(m.from)" in js["compare.js"],
-         "compare.js gives the token only to a member of its group on the same page and token address")
-    c.ok("window.name" in js["compare.js"] and re.findall(r"""searchParams\.set\(\s*["'](\w+)""", js["compare.js"]) == ["ds"],
-         "compare.js passes the group in window.name; the only thing it sets in an address is ?ds=")
-    c.ok('KEEP_PARAMS = ["data", "static", "api", "fmt", "qc"]' in js["viewlink.js"] and "location.hash" in js["viewlink.js"]
-         and "fetch(" not in js["viewlink.js"] and "fetch(" not in js["compare.js"],
-         "viewlink.js: the view travels after #, the link keeps ?data= / ?static= / ?qc=, and neither file fetches anything itself")
-    css = (APP / "compare.css").read_text(encoding="utf-8")
-    c.ok("#btnCompare" in css and "@media (pointer: coarse)" in css, "compare.css: the top-bar button, hidden on touch screens")
+    # the page's Content-Security-Policy (no inline script, no handler attributes, no eval): nothing in the file needs more
+    t = js["viewlink.js"]
+    c.ok(not re.search(r"""<[a-z][^>`]*\son[a-z]+\s*=""", t) and "javascript:" not in t
+         and not re.search(r"""\beval\(|new Function\(|setTimeout\(\s*["'`]""", t),
+         "viewlink.js: no inline handler attribute, no eval, no javascript: address")
+    c.ok(not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),  # deid:ok (type names)
+         "viewlink.js: only unsigned typed arrays (the de-identification check reads the signed names as sample IDs)")
+    lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
+    c.ok(all("try" in ln for ln in lines), f"viewlink.js: a storage access outside try / catch: {[ln.strip()[:60] for ln in lines if 'try' not in ln]}")
+    c.ok('KEEP_PARAMS = ["data", "static", "api", "fmt", "qc"]' in t and "location.hash" in t and "fetch(" not in t,
+         "viewlink.js: the view travels after #, the link keeps ?data= / ?static= / ?qc=, and it fetches nothing itself")
     node = shutil.which("node")
     if not node:
         print("    node not found: tests/viewlink_test.js skipped")
@@ -1030,13 +1008,12 @@ def check_sharing(c: Checker, log_path: Path):
 
 
 
-def check_offline(c: Checker, root: Path, log_path: Path):
-    """Offline use: the pinned libraries agree everywhere, nothing widens the page's Content-Security-Policy, the
-    service worker can find every file it must keep, and tests/offline_test.js passes in Chromium, WebKit and Firefox
-    (Firefox SKIPPED when Playwright's Firefox is not installed)."""
+def check_libs(c: Checker):
+    """The pinned libraries agree everywhere, nothing widens the page's Content-Security-Policy, and sw.js only
+    removes the service worker and caches of the old offline use (removed in 0.10.0)."""
     import tempfile
     html = (APP / "index.html").read_text(encoding="utf-8")
-    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("libs.js", "sw.js", "offline.js", "lasso_worker.js", "viewer.js", "layout.js", "diag.js")}
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("libs.js", "sw.js", "lasso_worker.js", "viewer.js", "layout.js", "diag.js")}
     m = re.search(r"/\* LIBS-JSON \*/(.*?)/\* END-LIBS-JSON \*/", js["libs.js"], re.S)
     libs = json.loads(m.group(1)) if m else {}
     c.ok(set(libs) == {"deck", "umap"} and all(re.fullmatch(r"sha384-[A-Za-z0-9+/]{64}", L.get("sri", "")) and L.get("bytes", 0) > 0
@@ -1054,8 +1031,6 @@ def check_offline(c: Checker, root: Path, log_path: Path):
          and names.index("libs.js") == names.index(vname) + 1
          and names.index("diag.js") < names.index("libs.js") < names.index("config.js") < names.index("viewer.js"),
          "index.html: libs.js right after the vendor/ tag (it writes the CDN copy when that did not run), before config.js and viewer.js")
-    c.ok("offline.js" in names and names.index("layout.js") < names.index("offline.js") < names.index("viewer.js"),
-         "index.html: offline.js loads after layout.js and before viewer.js")
     c.ok(not any("cdn.jsdelivr.net" in s for s in srcs), "index.html names no CDN script itself (libs.js writes the fallback)")
     c.ok("cdn.jsdelivr.net/npm/" in js["libs.js"] and "integrity=" in js["libs.js"] and 'crossorigin="anonymous"' in js["libs.js"],
          "libs.js: the CDN fallback carries the same SHA-384 (integrity, crossorigin)")
@@ -1063,13 +1038,13 @@ def check_offline(c: Checker, root: Path, log_path: Path):
     csp = csp.group(1) if csp else ""
     c.ok("script-src 'self' https://cdn.jsdelivr.net;" in csp and "worker-src 'self' blob:;" in csp and "unsafe-eval" not in csp,
          f"index.html: the Content-Security-Policy is no wider than before (no 'unsafe-eval', no 'wasm-unsafe-eval'): {csp[:120]}")
-    for f in ("libs.js", "sw.js", "offline.js"):
+    for f in ("libs.js", "sw.js"):
         t = js[f]
         c.ok(not re.search(r"""\beval\(|new Function\(|setTimeout\(\s*["'`]""", t) and "javascript:" not in t
              and not re.search(r"\b(Int8Array|Int16Array|Int32Array|BigInt64Array)\b", t),  # deid:ok (type names)
              f"{f}: no eval, no javascript: address, only unsigned typed arrays")
         lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
-        c.ok(not lines, f"{f}: no local / session storage (offline copies live in the Cache API only): {lines[:2]}")
+        c.ok(not lines, f"{f}: no local / session storage: {lines[:2]}")
     w = js["lasso_worker.js"]
     c.ok("https://" not in "".join(re.findall(r"importScripts\([^)]*\)", w)) and "SODA_LIBS.umap" in w and "integrity: L.sri" in w,
          "lasso_worker.js: umap-js from libs.js (vendor/ first, the CDN after), its SHA-384 checked with fetch() before importScripts")
@@ -1085,34 +1060,21 @@ def check_offline(c: Checker, root: Path, log_path: Path):
     v_l1 = re.search(r'importScripts\("leiden\.js\?v=([\w.-]+)"\)', w)
     v_l2 = re.search(r'importScripts\("leiden\.js\?v=([\w.-]+)"\)', lw)
     c.ok(bool(v_l1 and v_l2 and v_l1.group(1) == v_l2.group(1)), "lasso_worker.js and leiden_worker.js import the same leiden.js ?v=")
-    # the service worker keeps what a script names as "<name>.js?v=...": every worker and import must be named that way
+    # every worker and import is named "<name>.js?v=...", so a new publish is never mixed with a cached old file
     allj = "".join((APP / f).read_text(encoding="utf-8") for f in sorted(os.listdir(APP))
                    if f.endswith(".js") and f not in ("config.js", "sw.js"))
     wk = re.findall(r"""["'`]([\w-]+_worker\.js)(\?v=[\w.-]+)?["'`]""", allj)
-    c.ok(len(wk) >= 3 and all(v for _, v in wk), f"every worker is named with a ?v= string (sw.js keeps it): {sorted(set(n + v for n, v in wk))}")
+    c.ok(len(wk) >= 3 and all(v for _, v in wk), f"every worker is named with a ?v= string: {sorted(set(n + v for n, v in wk))}")
     imp = re.findall(r"""importScripts\(\s*["'`]([^"'`]+)["'`]""", "".join((APP / f).read_text(encoding="utf-8") for f in sorted(os.listdir(APP)) if f.endswith("_worker.js")))
     c.ok(imp and all(re.fullmatch(r"[\w-]+\.js\?v=[\w.-]+", i) for i in imp),
          f"every importScripts of the page's workers names a local script with a ?v= string: {imp}")
-    mk = re.search(r"const MARKERS = \[([^\]]*)\]", js["sw.js"])
-    listed = sorted(re.findall(r'"([\w.-]+\.json)"', mk.group(1))) if mk else []
-    c.eq(listed, sorted(p.name for p in (APP / "markers").glob("*.json")), "sw.js MARKERS = the files in markers/")
-    body = lambda t: re.sub(r"\s+", " ", (re.search(r"function hashRefs\(list\) \{.*?return [^\n]*\n", t, re.S) or re.search("x^", "")).group(0)) \
-        if re.search(r"function hashRefs\(list\) \{", t) else None
-    c.ok(body(js["sw.js"]) is not None and body(js["sw.js"]) == body(js["offline.js"]), "sw.js and offline.js hash the page's ?v= strings the same way")
-    rule = r"""if (!r || /^[a-z][\w+.-]*:|^\/\//i.test(r) || /^vendor\//.test(r) || !/[?&]v=/.test(r)) continue;"""
-    c.ok(rule.replace("!r || ", "") in js["sw.js"] and rule in js["offline.js"], "sw.js and offline.js pick the page's ?v= files by the same rule")
-    for needle, f, what in (("soda-data:${SCOPE}|", "sw.js", "kept datasets in caches of their own, per page folder"),
-                            ("name.startsWith(`soda-app:${SCOPE}|`)", "sw.js", "on activate, only this folder's own app caches are deleted"),
-                            ('if (req.method !== "GET") return;', "sw.js", "only GET requests are answered"),
-                            ("e.respondWith(fromKept(req, k))", "sw.js", "data: only a kept dataset's files are answered"),
-                            ("!cfg.tokenEndpoint", "offline.js", "off by default on a password-protected site"),
-                            ('why: "password"', "viewer.js", "a password-protected dataset is never kept"),
-                            ("window.SodaOffline.init(", "viewer.js", "viewer.js hands offline.js the open dataset"),
-                            ('sec.dataset.tab = "save"', "offline.js", "its section names its tab"),
-                            ("SodaLayout.adopt(sec)", "offline.js", "its section is handed to the layout"),
-                            ("panelOffline: { help:", "layout.js", "the Offline use section's ? note"),
-                            ("el.dataset.sodaLib", "diag.js", "the vendor/ probe is not reported as an error")):
-        c.ok(needle in js[f], f"{f}: {what} ({needle!r} not found)")
+    sw = js["sw.js"]
+    c.ok("self.registration.unregister()" in sw and "caches.delete(" in sw and '"fetch"' not in sw and "importScripts" not in sw
+         and all(p in sw for p in ('"soda-app:"', '"soda-lib:"', '"soda-data:"')) and "+ SCOPE +" in sw,
+         "sw.js: deletes only this folder's soda-app: / soda-lib: / soda-data: caches, unregisters itself, answers no request")
+    c.ok("navigator.serviceWorker.register" not in js["viewer.js"] and "r.update()" in js["viewer.js"],
+         "viewer.js registers no service worker; it only asks an old one to update (to sw.js, which removes it)")
+    c.ok("el.dataset.sodaLib" in js["diag.js"], "diag.js: the vendor/ probe is not reported as an error")
     gi = (REPO / ".gitignore").read_text(encoding="utf-8")
     c.ok("web/SpatialViewer/vendor/" in gi.splitlines(), ".gitignore: web/SpatialViewer/vendor/ (the library files are not committed)")
     prep = (APP / "prepare.py").read_text(encoding="utf-8")
@@ -1123,22 +1085,6 @@ def check_offline(c: Checker, root: Path, log_path: Path):
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         c.ok(p.returncode == 1 and p.stdout.count("MISSING") == len(libs) and not (Path(td) / "vendor").exists(),
              f"vendor.py --check on an empty folder: MISSING for each library, exit 1, nothing written ({p.returncode})")
-    node = shutil.which("node")
-    if not node:
-        print("    node not found: tests/offline_test.js skipped")
-        return
-    p = subprocess.run([node, str(REPO / "tests" / "offline_test.js"),
-                        "--shots", str(root / "offline_shots"), "--python", sys.executable], cwd=str(REPO),
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-    with open(log_path, "a", encoding="utf-8") as lg:
-        lg.write(p.stdout)
-    lines = p.stdout.strip().splitlines() or ["(no output)"]
-    tab = lines.index("feature table:") if "feature table:" in lines else len(lines) - 1
-    print_skipped("\n".join(lines[:tab]))
-    for ln in lines[tab:]:
-        print("    " + ln)
-    c.eq(p.returncode, 0, "node tests/offline_test.js: offline in Chromium, WebKit and Firefox (exit code)")
-
 
 
 # ------------------------------------------------------------------ main
@@ -1223,12 +1169,12 @@ def main(argv=None) -> int:
     check_picker(c)
     print("checks: tabbed layout (tabs, sections, ids)")
     check_layout(c)
-    print("checks: sharing (the link that restores a view, linked windows)")
+    print("checks: sharing (the link that restores a view)")
     check_sharing(c, log_path)
     print("checks: your own results (ownres.js: a reader's CSV / TSV matched in the browser)")
     check_ownres(c, root, log_path)
-    print("checks: offline use (libs.js, vendor.py, sw.js, offline.js)")
-    check_offline(c, root, log_path)
+    print("checks: pinned libraries (libs.js, vendor.py) and sw.js removing the old offline use")
+    check_libs(c)
     timings["checks"] = time.time() - t0
 
     print("\ntimings: " + ", ".join(f"{k} {v:.0f}s" for k, v in timings.items())

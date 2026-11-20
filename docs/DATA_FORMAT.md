@@ -202,7 +202,7 @@ check stops the export (below) instead of leaving one list out. gzip of UTF-8 te
 (Visium spots, Visium HD and Stereo-seq bins, AnnData / SpatialData spot or bin tables) or `cell_id` (cells
 layers: Xenium `cell_id`, CosMx `<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id, the obs names of
 an AnnData / SpatialData cell table). GeoMx ROI layers and protein grid layers get none.
-The viewer reads it for "Save barcodes (CSV)" in Combine and export shapes, and to match a reader's file to
+The viewer reads it for "Save barcodes (CSV)" in Export shapes, and to match a reader's file to
 the bins in "Your own results" (Clusters tab; [ADVANCED.md](ADVANCED.md#load-your-own-results-in-the-viewer-no-new-export));
 without it both say how to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
 
@@ -357,8 +357,8 @@ by `viewlink.js`):
 - The layer, drawn shapes, the clustering on show with cluster names, cell sets and hidden
   clusters (`sectionClusters`) and the quality thresholds (`qcFilter`) are where Save JSON always had
   them, one level up. A file without `view` (saved before 16 November 2026) loads as it did.
-- `runSets` (from 17 November 2026): clusters of a Draw a region run merged into sets (Merge clusters of
-  the run), `{"sizes": [bins per cluster of the run], "sets": [{"ids": [2, 5], "prev": null, "name": "T cells"}]}`.
+- `runSets` (17 November 2026 to 0.10.0, which removed Merge clusters of the run; now ignored): clusters of a
+  Draw a region run merged into sets, `{"sizes": [bins per cluster of the run], "sets": [{"ids": [2, 5], "prev": null, "name": "T cells"}]}`.
   A set takes its lowest member's number and colour; `name` is the set's name, `prev` what that member was
   called before. Saved in the file and the link; on opening they wait for the next run and are applied only
   when its clusters have exactly these sizes (the same shapes, seed and resolution), else left out with a
@@ -370,9 +370,9 @@ by `viewlink.js`):
 - `paint` (Colour by a value): two genes carry `pc`, the colours the reader chose: `"mg"` (magenta / green,
   both light grey; the default, and what a file or link without `pc` opens with) or `"rg"` (red / green,
   both yellow).
-- A shape made by Combine / Overlap / Subtract (selections.js) is a list of bins (`rows`, as
-  before) and, when it was made from outlines only (Circle, Freehand, imported polygons), also
-  carries its recipe `def`: `{"points": [[x, y], ...]}`, `{"geo": [[ring, hole, ...], ...]}` or
+- An imported polygon with holes, or a shape made by Combine / Overlap / Subtract before 0.10.0
+  (which removed them; such shapes still open), is a list of bins (`rows`) and, when it was made
+  from outlines only, also carries its recipe `def`: `{"points": [[x, y], ...]}`, `{"geo": [[ring, hole, ...], ...]}` or
   `{"op": "union" | "inter" | "sub", "parts": [def, ...]}`, in image pixels. Save JSON writes
   both; the link writes only `def`, and the bins are found again from it on opening. A shape with
   a plain selection inside it has no `def` and stays a list of bins.
@@ -777,7 +777,7 @@ same 500 µm chunks:
   99.5th percentile above it over the tissue (leaving out the squares flagged everything
   bright, so a fold cannot set it), so the circle tool scales a selection exactly
   as the section did: x = asinh(max(v − bg, 0) / hi / cofactor) / asinh(1 / cofactor) for
-  markers and gating, and for the layout the centred log-ratio of u = max(v − bg, 0) / hi,
+  markers, and for the layout the centred log-ratio of u = max(v − bg, 0) / hi,
   log(u + 0.1) minus the square's mean (protgrid.clr_features); squares with no channel at
   x ≥ 0.2 are left out (low signal).
   `median` = each channel's median x over the section (the `pct` of the cluster markers).
@@ -800,6 +800,9 @@ same 500 µm chunks:
   File size = 4 + 4n + 2n·nChannels.
 
 ### `qc.json` and `qc_flags.bin`: slide QC (protein grid layers)
+
+The viewer reads only `qc_flags.bin` (Draw a region names a cluster made mostly of flagged squares
+"Artefact?"); `qc.json` is for reading and for scripts (the viewer's Slide QC box was removed in 0.10.0).
 
 Written by `protgrid.py` next to `positions.bin`; the manifest layer's `qc` block names
 them and repeats the headline numbers (`everythingBright`, `saturatedSquares`, `weak`,

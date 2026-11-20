@@ -468,8 +468,8 @@ async function selectionChecks(B, browser, DATA, URL0) {
   const data = await serve(null, PORTS[0], true), pageSrv = await serve(PAGE, PORTS[1], false);
   const DATA = `http://127.0.0.1:${data.address().port}`, URL0 = `http://127.0.0.1:${pageSrv.address().port}/index.html`;
   const browser = await pw.chromium.launch({ args: GPU ? GPU_ARGS : SOFT_ARGS });
-  // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
-  // itself, out of page.route's sight; tests/offline_test.js tests it
+  // serviceWorkers "block": an old service worker of the removed offline use must not answer requests out of
+  // page.route's sight
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: "block" });
   const errors = [];
   const open = async (ds) => {

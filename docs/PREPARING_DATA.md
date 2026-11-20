@@ -819,9 +819,9 @@ Everything after that is automatic, so a slide needs no hand-tuning:
   bright marker moves the mean as much as brightness does). Then z-scores, PCA and UMAP as
   for genes. Squares with no marker above about 10%
   of its range (rims, gaps, empty squares: a quarter of one test slide) are left out of the
-  UMAP and the clusters, and counted in the slide QC as low signal; Draw a region leaves
+  UMAP and the clusters, and counted in the slide QC (`qc.json`) as low signal; Draw a region leaves
   them out the same way.
-- **Slide QC** (`expr/<layer>/qc.json`, shown in the viewer under the layer): weak stains
+- **Slide QC** (`expr/<layer>/qc.json`, a file of the export; the viewer does not show it): weak stains
   (signal under 15x background: kept, flagged), saturated stains (more than 1% of tissue
   pixels at the detector's limit: kept, flagged), squares where nearly every marker is bright
   (folds, bubbles, bright edges; a cluster made mostly of them is suggested as
@@ -831,7 +831,7 @@ Everything after that is automatic, so a slide needs no hand-tuning:
   (fields of 960 x 720 px) there are three parts: a dark line along the last pixel column / row
   of every field; shading shared by every field (one side of every field brighter than the
   other, so the step goes the same way at most edges); and brightness / background differences
-  between fields. The seams are detected and reported in the slide QC; nothing is corrected
+  between fields. The seams are detected and listed in the slide QC (`qc.json`); nothing is corrected
   (the correction, removed in 0.10.0, made no measurable difference to the squares on s48,
   because most of the seam there is the shared shading). Details: `web/SpatialViewer/seams.py`.
 - **Large slides.** Above 200,000 tissue squares the UMAP is fitted on a seeded random
@@ -1312,26 +1312,10 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   is laid out; the layout and the clusters are the same as one after the other.
 - A bin inside two shapes belongs to the one drawn last.
 - Leiden clusters of the result at a resolution you choose (0 = none).
-- **Merge clusters of the run** (Analyze tab, under Draw a region): tick two or more of the run's
-  clusters and press Merge, as Cell sets does for the whole section. A set takes the colour and
-  number of its lowest cluster; the run's panel and legend, the slide, the volcano and plot
-  groups and Save CSV (which then adds `set` and `set_name` columns) follow, and a volcano or plot
-  made before a merge says it is out of date. Un-merge and Undo take merges back. Save JSON and
-  Copy link keep them (`runSets`, with the run's cluster sizes): they come back when the same run
-  is made again (same shapes, seed and resolution), and are left out with a note when the new
-  run's clusters differ. Merges made in fast mode come back only on a fast-mode run of the same
-  sample, and merges made on every bin only on a run on every bin. A new run starts without merges.
 - **Marker squares (Akoya and other multi-channel images)** use the `mat/` files instead, and
-  add a comparison with the rest of the slide, because a UMAP of only the shapes cannot show
-  what the shapes have in common (a marker high in every square drawn, such as CD45 over an
-  immune-rich area, differs nowhere inside them):
-  - **Each shape vs the rest of the slide.** Under each shape, the markers most raised and
-    lowered compared with every other tissue square of the slide; below the shapes, the full
-    table for one shape (or all shapes together): mean intensity inside and in the rest, their
-    ratio, and z (the difference on the scale the UMAP uses, in the slide's standard
-    deviations). Every square of the shape counts, also above the 50,000 sample. **Compare
-    with slide** does only this, without a UMAP; **Save table (CSV)** writes every shape and
-    marker.
+  set the clusters against the rest of the slide too, because a UMAP of only the shapes cannot
+  show what the shapes have in common (a marker high in every square drawn, such as CD45 over
+  an immune-rich area, differs nowhere inside them):
   - **Cluster markers against the slide or against the other drawn squares.** A switch in the
     UMAP panel. Against the slide (the default) lists what each cluster has more of than the
     slide as a whole; against the other drawn squares lists what tells the clusters apart.
@@ -1348,17 +1332,10 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
 - "Save JSON" stores the shapes, layer, seed and every parameter so a result can be redone,
   and the view (position and zoom, genes, stains, colours), which "Load JSON" puts back;
   "Save CSV" saves bin row, shape and UMAP coordinates (no barcodes).
-- **Combine and export shapes** (Analyze tab, under Draw a region). Tick two or more shapes:
-  *Combine* makes a new shape of the bins inside any of them, *Overlap* of the bins inside all of
-  them, *Subtract* of the bins of the first ticked shape (the highest in the list) that are in none
-  of the others. It works on the bins inside each shape, counting every shape whole even where a
-  later one covers it; the result is one more shape (drawn last, so it takes its bins from the
-  earlier ones, as every new shape does) that Run UMAP, the volcano and the plots use like a drawn
-  one, and it is found again from the outlines on another layer. Save JSON and Copy link to this
-  view keep it too: a shape combined from outlines goes into a link as how it was made, which is
-  short, and its bins are found again when the link is opened. *Save GeoJSON* writes the shapes
+- **Export shapes** (Analyze tab, under Draw a region). Tick shapes to export only those (none
+  ticked: all). *Save GeoJSON* writes the shapes
   in the image's full-resolution pixels with `name`, `shape_type`, `microns_per_pixel` and
-  `dataset` per feature (an outline as a Polygon, a combined shape or a selection as a MultiPoint
+  `dataset` per feature (an outline as a Polygon, a selection as a MultiPoint
   of its bins' centres); *Load GeoJSON* reads such a file, or Polygon / MultiPolygon annotations
   from QuPath (holes kept, detections left out). A QuPath file lines up only when QuPath opened the
   same full-resolution image the export was made from (no `--crop` or `--flip` in between, same

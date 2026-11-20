@@ -5,11 +5,10 @@
 // puts it there, checked against the hash below), otherwise from https://cdn.jsdelivr.net/npm/<path>.
 // The page's own <script> for vendor/ and the CDN copy written below both carry the SHA-384
 // (Subresource Integrity), so a file that differs by one byte is not run; the worker checks the same
-// hash with fetch() before importScripts (which has no integrity attribute of its own), and the
-// service worker (sw.js) only keeps a copy that matches.
+// hash with fetch() before importScripts (which has no integrity attribute of its own).
 //
 // This file is read in three places: by the page (after the vendor/ tag in index.html), by
-// lasso_worker.js and by sw.js (importScripts), and by vendor.py, which reads the JSON between the two
+// lasso_worker.js (importScripts), and by vendor.py, which reads the JSON between the two
 // LIBS markers. Changing a version: change it here, in index.html's vendor/ tag (src and integrity)
 // and bump the ?v= of this file; tests/smoke_test.py checks that the copies agree.
 (function (g) {

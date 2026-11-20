@@ -28,9 +28,7 @@ The options below are in order of effort.
 Visitors need an internet connection in every case, also for option A, unless you serve the
 two libraries yourself: the page loads its drawing library (deck.gl) and, for the circle tool,
 umap-js from `cdn.jsdelivr.net`, or from a `vendor/` folder next to `index.html` after
-`python web/SpatialViewer/prepare.py vendor` (copy that folder along with the page). After one
-visit over https or localhost the page also opens offline; see
-[Offline use](ADVANCED.md#9-offline-use). The
+`python web/SpatialViewer/prepare.py vendor` (copy that folder along with the page). The
 viewer needs a browser with WebGL2. It is developed in Chrome on desktop; automated tests
 run it in Playwright's Chromium, WebKit (Safari's engine) and Firefox, and the image path was
 also tested on an iPhone. The same link works on phones and tablets: the page lays itself
@@ -193,12 +191,8 @@ the viewer runs in production. Step-by-step instructions, including CORS, upload
 AzCopy and the Static Web App setup:
 **[deploy/azure/README.md](../deploy/azure/README.md)**.
 
-**Compare** (a second window beside the first) does not ask for the password again: the new
-window asks the window that opened it for its token, over a channel that only the windows of
-that pair share and that never leaves the browser, and gets it only when both are the same
-page with the same `tokenEndpoint`. The token is handed over, never the password, and it is
-kept in memory only (not in the address, not in browser storage). A link made with **Copy link
-to this view** holds neither: whoever opens it is asked for the password first, then sees
+The access token is kept in memory only (not in the address, not in browser storage). A link
+made with **Copy link to this view** holds neither the token nor the password: whoever opens it is asked for the password first, then sees
 the view.
 
 Without a server, keep the data in a private container and share a link with a read pass

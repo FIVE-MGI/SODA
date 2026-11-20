@@ -17,21 +17,21 @@
 // of a seeded, shape-stratified sample of params.fastSample bins, every other bin placed by its 15 nearest
 // sample bins in PCA space (layout, below); markers and the result cover every bin.
 /* global UMAP, leiden, SODA_LIBS, SodaUmapFit */
-importScripts("libs.js?v=20261116of1");
+importScripts("libs.js?v=20261119s3");
 importScripts("leiden.js?v=20261102a");
 importScripts("umapfit.js?v=20261117b");
 const LEIDEN_WORKER = "leiden_worker.js?v=20261117a";
 const now = () => performance.now();
 // umap-js (pinned in libs.js): the copy in vendor/ when it is there and matches its SHA-384, else the CDN's,
 // as before. importScripts has no integrity check of its own, so fetch() checks the hash first; the script
-// then comes from the browser's cache (or, offline, from the copy sw.js kept). Loaded before the first job.
+// then comes from the browser's cache. Loaded before the first job.
 const umapReady = (async () => {
   const L = SODA_LIBS.umap;
   for (const [url, opts] of [[L.local, {}], [L.cdn, { mode: "cors", credentials: "omit" }]]) {
     try {
       // vendor/ first asked without the hash: when it is not there, WebKit reports a failed check of the hash
-      // ("access control checks") as an error rather than the plain 404. No answer at all (offline: sw.js keeps
-      // GETs only) is not "not there": the hash-checked GET below may still come from the kept copy.
+      // ("access control checks") as an error rather than the plain 404. No answer at all is not "not there":
+      // the hash-checked GET below may still come from the browser's cache.
       if (url === L.local) {
         let h = null;
         try { h = await fetch(url, { method: "HEAD" }); } catch (e) { /* offline */ }

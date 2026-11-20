@@ -7,14 +7,13 @@
   <!-- Scripts only from this site and the CDN, never from data: a dataset folder named in a
        ?data= link can be anyone's, and this keeps its text from running as code here.
        Data, images and tiles may come from any host (connect-src / img-src *).
-       worker-src 'self' also covers the service worker (sw.js, offline use). -->
+       worker-src 'self' also covers sw.js (it removes the service worker of the old offline use). -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src * data: blob:; connect-src * data: blob:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'" />
-  <link href="styles.css?v=20261117dt2" rel="stylesheet" />
+  <link href="styles.css?v=20261119s3" rel="stylesheet" />
   <link href="volcano.css?v=20261111a" rel="stylesheet" />
   <link href="plots.css?v=20261111a" rel="stylesheet" />
   <link href="dspicker.css?v=20261116pf" rel="stylesheet" />
-  <link href="layout.css?v=20261116vx6" rel="stylesheet" />
-  <link href="compare.css?v=20261116t2" rel="stylesheet" />
+  <link href="layout.css?v=20261119s3" rel="stylesheet" />
   <link href="ownres.css?v=20261117or1" rel="stylesheet" />
 </head>
 <body>
@@ -99,18 +98,6 @@
           <input id="pointScale" type="range" min="0.25" max="4" step="0.05" value="1"></label>
         <label class="row slim check"><input id="tissueBins" type="checkbox" /><span id="lblTissueBins">Show all in-tissue bins</span></label>
         <label class="row slim check" id="rowCellNuclei" hidden><input id="cellNuclei" type="checkbox" /><span>Nucleus outlines</span></label>
-        <div class="btnrow" id="rowGateOpen" hidden>
-          <button id="gateOpenPos" title="Pick a marker, set where real staining starts, and get the % of tissue squares above it per region">% positive for a marker…</button>
-          <button id="gateOpenCl" title="How many squares each cluster has, per region, under the cluster names you see">Count clusters…</button>
-        </div>
-        <div id="gatePub" class="meta" hidden>This dataset comes with published cut-offs (gates.json).</div>
-        <!-- marker squares: the export's slide QC (protgrid.py qc.json); hidden for other layers and older exports -->
-        <div id="qcBox" class="qc-box" hidden>
-          <div class="sub-h">Slide QC</div>
-          <div id="qcSummary" class="meta qc-sum"></div>
-          <label class="row slim check" id="rowQcOutline" hidden><input id="qcOutline" type="checkbox" /><span title="Orange rings: everything bright (folds, bubbles, edges). Magenta rings: many pixels at the detector's limit.">Outline flagged squares</span></label>
-          <details class="qc-det"><summary>Each marker</summary><div id="qcChannels"></div></details>
-        </div>
       </section>
 
       <!-- Molecules (Xenium ...): every decoded transcript of the genes picked here, one colour each
@@ -130,74 +117,11 @@
         <div id="molMeta" class="meta"></div>
       </section>
 
-      <!-- Counting tools for marker (protein) square layers; hidden for sequencing data.
-           (A) % positive for one marker, (B) counts per cluster, and the optional combined rules. -->
-      <section class="panel gate" id="panelGate" data-tab="clusters" hidden>
-        <div class="gate-head">
-          <h2 id="gateTitle">% positive for a marker</h2>
-          <button id="gateClose" class="gate-x" title="Close (your cut-offs are kept)">×</button>
-        </div>
-        <div class="meta gate-note" id="gateCaveat">Squares are 20 µm and can mix cells: counts are approximate.</div>
-
-        <div id="gateModePos">
-          <label class="row slim"><span>Marker</span><select id="gateMarker"></select></label>
-          <div id="gateSource" class="meta gate-note" hidden></div>
-          <div id="gateEdit" class="gate-edit" hidden>
-            <canvas id="gateHist" class="gate-hist" tabindex="0" title="Drag the line, or click where it should go (arrow keys nudge it)"></canvas>
-            <div class="gate-axis"><span>dim</span><span id="gateAxisHi">bright</span></div>
-            <p id="gateSentence" class="gate-sentence"></p>
-            <p id="gateNoGap" class="gate-nogap" hidden>No clear gap here — judge by eye.</p>
-            <div class="gate-ctl">
-              <button id="gateSuggest" title="Place the line at Otsu's suggestion">Suggest</button>
-              <label class="check"><input id="gatePreview" type="checkbox" checked /> Outline them on the image</label>
-              <button id="gateClearCut" class="linkish" title="Remove this marker's line">remove</button>
-            </div>
-          </div>
-          <div id="gatePosTable" class="gate-counts"></div>
-          <div class="gate-add">
-            <button id="gatePosCsv" title="One row per marker and region: dataset, layer, marker, cut-off, how it was set, region, squares above, tissue squares, percent. Every marker you have set is included.">Download CSV</button>
-            <button id="gateCombine" class="linkish" title="Name cell types from several markers (e.g. CD45+ and CD68+) and count them">Combine markers…</button>
-            <button id="gateMore" class="linkish">More</button>
-          </div>
-          <div id="gateMoreBox" class="gate-more" hidden>
-            <button id="gateSave" title="Every marker's cut-off (and how it was set), plus any combined cell types, as a JSON file">Save cut-offs</button>
-            <button id="gateLoadBtn" title="Read cut-offs saved earlier">Load cut-offs</button>
-            <input id="gateLoad" type="file" accept=".json,application/json" hidden />
-          </div>
-        </div>
-
-        <div id="gateModeCl" hidden>
-          <label class="row slim"><span>Clustering</span><select id="gateClRes" title="SODA's Leiden clusters (a higher resolution splits the squares into more, smaller clusters) or one that came with the data"></select></label>
-          <div id="gateClTable" class="gate-counts"></div>
-          <label class="check gate-colour"><input id="gateClColour" type="checkbox" /> Colour the squares by cluster</label>
-          <div class="gate-add">
-            <button id="gateClCsv" title="One row per region and cluster: dataset, layer, resolution, region, cluster id, cluster name, count, total squares, percent">Download CSV</button>
-          </div>
-        </div>
-
-        <div id="gateModeRules" hidden>
-          <p class="gate-lead">Each square gets the first cell type (top to bottom) whose markers all match; the rest are Unassigned. Markers use the lines set under % positive.</p>
-          <div id="gateRules" class="gate-rules"></div>
-          <div class="gate-add">
-            <button id="gateAddRule">Add a cell type</button>
-            <button id="gateExamples" class="linkish" title="Example rules for common immune, vessel and nerve markers: only those whose markers all have a line">Use example rules</button>
-          </div>
-          <label class="check gate-colour"><input id="gateColour" type="checkbox" /> Colour the squares by cell type</label>
-          <div id="gateCounts" class="gate-counts"></div>
-          <div class="gate-add">
-            <button id="gateCsvCounts" title="One row per region and cell type: dataset, layer, region, cell type, count, total squares, percent">Download CSV</button>
-            <button id="gateCsvSquares" class="linkish" title="One row per square: row, x, y (image px), cell type, one column per marker (1 = above its line). No barcodes.">Per-square CSV</button>
-            <button id="gateBackPos" class="linkish">← Back to markers</button>
-          </div>
-        </div>
-        <div id="gateMsg" class="meta gate-note"></div>
-      </section>
-
       <section class="panel" id="panelUmap" data-tab="clusters" hidden>
         <h2>Clusters &amp; selection</h2>
         <div id="umapNote" class="meta umap-note"></div>
         <label class="row slim"><span id="lblColorBy">Colour bins by</span>
-          <select id="colorBy"><option value="gene">Genes (picked in View)</option><option value="cluster">Clusters (Leiden)</option><option value="celltype" hidden disabled>Suggested cell type</option><option value="phenotype" hidden disabled>Cell types (your rules)</option></select></label>
+          <select id="colorBy"><option value="gene">Genes (picked in View)</option><option value="cluster">Clusters (Leiden)</option><option value="celltype" hidden disabled>Suggested cell type</option></select></label>
         <label class="row slim" id="rowRes" hidden><span title="Which clustering colours the bins: SODA's Leiden clusters (a higher resolution splits the bins into more, smaller clusters) or one that came with the data">Clustering</span>
           <select id="clusterRes" title="SODA's Leiden clusters (a higher resolution splits the bins into more, smaller clusters) or one that came with the data"></select></label>
         <div id="clusterTools" class="btnrow cl-tools" hidden>
@@ -241,17 +165,9 @@
           <input id="lassoRes" type="text" inputmode="decimal" value="auto" title="Leiden resolution. auto = the finest resolution whose clusters reproduce across reseeded and subsampled runs; a number = that resolution (a higher number gives more, smaller clusters); 0 = no clustering" /></label>
         <div class="btnrow">
           <button id="lassoRun">Run UMAP</button>
-          <button id="lassoCompare" hidden title="Compare each shape with the rest of the slide, marker by marker (no UMAP). Run UMAP does this too.">Compare with slide</button>
           <button id="lassoCancel" hidden>Cancel</button>
         </div>
         <div id="lassoMsg" class="meta lasso-msg"></div>
-        <div id="lassoRoi" class="lasso-roi" hidden>
-          <h3 class="sub-h">Shape vs the rest of the slide</h3>
-          <div class="btnrow"><select id="lassoRoiPick" title="Which shape to compare"></select>
-            <button id="lassoRoiCsv" title="Every shape and marker: mean inside, mean in the rest of the slide, ratio, z">Save table (CSV)</button></div>
-          <div id="lassoRoiTable" class="roi-table"></div>
-          <div id="lassoRoiNote" class="meta"></div>
-        </div>
         <div class="btnrow">
           <button id="lassoSaveJson" title="Shapes, layer, seed and every parameter: rerun it later">Save JSON</button>
           <button id="lassoSaveCsv" title="bin row, shape, UMAP x/y (no barcodes)">Save CSV</button>
@@ -358,31 +274,28 @@
     </div>
   </div>
   <!-- first, so it also catches a script below that fails to load; draws nothing unless the address has &diag=1 -->
-  <script src="diag.js?v=20261117dt1"></script>
+  <script src="diag.js?v=20261119s3"></script>
   <!-- deck.gl: from vendor/ when `python prepare.py vendor` put it there (the browser checks its SHA-384 and
        refuses a file that differs), else libs.js writes the same version's CDN tag with the same hash -->
   <script src="vendor/deck.gl@9.1.12/dist.min.js" integrity="sha384-5HL6K250f0iIGF3yxNktkzN7iXNkWaduwyG3fie9Izlsj535dRJ8qPJ9BbrP28wV" data-soda-lib="deck"></script>
-  <script src="libs.js?v=20261116of1"></script>
+  <script src="libs.js?v=20261119s3"></script>
   <script src="site.js?v=20261118sp2"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="layout.js?v=20261118pc1"></script>
+  <script src="layout.js?v=20261119s3"></script>
   <script src="qc.js?v=20261116y1"></script>
   <script src="roi.js?v=20261116q3"></script>
   <script src="outlines.js?v=20261116os1"></script>
-  <script src="volcano.js?v=20261117dt1"></script>
-  <script src="plots.js?v=20261118pc1"></script>
+  <script src="volcano.js?v=20261119s3"></script>
+  <script src="plots.js?v=20261119s3"></script>
   <script src="snapshot.js?v=20261117sn1"></script>
-  <script src="cellsets.js?v=20261117df1"></script>
+  <script src="cellsets.js?v=20261119s3"></script>
   <script src="binpaint.js?v=20261117dm1"></script>
   <script src="ownres.js?v=20261117dm1"></script>
-  <script src="selections.js?v=20261117df1"></script>
+  <script src="selections.js?v=20261119s3"></script>
   <script src="measure.js?v=20261116vx6"></script>
   <script src="dspicker.js?v=20261116pf"></script>
-  <!-- a link to this view (Save tab) and linked windows (Compare): both before viewer.js, which hands them its functions -->
-  <script src="viewlink.js?v=20261117dt3"></script>
-  <script src="compare.js?v=20261116t2"></script>
-  <!-- offline use: the service worker (sw.js) and the Save tab's Offline use section -->
-  <script src="offline.js?v=20261118pc1"></script>
-  <script src="viewer.js?v=20261118sp3"></script>
+  <!-- a link to this view (Save tab): before viewer.js, which hands it its functions -->
+  <script src="viewlink.js?v=20261119s3"></script>
+  <script src="viewer.js?v=20261119s3"></script>
 </body>
 </html>

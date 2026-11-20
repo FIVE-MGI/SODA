@@ -76,11 +76,8 @@
 /* a long legend scrolls in its own box, sized so the tab still fits the window */
 .app.tabbed .cl-legend { max-height: min(420px, max(150px, calc(100vh - 470px))); max-height: min(420px, max(150px, calc(100dvh - 470px))); }
 /* sections that were blocks inside another panel: their old sub-heading is now the section's own */
-#panelSlideQc .qc-box { margin-top: 0; }
-#panelSlideQc .qc-box > .sub-h, #panelVolcano .vc-block > .sub-h { display: none; }
+#panelVolcano .vc-block > .sub-h { display: none; }
 #panelVolcano .vc-block { margin-top: 0; padding-top: 0; border-top: 0; }
-#panelCount > .sec-body > .btnrow { margin-top: 0; }
-.app.tabbed #panelGate { margin-top: 10px; padding: 10px 0 0; border-top: 1px solid var(--line); border-bottom: 0; }
 .ds-layers { margin: 6px 0 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
 .ds-layers li { margin: 2px 0; }
 .save-msg { word-break: normal; min-height: 16px; }
@@ -211,3 +208,7 @@
   .top-bar .view-switch { flex: none; }
   .top-bar .view-switch .seg button { padding: 5px 9px; }
 }
+
+/* the link to this view, when the browser would not copy it: select and copy by hand (viewlink.js) */
+.save-link-box { display: block; width: 100%; margin-top: 6px; font-size: 12px; }
+.save-link-box[hidden] { display: none; }

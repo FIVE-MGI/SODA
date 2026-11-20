@@ -23,8 +23,6 @@
 // there a gene must arrive as one 206 answer to a Range request into a pack. On top of that, for those exports:
 //   sas      ?data=<root>/?sv=..&sig=..&ds=<id>  a data link with a read pass: the pass rides on the
 //            Range request too, and the gene is right
-//   compare  the same link, then compare.js "Open beside" (one dataset, a Visium HD one if named):
-//            the gene added in the first window follows into the second, both read it by Range
 //   norange  ?static=<the same folder on a server that ignores Range>  the whole shard comes back
 //            (200) and the gene is cut out of it, right; with config packWholeMaxMB below the
 //            shard size the gene is refused with a message that names Range, and nothing else breaks
@@ -71,9 +69,6 @@ const versions = fs.existsSync(FIX) ? fs.readdirSync(FIX).filter((v) => fs.statS
   .filter((v) => (!ONLY || ONLY.split(",").includes(v)) && datasetsOf(v).length).sort() : [];
 // current (packed) exports to open: those named that the data root has (found before the run)
 let packedIds = [];
-// the linked second window (step 1b of checkPacked) on one dataset only: every extra window is another
-// WebGL context in the one software-rendered browser, and a few too many make it take contexts back
-let compareId = null;
 if (!versions.length) {
   console.log(`SKIPPED: no old exports in ${FIX} (rebuild them with tests/fixtures/old_exports/make_old_exports.py)`); process.exit(0);
 }
@@ -212,8 +207,8 @@ const failures = [...catFail];
 const packedTally = { pass: 0, fail: 0 };
 
 async function openPage(browser, url, version, label, config) {
-  // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
-  // itself, out of page.route's sight; tests/offline_test.js tests it
+  // serviceWorkers "block": an old service worker of the removed offline use must not answer requests out of
+  // page.route's sight
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
   const page = await ctx.newPage();
   const log = { console: [], pageErrors: [], bad: [], ok: [] };
@@ -425,50 +420,6 @@ async function checkPacked(browser, urls, id) {
     finally { await t.ctx.close(); }
   }
   if (!packedLayers.length) return;
-  // 1b. a second, linked window (compare.js "Open beside") on the same data link: it fetches its genes
-  // through its own source object, so the gene A adds must come to B from the pack by Range as well
-  if (id === compareId) {
-    const n0 = seen.length;
-    const link = encodeURIComponent(`${urls.data}/packed/?${SAS}`);
-    // a browser of its own, closed afterwards: the two windows' WebGL contexts must not count against
-    // the datasets checked after this one (software rendering then takes contexts back)
-    const own = await pw.chromium.launch();
-    const t = await openPage(own, `${urls.page}/index.html?data=${link}&ds=${id}`, V, `compare window ${id}`);
-    try {
-      await t.ctx.route("**/config.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript", body: "window.SpatialViewerConfig = {};" }));
-      await until(t.page, () => { const S = window.__spatialViewer && window.__spatialViewer.state; return S && S.m && S.exprKey && S.geneIndex && S.geneIndex.length; });
-      const canLink = await t.page.evaluate(() => !!(window.SodaCompare && window.SodaCompare.state().canLink));
-      if (!canLink) { t.ok(true, "compare windows cannot link in this browser: skipped"); }
-      else {
-        const popup = t.ctx.waitForEvent("page", { timeout: 30000 });
-        await t.page.evaluate((id) => window.SodaCompare.open(id), id);
-        const b = await popup;
-        const bErr = [];
-        b.on("pageerror", (e) => bErr.push(String(e.message || e).split("\n")[0]));
-        // the 404s step 1 allows too: the optional files (gates.json ...), and datasets.json / about.html,
-        // which a data link folder without a catalog does not have
-        const okMissing = OPTIONAL.concat([/\/datasets\.json$/, /\/about\.html$/]);
-        b.on("console", (mm) => {
-          const u = ((mm.location() || {}).url || "").split("?")[0];
-          if (mm.type() === "error" && !(/Failed to load resource/.test(mm.text()) && okMissing.some((re) => re.test(u)))) bErr.push(`${mm.text()} ${u}`);
-        });
-        const ready = await until(b, () => { const S = window.__spatialViewer && window.__spatialViewer.state; return S && S.m && S.exprKey && S.geneIndex && S.geneIndex.length; });
-        const joined = await until(t.page, () => window.SodaCompare.state().peers.length > 0, null, 30000);
-        t.ok(ready && joined, "the second window opens on the data link and joins the group");
-        const a = await addLayerGene(t, dir, m);
-        if (a) {
-          const followed = await until(b, (n) => { const S = window.__spatialViewer.state; return S.genes.length === 1 && S.genes[0].n === n; }, a.pts, 30000);
-          const gotB = await b.evaluate(() => window.__spatialViewer.state.genes.map((g) => g.n));
-          t.ok(a.got && a.got.n === a.pts && followed, `gene ${a.gene.n} in both windows: A ${a.got ? a.got.n : "none"}, B ${gotB.join(",") || "none"} points (pack ${a.pts})`);
-          const hits = seen.slice(n0).filter((q) => q.url.includes(`/expr/${a.L.key}/genepack/`));
-          t.ok(hits.length >= 2 && hits.every((q) => q.status === 206 && /^bytes=\d+-\d+$/.test(q.range) && q.url.includes("sig=FAKE-SIG")),
-            `both windows read it with Range and the read pass: ${hits.map((q) => `${q.status} ${q.range}`).join(", ") || "no request"}`);
-        }
-        t.ok(!bErr.length, `second window: no page or console error${bErr.length ? ": " + bErr.slice(0, 3).join(" / ") : ""}`);
-      }
-    } catch (e) { t.ok(false, `crashed: ${String(e.message).split("\n")[0]}`); }
-    finally { await t.ctx.close(); await own.close(); }
-  }
   // 2. a host that ignores Range: the whole shard comes back, the gene is cut out of it
   {
     const n0 = seen.length;
@@ -548,7 +499,6 @@ async function checkCatalog(browser, urls, version) {
   for (const id of PACKED_IDS) {
     if (await D.has(id)) packedIds.push(id); else console.log(D.skipLine(id, "(current packed export)"));
   }
-  compareId = packedIds.find((id) => /visium/i.test(id)) || packedIds[0];
   const data = await listen(handler(dataRoute), PORTS[0]), pageSrv = await listen(handler(pageRoute), PORTS[1]);
   const urls = { data: `http://127.0.0.1:${data.address().port}`, page: `http://127.0.0.1:${pageSrv.address().port}` };
   let browser;

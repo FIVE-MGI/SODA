@@ -59,13 +59,6 @@ window.SpatialViewerConfig = {
   // (index.html?data=<their folder>). On by default, off when tokenEndpoint is set.
   // allowDataLinks: true,
 
-  // Offline use (offline.js, sw.js; docs/ADVANCED.md "Offline use"): after one visit over https or
-  // localhost the page opens with no network, and a reader can keep a dataset (Save tab). On by
-  // default, off when tokenEndpoint is set. false also deletes what earlier visits kept.
-  // offline: true,
-  // offlineMaxMB: 500,   // the most one kept dataset may hold
-  // offlineKeep: false,  // no "Keep this dataset" button (the page still keeps itself), e.g. data on local disk
-
   // ---- data access ----------------------------------------------------------------
   // The managed function that checks the shared password and returns a short-lived,
   // read-only SAS for the private container. Empty disables the password entirely,

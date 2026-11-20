@@ -82,7 +82,7 @@ folder of datasets in one command:
 | [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways to share: a link to your data folder, or your own copy of SODA |
 | [docs/HOSTING.md](docs/HOSTING.md) | hosting from a laptop to a password-protected cloud site; what the host must do; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure, step by step: private container, password, Static Web App |
-| [docs/ADVANCED.md](docs/ADVANCED.md) | your own site, passwords, names and colours, every notebook setting, your own clusters, marker lists, the code, batch runs, offline use |
+| [docs/ADVANCED.md](docs/ADVANCED.md) | your own site, passwords, names and colours, every notebook setting, your own clusters, marker lists, the code, batch runs |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the sample ID check before upload, and its limits |
 | [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) | the exported files, byte by byte, for people writing their own tools |
 | [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md) | the SODA desktop app for Windows and Mac (no Python needed) |
@@ -127,8 +127,7 @@ files. The output is plain static files: you can look at it on your own computer
 any web host for public data, or keep it in a private cloud container behind a password. No
 database and no always-on server are needed. By default the page loads its two libraries
 (deck.gl and umap-js) from a public CDN; `prepare.py vendor` puts them on your own site
-instead, and after one visit the page also opens with no network
-([Offline use](docs/ADVANCED.md#9-offline-use)).
+instead.
 
 SODA reads multiplexed immunofluorescence (OME-TIFF, QPTIFF, Akoya), H&E, Visium and Visium
 HD, Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, single-cell RNA-seq, and the standard
@@ -138,7 +137,7 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
 
 - **Four tabs, one job each.** The controls sit beside the picture in four tabs: **View**
   (image and stains, genes, molecules, outlines), **Clusters** (colour by clusters or cell
-  types, select, quality filter, slide QC and counting tools for protein images),
+  types, select, quality filter, cell sets),
   **Analyze** (draw a region, volcano plot, heatmap and violin) and **Save** (save / load,
   a link, dataset details, about and help). A tab shows only when the dataset has something
   for it. Sections fold, and a folded one says its state on its header ("3 stains on",
@@ -205,8 +204,6 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
   optional Leiden clusters, of just the bins inside, computed in the browser. Drag a box or
   a loop over dots in its UMAP (Shift or **+** adds more) to light those bins on the slide,
   and **Show on slide** (above the picture) to frame them. Save the shapes and every parameter to redo it later.
-  **Merge clusters of the run** (under it) merges the run's clusters into named sets, as Cell sets does
-  for the whole section; the panel, the slide, the volcano and plot groups and Save CSV follow.
 - **Quality filter (per-bin QC).** Histograms of total counts, genes detected and % mitochondrial per bin,
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
   slide and left out of Draw a region, and the thresholds are saved with the shapes and in
@@ -220,21 +217,10 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
   or left out, and the message under the button says so. The view travels in the part of the
   address after `#`, which the browser never sends to a server; `ds=`, `qc=` and a `data=` or
   `static=` already in the address stay as they are. Not in a link: a box or freehand
-  selection, marker cut-offs and cell-type rules, volcano and plot settings, and the result
+  selection, volcano and plot settings, and the result
   of a Draw a region run (the shapes come back; press Run UMAP). **Save JSON** writes the same
   view to a file together with the shapes in full, every setting and the run's result, and
   **Load JSON** on the same dataset puts it back and runs it again.
-- **Compare side by side.** **Compare** (top bar, or the Save tab) opens another dataset in a
-  second window beside the first. While **Link views** is on, moving or zooming one window
-  moves the other to the same place at the same scale in micrometres, whatever the two
-  datasets' pixel sizes and image sizes; **Link from here** keeps what each window shows now
-  as the same place (to line up two sections that sit differently on their slides), **Line
-  up centres** goes back to the middle of each picture. Genes picked, the colour-by and the
-  Tissue / UMAP view follow where the other dataset has them, and the window says so where it
-  has not. Up to four windows can be linked. Views are not rotated or mirrored, and the
-  windows are separate: there is no split view inside one page. On a private site the second
-  window does not ask for the password again. On a phone or tablet the other dataset opens
-  in a new tab, not linked.
 - **Heatmap, dot plot and violin plots.** Compare genes across groups: the section's clusters
   at any resolution, the shapes you drew, the clusters of a Draw a region run, the regions of an overlay,
   or (single-cell datasets) any annotation column. Genes are each group's top markers plus any
@@ -250,9 +236,8 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
   pixels), and the squares get everything above: UMAP, Leiden clusters, suggested names from
   protein marker lists, and Draw a region. Each marker is normalised per slide (background
   off, scaled to its 99.5th percentile, asinh), empty and duplicate channels are dropped
-  automatically, and a slide QC box lists weak and saturated stains and outlines folds and
-  bright edges. Set a cut-off per marker (by eye or Otsu) to read the % of tissue squares
-  positive for it, or count squares per cluster. No cell segmentation (yet).
+  automatically, and the export's slide QC (`qc.json`) lists weak and saturated stains, folds
+  and bright edges, and possible tile seams. No cell segmentation (yet).
 - **Save as image.** **Save image** (Save tab, or the camera beside Fit) saves the map as a
   PNG exactly as shown in Tissue, UMAP or Side by side, with a legend, the scale bar and the
   dataset's name, at 1x, 2x or 4x the screen's pixels (finer image tiles at 2x / 4x), on a
@@ -410,10 +395,7 @@ email wbuchser@wustl.edu with any questions about hosting.
   [How big and how long](docs/PREPARING_DATA.md#how-big-and-how-long).
 - Viewing needs no installation, only a browser. The page loads its drawing library (deck.gl),
   and Draw a region its UMAP library (umap-js), from `cdn.jsdelivr.net`, or from your own copy
-  after `python web/SpatialViewer/prepare.py vendor`. Served over https or from localhost, the
-  page keeps itself after one visit and opens with no network; a dataset is kept for offline use
-  only when you ask (Save tab > Offline use). See
-  [Offline use](docs/ADVANCED.md#9-offline-use).
+  after `python web/SpatialViewer/prepare.py vendor`.
 
 ## Browser support
 

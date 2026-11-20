@@ -29,7 +29,6 @@ What it checks, through the app's command line and its local server only:
   7. --browser: the viewer and the home page in headless Chromium (tests/app_browser_test.js;
      needs node and Playwright on NODE_PATH; skipped otherwise). With vendor/ the CDN is blocked
      and the viewer must still load deck.gl (from the app); without it deck.gl needs internet.
-     The viewer offers no "Keep this dataset" (offlineKeep: false from the app's config.js).
 
 Exit code 0 = every check passed.
 """
@@ -252,9 +251,8 @@ def main() -> int:
             c.ok(s == 200 and "javascript" in ct, f"viewer.js as JavaScript ({ct})")
             s, ct, body = get(base + "/viewer/config.js")
             c.ok(s == 200 and b"SpatialViewerConfig" in body, "the app's own config.js")
-            c.ok(re.search(rb"SpatialViewerConfig\.offlineKeep\s*=\s*false", body) is not None
-                 and b"tokenEndpoint" not in body and re.search(rb"\boffline\s*:", body) is None,
-                 "config.js: offlineKeep = false (no Keep this dataset), offline use itself left on")
+            c.ok(b"tokenEndpoint" not in body and b"offline" not in body,
+                 "config.js: the page's defaults (no password site, nothing about the removed offline use)")
             s, ct, body = get(base + "/data/1/datasets.json")
             c.ok(s == 200 and json.loads(body).get("datasets"), "datasets.json from the export")
             s, _, body, h = get(base + f"/data/1/{DATASETS[0]}/manifest.json", full=True)

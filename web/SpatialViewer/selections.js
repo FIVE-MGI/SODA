@@ -1,17 +1,15 @@
-// Combine and export shapes: set operations on the Draw a region shapes, GeoJSON out and in, and a CSV of the
-// bins (cells) inside the shapes with the instrument's own barcodes / cell ids.
+// Export shapes: the Draw a region shapes as GeoJSON out and in, and a CSV of the bins (cells) inside the shapes
+// with the instrument's own barcodes / cell ids.
 //
 // The shapes live in viewer.js's state (S.lasso.shapes). This file reads them, adds new ones and asks viewer.js to
 // assign the bins again (api.changed = lassoShapesChanged); the volcano, the plots and Run UMAP then see a new shape
 // exactly as they see a drawn one.
 //
-// Membership. viewer.js gives each bin to ONE shape, the one drawn last (L.assign). The operations here work on the
-// full membership instead: a bin is inside a shape when it is inside its outline (Circle, Freehand, an imported
-// polygon) or in its list of bins (a selection, a combined shape), whatever was drawn after it. A combined shape is a
-// list of bins (kind "rows", as "Use selection as a shape" makes) and keeps how it was made (s.def), so on another
-// layer its bins are found again from the outlines. Save JSON keeps it as an ordinary list of bins (format unchanged)
-// plus, when it was made from outlines only, that recipe (`def`, an added field); a link to the view carries the
-// recipe instead of the bins (see saveDef below).
+// Membership. viewer.js gives each bin to ONE shape, the one drawn last (L.assign). The exports here use the full
+// membership instead: a bin is inside a shape when it is inside its outline (Circle, Freehand, an imported polygon)
+// or in its list of bins (a selection), whatever was drawn after it. An imported polygon with holes, or a combined
+// shape from a file or link made before 0.10.0 (Combine / Overlap / Subtract were removed then), keeps how it was made
+// (s.def), so on another layer its bins are found again from the outlines (see saveDef below).
 //
 // GeoJSON. Coordinates are in the export's full-resolution image pixels (x right, y down, origin top-left), as every
 // other file of the export. An outline is a Polygon; a list of bins is a MultiPoint of the bins' centres. Import takes
@@ -43,15 +41,9 @@
   function buildDom() {
     const sec = document.createElement("section");
     sec.className = "panel"; sec.id = "panelShapes"; sec.dataset.tab = "analyze"; sec.hidden = true;
-    sec.innerHTML = `<h2>Combine and export shapes</h2>
+    sec.innerHTML = `<h2>Export shapes</h2>
       <div id="shNote" class="meta cs-note"></div>
-      <div id="shPick" class="cs-pick" role="group" aria-label="Shapes to combine or export"></div>
-      <div class="btnrow">
-        <button id="shUnion" type="button" disabled title="A new shape of the bins inside any of the ticked shapes">Combine</button>
-        <button id="shInter" type="button" disabled title="A new shape of the bins inside every ticked shape">Overlap</button>
-        <button id="shSub" type="button" disabled title="A new shape of the bins of the first ticked shape (highest in the list) that are in none of the others">Subtract</button>
-      </div>
-      <label class="row slim check"><input id="shReplace" type="checkbox" /><span>Remove the shapes used</span></label>
+      <div id="shPick" class="cs-pick" role="group" aria-label="Shapes to export"></div>
       <div class="btnrow">
         <button id="shGeo" type="button" disabled title="The shapes (the ticked ones, else all) as GeoJSON in image pixels: for QuPath, Python or a later visit">Save GeoJSON</button>
         <button id="shGeoBtn" type="button" title="Add shapes from a GeoJSON file of polygons in this image's full-resolution pixels (SODA, QuPath)">Load GeoJSON</button>
@@ -68,9 +60,6 @@
       new MutationObserver(f).observe(lasso, { attributes: true, attributeFilter: ["hidden"] });
       f();
     }
-    $("shUnion").onclick = () => combine("union");
-    $("shInter").onclick = () => combine("inter");
-    $("shSub").onclick = () => combine("sub");
     $("shGeo").onclick = saveGeoJson;
     $("shGeoBtn").onclick = () => $("shGeoFile").click();
     $("shGeoFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) loadGeoJson(f); };
@@ -112,11 +101,7 @@
   const maskRows = (m) => { let k = 0; for (let i = 0; i < m.length; i++) if (m[i]) k++; const out = new Uint32Array(k); k = 0; for (let i = 0; i < m.length; i++) if (m[i]) out[k++] = i; return out; };
   // how a shape is made, independent of the layer where possible:
   //   { pts } an outline | { geo } polygons with holes | { rows, layer } bins of one layer | { op, parts } an operation
-  function defOf(s) {
-    if (s.def) return s.def;
-    if (!s.rows && s.pts && s.pts.length >= 3) return { pts: s.pts };
-    return { rows: s.rows || EMPTY, layer: s.layer || null };
-  }
+  //   (op: a combined shape from a file or link made before 0.10.0)
   // the mask of a definition on this layer's bins; null when part of it is bins of another layer
   function maskOfDef(d, pos, key) {
     const n = pos.length / 2;
@@ -224,39 +209,9 @@
     });
   }
 
-  // ---- the operations ------------------------------------------------------------------------------------------
-  const OPS = {
-    union: { sym: " + ", what: "inside any of them", verb: "Combined" },
-    inter: { sym: " ∩ ", what: "inside all of them", verb: "Overlap" },
-    sub: { sym: " − ", what: "of the first and in none of the others", verb: "Subtracted" },
-  };
+  // the operations a recipe may hold (combined shapes made before 0.10.0: read, never made here any more)
+  const OPS = { union: true, inter: true, sub: true };
   function tickedShapes() { const l = L(); return l ? l.shapes.filter((s) => picked.has(s.id)) : []; }
-  function combine(op) {
-    const l = L(), S = api.state();
-    if (!l || !l.pos) { msg("The shapes are not ready yet.", true); return; }
-    const used = tickedShapes();
-    if (used.length < 2) { msg("Tick two or more shapes first.", true); return; }
-    const pos = l.pos, n = pos.length / 2, key = S.exprKey;
-    const masks = used.map((s) => maskOfShape(s, pos));
-    const rows = maskRows(combineMasks(op, masks, n));
-    const o = OPS[op], name = cut(used.map((s) => s.name).join(o.sym));
-    if (!rows.length) { msg(`No ${W().bins} ${o.what}: nothing added.`, true); return; }
-    const def = { op, parts: used.map(defOf) };
-    if ($("shReplace").checked) {
-      const gone = new Set(used);
-      l.shapes = l.shapes.filter((s) => !gone.has(s));
-      l.selShape = null;
-    }
-    const id = l.next++;
-    l.shapes.push({ id, name, kind: "rows", pts: [], rows, layer: key, home: { layer: key, rows }, def,
-                    hex: api.colors[(id - 1) % api.colors.length], bins: 0, shared: 0, lost: 0 });
-    picked.clear();
-    api.changed();
-    const kept = !$("shReplace").checked;
-    msg(`${o.verb}: “${name}”, ${rows.length.toLocaleString()} ${W().bins} ${o.what}.` +
-        (kept ? ` It is the newest shape, so these ${W().bins} now count for it in Run UMAP, the volcano and the plots (a ${W().bin} counts once, for the shape drawn last).` : ""));
-  }
-
   // ---- what the section shows ---------------------------------------------------------------------------------
   function refresh() {
     const sec = $("panelShapes"), l = L();
@@ -270,8 +225,8 @@
     const w = W();
     const away = l.shapes.filter((s) => s.away);
     $("shNote").textContent = !l.shapes.length
-      ? "Draw two or more shapes in Draw a region (or load a GeoJSON file), then tick them here."
-      : `Tick shapes to combine them into a new shape, or to save only those.` +
+      ? "Draw shapes in Draw a region (or load a GeoJSON file) to save them here."
+      : `Tick shapes to save only those (none ticked: all of them).` +
         (away.length ? ` ${away.map((s) => `“${s.name}”`).join(", ")} ${away.length === 1 ? "was" : "were"} made on another layer (${[...new Set(away.map((s) => s.away))].join(", ")}): ${away.length === 1 ? "its" : "their"} ${w.bins} are not on this one.` : "");
     $("shPick").innerHTML = l.shapes.map((s) => {
       const on = picked.has(s.id);
@@ -286,11 +241,7 @@
     syncButtons();
   }
   function syncButtons() {
-    const l = L(), n = tickedShapes().length, any = !!(l && l.shapes.length && l.pos);
-    for (const [id, label] of [["shUnion", "Combine"], ["shInter", "Overlap"], ["shSub", "Subtract"]]) {
-      $(id).disabled = n < 2 || !any;
-      $(id).textContent = n >= 2 ? `${label} ${n}` : label;
-    }
+    const l = L(), any = !!(l && l.shapes.length && l.pos);
     $("shGeo").disabled = !any;
     $("shIds").disabled = !any;
   }
@@ -521,7 +472,6 @@
     remap, saveDef, restore,
     // for tests from the console
     _pick(ids) { picked.clear(); ids.forEach((i) => picked.add(i)); sig = ""; refresh(); },
-    _combine(op, ids) { this._pick(ids); combine(op); return $("shMsg").textContent; },
     _geojson: () => geoJson().gj,
     _import: async (obj) => { await importGeoJson(obj); return $("shMsg").textContent; },
     _ids: async () => { const r = await idsCsv(); return r ? r.parts.join("") : null; },

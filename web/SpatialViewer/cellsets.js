@@ -1,12 +1,9 @@
-// Cell sets: merge clusters into named sets, undo, and export one row per bin. Two sections share this code:
-//   Cell sets (Clusters tab)               the clustering of the whole section on show (SodaSets),
-//   Merge clusters of the run (Analyze tab) the Leiden clusters of the last Draw a region run (SodaSets.region).
+// Cell sets (Clusters tab): merge the clusters of the whole section on show into named sets, undo, and export one
+// row per bin (SodaSets).
 //
 // The section's sets live in viewer.js's state (S.umap.sets, per clustering key) next to the names given to clusters
 // (S.umap.names); viewer.js applies them where the clusters are read, so every view, legend, group picker and
-// count sees the sets (viewer.js: clSetsApply, clWithSets). A run's sets live on the run's result (R.sets, the
-// names in S.lasso.clNames) and viewer.js applies them to its codes (runSetsApply), so the run's panel, the slide,
-// the volcano and plot groups and its Save CSV see them. Either way a set takes the number of its lowest member:
+// count sees the sets (viewer.js: clSetsApply, clWithSets). A set takes the number of its lowest member:
 // its colour is that cluster's, its name is that cluster's name entry (the member's own name is kept in `prev`
 // and comes back on Un-merge). This file only builds the sections, changes the sets and writes the CSV.
 //
@@ -297,16 +294,5 @@
     csvTitle: "One row per bin: its row number, position, cluster and set (no barcodes)",
     none: (w) => `Merge clusters into named sets: first colour the ${w.bins} by clusters (Clusters & selection, or the button below).`,
   });
-  // the clusters of the last Draw a region run: a new run starts without sets; the volcano and the plots say when
-  // what they show was computed before a merge
-  const region = make({
-    p: "rs", id: "panelRunSets", tab: "analyze", title: "Merge clusters of the run", after: "panelLasso",
-    csvTitle: "The run's Save CSV: one row per bin of the run, its cluster and the set it is in (no barcodes)",
-    none: (w) => `Run UMAP in Draw a region with clusters (resolution auto or above 0, one dot per ${w.bin}) to merge its clusters here.`,
-    after1: " A volcano or plot made before is out of date: run it again.",
-  });
-  // sets of a run read from a file or a link (viewer.js checks them against the run's clusters before using them)
-  region.cleanList = cleanList;
-
-  window.SodaSets = { ...section, region };
+  window.SodaSets = section;
 })();

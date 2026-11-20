@@ -16,8 +16,7 @@
 //             volcano (its worker) and its PNG (an SVG drawn on a canvas); heatmap / violin and the
 //             plot's PNG; Cell sets merge and its CSV; the QC filter; Save image at 1x, 2x and 4x (the
 //             PNG's size read from the file); Copy link to this view, and that link opened in a new tab
-//             (same dataset, layer, genes, mode and camera). Compare's two linked windows are not run:
-//             only that the browser has BroadcastChannel, which they need (probe).
+//             (same dataset, layer, genes, mode and camera).
 //   links     ?data=<folder>/&ds=<id> (no datasets.json), and ?data=<folder>/ with a datasets.json
 //             carrying tags: the picker lists every dataset, a tag filter narrows the list, a row opens.
 //   outlines  a cells layer with segmentation boundaries (xenium_pub), Cell shapes on Outlines, zoomed in
@@ -239,8 +238,8 @@ const FIREFOX_QUIET = [/integrity attribute match the content of the subresource
   /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 
 async function openPage(browser, eng, url, label, feature) {
-  // serviceWorkers "block": the page registers a service worker (sw.js, offline use) that would answer some requests
-  // itself, out of page.route's sight; tests/offline_test.js tests it
+  // serviceWorkers "block": an old service worker of the removed offline use must not answer requests out of
+  // page.route's sight
   const ctx = await browser.newContext({ ...(eng.device || { viewport: { width: 1280, height: 800 } }), acceptDownloads: true, serviceWorkers: "block" });
   if (eng.clipboard) await ctx.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
   const page = await ctx.newPage();
@@ -341,7 +340,6 @@ async function probe(browser, eng, urls) {
         webkitBackdropFilter: CSS.supports("-webkit-backdrop-filter", "blur(2px)"), inset: CSS.supports("inset", "0"), gap: CSS.supports("gap", "1px"), aspectRatio: CSS.supports("aspect-ratio", "1") };
       out.clipboardWrite = !!(navigator.clipboard && navigator.clipboard.writeText);
       out.anchorDownload = "download" in document.createElement("a");
-      out.broadcastChannel = typeof BroadcastChannel === "function";
       out.compressionStream = typeof CompressionStream === "function";
       // the largest 2D canvas that still encodes a PNG (Save image draws on one)
       out.canvas = {};
@@ -367,7 +365,6 @@ async function probe(browser, eng, urls) {
     t.ok(p.anchorDownload, "<a download> (Save JSON / CSV / PNG)", "file download via <a download>");
     t.ok(p.canvas["8192x8192"] === "ok", `a 2D canvas of 8192 x 8192 encodes a PNG (${p.canvas["8192x8192"]})`, "2D canvas 8192 x 8192 to PNG");
     mark("createImageBitmap with options", eng.name, p.createImageBitmapOptions === true);
-    t.ok(p.broadcastChannel, "BroadcastChannel (Compare: the second, linked window)", "BroadcastChannel (Compare windows)");
     info("CompressionStream (shorter view links; without it the link is plain JSON)", eng.name, p.compressionStream);
     for (const [k, v] of Object.entries(p.css)) if (k !== "webkitBackdropFilter") mark(`CSS ${k}`, eng.name, v);
     info("OffscreenCanvas (not used by the page)", eng.name, p.offscreenCanvas);
@@ -570,74 +567,6 @@ async function walk(browser, eng, urls) {
       t.ok(n > 100 && /Browser test set/.test(csv.buf.toString("utf-8")), `cell sets CSV: ${csv ? csv.name : "nothing"} (${n} lines)`, "Cell sets merge");
       await t.shot("walk_cellsets");
       await ev(() => window.SodaSets._undo());
-    });
-
-    // Merge clusters of the run (cellsets.js on the Draw a region run): the set takes its lowest member's number and
-    // colour, the volcano made before says it is out of date, the run's CSV adds set / set_name, Save JSON and the
-    // link carry the merges, and Load JSON (the same shapes, seed and resolution, run again) brings them back
-    await step("Merge clusters of the run", async () => {
-      const F = "Merge clusters of the run";
-      const run = () => ev(() => { const L = window.__spatialViewer.state.lasso, R = L.result; if (!R || !R.cluster) return null;
-        const raw = R.clRaw || R.cluster, K = R.info.nClusters || 0, z = new Array(K).fill(0), m = new Array(K).fill(0);
-        for (let j = 0; j < R.cluster.length; j++) { if (R.cluster[j] < K) z[R.cluster[j]]++; if (raw[j] < K) m[raw[j]]++; }
-        return { id: R.id, k: K, sizes: z, rawSizes: m, sets: (R.sets || []).map((s) => s.ids), ver: R.setsVer || 0 }; });
-      const r0 = await run();
-      if (!t.ok(r0 && r0.k >= 2, `the run has clusters to merge (${r0 ? r0.k : "no run"})`, F)) return;
-      // the region panel lists the run's clusters
-      const ready = await until(P, () => document.querySelectorAll("#rsPick input[data-c]").length >= 2, null, 30000);
-      const listed = await ev(() => [...document.querySelectorAll("#rsPick input[data-c]")].map((i) => Number(i.dataset.c)));
-      if (!t.ok(ready && listed.length === r0.k, `Merge clusters of the run lists the run's ${r0.k} clusters (${listed.length})`, F)) return;
-      // two clusters, the lowest not 0 when there are three or more: the set must take the lower one's number
-      const pair = r0.k >= 3 ? [r0.k - 1, 1] : [1, 0], lo = Math.min(...pair), hi = Math.max(...pair);
-      const vc = await ev(() => { const p = document.getElementById("volcanoPanel"); if (window.SodaVolcano.result && p) { p.hidden = false; document.getElementById("vcWarn").hidden = true; } return !!window.SodaVolcano.result; });
-      const colLo = await ev((c) => { const sp = document.querySelector(`#rsPick input[data-c="${c}"] + i`); return sp ? sp.style.background : null; }, lo);
-      const txt = await ev((c) => window.SodaSets.region._merge(c, "Browser run set"), pair);
-      const r1 = await run();
-      const after = await ev(([lo, hi]) => {
-        const L = window.__spatialViewer.state.lasso, R = L.result, vcA = [...document.getElementById("vcA").options].map((o) => o.value);
-        const sp = document.querySelector(`#rsSets .cs-set i`);
-        return { sets: document.querySelectorAll("#rsSets .cs-set").length, name: L.clNames[lo], gone: !!(R.setGone && R.setGone.has(hi)),
-                 vcHasLo: vcA.includes(`c:${lo}`), vcHasHi: vcA.includes(`c:${hi}`), warn: document.getElementById("vcWarn").hidden ? "" : document.getElementById("vcWarn").textContent,
-                 setCol: sp ? sp.style.background : null, msg: document.getElementById("rsMsg").textContent };
-      }, [lo, hi]);
-      t.ok(after.sets === 1 && r1.sets.length === 1 && r1.sets[0].join() === `${lo},${hi}` && r1.sizes[hi] === 0 && r1.sizes[lo] === r0.sizes[lo] + r0.sizes[hi]
-        && after.gone && after.name === "Browser run set" && r1.rawSizes.join() === r0.rawSizes.join(),
-        `merged run clusters ${hi} + ${lo}: one set numbered ${lo} with ${r1.sizes[lo]} bins (${r0.sizes[lo]} + ${r0.sizes[hi]}), named; ${String(txt).slice(0, 100)}`, F);
-      t.ok(!!colLo && after.setCol === colLo, `the set takes cluster ${lo}'s colour (${after.setCol} = ${colLo})`, F);
-      t.ok(after.vcHasLo && !after.vcHasHi, `the volcano's groups: the set in cluster ${lo}'s place, cluster ${hi} gone`, F);
-      if (vc) t.ok(/changed|again/.test(after.warn), `a volcano made before the merge says it is out of date ("${after.warn}")`, F);
-      await t.shot("walk_run_sets");
-      // the run's Save CSV: cluster / cluster_name its own, set / set_name the merged one
-      const c = await download(t, () => ev(() => document.getElementById("lassoSaveCsv").click()), 20000);
-      const rows = c && c.buf ? c.buf.toString("utf-8").trim().split("\n") : [];
-      const head = (rows[0] || "").split(","), ic = head.indexOf("cluster"), is = head.indexOf("set"), isn = head.indexOf("set_name");
-      const hiRows = rows.slice(1).map((l) => l.split(",")).filter((x) => x[ic] === String(hi));
-      t.ok(is > 0 && isn > 0 && hiRows.length === r0.sizes[hi] && hiRows.every((x) => x[is] === String(lo)) && rows.join("\n").includes("Browser run set"),
-        `the run's CSV adds set and set_name: cluster ${hi}'s ${hiRows.length} rows are in set ${lo} (${head.slice(-3).join(",")})`, F);
-      // Save JSON and the link carry the merges with the run's own cluster sizes
-      const j = await download(t, () => ev(() => document.getElementById("lassoSaveJson").click()), 20000);
-      let saved = null; try { saved = j && j.buf ? JSON.parse(j.buf.toString("utf-8")) : null; } catch (e) { /* not JSON */ }
-      const rs = saved && saved.runSets;
-      t.ok(!!rs && rs.sets.length === 1 && rs.sets[0].ids.join() === `${lo},${hi}` && rs.sets[0].name === "Browser run set" && rs.sizes.join() === r0.rawSizes.join(),
-        `Save JSON keeps the merge (runSets ${JSON.stringify(rs ? rs.sets : null)})`, F);
-      const lk = await ev(async () => { const u = (await window.SodaViewLink.make()).url, d = await window.SodaViewLink.decode(u.split("#v=")[1]); return d.ok ? d.state.runSets || null : null; });
-      t.ok(!!lk && lk.sets.length === 1 && lk.sets[0].ids.join() === `${lo},${hi}`, `the link to this view keeps the merge (${JSON.stringify(lk ? lk.sets : null)})`, F);
-      // Undo: back to the run's own clusters
-      await ev(() => window.SodaSets.region._undo());
-      const r2 = await run();
-      t.ok(r2.sets.length === 0 && r2.sizes.join() === r0.sizes.join(), `Undo takes the merge back (${r2.sizes[hi]} bins in cluster ${hi} again)`, F);
-      // Load JSON: the shapes and the run again, then the saved merge on the same clusters
-      if (saved) {
-        await ev((o) => window.__spatialViewer.lassoLoad(o), saved);
-        const ok = await until(P, (id) => { const L = window.__spatialViewer.state.lasso, R = L.result; return R && R.id !== id && !L.running && R.sets && R.sets.length > 0 || (R && R.id !== id && !L.running && /not applied/.test(document.getElementById("lassoMsg").textContent)); }, r0.id, 600000);
-        const r3 = await run();
-        const m3 = await ev(() => document.getElementById("lassoMsg").textContent);
-        t.ok(ok && r3 && r3.id !== r0.id && r3.sets.length === 1 && r3.sets[0].join() === `${lo},${hi}` && r3.sizes[lo] === r0.sizes[lo] + r0.sizes[hi]
-          && (await ev((c) => window.__spatialViewer.state.lasso.clNames[c], lo)) === "Browser run set",
-          `Load JSON runs it again and the saved merge comes back on the same clusters (${JSON.stringify(r3 && r3.sets)}; "${m3.split("\n").pop().slice(0, 100)}")`, F);
-        await ev(() => window.SodaSets.region._undo());
-      }
-      await ev(() => { const p = document.getElementById("vcClose"); if (p) p.click(); });
     });
 
     // the QC filter: total counts >= the median removes about half the bins

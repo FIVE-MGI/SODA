@@ -6,7 +6,6 @@
 //
 // viewer: the page opens the export's datasets.json through the app's own server, lists every
 //         dataset, opens the first, fetches and draws image tiles; no console error, no page error.
-//         The Save tab offers no "Keep this dataset" (the app's config.js: offlineKeep = false).
 //         --no-cdn (an app built with vendor/): every request to cdn.jsdelivr.net is refused, as with no
 //         internet, and deck.gl must still load, from the app's own vendor/.
 // home:   the home page renders its three sections and its status line, with no console error.
@@ -38,7 +37,7 @@ const until = (page, fn, a, ms = 30000) => page.waitForFunction(fn, a, { timeout
   let browser;
   try { browser = await pw.chromium.launch(); }
   catch (e) { console.log(`SKIPPED: cannot launch Chromium (${String(e.message).split("\n")[0]})`); process.exit(0); }
-  // the viewer's service worker (sw.js) is tested by tests/offline_test.js; here the page as it loads
+  // no service worker (an old one of the removed offline use must not answer requests here)
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, serviceWorkers: "block" });
   const page = await ctx.newPage();
   const errors = [], failed = [], cdn = [];
@@ -80,11 +79,6 @@ const until = (page, fn, a, ms = 30000) => page.waitForFunction(fn, a, { timeout
       ok(WANT.every((w) => r.list.includes(w)), `every dataset listed from datasets.json: ${r.list.join(", ")}`);
       const tiles = await until(page, () => window.__spatialViewer.diag().cached > 0);
       ok(tiles, "image tiles fetched and decoded");
-      const off = await page.evaluate(() => {
-        const st = window.SodaOffline ? window.SodaOffline.state() : null, b = document.getElementById("offKeep");
-        return { keep: st ? st.keep : null, panel: !!document.getElementById("panelOffline"), shown: !!(b && b.offsetParent) };
-      });
-      ok(off.panel && off.keep === false && !off.shown, `Save tab: Offline use without "Keep this dataset" (keep=${off.keep}, button shown=${off.shown})`);
       await page.waitForTimeout(1500);
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "viewer.png") });
     }

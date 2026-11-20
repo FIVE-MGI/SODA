@@ -146,7 +146,7 @@ def main(argv=None) -> int:
         print(f"written  {lib['name']} {lib['version']}: {target} ({len(data):,} bytes, {lib['sri']})")
     if bad:
         print(f"\n{bad} of {len(libs)} libraries are not in place: the page uses the CDN for "
-              f"{'it' if bad == 1 else 'them'} (or, offline, the copy its service worker kept).")
+              f"{'it' if bad == 1 else 'them'}.")
         return 1
     print(f"\nvendor/ is complete ({len(libs)} libraries): the page loads them from {vendor} instead of the CDN.")
     return 0

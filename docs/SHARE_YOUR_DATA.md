@@ -154,9 +154,6 @@ shapes are in it when they fit (the message under the button says when they do n
 on a Draw a region result, send the file from **Save JSON**; the other person opens the same
 dataset and uses **Load JSON**.
 
-**Compare** (top bar) opens a second dataset of the same folder in a window beside the
-first, with the two views linked; the second window's address carries the same `?data=`.
-
 If something is wrong, the page says what in plain words: no `datasets.json` in the folder
 (run Step 1 and upload again), the storage refused (the folder is private and the link has
 no read pass), or it could not be reached (Step 4, or a wrong link).

@@ -204,7 +204,7 @@
     const S = api.state(), L = S.lasso, qc = api.qc && api.qc();
     let part = "";
     if (gv === "shapes") part = L ? L.shapes.map((s) => `${s.id}:${s.bins}`).join(",") : "";
-    else if (gv === "run") part = L && L.result ? `${L.result.id}.${L.result.setsVer || 0}` : "";     // a merge of the run's clusters too
+    else if (gv === "run") part = L && L.result ? `${L.result.id}` : "";
     const q3 = modeNow() === "spatial" && window.SodaRoi && window.SodaRoi.scale(curExpr(S)) ? "q3" : "";
     return [cacheKey(), gv, part, modeNow() === "spatial" && qc ? JSON.stringify(qc.state()) : "", q3].join("|");
   }

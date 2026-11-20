@@ -15,7 +15,7 @@
   const $ = (id) => document.getElementById(id);
 
   if (!window.deck) {
-    $("status").textContent = "deck.gl failed to load (no internet, and no copy in vendor/ or kept for offline use)";
+    $("status").textContent = "deck.gl failed to load (no internet, and no copy in vendor/)";
     $("status").hidden = false; $("status").classList.add("err");
     return;
   }
@@ -121,8 +121,8 @@
     exprKey: null, geneIndex: [], genes: [],   // genes: {name,hex,color,max,p99,n,positions,values,colors}
     geneBlend: "heatmap", pointScale: 1, genePalette: "genes", geneBin: 1, heat: null,
     tissue: { on: false, positions: null, key: null },
-    // marker squares: the export's slide QC (qc.json) and per-square flags (qc_flags.bin)
-    qc: { key: null, info: null, flags: null, positions: null, outline: false },
+    // marker squares: per-square flags (qc_flags.bin) for Draw a region's "Artefact?" cluster flag
+    qc: { key: null, flags: null },
     overlays: [],          // {key,label,on,data}
     // Tier A region linking: meta from the manifest, ids aligned to positions.bin,
     // and a quantized-xy -> region-id lookup so a gene point finds its region.
@@ -434,8 +434,6 @@
     tokenWait = (async () => {
       try {
         let t = await requestToken(null);                  // cookie still valid? then no prompt
-        // a window opened beside another one (compare.js): that one already has a token, so no second prompt
-        if (!t && window.SodaCompare) t = await window.SodaCompare.askToken(new URL(TOKEN_URL, location.href).href);
         for (let tries = 0; !t && tries < 6; tries++) {
           const pw = await askPassword(tries > 0, "This viewer is password protected.");
           t = await requestToken(pw);
@@ -860,14 +858,6 @@
     const el = $("densityKey");
     const on = S.genes.filter((g) => g.visible !== false);
     const umap = inUmap();
-    if (S.mode === "image" && gatePreviewOn() && !umapByCat()) {
-      const G = S.gate, c = G.cut.get(G.cur);
-      el.innerHTML = `<div class="genes"><span class="g"><i style="background:transparent;outline:2px solid rgb(${gateLineRgb(G.cur).join(",")});outline-offset:-2px"></i>${escHtml(G.cur)} above ${gateFmt(c.v)}</span></div>` +
-        `<div class="note">${umap ? "Lit dots: squares above the line." : "Outlined: squares above the line. Other tissue squares are darkened; the stain is underneath."}` +
-        ` ${(gateFracPos(G.vals.get(G.cur), c.v) * 100).toFixed(1)}% of squares.</div>`;
-      el.hidden = false;
-      return;
-    }
     if (paint && S.mode === "image" && !umapByCat() && paint.active()) { el.innerHTML = paint.keyHtml(); el.hidden = false; return; }
     if (isRois() && S.mode === "image" && on.length && !umapByCat() && !umap) { el.innerHTML = window.SodaRoi.keyHtml(roiCtx()); el.hidden = false; return; }
     if (S.mode !== "image" || (S.geneBlend !== "heatmap" && !umap) || !on.length || umapByCat()) { el.hidden = true; return; }
@@ -1203,11 +1193,10 @@
     if (S.imgOn) for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch, S.imgOpacity, nOn));
     const tl = tissueLayer(); if (tl) layers.push(tl);
     // Colour by cluster replaces the gene density: one colour per bin, not two on top of each other.
-    const gPrev = gatePreviewOn();
     // Colour by a value (binpaint.js) replaces the gene density the same way
-    const pl = paint && !umapByCat() && !gPrev && paint.active() ? paint.layer(dotRadius(), S.geneOpacity * dotK()) : null;
+    const pl = paint && !umapByCat() && paint.active() ? paint.layer(dotRadius(), S.geneOpacity * dotK()) : null;
     if (pl) layers.push(pl);
-    else if (!umapByCat() && !gPrev) {
+    else if (!umapByCat()) {
       if (isRois()) {
         layers.push(...window.SodaRoi.geneLayers(roiCtx()));
       } else if (S.geneBlend === "heatmap") {
@@ -1222,10 +1211,8 @@
     drawDensityKey();
     updateRegionReadout();
     for (const o of S.overlays) { const l = overlayLayer(o); if (l) layers.push(l); }
-    // the gating preview replaces the coloured squares on the slide while it is on
-    if (gPrev) layers.push(gatePreviewLayer()); else layers.push(...umapTissueLayers());
+    layers.push(...umapTissueLayers());
     if (OL && OL.over) layers.push(...OL.layers);
-    const ql = qcLayer(); if (ql) layers.push(ql);
     layers.push(...lassoLayers());
     const bq = binQcLayer(); if (bq) layers.push(bq);
     if (measure) { measure.show(true); layers.push(...measure.layers()); }      // the ruler and areas (measure.js), on top
@@ -1336,7 +1323,7 @@
 
   function tooltipFor(info) {
     const orow = outlines ? outlines.rowAt(info) : -1;           // a cell's outline: what its dot would say
-    if (orow >= 0 && paint && paint.active() && !umapByCat() && !gatePreviewOn()) { const t = paint.tip(orow); if (t) return { text: t }; }
+    if (orow >= 0 && paint && paint.active() && !umapByCat()) { const t = paint.tip(orow); if (t) return { text: t }; }
     if (orow >= 0) return umapTooltip(orow);
     if (paint && info.layer && info.layer.id.startsWith("paint-") && info.index >= 0) { const t = paint.tip(info.index); if (t) return { text: t }; }
     if (info.layer && info.layer.id.includes("ucloud") && info.index >= 0) return umapTooltip(umapRowAt(info.layer.id, info.index));
@@ -1374,8 +1361,7 @@
     if (umapSbs() && S.umap.sideVs) out.uside = S.umap.sideVs;
     return out;
   }
-  // The camera goes somewhere: by the mouse (deck's controller), by a link to a view (viewlink.js)
-  // or by a linked window (compare.js).
+  // The camera goes somewhere: by the mouse (deck's controller) or by a link to a view (viewlink.js).
   function setCamera(viewState, viewId) {
     autoFit = false;
     $("tapTip").hidden = true;                   // it pointed at a spot that has just moved
@@ -1385,7 +1371,7 @@
     S.viewState = viewState; deckgl.setProps({ viewState: deckVs() }); updateHud();
     // the heat map's squares have a screen-space floor, so their size in world
     // units changes with the zoom
-    if (zoomed && ((S.geneBlend === "heatmap" && S.genes.length) || gatePreviewOn())) requestRender();
+    if (zoomed && (S.geneBlend === "heatmap" && S.genes.length)) requestRender();
     molViewChanged();
     if (outlines && outlines.viewChanged(viewState)) requestRender();
   }
@@ -1905,7 +1891,6 @@
     await lassoOnLayer(); if (stale()) return false;
     await umapOnLayer(); if (stale()) return false;
     render();
-    await gateOnLayer(); if (stale()) return false;
     syncUmapUI(); render();
     return true;
   }
@@ -1918,99 +1903,20 @@
   }
 
   // ---- slide QC (marker squares): protgrid.py qc.json + qc_flags.bin -------------------
-  // Channels left out or flagged (weak, saturated), squares flagged "everything bright"
-  // (folds, bubbles, edges) or with many saturated pixels, the seam check. Older exports
-  // have no qc: the box stays hidden.
-  const QC_STATUS = { weak: "weak", saturated: "saturated", flat: "flat: not in the UMAP", nuclear: "nuclear: tissue mask only" };
+  // qc_flags.bin of a marker-square layer (protgrid.py): one byte per square, set where everything is bright (folds,
+  // bubbles, edges) or many pixels are saturated. Draw a region names a cluster mostly made of them "Artefact?".
+  // The rest of the export's slide QC (qc.json) is for reading, not shown here.
   async function loadQc() {
     const Q = S.qc, e = currentExpr();
-    Q.key = null; Q.info = null; Q.flags = null; Q.positions = null;
+    Q.key = null; Q.flags = null;
     if (e && e.qc && e.qc.file && S.src && S.src.buf) {
       const seq = layerSeq;
       try {
-        const [info, buf] = await Promise.all([S.src.json(`expr/${S.exprKey}/${e.qc.file}`),
-          S.src.buf(`expr/${S.exprKey}/${e.qc.flags || "qc_flags.bin"}`)]);
+        const buf = await S.src.buf(`expr/${S.exprKey}/${e.qc.flags || "qc_flags.bin"}`);
         if (seq !== layerSeq) return;
-        Q.info = info; Q.flags = new Uint8Array(buf); Q.key = S.exprKey;
-      } catch (err) { if (seq !== layerSeq) return; Q.info = null; Q.flags = null; }
+        Q.flags = new Uint8Array(buf); Q.key = S.exprKey;
+      } catch (err) { if (seq !== layerSeq) return; Q.flags = null; }
     }
-    buildQcBox();
-  }
-  function buildQcBox() {
-    const Q = S.qc, box = $("qcBox");
-    box.hidden = !Q.info;
-    if (!Q.info) { Q.outline = false; $("qcOutline").checked = false; return; }
-    const I = Q.info, esc = escHtml;
-    const ch = I.channels || [], weak = ch.filter((c) => c.weak && c.inUmap), sat = ch.filter((c) => c.saturated);
-    const nUmap = ch.filter((c) => c.inUmap).length, drop = I.dropped || [];
-    const pct = (n) => (I.squares ? `${(100 * n / I.squares).toFixed(2)}%` : "");
-    const br = I.everythingBright || {}, ss = I.saturatedSquares || {}, sm = I.seams;
-    const lines = [
-      `<b>${nUmap}</b> markers in the UMAP; ${drop.length} left out` +
-        (drop.length ? ` (<span title="${esc(drop.map((d) => `${d.name}: ${d.reason}`).join("\n"))}">${esc(drop.map((d) => d.name).join(", "))}</span>)` : "") + ".",
-      weak.length ? `<span class="qc-warn" title="${esc((I.rules && I.rules.weak) || "")}">Weak stain</span>: ${esc(weak.map((c) => c.name).join(", "))}. Kept in the UMAP; check them by eye.` : "No weak stains.",
-      sat.length ? `<span class="qc-warn" title="${esc((I.rules && I.rules.saturated) || "")}">Saturated</span>: ${esc(sat.map((c) => `${c.name} ${c.saturatedPct.toFixed(1)}%`).join(", "))} of tissue pixels at the detector's limit.` : "No saturated stains.",
-      `<span title="${esc(br.rule || "")}">Everything bright</span> (folds, bubbles, edges): ${(br.n || 0).toLocaleString()} squares (${pct(br.n || 0)}).` +
-        ` <span title="${esc(ss.rule || "")}">Many saturated pixels</span>: ${(ss.n || 0).toLocaleString()} (${pct(ss.n || 0)}).`,
-      sm ? (sm.flagged ? `<span class="qc-warn" title="${esc(sm.rule || "")}">Possible tile seams</span>: ` +
-                         ["columns", "rows"].filter((k) => sm[k] && sm[k].flagged).map((k) =>
-                           `<span title="${esc(sm[k].channels.join(", "))}">${sm[k].channels.length} of ${sm[k].channelsChecked} markers ` +
-                           `(${esc(sm[k].channels.slice(0, 4).join(", "))}${sm[k].channels.length > 4 ? " …" : ""})</span> step every ` +
-                           `${sm[k].spacingPx} px (~${sm[k].spacingUm} µm) ${k === "columns" ? "across" : "down"} the slide`).join("; ") +
-                         (sm.correction ? "." : `. Clusters can follow such steps: if a cluster pattern repeats at this spacing, compare it with the image before trusting it.` +
-                                                (sm.gridProblem ? ` Not corrected: ${esc(sm.gridProblem)}.` :
-                                                 sm.correctionSkipped ? ` Not corrected: ${esc(sm.correctionSkipped)}.` : ""))
-                       : `<span title="${esc(sm.rule || "")}">No tile seams found.</span>`) : "",
-      sm && sm.correction ? (() => {
-        const co = sm.correction, nc = co.notCorrectable || [];
-        return `<span class="qc-ok" title="${esc(co.rule || "")}">Seams corrected</span> in ${co.corrected.length} of ` +
-          `${co.corrected.length + nc.length} markers with steps (step at tile edges ${co.excessBeforeMedian} → ` +
-          `${co.excessAfterMedian} points, median). The numbers are corrected; the image is shown as recorded.` +
-          (nc.length ? ` <span class="qc-warn" title="${esc(nc.map((x) => `${x.name}: ${x.reason}`).join("\n"))}">Not correctable</span>: ` +
-                       `${esc(nc.map((x) => x.name).join(", "))} (kept in the UMAP; their clusters may still follow the tiles).` +
-                       (nc.filter((x) => /shading shared/.test(x.reason || "")).length
-                         ? ` For ${nc.filter((x) => /shading shared/.test(x.reason || "")).length} of them the seam is shading ` +
-                           `shared by every field (one side of every field brighter), which needs a flat-field correction (not built yet).` : "") : "");
-      })() : "",
-      `<i>${esc(I.note || "")}</i>`,
-    ].filter(Boolean);
-    $("qcSummary").innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
-    $("rowQcOutline").hidden = !((br.n || 0) + (ss.n || 0));
-    $("qcChannels").innerHTML = `<table class="qc-tab"><tr><th>Marker</th><th title="Off-tissue level (0–255)">Bg</th>` +
-      `<th title="(99.5th percentile − background) / background">Signal</th><th title="Share of tissue pixels at the detector's limit">Sat.</th>` +
-      `<th title="Tile seams: corrected (and how), or not correctable">Seams</th><th></th></tr>` +
-      ch.map((c) => `<tr class="${c.status === "ok" ? "" : "qc-" + c.status}"><td>${esc(c.name)}</td><td>${c.background.toFixed(1)}</td>` +
-        `<td>${c.signalToBackground.toFixed(0)}</td><td>${c.saturatedPct.toFixed(2)}%</td>` +
-        `<td class="${c.seams === "not correctable" ? "qc-warnc" : ""}">${esc(c.seams || "")}</td><td>${esc(QC_STATUS[c.status] || "")}</td></tr>`).join("") +
-      `</table>`;
-  }
-  async function qcSetOutline(on) {
-    const Q = S.qc;
-    Q.outline = !!on && !!Q.flags;
-    if (Q.outline && !Q.positions) {
-      const pos = S.tissue.positions && S.tissue.key === S.exprKey ? S.tissue.positions : await S.src.positions(S.exprKey);
-      const idx = [];
-      for (let i = 0; i < Q.flags.length; i++) if (Q.flags[i]) idx.push(i);
-      const xy = new Float32Array(idx.length * 2), col = new Uint8Array(idx.length * 4);
-      idx.forEach((i, k) => {
-        xy[2 * k] = pos[2 * i]; xy[2 * k + 1] = pos[2 * i + 1];
-        col.set(Q.flags[i] & 1 ? [255, 170, 40, 255] : [230, 60, 230, 255], 4 * k);   // orange: everything bright, magenta: saturated
-      });
-      Q.positions = { xy, col, n: idx.length };
-    }
-    render();
-  }
-  function qcLayer() {
-    const Q = S.qc;
-    if (!Q.outline || !Q.positions || Q.key !== S.exprKey) return null;
-    const e = currentExpr(), r = Math.max(0.5, e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4);
-    return new ScatterplotLayer({
-      id: `qc-${S.dsId}-${Q.key}`,
-      data: { length: Q.positions.n, attributes: { getPosition: { value: Q.positions.xy, size: 2 },
-                                                   getLineColor: { value: Q.positions.col, size: 4, normalized: true } } },
-      radiusUnits: "common", getRadius: r, filled: false, stroked: true,
-      lineWidthUnits: "pixels", getLineWidth: 1.5, parameters: NORMAL,
-    });
   }
 
   // ---- Tier A: region linking --------------------------------------------------------
@@ -2529,8 +2435,6 @@
             (R.info.qcRemoved ? ` · ${R.info.qcRemoved[i].toLocaleString()} removed by QC` : "") + `</small>`);
         const n = R ? R.info.kept[i] : s.bins;
         if (n > 0 && n < LASSO.smallShape) notes.push(`<small class="warn">too few bins for this shape to mean much</small>`);
-        const rr = L.prot && L.roi && L.roi.sig === lassoSig() && L.roi.key === S.exprKey ? L.roi.rows.find((x) => x.shape === i) : null;
-        if (rr) notes.push(`<small class="roi">${roiLine(rr)}</small>`);
       }
       if (s.missing) notes.push(`<small class="bad">data missing for part of this shape</small>`);
       const nt = notes.join("");
@@ -2581,11 +2485,7 @@
       $("lassoMsg").textContent = L.prot ? toProtWords(m) : isCells() ? toCellWords(m) : isRois() ? toRoiWords(m) : m;
     }
     $("lassoRun").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
-    $("lassoCompare").hidden = !L.prot;
-    $("lassoCompare").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoSaveCsv").disabled = !R;
-    buildRoiTable();
-    runSetsSync();                                 // merges a file or link carried, the Merge clusters of the run section
     if (window.SodaVolcano) window.SodaVolcano.refresh();
     if (window.SodaPlots) window.SodaPlots.refresh();
     if (window.SodaShapes) window.SodaShapes.refresh();
@@ -2670,10 +2570,9 @@
 
   // ---- each shape against the rest of the slide (marker squares) ---------------------
   // A circle's own UMAP can only tell its squares apart from each other: a marker that is high
-  // in every square drawn (CD45 over an immune-rich circle) differs nowhere inside it. So each
-  // shape is also set against the rest of the slide, marker by marker, from the slide-wide
-  // mean and sd that mat/index.json carries (older exports: worked out once from every chunk).
-  const lassoSig = () => S.lasso.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
+  // in every square drawn (CD45 over an immune-rich circle) differs nowhere inside it. So Run UMAP
+  // also sets the clusters' markers against the whole slide, from the slide-wide mean and sd that
+  // mat/index.json carries (older exports: worked out once from every chunk, lassoSlideStats).
 
   // the chunks with these keys, from the cache or the server (6 at a time)
   async function lassoFetch(keys) {
@@ -2718,7 +2617,7 @@
       return { mean: H.mean, sd: H.sd, rawMean: H.rawMean, n: H.nSquares || H.chunks.reduce((a, c) => a + c.n, 0), from: "index" };
     if (L.slideStats && L.slideStats.key === S.exprKey) return L.slideStats;
     const mb = H.chunks.reduce((a, c) => a + c.bytes, 0) / 1e6;
-    if (TOUCH && mb > 30) return { error: "This export has no slide-wide averages, and working them out needs more than a phone should download: compare on a computer, or re-export." };
+    if (TOUCH && mb > 30) return { error: "This export has no slide-wide averages, and working them out needs more than a phone should download: run it on a computer, or re-export." };
     say(`This export has no slide-wide averages yet: reading every square once (${mb.toFixed(0)} MB)…`);
     const all = H.chunks.map((c) => `${c.tx}_${c.ty}`);
     let { missing } = await lassoFetch(all);
@@ -2736,106 +2635,6 @@
     L.slideStats = { key: S.exprKey, mean, sd: mean.map((m, j) => Math.sqrt(Math.max(sxx[j] / n - m * m, 0))),
                      rawMean: Array.from(sv, (a) => a / n), n, from: "chunks" };
     return L.slideStats;
-  }
-
-  // per shape (and all shapes together): mean x and raw intensity inside, the same for the rest of
-  // the slide, z = (inside - rest) / the slide's sd, and the ratio of raw means. Every square of
-  // the shape counts (no sampling); a square in two shapes belongs to the one drawn last, as in the UMAP.
-  function lassoRoiCompare(bufs, st) {
-    const L = S.lasso, H = L.hvg, K = H.nChannels, xp = protXp(H), sc = H.scale, nS = L.shapes.length;
-    const n = new Float64Array(nS + 1), sx = new Float64Array((nS + 1) * K), sv = new Float64Array((nS + 1) * K);
-    protEach(bufs, K, (r, q, at) => {
-      const s = L.assign[r]; if (s === LASSO_NONE || s >= nS) return;
-      n[s]++; n[nS]++;
-      for (let j = 0; j < K; j++) { const v = q[at + j] / sc, x = xp(v, j); sx[s * K + j] += x; sv[s * K + j] += v; sx[nS * K + j] += x; sv[nS * K + j] += v; }
-    });
-    const live = L.shapes.map((_, i) => i).filter((i) => n[i] > 0);
-    const rows = [...live, ...(live.length > 1 ? [nS] : [])].map((i) => {
-      const k = n[i], rest = Math.max(st.n - k, 1), x = [], raw = [], xRest = [], rawRest = [], z = [], fold = [];
-      for (let j = 0; j < K; j++) {
-        x.push(sx[i * K + j] / k); raw.push(sv[i * K + j] / k);
-        xRest.push((st.mean[j] * st.n - sx[i * K + j]) / rest); rawRest.push((st.rawMean[j] * st.n - sv[i * K + j]) / rest);
-        z.push(st.sd[j] > 0 ? (x[j] - xRest[j]) / st.sd[j] : 0);
-        fold.push(rawRest[j] > 0 ? raw[j] / rawRest[j] : null);
-      }
-      return { shape: i === nS ? -1 : i, n: k, x, raw, xRest, rawRest, z, fold };
-    });
-    L.roi = { sig: lassoSig(), key: S.exprKey, channels: H.channels, nSlide: st.n, from: st.from, rows };
-    if (L.roiPick === undefined || !rows.some((r) => r.shape === L.roiPick)) L.roiPick = rows.length ? rows[0].shape : null;
-  }
-
-  // "Compare with the slide" on its own: the chunks under the shapes and the table, no UMAP
-  async function lassoCompareOnly() {
-    const L = S.lasso;
-    if (L.running || !L.prot || !L.hvg || !L.assign) return;
-    const msg = (t, err) => { $("lassoMsg").textContent = t; $("lassoMsg").style.color = err ? "#ff8f8f" : ""; };
-    if (!L.shapes.some((s) => s.bins > 0)) { msg("Draw a shape over tissue first.", true); return; }
-    const keys = new Set();
-    for (let i = 0; i < L.assign.length; i++) if (L.assign[i] !== LASSO_NONE) keys.add(lassoChunkOf(L.pos[2 * i], L.pos[2 * i + 1], L.hvg.chunkPx));
-    L.running = true; buildLassoUI();
-    try {
-      msg(`Fetching ${keys.size} data chunk(s)…`);
-      const { bufs, missing } = await lassoFetch([...keys]);
-      const st = await lassoSlideStats(msg);
-      if (st.error) { msg(st.error, true); return; }
-      lassoRoiCompare(bufs, st);
-      msg(missing.length ? `Compared with the rest of the slide; ${missing.length} chunk(s) could not be loaded, so part of a shape is missing.` : "Compared with the rest of the slide.");
-    } finally { L.running = false; buildLassoUI(); }
-  }
-
-  // raised / lowered only when the raw ratio and z (background off, asinh) agree on the direction
-  const roiAgree = (r, j) => r.fold[j] == null || (r.z[j] > 0) === (r.fold[j] > 1);
-
-  function roiTxt(r, j) {
-    const f = r.fold[j];
-    return f == null ? `z ${r.z[j] >= 0 ? "+" : ""}${r.z[j].toFixed(1)}` : f >= 10 ? `×${f.toFixed(0)}` : `×${f.toFixed(1)}`;
-  }
-
-  // one line per shape in the list: the markers that set it apart most
-  function roiLine(r) {
-    const ch = S.lasso.roi.channels, ord = ch.map((_, j) => j).sort((a, b) => r.z[b] - r.z[a]);
-    const up = ord.filter((j) => r.z[j] >= 0.5 && roiAgree(r, j)).slice(0, 4), down = ord.filter((j) => r.z[j] <= -0.5 && roiAgree(r, j)).reverse().slice(0, 2);
-    if (!up.length && !down.length) return "vs rest of slide: no marker differs by half a standard deviation";
-    return "vs rest of slide:" + (up.length ? " ↑ " + up.map((j) => `${escHtml(ch[j])} ${roiTxt(r, j)}`).join(", ") : "") +
-      (down.length ? `${up.length ? " ·" : ""} ↓ ` + down.map((j) => `${escHtml(ch[j])} ${roiTxt(r, j)}`).join(", ") : "");
-  }
-
-  // the full table for the picked shape, every marker, most raised first
-  function buildRoiTable() {
-    const L = S.lasso, box = $("lassoRoi");
-    const R = L.roi && L.roi.sig === lassoSig() && L.roi.key === S.exprKey ? L.roi : null;
-    box.hidden = !L.prot || !R || !R.rows.length;
-    if (box.hidden) return;
-    const nameOf = (i) => (i === -1 ? "All shapes together" : L.shapes[i] ? L.shapes[i].name : `Shape ${i + 1}`);
-    const u = isCells() ? "cell" : "square";       // a lab's own cells of the image, or the grid's squares
-    const sel = $("lassoRoiPick");
-    sel.innerHTML = "";
-    for (const r of R.rows) { const o = document.createElement("option"); o.value = r.shape; o.textContent = `${nameOf(r.shape)} (${r.n.toLocaleString()} ${u}s)`; sel.appendChild(o); }
-    sel.value = L.roiPick;
-    const r = R.rows.find((x) => x.shape === L.roiPick) || R.rows[0];
-    const ord = R.channels.map((_, j) => j).sort((a, b) => r.z[b] - r.z[a]);
-    $("lassoRoiTable").innerHTML = `<table><thead><tr><th>Marker</th><th title="Mean intensity of the shape's ${u}s (0-255, as the image)">Inside</th>` +
-      `<th title="Mean intensity of every other tissue ${u} on the slide">Rest</th><th title="Inside / rest">Ratio</th>` +
-      `<th title="(inside - rest) in the slide's standard deviations, on the scaled values the UMAP uses">z</th></tr></thead><tbody>` +
-      ord.map((j) => `<tr class="${Math.abs(r.z[j]) < 0.25 || !roiAgree(r, j) ? "dim" : r.z[j] > 0 ? "up" : "down"}"><td>${escHtml(R.channels[j])}</td>` +
-        `<td>${protVal(r.raw[j])}</td><td>${protVal(r.rawRest[j])}</td><td>${r.fold[j] == null ? "–" : r.fold[j].toFixed(2)}</td>` +
-        `<td>${r.z[j] >= 0 ? "+" : ""}${r.z[j].toFixed(2)}</td></tr>`).join("") + `</tbody></table>`;
-    $("lassoRoiNote").textContent = `${r.n.toLocaleString()} ${u}s inside, ${(R.nSlide - r.n).toLocaleString()} in the rest of the slide` +
-      (R.from === "chunks" ? " (slide averages worked out in this browser: the export predates them). " : ". ") +
-      `Ratio = mean intensity inside / rest. z = the difference on the scale the UMAP uses (${L.hvg.normalize === "bg-asinh-v1" ? "background off, asinh" : "1st–99.5th percentile window"}), ` +
-      "in the slide's standard deviations. Grey: under 0.25, or ratio and z disagree on the direction.";
-  }
-
-  function lassoSaveRoiCsv() {
-    const L = S.lasso, R = L.roi; if (!R) return;
-    const q = (t) => `"${String(t).replace(/"/g, '""')}"`, f = (x, d) => (x == null ? "" : (+x).toFixed(d));
-    const lines = ["dataset,layer,shape,squares_inside,squares_rest,marker,mean_inside,mean_rest,ratio,z_vs_rest,scaled_inside,scaled_rest"];
-    for (const r of R.rows) {
-      const nm = r.shape === -1 ? "All shapes together" : L.shapes[r.shape].name;
-      R.channels.forEach((c, j) => lines.push([S.dsId, S.exprKey, q(nm), r.n, R.nSlide - r.n, q(c), f(r.raw[j], 3), f(r.rawRest[j], 3),
-        f(r.fold[j], 4), f(r.z[j], 4), f(r.x[j], 5), f(r.xRest[j], 5)].join(",")));
-    }
-    lassoDownload(`${S.dsId}_${S.exprKey}_shapes_vs_slide.csv`, lines.join("\n") + "\n", "text/csv");
   }
 
   async function lassoRun() {
@@ -2869,7 +2668,7 @@
     L.running = true; $("lassoCancel").hidden = false; buildLassoUI();
     lassoWake(true);
     // started now, so it loads umap-js while the chunks download
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117b");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261119s3");
     msg(`Fetching ${need.size} data chunk(s)…`);
     const { bufs, missing } = await lassoFetch([...need.keys()]);
     if (!L.running) return;                         // cancelled while fetching
@@ -2886,7 +2685,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261117b");
+    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261119s3");
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const sampling = L.prot ? "exact" : L.sampling || "auto";
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
@@ -2924,7 +2723,7 @@
              (I.stability != null ? `, stability ${I.stability.toFixed(2)}.` : ".") :
              mode === "bins" && clustering ? "No clusters came back (this worker version does not cluster yet)." : "",
            cluster ? lassoStabilityNote(I) : "",
-           L.prot && L.roiError ? `Not compared with the rest of the slide: ${L.roiError}` : "",
+           L.prot && L.roiError ? `Markers not set against the whole slide: ${L.roiError}` : "",
            I.qcRemoved ? `QC filter: left out ${I.qcRemoved.reduce((a, b) => a + b, 0).toLocaleString()} bins (${qcTxt}).` : "",
            qcNote,
           ].filter(Boolean).join("\n"));
@@ -2938,7 +2737,7 @@
       st = await lassoSlideStats(msg);
       if (!L.running) return;                       // cancelled meanwhile
       if (st.error) { L.roiError = st.error; st = null; }
-      else { L.roiError = null; lassoRoiCompare(bufs, st); buildLassoUI(); }
+      else L.roiError = null;
     }
     msg("Computing…");
     const protein = L.prot ? { channels: H.channels, p1: H.p1, p99_5: H.p99_5, median: H.median, scale: H.scale,
@@ -3112,17 +2911,14 @@
     const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     if (byCl) {
       // one row per cluster with its top markers; click lights its bins on the slide
-      // merged clusters (Merge clusters of the run): a set in its lowest member's row, the other members left out
-      const sizes = R.setSizes || I.clusterSizes || (() => { const z = new Array(I.nClusters).fill(0); for (const c of R.cluster) if (c < z.length) z[c]++; return z; })();
-      const gone = R.setGone, heads = gone ? new Set(R.sets.map((s) => s.ids[0])) : null, mkOf = R.setMarkers || I;
+      const sizes = I.clusterSizes || (() => { const z = new Array(I.nClusters).fill(0); for (const c of R.cluster) if (c < z.length) z[c]++; return z; })();
       const ct = I.celltypes && Array.isArray(I.celltypes.clusters) ? I.celltypes : null;
-      const sug = (c) => (ct && !(heads && heads.has(c)) && ct.clusters[c]) || null;      // a set: no one cluster's suggestion
+      const sug = (c) => (ct && ct.clusters[c]) || null;
       const vsSlide = !!I.markersVsSlide && L.mkVs !== "shapes";
       $("lpMkVs").hidden = !I.markersVsSlide;
       $("lpMkVs").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === (vsSlide ? "slide" : "shapes")));
       clusterLegend($("lpLegend"), {
-        n: I.nClusters, sizes, markers: (vsSlide ? mkOf.markersVsSlide : mkOf.markers) || [], picked: L.selCluster,
-        skip: gone ? (c) => gone.has(c) : null,
+        n: I.nClusters, sizes, markers: (vsSlide ? I.markersVsSlide : I.markers) || [], picked: L.selCluster,
         markerTitle: L.prot ? (vsSlide
           ? "Top markers against the whole slide (the cluster's mean, in the slide's standard deviations; share of its squares above the marker's typical level):\n"
           : "Top markers against the other squares drawn (how much higher than in the rest of the shapes, in their standard deviations; share of its squares above the marker's typical level):\n") : null,
@@ -3138,7 +2934,7 @@
         onAccept: (c, t) => { L.clNames[c] = t; renderLassoPanel(); },
         acceptAll: (count) => {
           const todo = [];
-          for (let c = 0; c < I.nClusters; c++) { const s = sug(c); if (s && s.confidence === "high" && !L.clNames[c] && !(gone && gone.has(c))) todo.push([c, s.suggest]); }
+          for (let c = 0; c < I.nClusters; c++) { const s = sug(c); if (s && s.confidence === "high" && !L.clNames[c]) todo.push([c, s.suggest]); }
           if (!count) { todo.forEach(([c, t]) => (L.clNames[c] = t)); renderLassoPanel(); }
           return todo.length;
         },
@@ -3155,113 +2951,6 @@
         `${I.stability != null ? `, stability ${I.stability.toFixed(2)}` : ""}` : ""}. ` +
       `Drag ${L.lpTool === "free" ? "a loop" : "a box"} to select (Shift or + adds) · click a point to pick its ${byCl ? "cluster" : "shape"} · ` +
       `Show on slide (above the picture) frames the picked squares · scroll to zoom.`;
-    if (window.SodaSets && window.SodaSets.region) window.SodaSets.region.refresh();   // a name given in the legend
-  }
-
-  // ---- merged clusters of a Draw a region run (cellsets.js: SodaSets.region, the Merge clusters of the run section) ----
-  // As the whole section's cell sets: a set takes the number, colour and name entry of its lowest member. R.sets holds
-  // the sets, R.clRaw the run's own codes (kept from the first merge on) and R.cluster the codes with the sets applied,
-  // so the run's panel, the slide, the volcano and plot groups and Save CSV follow; R.setsVer marks a volcano or plot
-  // made before a merge as out of date. A new run starts without sets. Works on whatever codes the run produced.
-  function runSetsApply(R) {
-    const sets = R.sets || [];
-    if (!R.clRaw) { if (!sets.length) return; R.clRaw = R.cluster; }
-    const raw = R.clRaw;
-    let arr = raw;
-    if (sets.length) {
-      const to = new Map();
-      for (const s of sets) for (const c of s.ids) to.set(c, s.ids[0]);
-      arr = new raw.constructor(raw.length);
-      for (let j = 0; j < raw.length; j++) { const h = to.get(raw[j]); arr[j] = h === undefined ? raw[j] : h; }
-    }
-    R.cluster = arr;
-    const K = R.info.nClusters || 0, z = new Array(K).fill(0);
-    for (let j = 0; j < arr.length; j++) if (arr[j] < K) z[arr[j]]++;
-    R.setSizes = sets.length ? z : null;
-    R.setGone = sets.length ? new Set(sets.flatMap((s) => s.ids.slice(1))) : null;
-    // a set's top markers: its members' in turn, names only (their numbers belong to the members alone)
-    const mix = (mk) => {
-      if (!sets.length || !Array.isArray(mk)) return mk;
-      const out = mk.slice();
-      for (const s of sets) {
-        const lists = s.ids.map((k) => mk[k] || []), seen = new Set(), m = [];
-        for (let i = 0; m.length < 20 && lists.some((l) => i < l.length); i++) for (const l of lists) {
-          const g = l[i] && (typeof l[i] === "string" ? l[i] : l[i].gene);
-          if (g != null && !seen.has(g)) { seen.add(g); m.push({ gene: g }); }
-        }
-        out[s.ids[0]] = m;
-      }
-      return out;
-    };
-    R.setMarkers = sets.length ? { markers: mix(R.info.markers), markersVsSlide: mix(R.info.markersVsSlide) } : null;
-  }
-  // what cellsets.js works on: the run's codes as one "clustering" (key "run")
-  function runSetsU(R) {
-    if (!R.setsU) {
-      R.sets = R.sets || []; R.setsVer = R.setsVer || 0;
-      R.setsU = {
-        sets: { run: R.sets }, hidden: new Set(), pos: null,
-        get names() { return { run: S.lasso.clNames }; },
-        get cl() { return R.cluster; },
-        get clRaw() { return new Map([["run", R.clRaw || R.cluster]]); },
-        get setsVer() { return R.setsVer; },
-        get pick() { return S.lasso.selCluster; }, set pick(v) { S.lasso.selCluster = v; },
-      };
-    }
-    return R.setsU;
-  }
-  const runSetsOk = () => { const L = S.lasso, R = L && L.result; return !!(R && R.cluster && R.info.mode === "bins" && R.layer === S.exprKey && !$("panelLasso").hidden); };
-  function runSetsChanged() {
-    const L = S.lasso, R = L.result; if (!R || !R.setsU) return;
-    R.sets = (R.setsU.sets.run || []).map((s) => s);
-    R.setsU.sets.run = R.sets;
-    R.setsVer++;
-    runSetsApply(R);
-    lassoRefresh(); buildLassoUI();
-  }
-  // a file or a link carried merges of a run: kept until a run whose own cluster sizes match those saved
-  // (the same shapes, seed and resolution give the same clusters), then applied once; otherwise said and dropped.
-  // Fast mode's clusters are the sample's, voted onto the other bins: merges made on a fast-mode run go only to a
-  // fast-mode run of the same sample (its size, of how many bins, and a hash of its bin rows), and merges made on
-  // every bin only to a run on every bin (runLayoutOf; a merge saved without it was made on every bin)
-  function runLayoutOf(R) {
-    const F = R && R.info && R.info.fast;
-    if (!F || !F.isSample) return { sampling: "exact" };
-    let h = 0x811c9dc5;
-    for (let j = 0; j < R.rows.length; j++) if (F.isSample[j]) h = Math.imul(h ^ R.rows[j], 0x01000193) >>> 0;
-    return { sampling: "fast", sample: { n: F.sample, of: F.of, hash: h } };
-  }
-  function runSetsSave(R) {
-    if (!R || !R.cluster || !R.sets || !R.sets.length) return null;
-    const raw = R.clRaw || R.cluster, K = R.info.nClusters || 0, z = new Array(K).fill(0);
-    for (let j = 0; j < raw.length; j++) if (raw[j] < K) z[raw[j]]++;
-    return { sizes: z, ...runLayoutOf(R), sets: R.sets.map((s) => ({ ids: s.ids.slice(), prev: s.prev == null ? null : s.prev, name: S.lasso.clNames[s.ids[0]] || null })) };
-  }
-  function runSetsPending() {
-    const L = S.lasso, R = L.result, p = L.pendingRunSets;
-    if (!p || !R || !R.cluster || R.id <= p.at || R.sets && R.sets.length) return;
-    L.pendingRunSets = null;
-    const K = R.info.nClusters || 0, z = new Array(K).fill(0);
-    for (let j = 0; j < R.cluster.length; j++) if (R.cluster[j] < K) z[R.cluster[j]]++;
-    const sets = window.SodaSets && window.SodaSets.region ? window.SodaSets.region.cleanList(p.sets).filter((s) => s.ids.every((k) => k < K)) : [];
-    const lay = runLayoutOf(R), ps = p.sample || {}, was = p.sampling || "exact";
-    const sameLayout = was === lay.sampling && (lay.sampling === "exact" || (ps.n === lay.sample.n && ps.of === lay.sample.of && ps.hash === lay.sample.hash));
-    const same = sameLayout && Array.isArray(p.sizes) && p.sizes.length === K && p.sizes.every((n, k) => n === z[k]);
-    if (!same || !sets.length) {
-      $("lassoMsg").textContent += !sameLayout
-        ? `\nThe merged clusters saved with this view were not applied: they were made on ${was === "fast" ? "a fast-mode run (a sample's clusters)" : "a run on every bin"}, and this run ${lay.sampling === "fast" ? (was === "fast" ? "has another sample" : "is in fast mode") : "is on every bin"}.`
-        : `\nThe merged clusters saved with this view were not applied: this run's clusters are not the ones they were made from.`;
-      return;
-    }
-    runSetsU(R);
-    for (const s of sets) { const x = p.sets.find((y) => Array.isArray(y.ids) && y.ids.length && Math.min(...y.ids) === s.ids[0]); if (x && typeof x.name === "string" && x.name) L.clNames[s.ids[0]] = x.name.slice(0, 60); }
-    R.setsU.sets.run = sets;
-    runSetsChanged();
-    $("lassoMsg").textContent += `\nMerged clusters from the saved view: ${sets.length} ${sets.length === 1 ? "set" : "sets"}.`;
-  }
-  function runSetsSync() {
-    runSetsPending();
-    if (window.SodaSets && window.SodaSets.region) window.SodaSets.region.refresh();
   }
 
   function lassoPickCluster(c) {
@@ -3320,10 +3009,7 @@
                                       markers: R.info.markers || null,
                                       markersVsSlide: R.info.markersVsSlide || null,
                                       // bin row (positions.bin order, never a barcode) and its cluster
-                                      // the run's own clusters; merges are in runSets
-                                      rows: Array.from(R.rows), cluster: Array.from(R.clRaw || R.cluster) } : {}) } : null,
-      // clusters of the run merged into sets (Merge clusters of the run), with the run's cluster sizes they were made on
-      ...(runSetsSave(R) ? { runSets: runSetsSave(R) } : {}),
+                                      rows: Array.from(R.rows), cluster: Array.from(R.cluster) } : {}) } : null,
       // the whole-section clustering, if one is shown: its resolution and any names given to clusters
       sectionClusters: umapSaveState(),
       // the per-bin QC thresholds the result was computed with (null = no filter)
@@ -3348,19 +3034,14 @@
     const q = (x) => `"${String(x).replace(/"/g, '""')}"`;
     const lines = [];
     if (R.info.mode === "bins") {
-      // merged clusters (Merge clusters of the run): cluster and cluster_name are the run's own, set and set_name the
-      // set each one is in (a set: its lowest member's number and the name given to it); without merges as before
-      const merged = !!(R.sets && R.sets.length && R.clRaw), cl = merged ? R.clRaw : R.cluster;
-      const prev = merged ? new Map(R.sets.map((s) => [s.ids[0], s.prev])) : null;
-      const own = (c) => (prev && prev.has(c) ? prev.get(c) || `Cluster ${c}` : L.clNames[c] || `Cluster ${c}`);
+      const cl = R.cluster, own = (c) => L.clNames[c] || `Cluster ${c}`;
       // fast mode: in_umap_sample 1 = laid out (and clustered) in the sample, 0 = placed by its nearest sample bins
       const fs = R.info.fast ? R.info.fast.isSample : null;
-      lines.push("bin_row,x_px,y_px,shape,umap_x,umap_y" + (cl ? ",cluster,cluster_name,leiden_resolution" : "") + (merged ? ",set,set_name" : "") + (fs ? ",in_umap_sample" : ""));
+      lines.push("bin_row,x_px,y_px,shape,umap_x,umap_y" + (cl ? ",cluster,cluster_name,leiden_resolution" : "") + (fs ? ",in_umap_sample" : ""));
       for (let j = 0; j < R.rows.length; j++) {
         const r = R.rows[j], none = cl && cl[j] === LASSO_NONE;
         lines.push(`${r},${L.pos[2 * r].toFixed(2)},${L.pos[2 * r + 1].toFixed(2)},${q(L.shapes[R.shape[j]].name)},${R.emb[2 * j]},${R.emb[2 * j + 1]}` +
           (cl ? `,${none ? "" : cl[j]},${none ? "" : q(own(cl[j]))},${R.resolution}` : "") +
-          (merged ? `,${none ? "" : R.cluster[j]},${none ? "" : q(L.clNames[R.cluster[j]] || `Cluster ${R.cluster[j]}`)}` : "") +
           (fs ? `,${fs[j] ? 1 : 0}` : ""));
       }
     } else {
@@ -3399,8 +3080,6 @@
     if (Number.isInteger(j.seed)) $("lassoSeed").value = j.seed;
     if (Number.isFinite(j.resolution) || j.resolution === "auto") $("lassoRes").value = j.resolution;
     umapLoadState(j.sectionClusters);
-    // merged clusters of the run: applied to the next run whose clusters are the ones they were made on (runSetsPending)
-    L.pendingRunSets = j.runSets && Array.isArray(j.runSets.sets) && j.runSets.sets.length ? { ...j.runSets, at: Date.now() } : null;
     L.qcNote = binQc ? binQc.setState(j.qcFilter || null) : null;   // a file without qcFilter = no filter
     if (j.mode === "bins" || j.mode === "shapes") $("lassoMode").value = j.mode;
     if (canDraw && Array.isArray(j.shapes)) lassoShapesChanged();
@@ -3412,8 +3091,7 @@
     }
     if (ownNotes.length) notes = [...ownNotes, ...(notes || [])];
     if (run) lassoRun();
-    else if (canDraw && L.shapes.length) notes.push("The drawn shapes are back: press Run UMAP (Analyze tab) for their UMAP" +
-      (L.pendingRunSets ? " (its merged clusters come back with it)." : "."));
+    else if (canDraw && L.shapes.length) notes.push("The drawn shapes are back: press Run UMAP (Analyze tab) for their UMAP.");
     return notes;
   }
 
@@ -3424,9 +3102,6 @@
     $("lassoFree").onclick = () => lassoSetTool("free");
     $("lassoClear").onclick = () => { S.lasso.shapes = []; S.lasso.next = 1; S.lasso.selShape = null; lassoShapesChanged(); };
     $("lassoRun").onclick = lassoRun;
-    $("lassoCompare").onclick = lassoCompareOnly;
-    $("lassoRoiPick").onchange = (e) => { S.lasso.roiPick = Number(e.target.value); buildRoiTable(); };
-    $("lassoRoiCsv").onclick = lassoSaveRoiCsv;
     $("lpMkVs").onclick = (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.lasso.mkVs = v; renderLassoPanel(); };
     $("lassoCancel").onclick = () => { lassoCancel(); $("lassoMsg").textContent = "Cancelled."; buildLassoUI(); };
     $("lassoMode").onchange = () => { if (S.lasso.result) lassoRun(); };
@@ -3519,9 +3194,7 @@
     tissueVs: null, umapVs: null, sideVs: null, anim: null, lastFly: null, rowOf: null, mix: null, ver: 0,
     cloud: new Map(), drawn: new Map(), busy: null,
     // suggested cell types: celltypes.json (per clustering), celltype.bin (per bin), a picked type
-    ctInfo: null, ctTried: false, ct: null, ctCounts: null, ctPick: null,
-    // gating: a highlighted phenotype (rule index, or GATE_NONE for Unassigned)
-    phPick: null });
+    ctInfo: null, ctTried: false, ct: null, ctCounts: null, ctPick: null });
   const inUmap = () => !!(S.umap && S.umap.view === "umap" && S.mode !== "rna");
   const umapSbs = () => !!(S.umap && S.umap.view === "sbs" && S.mode !== "rna");
   const umapMeta = () => { const e = S.m && S.mode !== "rna" ? currentExpr() : null; if (!e) return null; if (e.umap) return e.umap; const R = ownCur(); return R ? R.meta : null; };
@@ -3632,7 +3305,6 @@
     const U = S.umap; if (!U) return;
     if (U.clRaw.has(ck)) clSetsApply(U, ck);
     U.setsVer++;
-    if (S.gate) S.gate.clT = null;
     umapDirty(); syncUmapUI(); render();
     if (window.SodaVolcano) window.SodaVolcano.refresh();          // their group menus list the sets
     if (window.SodaPlots) window.SodaPlots.refresh();
@@ -3778,7 +3450,7 @@
     const old = S.umap, was = old.view;
     umapSetTool(null);
     const U = S.umap = umapBlank();
-    U.colorBy = old.colorBy === "phenotype" ? "gene" : old.colorBy; U.tissueVs = was === "umap" ? old.tissueVs : S.viewState;
+    U.colorBy = old.colorBy; U.tissueVs = was === "umap" ? old.tissueVs : S.viewState;
     if (umapAvail()) {
       U.key = S.exprKey;
       const m = umapMeta(), list = m.clusterings || [];
@@ -3945,10 +3617,6 @@
     if (U.sel) return (r) => U.sel[r] === 1;
     if (U.pick !== null && U.cl) return (r) => U.cl[r] === U.pick;
     if (umapCtLit()) return (r) => U.ct[r] === U.ctPick;
-    if (umapPhLit()) { const calls = S.gate.calls, k = U.phPick; return (r) => calls[r] === k; }
-    // gating preview: the squares above the cut-off light up in the UMAP (on the slide the
-    // preview draws its own outlines)
-    if (where !== "tissue" && gatePreviewOn()) { const v = S.gate.vals.get(S.gate.cur), t = S.gate.cut.get(S.gate.cur).v; return (r) => v[r] > t; }
     // a shape, brushed points or a cluster picked in Circle -> UMAP light up in the UMAP too;
     // on the slide the circle tool draws its own highlight, and the section's cluster colours
     // under it dim (same palette: undimmed, panel cluster 0 and section cluster 0 read as one)
@@ -4079,12 +3747,11 @@
   //   where = "fly":    every bin, slide place + UMAP place (for FlyScatterLayer)
   function umapCloud(where) {
     const U = S.umap, N = U.pos.length / 2, lit = umapLit(where), byCl = umapByCluster(), byCt = !byCl && umapByType();
-    const byPh = !byCl && !byCt && umapByPh(), calls = byPh ? S.gate.calls : null;
-    const mix = byCl || byCt || byPh ? null : umapGeneMix();
-    const key = `${where}|${U.key}|${U.ver}|${byCl ? U.clRes : byCt ? "ct" : byPh ? "ph" + S.gate.ver : "g"}|${mix ? mix.key : ""}|${[...U.hidden].join(",")}|${lit ? 1 : 0}`;
+    const mix = byCl || byCt ? null : umapGeneMix();
+    const key = `${where}|${U.key}|${U.ver}|${byCl ? U.clRes : byCt ? "ct" : "g"}|${mix ? mix.key : ""}|${[...U.hidden].join(",")}|${lit ? 1 : 0}`;
     const hit = U.cloud.get(where);
     if (hit && hit.key === key) return hit;
-    if (where === "tissue" && !byCl && !byCt && !byPh && !lit) { const c = { key, n: 0 }; U.cloud.set(where, c); return c; }
+    if (where === "tissue" && !byCl && !byCt && !lit) { const c = { key, n: 0 }; U.cloud.set(where, c); return c; }
     // counting sort on a 0..511 bucket: expression strength, +256 when lit
     const bucket = new Uint16Array(N), keep = new Uint8Array(N), start = new Uint32Array(513);
     let n = 0;
@@ -4093,11 +3760,9 @@
       let b = 0;
       if (byCl) { const c = U.cl[r]; if (U.hidden.has(c) || (c === UMAP_NONE && where !== "fly")) continue; }
       else if (byCt) { if (U.ct[r] === CT_OUT && where !== "fly") continue; }
-      // phenotypes: Unassigned squares are left off the slide, so the stains show through them
-      else if (byPh) { if (where === "tissue" && calls[r] === GATE_NONE && !(lit && lit(r))) continue; }
       else if (mix && mix.t[r] >= 0) b = 1 + Math.min(254, Math.round(mix.t[r] * 254));
       const l = lit ? lit(r) : false;
-      if (where === "tissue" && !byCl && !byCt && !byPh && !l) continue;
+      if (where === "tissue" && !byCl && !byCt && !l) continue;
       if (l) b += 256;
       keep[r] = 1; bucket[r] = b; start[b + 1]++; n++;
     }
@@ -4119,7 +3784,6 @@
       if (lit && !l) c = UMAP_GREY;               // a faded cluster colour still read as the cluster in a dense UMAP
       else if (byCl) c = sectionRgb(U.cl[r]);
       else if (byCt) c = ctRgb(U.ct[r]);
-      else if (byPh) c = gateRuleRgb(calls[r]);
       else if (mix && mix.t[r] >= 0) c = [mix.rgb[3 * r], mix.rgb[3 * r + 1], mix.rgb[3 * r + 2]];
       else c = l ? (where === "tissue" ? UMAP_SEL : UMAP_LIT_GREY) : UMAP_GREY;
       col[4 * j] = c[0]; col[4 * j + 1] = c[1]; col[4 * j + 2] = c[2];
@@ -4262,7 +3926,6 @@
     const U = S.umap, parts = [], prot = isProt();
     if (U.cl) parts.push(U.cl[r] === UMAP_NONE ? (prot ? "No cluster (low signal: not in the UMAP)" : "No cluster (too few counts)") : umapName(U.cl[r]));
     if (umapByType() && U.ct[r] !== CT_OUT) parts.push(`Suggested type: ${ctName(U.ct[r])}`);
-    if (gateOn() && S.gate.calls && r < S.gate.N) parts.push(`Phenotype: ${gatePhName(S.gate.calls[r])}`);
     if (!umapByCat()) {
       for (const g of S.genes) {
         if (g.visible === false) continue;
@@ -4280,12 +3943,12 @@
   function umapPick(c) {
     const U = S.umap;
     U.pick = c === null || c === undefined || U.pick === c ? null : c;
-    U.sel = null; U.selN = 0; U.ctPick = null; U.phPick = null;
+    U.sel = null; U.selN = 0; U.ctPick = null;
     umapDirty(); syncUmapUI(); render();
   }
   function umapClearSel() {
     const U = S.umap;
-    if (U) { U.sel = null; U.selN = 0; U.pick = null; U.ctPick = null; U.phPick = null; }
+    if (U) { U.sel = null; U.selN = 0; U.pick = null; U.ctPick = null; }
     lassoClearPick();
     if (U) { umapDirty(); syncUmapUI(); }
     render();
@@ -4340,11 +4003,11 @@
     await umapLoad();
     if (S.umap !== U || !U.pos || mask.length * 2 !== U.pos.length) return 0;
     let emb = 0; for (let r = 0; r < mask.length; r++) if (mask[r] && U.uxy[2 * r] === U.uxy[2 * r]) emb++;
-    U.sel = mask; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null; U.phPick = null;
+    U.sel = mask; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null;
     umapDirty(); syncUmapUI(); render();
     return showLitOnSlide();
   }
-  // whatever is lit: the section selection / cluster / type / phenotype, else the circle tool's pick
+  // whatever is lit: the section selection / cluster / type, else the circle tool's pick
   function showLitOnSlide() {
     const U = S.umap, L = S.lasso;
     const f = U && U.pos ? umapLit("tissue") : null;
@@ -4425,7 +4088,7 @@
     }
     let n = 0, emb = 0;
     for (let r = 0; r < N; r++) if (sel[r]) { n++; if (U.uxy && U.uxy[2 * r] === U.uxy[2 * r]) emb++; }
-    U.sel = n ? sel : null; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null; U.phPick = null;
+    U.sel = n ? sel : null; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null;
     umapDirty(); syncUmapUI(); render();
   }
   // The selection becomes one more Circle -> UMAP shape: a list of bins rather than an outline.
@@ -4615,7 +4278,7 @@
     : ctLut[t] || (ctLut[t] = liftForDark(t < CT_COLORS.length ? hexToRgb255(CT_COLORS[t]) : hslRgb((t * 137.508 + 40) % 360, 0.6, 0.6))));
   const umapCtAvail = () => { const m = umapMeta(); return !!(m && m.celltypes); };
   const umapByType = () => !!(S.umap && S.umap.colorBy === "celltype" && S.umap.ct);
-  const umapByCat = () => umapByCluster() || umapByType() || umapByPh();      // one colour per bin replaces the genes
+  const umapByCat = () => umapByCluster() || umapByType();      // one colour per bin replaces the genes
   // (none for a cell set: the suggestion was made for its lowest member alone)
   const umapSuggest = (c) => { const U = S.umap, a = U.ctInfo && U.ctInfo.byRes.get(U.clRes); return (a && a[c] && !clSetHead(c) && a[c]) || null; };
 
@@ -4680,7 +4343,7 @@
   function umapPickType(t) {
     const U = S.umap;
     U.ctPick = t === null || t === undefined || U.ctPick === t ? null : t;
-    U.pick = null; U.sel = null; U.selN = 0; U.phPick = null;
+    U.pick = null; U.sel = null; U.selN = 0;
     umapDirty(); syncUmapUI(); render();
   }
   const umapCtLit = () => !!(S.umap && S.umap.ctPick !== null && umapByType());
@@ -4710,32 +4373,9 @@
     }
   }
 
-  // Colour squares by "Phenotype": one row per rule, in rule order, then Unassigned
-  function phenoLegend(host) {
-    const U = S.umap, G = S.gate, W = wd(), esc = escHtml;
-    host.innerHTML = "";
-    const head = document.createElement("div");
-    head.className = "ct-head";
-    head.innerHTML = `<span>Your cell types: the first matching rule per ${W.bin} (Combine markers…)</span>`;
-    host.appendChild(head);
-    const ids = G.rules.map((_, i) => i).slice(0, GATE_NONE).concat([GATE_NONE]);
-    for (const k of ids) {
-      const bad = k !== GATE_NONE && gateRuleProblems(G.rules[k]).length > 0;
-      const [r, g, b] = gateRuleRgb(k), n = G.counts ? G.counts[k] : 0;
-      const row = document.createElement("div");
-      row.className = "cl-row" + (U.phPick === k ? " sel" : "") + (bad ? " off" : "");
-      row.innerHTML = `<span></span><i style="background:rgb(${r},${g},${b})"></i>` +
-        `<div class="cl-txt"><span class="nm">${esc(gatePhName(k))}</span><small>${bad ? "matches nothing yet: see its rule"
-          : `${n.toLocaleString()} ${W.bins} · ${G.N ? ((100 * n) / G.N).toFixed(1) : 0}%`}</small></div><span></span>`;
-      if (!bad) { row.title = `Click to highlight these ${W.bins} in every view.`; row.onclick = () => umapPickPh(k); }
-      host.appendChild(row);
-    }
-  }
-
   function buildUmapLegend() {
     const U = S.umap, host = $("clusterLegend"), info = umapClusterInfo();
     if (U.colorBy === "celltype" && U.ct && U.ctInfo) { typeLegend(host); return; }
-    if (U.colorBy === "phenotype" && umapByPh()) { phenoLegend(host); return; }
     if (U.colorBy !== "cluster" || !U.cl || !info) { host.innerHTML = ""; return; }
     let sizes = info.sizes;
     if (!sizes) { sizes = []; for (const c of U.cl) if (c !== UMAP_NONE) sizes[c] = (sizes[c] || 0) + 1; }
@@ -4786,7 +4426,7 @@
     // groupings without an embedding (GeoMx ROIs): the Tissue / UMAP switch has nothing to switch to
     const noEmb = ok && umapNoEmb();
     for (const el of $("viewSwitch").querySelectorAll(".seg, .fly-play, .fly-speed")) el.hidden = noEmb || !ok;
-    if (!ok) { $("selChip").hidden = !lpOnly; $("selChipTxt").textContent = lpOnly; syncGateColourOpt(); gateCountsRefresh(); if (window.SodaSets) window.SodaSets.refresh(); return; }
+    if (!ok) { $("selChip").hidden = !lpOnly; $("selChipTxt").textContent = lpOnly; if (window.SodaSets) window.SodaSets.refresh(); return; }
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === U.view));
     $("flyPlay").disabled = !!U.anim;
     const list = umapClusterings();
@@ -4795,7 +4435,6 @@
     $("colorBy").options[1].textContent = noEmb ? "Groups (annotation)" : list.some(clUser) ? "Clusters" : "Clusters (Leiden)";
     const ctOpt = $("colorBy").options[2], ctOk = umapCtAvail();      // older exports: no such option
     ctOpt.hidden = !ctOk; ctOpt.disabled = !ctOk;
-    syncGateColourOpt();
     const resSel = $("clusterRes");
     const opts = list.map((c) => `<option value="${escHtml(clKey(c))}">${escHtml(clLabel(c))} · ${c.n} ${clUser(c) ? "groups" : "clusters"}</option>`).join("");
     if (resSel.dataset.opts !== opts) { resSel.innerHTML = opts; resSel.dataset.opts = opts; }
@@ -4818,20 +4457,19 @@
         `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`
       : (nEmb ? `${nEmb.toLocaleString()} of the ${e.nBins.toLocaleString()} ${W.bins} (those with at least 10 ${countUnit()}${m.minHvgDetected ? ` and ${m.minHvgDetected} variable genes` : ""}) are in the UMAP. ` : "") +
         `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`;
-    const ctLit = umapCtLit(), phLit = umapPhLit(), has = !!(U.sel || U.pick !== null || ctLit || phLit);
+    const ctLit = umapCtLit(), has = !!(U.sel || U.pick !== null || ctLit);
     const lpTxt = !has ? lassoPickTxt() : "";
     $("selToShape").hidden = !U.sel || $("panelLasso").hidden;
     const selTxt = U.sel ? `${U.selN.toLocaleString()} ${U.selN === 1 ? W.bin : W.bins} selected` : U.pick !== null ? `${umapName(U.pick)} highlighted`
-      : ctLit ? `${ctName(U.ctPick)} highlighted` : phLit ? `${gatePhName(U.phPick)} highlighted` : "";
+      : ctLit ? `${ctName(U.ctPick)} highlighted` : "";
     $("selMsg").textContent = U.sel
       ? `${selTxt}, lit in every view` + (U.uxy && U.selEmb < U.selN
         ? ` (${U.selEmb.toLocaleString()} of them are in the UMAP; the others ${prot ? "are low signal (rims, gaps)" : "have too few counts"}).` : ".")
-      : U.pick !== null || ctLit || phLit ? `${selTxt} in every view.`
+      : U.pick !== null || ctLit ? `${selTxt} in every view.`
       : noEmb ? `Draw a box or a loop around ${W.bins} on the slide to select them.`
       : `Draw a box or a loop around dots, on the tissue or the UMAP, to light the same ${W.bins} in both.`;
     $("selChip").hidden = !has && !lpTxt;
     $("selChipTxt").textContent = selTxt || lpTxt;
-    gateCountsRefresh();
     if (window.SodaSets) window.SodaSets.refresh();
   }
 
@@ -4852,7 +4490,6 @@
     for (const ck of U.clRaw.keys()) clSetsApply(U, ck);
     if (U.pick !== null && U.cl && !U.cl.includes(U.pick)) U.pick = null;
     U.setsVer++;
-    if (S.gate) S.gate.clT = null;
     umapDirty(); syncUmapUI(); render();
   }
 
@@ -4870,7 +4507,6 @@
         try { await umapSetRes(U.res); }
         catch (err) { status(`Could not load clusters: ${err.message}`, true); setTimeout(() => status(null), 5000); U.colorBy = "gene"; }
       }
-      if (U.colorBy === "phenotype") { await gateSetColour(true); return; }
       if (U.colorBy === "celltype" && !U.ct) {
         try { await umapLoadTypes(); }
         catch (err) { status(`Could not load cell types: ${err.message}`, true); setTimeout(() => status(null), 5000); U.colorBy = "gene"; }
@@ -4892,7 +4528,7 @@
       if (e.key !== "Escape" || !S.umap) return;
       if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
       if (S.umap.tool) umapSetTool(null);
-      else if (S.umap.sel || S.umap.pick !== null || S.umap.ctPick !== null || S.umap.phPick != null) umapClearSel();
+      else if (S.umap.sel || S.umap.pick !== null || S.umap.ctPick !== null) umapClearSel();
     });
     // side by side, the circle -> UMAP panel takes the lower half of the UMAP pane: re-lay
     // the panes whenever it opens or closes
@@ -4917,827 +4553,6 @@
     });
   }
 
-  // ---- Counting tools for marker squares: % positive, counts per cluster, combined rules -----
-  // For an expression layer with one value per square per marker (protein grid). Each marker
-  // gets a cut-off on its squares' mean intensity (0-255, the image's own units): set by hand
-  // on a histogram, or from Otsu's suggestion with one click - never silently. Rules then
-  // name the squares: the FIRST rule (top to bottom) whose conditions all hold, else
-  // "Unassigned". Calls live per positions.bin row, so they colour, highlight and select
-  // through the same machinery as clusters, in every view.
-  // Only shown for protein layers for now; nothing here runs for a sequencing layer.
-  const GATE_VERSION = "20261102gate3";
-  const GATE_NONE = 255;                                   // calls: no rule matched
-  const GATE_COLORS = ["#ff7f0e", "#e6194b", "#3cb44b", "#4c8dff", "#f032e6", "#42d4f4", "#ffe119", "#b07cff",
-                       "#bfef45", "#fabed4", "#2ec4b6", "#dcbeff", "#c8a27a", "#aaffc3", "#ff9e9e", "#9fd3ff"];
-  const GATE_GREY = [120, 120, 120];
-  // A starting point drawn from common immune / vascular / nerve markers. Only rules whose
-  // markers are all on the panel are offered, and the panel is labelled "example".
-  // Order matters (first match wins): the more specific rule sits above the general one.
-  const GATE_EXAMPLES = [
-    ["Treg", ["CD45+", "CD4+", "FoxP3+"]],
-    ["Cytotoxic T cell", ["CD45+", "CD8+"]],
-    ["Helper T cell", ["CD45+", "CD4+"]],
-    ["B cell", ["CD45+", "CD19+"]],
-    ["Plasma cell", ["CD138+", "CD38+"]],
-    ["Macrophage", ["CD45+", "CD68+"]],
-    ["Dendritic cell", ["CD45+", "CD11c+", "HLA-DR+"]],
-    ["Lymphatic endothelium", ["CD45-", "CD31+", "Podoplanin+"]],
-    ["Endothelial", ["CD45-", "CD31+"]],
-    ["Axons (NF-L)", ["NF-L+"]],
-    ["Glia / Schwann (GFAP)", ["GFAP+"]],
-  ];
-  const GATE_GAP_DIP = 1.5, GATE_GAP_ETA = 0.7, GATE_POS_HI = 0.6, GATE_POS_LO = 0.005;
-  const gateBlank = () => ({ key: null, pos: null, N: 0, rowIdx: null, markers: [], vals: new Map(), info: new Map(),
-    cut: new Map(), rules: [], cur: null, preview: false, calls: null, counts: null, ver: 0,
-    source: null, busy: null, masks: new Map(), tableKey: "", table: null, posT: null, clT: null });
-  const gateOn = () => !!(S.gate && S.gate.key && S.gate.key === S.exprKey && isProt());
-  const gateFmt = (v) => (v == null ? "–" : v >= 100 ? v.toFixed(0) : v.toFixed(1));
-  const gateRuleRgb = (i) => (i === GATE_NONE || !S.gate.rules[i] ? GATE_GREY : hexToRgb255(S.gate.rules[i].hex));
-  const gatePhName = (i) => (i === GATE_NONE ? "Unassigned" : (S.gate.rules[i] && S.gate.rules[i].name) || `Rule ${i + 1}`);
-  // the outlines belong to the % positive tool, while it is open on a marker with a line
-  const gatePreviewOn = () => !!(gateOn() && S.gateUi && S.gateUi.open && S.gateUi.mode === "pos" &&
-    S.gate.preview && S.gate.cur && S.gate.cut.has(S.gate.cur) && S.gate.vals.has(S.gate.cur));
-  const umapByPh = () => !!(S.umap && S.umap.colorBy === "phenotype" && gateOn() && S.gate.calls);
-  const umapPhLit = () => !!(S.umap && S.umap.phPick != null && gateOn() && S.gate.calls);
-  function gateMsg(t) { $("gateMsg").textContent = t || ""; }
-
-  // Called when the expression layer changes (after the UMAP state is rebuilt).
-  async function gateOnLayer() {
-    S.gate = gateBlank();
-    const prot = isProt();
-    $("rowGateOpen").hidden = !prot;
-    $("gateOpenCl").hidden = !umapClusterings().length;
-    $("gatePub").hidden = true;
-    $("panelGate").hidden = !prot || !S.gateUi.open;
-    syncGateColourOpt();
-    if (!prot) return;
-    const G = S.gate, e = currentExpr();
-    G.key = S.exprKey;
-    G.markers = S.geneIndex.map((g) => g.n);
-    $("gateCaveat").textContent = e.kind === "cells"
-      ? "Cells from the lab's own segmentation: a cell's mean can take in a neighbour's signal at its edge."
-      : `Squares are ${e.binSizeUm ? `${e.binSizeUm} µm` : "small"} and can mix cells: counts are approximate.`;
-    if (S.gateUi.open) await gateOpenPanel(S.gateUi.mode);
-    // a lab can publish its cut-offs with the data: <dataset>/gates.json (absent = none, quietly)
-    const j = await gateFetchPublished();
-    if (S.gate !== G || !j) return;
-    if (j.layer && j.layer !== G.key) return;
-    await gateEnsurePos();
-    if (S.gate !== G) return;
-    if (await gateApply(j, "this dataset's gates.json (published with the data)")) $("gatePub").hidden = false;
-  }
-  // fetched once per dataset; only static exports have a dataset folder to look in
-  function gateFetchPublished() {
-    if (!S.src || !S.src.json) return Promise.resolve(null);
-    if (S.gatePub && S.gatePub.src === S.src) return S.gatePub.p;   // per source: a retired source never answers
-    const p = S.src.json("gates.json").catch(() => null);
-    S.gatePub = { ds: S.dsId, src: S.src, p };
-    return p;
-  }
-
-  // positions + one value per row for a marker. Gene files of a grid layer hold every square
-  // in positions.bin order; if one ever does not, rows are matched by coordinates.
-  async function gateEnsurePos() {
-    const G = S.gate;
-    if (G.pos) return G.pos;
-    if (!G.busy) G.busy = (async () => {
-      status(`Loading ${wd().bin} positions…`);
-      try {
-        const pos = S.umap && S.umap.pos && S.umap.key === S.exprKey ? S.umap.pos : await umapPositions();
-        if (S.gate !== G) return null;
-        G.pos = pos; G.N = pos.length / 2;
-        G.rowIdx = Array.from({ length: G.N }, (_, i) => i);
-        // the phenotype colours are drawn by the UMAP machinery, which needs the same rows
-        if (S.umap && !S.umap.pos) S.umap.pos = pos;
-        if (S.umap && !S.umap.key) S.umap.key = S.exprKey;
-        return pos;
-      } finally { status(null); G.busy = null; }
-    })();
-    return G.busy;
-  }
-  async function gateValues(name) {
-    const G = S.gate;
-    if (G.vals.has(name)) return G.vals.get(name);
-    await gateEnsurePos();
-    const shown = S.genes.find((g) => g.name === name);
-    let xyv = null, n, px;
-    if (shown) { n = shown.n; px = shown.positions; }
-    else {
-      status(`Loading ${name}…`);
-      try { xyv = await S.src.gene(S.exprKey, name); } finally { status(null); }
-      n = xyv.length / 3;
-    }
-    if (S.gate !== G) return null;
-    const N = G.N, P = G.pos, out = new Float32Array(N);
-    const X = (i) => (xyv ? xyv[3 * i] : px[2 * i]), Y = (i) => (xyv ? xyv[3 * i + 1] : px[2 * i + 1]);
-    const V = (i) => (xyv ? xyv[3 * i + 2] : shown.values[i]);
-    let same = n === N;
-    for (let i = 0; same && i < n; i++) if (X(i) !== P[2 * i] || Y(i) !== P[2 * i + 1]) same = false;
-    if (same) for (let i = 0; i < N; i++) out[i] = V(i);
-    else {
-      const m = new Map();
-      for (let r = 0; r < N; r++) m.set(ukey(P[2 * r], P[2 * r + 1]), r);
-      for (let i = 0; i < n; i++) { const r = m.get(ukey(X(i), Y(i))); if (r !== undefined) out[r] = V(i); }
-    }
-    G.vals.set(name, out);
-    G.info.set(name, gateStats(out));
-    return out;
-  }
-
-  // Otsu's threshold over the tissue squares (256 bins up to the 99.9th percentile, the very
-  // brightest clipped into the top bin), plus two plain checks on whether it means anything:
-  //   eta  = between-class / total variance at that threshold (1 = two perfectly separate groups)
-  //   dip  = is there a valley? the highest bar above the threshold vs the lowest bar between
-  //          the dim peak and it (64 smoothed bars). A tail that just fades out has dip ~ 1.
-  function gateStats(v) {
-    const N = v.length, s = Float32Array.from(v).sort();
-    const q = (f) => s[Math.min(N - 1, Math.max(0, Math.floor(f * (N - 1))))];
-    const top = Math.max(q(0.999), 1e-3), NB = 256, h = new Float64Array(NB);
-    for (let i = 0; i < N; i++) h[Math.min(NB - 1, Math.max(0, Math.floor((v[i] / top) * NB)))]++;
-    let muT = 0; for (let b = 0; b < NB; b++) muT += h[b] * ((b + 0.5) / NB) * top;
-    muT /= N;
-    let sT = 0; for (let b = 0; b < NB; b++) sT += h[b] * (((b + 0.5) / NB) * top - muT) ** 2;
-    sT /= N;
-    let w = 0, mu = 0, best = -1, kb = 0;
-    for (let b = 0; b < NB - 1; b++) {
-      const p = h[b] / N; w += p; mu += p * ((b + 0.5) / NB) * top;
-      if (w <= 0 || w >= 1) continue;
-      const sb = (muT * w - mu) ** 2 / (w * (1 - w));
-      if (sb > best) { best = sb; kb = b; }
-    }
-    const otsu = ((kb + 1) / NB) * top, eta = sT > 0 ? best / sT : 0;
-    // valley check on 64 smoothed bars; the top bar is left out (it holds the clipped brightest)
-    const NS = 64, h2 = new Float64Array(NS);
-    for (let i = 0; i < N; i++) h2[Math.min(NS - 1, Math.max(0, Math.floor((v[i] / top) * NS)))]++;
-    const sm = new Float64Array(NS);
-    for (let b = 0; b < NS; b++) sm[b] = (h2[Math.max(0, b - 1)] + h2[b] + h2[Math.min(NS - 1, b + 1)]) / 3;
-    const kt = Math.min(NS - 2, Math.floor((otsu / top) * NS));
-    let L = 0; for (let b = 0; b <= kt; b++) if (sm[b] > sm[L]) L = b;
-    let R = kt + 1; for (let b = kt + 1; b < NS - 1; b++) if (sm[b] > sm[R]) R = b;
-    let V = Infinity; for (let b = L; b <= R; b++) V = Math.min(V, sm[b]);
-    const dip = sm[R] / Math.max(V, 1e-9);
-    let pos = 0; for (let i = 0; i < N; i++) if (v[i] > otsu) pos++;
-    // display histogram: 96 bars from 0 to a little past the bright tail (or the cut-off)
-    const xmax = Math.min(255, Math.max(q(0.995) * 1.25, otsu * 1.5, 1));
-    return { otsu, eta, dip, fracOtsu: pos / N, xmax, median: q(0.5), p99: q(0.99) };
-  }
-  function gateHistBars(G, name) {
-    const I = G.info.get(name), v = G.vals.get(name), NB = 96;
-    if (I.bars && I.barsMax === I.xmax) return I.bars;
-    const h = new Float64Array(NB);
-    for (let i = 0; i < v.length; i++) h[Math.min(NB - 1, Math.max(0, Math.floor((v[i] / I.xmax) * NB)))]++;
-    I.bars = h; I.barsMax = I.xmax;
-    return h;
-  }
-  function gateWarnings(I) {
-    const out = [];
-    if (I.dip < GATE_GAP_DIP) out.push("No clear gap: the squares fade from dim to bright without a dip, so Otsu only splits the tail. Check by eye on the tissue.");
-    else if (I.eta < GATE_GAP_ETA) out.push(`Weak split (separation ${I.eta.toFixed(2)}; 1 = two clean groups). Check by eye on the tissue.`);
-    if (I.fracOtsu > GATE_POS_HI) out.push("Over 60% of the squares would be positive: check by eye.");
-    if (I.fracOtsu < GATE_POS_LO) out.push("Under 0.5% of the squares would be positive: check by eye.");
-    return out;
-  }
-  const gateFracPos = (v, c) => { let k = 0; for (let i = 0; i < v.length; i++) if (v[i] > c) k++; return v.length ? k / v.length : 0; };
-
-  // ---- calls: first matching rule per square ----------------------------------------------
-  function gateRuleProblems(rule) {
-    const G = S.gate, out = [];
-    if (!rule.conds.length) out.push("no conditions yet");
-    const off = rule.conds.filter((c) => !G.markers.includes(c.m)).map((c) => c.m);
-    if (off.length) out.push(`not on this panel: ${off.join(", ")}`);
-    const nocut = rule.conds.filter((c) => G.markers.includes(c.m) && !G.cut.has(c.m)).map((c) => c.m);
-    if (nocut.length) out.push(`no cut-off yet for ${nocut.join(", ")}`);
-    return out;
-  }
-  function gateRecompute() {
-    const G = S.gate;
-    if (!G.pos) return;
-    const N = G.N, calls = new Uint8Array(N).fill(GATE_NONE);
-    const act = G.rules.slice(0, GATE_NONE).map((rule) => (gateRuleProblems(rule).length || rule.conds.some((c) => !G.vals.has(c.m))
-      ? null : rule.conds.map((c) => ({ v: G.vals.get(c.m), t: G.cut.get(c.m).v, pos: c.s > 0 }))));
-    if (act.some(Boolean)) {
-      for (let r = 0; r < N; r++) {
-        for (let i = 0; i < act.length; i++) {
-          const a = act[i]; if (!a) continue;
-          let ok = true;
-          for (let j = 0; j < a.length; j++) { if ((a[j].v[r] > a[j].t) !== a[j].pos) { ok = false; break; } }
-          if (ok) { calls[r] = i; break; }
-        }
-      }
-    }
-    const counts = new Array(256).fill(0);
-    for (let r = 0; r < N; r++) counts[calls[r]]++;
-    G.calls = calls; G.counts = counts; G.ver++;
-    if (S.umap && S.umap.phPick != null && S.umap.phPick !== GATE_NONE && !G.rules[S.umap.phPick]) S.umap.phPick = null;
-    umapDirty();
-  }
-  // everything that follows a change of cut-off or rules: calls, the panel, the legend, the picture
-  function gateChanged() {
-    gateRecompute();
-    buildGateUI();
-    syncUmapUI(); render();
-  }
-  function gateSetCut(name, v, how) {
-    const G = S.gate;
-    if (v == null || !Number.isFinite(v)) G.cut.delete(name);
-    else G.cut.set(name, { v: Math.max(0, Math.min(255, Math.round(v * 10) / 10)), how });
-  }
-
-  // ---- the panel: one tool at a time ---------------------------------------------------------
-  //   pos      % positive for one marker: a line on its histogram, % above it per region
-  //   clusters counts per region of the current clusters, under their names
-  //   rules    optional: name cell types from several markers' lines, count them per region
-  const GATE_TITLES = { pos: "% positive for a marker", clusters: "Count clusters", rules: "Combine markers" };
-  function buildGateUI() {
-    if (!gateOn() || !S.gateUi.open) return;
-    const mode = S.gateUi.mode, G = S.gate;
-    $("panelGate").hidden = false;
-    $("gateTitle").textContent = GATE_TITLES[mode];
-    $("gateModePos").hidden = mode !== "pos"; $("gateModeCl").hidden = mode !== "clusters"; $("gateModeRules").hidden = mode !== "rules";
-    $("gateSource").hidden = !G.source; $("gateSource").textContent = G.source ? `Cut-offs loaded from ${G.source}.` : "";
-    if (mode === "pos") { buildGateMarkerSelect(); buildGateEdit(); }
-    if (mode === "rules") buildGateRules();
-    gateCountsRefresh(true);
-    syncGateColourOpt();
-  }
-  async function gateOpenPanel(mode) {
-    const G = S.gate;
-    S.gateUi.open = !!mode;
-    if (mode) S.gateUi.mode = mode;
-    gateMsg("");
-    if (!mode || !gateOn()) { $("panelGate").hidden = true; render(); return; }
-    try { await gateEnsurePos(); } catch (e) { gateMsg(`Could not load the ${wd().bins}: ${e.message}`); return; }
-    if (mode === "clusters" && !S.umap.cl && umapClusterings().length) {
-      try { await umapSetRes(S.umap.res); } catch (e) { gateMsg(`Could not load the clusters: ${e.message}`); }
-    }
-    if (S.gate !== G) return;
-    if (!G.calls) gateRecompute();
-    buildGateUI(); syncUmapUI();
-    $("panelGate").scrollIntoView({ block: "nearest" });
-    render();
-  }
-  // markers to offer: the panel minus the nuclear counterstain; the status is in the menu
-  const gateListMarkers = () => S.gate.markers.filter((m) => !NUCLEAR_CHANNEL.test(m));
-  function buildGateMarkerSelect() {
-    const G = S.gate, sel = $("gateMarker"), esc = escHtml;
-    sel.innerHTML = `<option value="">Choose a marker…</option>` + gateListMarkers().map((m) => {
-      const c = G.cut.get(m), v = G.vals.get(m);
-      const st = c && v ? ` · ${(gateFracPos(v, c.v) * 100).toFixed(1)}% positive` : c ? " · set" : "";
-      return `<option value="${esc(m)}">${esc(m)}${st}</option>`;
-    }).join("");
-    sel.value = G.cur || "";
-  }
-  async function gateSelect(m) {
-    const G = S.gate;
-    G.cur = m || null;
-    if (G.cur) {
-      try { await gateValues(m); } catch (e) { status(`Could not load ${m}: ${e.message}`, true); setTimeout(() => status(null), 4000); G.cur = null; }
-      if (S.gate !== G) return;
-      G.preview = true;                                       // outlines on by default while setting
-      if (G.cur) gateShowStain(G.cur);                        // the stain is what the line is judged against
-    }
-    buildGateMarkerSelect(); buildGateEdit(); gateCountsRefresh(true); render();
-  }
-  function gateShowStain(m) {
-    const ch = S.channels.find((c) => c.name.toLowerCase() === m.toLowerCase());
-    if (!ch || ch.visible) return;
-    ch.visible = true;
-    const rows = $("chanList").querySelectorAll(".chan"), i = S.channels.indexOf(ch);
-    if (rows[i]) { rows[i].querySelector(".cb").checked = true; rows[i].classList.remove("off"); }
-  }
-  function gateSentence() {
-    const G = S.gate, m = G.cur, c = G.cut.get(m), v = G.vals.get(m), I = G.info.get(m);
-    const el = $("gateSentence");
-    el.textContent = c ? `${(gateFracPos(v, c.v) * 100).toFixed(1)}% of tissue squares are above the line` +
-                         (G.preview ? " — they're outlined on the image." : ".")
-                       : "Drag on the chart to place the line where real staining starts, or press Suggest.";
-    el.title = (c ? `Line at ${gateFmt(c.v)} (mean intensity per square, 0–255 as the image; ${c.how === "otsu" ? "the suggestion" : "set by hand"}). ` : "") +
-      `Suggestion (Otsu): ${gateFmt(I.otsu)}, ${(I.fracOtsu * 100).toFixed(1)}% above. Typical square ${gateFmt(I.median)}; ` +
-      `brightest 1% above ${gateFmt(I.p99)}. Separation ${I.eta.toFixed(2)} (1 = two clean groups).` +
-      (gateWarnings(I).length ? " " + gateWarnings(I).join(" ") : "");
-  }
-  function buildGateEdit() {
-    const G = S.gate, m = G.cur, edit = $("gateEdit");
-    edit.hidden = !m || !G.vals.has(m);
-    if (edit.hidden) return;
-    const I = G.info.get(m), c = G.cut.get(m);
-    if (c && c.v > I.xmax * 0.95) I.xmax = Math.min(255, c.v * 1.3);
-    // the one warning worth a line of its own: no valley, or a split that leaves almost all / none positive
-    const w = I.dip < GATE_GAP_DIP || I.eta < GATE_GAP_ETA || I.fracOtsu > GATE_POS_HI || I.fracOtsu < GATE_POS_LO;
-    $("gateNoGap").hidden = !w;
-    $("gateNoGap").title = gateWarnings(I).join(" ");
-    $("gatePreview").checked = !!G.preview;
-    $("gateClearCut").hidden = !c;
-    $("gateAxisHi").textContent = `bright (${gateFmt(I.xmax)})`;
-    gateSentence();
-    drawGateHist();
-  }
-  function drawGateHist() {
-    const G = S.gate, m = G.cur, cv = $("gateHist");
-    if (!m || !G.vals.has(m) || $("gateEdit").hidden) return;
-    const I = G.info.get(m), c = G.cut.get(m), bars = gateHistBars(G, m);
-    const dpr = window.devicePixelRatio || 1, W = Math.max(100, cv.clientWidth || 300), H = cv.clientHeight || 96;
-    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-    const g = cv.getContext("2d");
-    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-    // bar height on a log scale: the dim background holds most squares by far
-    let top = 0; for (const b of bars) top = Math.max(top, Math.log1p(b));
-    const NB = bars.length, bw = W / NB, cx = c ? (c.v / I.xmax) * W : -1;
-    for (let b = 0; b < NB; b++) {
-      if (!bars[b]) continue;
-      const bh = Math.max(1, (Math.log1p(bars[b]) / top) * (H - 14));
-      g.fillStyle = c && (b + 0.5) * bw > cx ? `rgba(${gateLineRgb(m).join(",")},0.9)` : "rgba(160,170,190,0.45)";
-      g.fillRect(b * bw, H - bh, Math.max(1, bw - 0.6), bh);
-    }
-    if (c) {
-      g.strokeStyle = "#fff"; g.lineWidth = 2;
-      g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, H); g.stroke();
-      g.fillStyle = "#fff"; g.font = "11px system-ui, sans-serif";
-      const t = gateFmt(c.v), tw = g.measureText(t).width;
-      g.fillText(t, cx + 4 + tw > W ? cx - tw - 4 : cx + 4, 11);
-    }
-  }
-  function gateHistEvents() {
-    const cv = $("gateHist");
-    let drag = false;
-    const at = (ev) => {
-      const G = S.gate, I = G.info.get(G.cur); if (!I) return null;
-      const r = cv.getBoundingClientRect();
-      return Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * I.xmax;
-    };
-    const live = (v, how) => {
-      const G = S.gate; if (v == null) return;
-      gateSetCut(G.cur, v, how || "manual");
-      $("gateClearCut").hidden = false;
-      gateSentence(); drawGateHist(); umapDirty(); requestRender();
-    };
-    cv.addEventListener("pointerdown", (ev) => {
-      if (ev.button !== 0 || !S.gate || !S.gate.cur) return;
-      drag = true; cv.setPointerCapture(ev.pointerId); live(at(ev));
-    });
-    cv.addEventListener("pointermove", (ev) => { if (drag) live(at(ev)); });
-    const end = () => { if (!drag) return; drag = false; gateChanged(); };
-    cv.addEventListener("pointerup", end);
-    cv.addEventListener("pointercancel", end);
-    // arrow keys nudge the line by half a percent of the axis
-    cv.addEventListener("keydown", (ev) => {
-      const G = S.gate, I = G && G.info.get(G.cur); if (!I || !/^Arrow(Left|Right)$/.test(ev.key)) return;
-      ev.preventDefault(); ev.stopPropagation();
-      const c = G.cut.get(G.cur), step = Math.max(0.1, I.xmax / 200) * (ev.key === "ArrowLeft" ? -1 : 1);
-      live((c ? c.v : I.otsu) + step); gateChanged();
-    });
-  }
-
-  // ---- Combine markers: cell types as sentences ------------------------------------------------
-  // "[Macrophage] = CD45 + and CD68 +". The marker menu lists only markers that have a line.
-  const gateCutMarkers = () => S.gate.markers.filter((m) => S.gate.cut.has(m));
-  function buildGateRules() {
-    const G = S.gate, host = $("gateRules"), esc = escHtml, cutM = gateCutMarkers();
-    host.innerHTML = "";
-    $("gateAddRule").disabled = !cutM.length;
-    $("gateAddRule").title = cutM.length ? "Add a cell type at the bottom" : "Set a line for at least one marker first (← Back to markers)";
-    const ex = gateExampleRules();
-    $("gateExamples").disabled = !ex.length;
-    $("gateExamples").title = ex.length ? `Adds ${ex.map((r) => r[0]).join(", ")} (examples: edit them for your panel)`
-      : "No example fits the markers you have set yet (examples use CD45, CD4, CD8, CD68, CD31, NF-L …)";
-    if (!G.rules.length) {
-      host.innerHTML = `<div class="meta gate-note">${cutM.length ? `No cell types yet. Markers with a line: ${esc(cutM.join(", "))}.` : "Set a line for at least one marker first (← Back to markers)."}</div>`;
-      return;
-    }
-    G.rules.forEach((rule, i) => {
-      const probs = gateRuleProblems(rule);
-      const row = document.createElement("div");
-      row.className = "gr-row" + (probs.length && rule.conds.length ? " off" : "");
-      const n = G.counts && !probs.length ? G.counts[i] : null;
-      const conds = rule.conds.map((c, j) => `<span class="cond">${esc(c.m)} <button class="sg" data-j="${j}" title="Click to switch between + (above its line) and − (below)">${c.s > 0 ? "+" : "−"}</button>` +
-        `<button class="rmc" data-j="${j}" title="Remove ${esc(c.m)}">×</button></span>`).join(`<span class="and">and</span>`);
-      const free = cutM.filter((m) => !rule.conds.some((c) => c.m === m));
-      row.innerHTML = `<input type="color" value="${rule.hex}" title="Colour" />` +
-        `<div class="gr-txt"><input type="text" class="nm" maxlength="60" /><span class="eq">=</span>${conds}` +
-        (free.length ? `<select class="addc" title="Add a marker"><option value="">${rule.conds.length ? "+ and…" : "+ marker…"}</option>${free.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")}</select>` : "") +
-        (n != null ? ` <span class="gr-n" title="Squares called ${esc(rule.name)}">· ${n.toLocaleString()}</span>` : "") +
-        (probs.length && rule.conds.length ? `<span class="gr-skip">skipped: ${esc(probs.join("; "))}</span>` : "") + `</div>` +
-        `<div class="gr-btns"><button class="up" title="Move up (checked earlier)" ${i ? "" : "disabled"}>↑</button>` +
-        `<button class="dn" title="Move down" ${i < G.rules.length - 1 ? "" : "disabled"}>↓</button><button class="del" title="Delete">×</button></div>`;
-      const nm = row.querySelector(".nm");
-      nm.value = rule.name;
-      nm.onchange = () => { rule.name = nm.value.trim().slice(0, 60) || `Cell type ${i + 1}`; G.ver++; umapDirty(); syncUmapUI(); render(); };
-      nm.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") nm.blur(); };
-      row.querySelector("input[type=color]").oninput = (e) => { rule.hex = e.target.value; G.ver++; umapDirty(); syncUmapUI(); requestRender(); };
-      row.querySelector(".up").onclick = () => { G.rules.splice(i - 1, 0, G.rules.splice(i, 1)[0]); gateRulesEdited(); };
-      row.querySelector(".dn").onclick = () => { G.rules.splice(i + 1, 0, G.rules.splice(i, 1)[0]); gateRulesEdited(); };
-      row.querySelector(".del").onclick = () => { G.rules.splice(i, 1); gateRulesEdited(); };
-      row.querySelectorAll(".sg").forEach((b) => { b.onclick = () => { const c = rule.conds[+b.dataset.j]; c.s = -c.s; gateRulesEdited(); }; });
-      row.querySelectorAll(".rmc").forEach((b) => { b.onclick = () => { rule.conds.splice(+b.dataset.j, 1); gateRulesEdited(); }; });
-      const add = row.querySelector(".addc");
-      if (add) add.onchange = (e) => { const m = e.target.value; if (m) rule.conds.push({ m, s: 1 }); gateRulesEdited(); };
-      host.appendChild(row);
-    });
-  }
-  // the examples whose markers all have a line (and are not in the list already)
-  function gateExampleRules() {
-    const G = S.gate, byLow = new Map(G.markers.map((m) => [m.toLowerCase(), m]));
-    const have = new Set(G.rules.map((r) => r.name.toLowerCase()));
-    const out = [];
-    for (const [name, conds] of GATE_EXAMPLES) {
-      const cs = conds.map((c) => ({ m: byLow.get(c.slice(0, -1).toLowerCase()), s: c.endsWith("-") ? -1 : 1 }));
-      if (cs.every((c) => c.m && G.cut.has(c.m)) && !have.has(name.toLowerCase())) out.push([name, cs]);
-    }
-    return out;
-  }
-  async function gateRulesEdited() {
-    const G = S.gate;
-    if (S.umap) S.umap.phPick = null;                  // rule numbers may have moved
-    // a rule whose markers have lines needs their values (loaded on demand)
-    const need = new Set();
-    for (const r of G.rules) for (const c of r.conds) if (G.cut.has(c.m) && !G.vals.has(c.m)) need.add(c.m);
-    for (const m of need) { try { await gateValues(m); } catch (e) { /* stays skipped */ } }
-    if (S.gate !== G) return;
-    gateChanged();
-  }
-
-  // ---- regions: whole tissue, Tier A regions, overlays switched on, the selection -------------
-  function gateOverlayMask(o) {
-    const G = S.gate, k = `${o.key || o.file}|${G.N}`;
-    if (G.masks.has(k)) return G.masks.get(k);
-    const groups = new Map();                          // region name -> Uint8Array over rows
-    const feats = (o.data && (o.data.features || (o.data.type === "Feature" ? [o.data] : []))) || [];
-    const P = G.pos, N = G.N;
-    for (const f of feats) {
-      const geo = f && f.geometry; if (!geo) continue;
-      const polys = geo.type === "Polygon" ? [geo.coordinates] : geo.type === "MultiPolygon" ? geo.coordinates : [];
-      if (!polys.length) continue;
-      const p = f.properties || {};
-      const name = String(p.name || (p.classification && p.classification.name) || p.label || p.id || o.label || "Region");
-      let mk = groups.get(name); if (!mk) { mk = new Uint8Array(N); groups.set(name, mk); }
-      for (const rings of polys) {
-        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        for (const [x, y] of rings[0]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-        for (let r = 0; r < N; r++) {
-          const x = P[2 * r], y = P[2 * r + 1];
-          if (mk[r] || x < x0 || x > x1 || y < y0 || y > y1) continue;
-          let inside = false;                            // even-odd over the rings: holes come out
-          for (const ring of rings) if (inPoly(x, y, ring)) inside = !inside;
-          if (inside) mk[r] = 1;
-        }
-      }
-    }
-    const out = [...groups].map(([name, mk]) => ({ name: `${o.label}: ${name}`, mask: mk }));
-    G.masks.set(k, out);
-    return out;
-  }
-  function gateGroups() {
-    const G = S.gate, U = S.umap, out = [{ name: "Whole tissue", test: null }];
-    const R = S.region;
-    if (R.meta && R.ids && R.ids.length === G.N) {
-      for (const m of R.meta) { const id = m.id; out.push({ name: m.name || `Region ${id}`, test: (r) => R.ids[r] === id }); }
-    }
-    for (const o of S.overlays) {
-      if (!o.on || !o.data) continue;
-      if (R.meta && R.ids && (o.file === R.overlayKey || o.key === R.overlayKey)) continue;   // already counted by region.bin
-      for (const g of gateOverlayMask(o)) { const mk = g.mask; out.push({ name: g.name, test: (r) => mk[r] === 1 }); }
-    }
-    if (U && U.sel && U.sel.length === G.N) { const sel = U.sel; out.push({ name: `Selection (${U.selN.toLocaleString()} ${wd().bins})`, test: (r) => sel[r] === 1, sel: true }); }
-    return out;
-  }
-  // counts per group x phenotype; rows = rules in order, then Unassigned
-  function gateTable() {
-    const G = S.gate;
-    if (!G.calls) return null;
-    const key = `${G.ver}|${gateGroupKey()}`;
-    if (G.table && G.tableKey === key) return G.table;
-    const groups = gateGroups(), K = G.rules.length, calls = G.calls;
-    for (const g of groups) {
-      const c = new Float64Array(K + 1); let tot = 0;
-      for (let r = 0; r < G.N; r++) {
-        if (g.test && !g.test(r)) continue;
-        const k = calls[r]; c[k === GATE_NONE ? K : k]++; tot++;
-      }
-      g.counts = c; g.total = tot;
-    }
-    G.table = { groups, K }; G.tableKey = key;
-    return G.table;
-  }
-  // what the region columns depend on: the selection, overlays switched on, region.bin
-  function gateGroupKey() {
-    const U = S.umap;
-    return `${U && U.sel ? `${U.selN}:${U.selEmb}` : ""}|${S.overlays.filter((o) => o.on && o.data).map((o) => o.key || o.file).join(",")}|${S.region.ids ? 1 : 0}`;
-  }
-  // squares above one marker's line, per region
-  function gatePosCounts(m) {
-    const G = S.gate, c = G.cut.get(m), v = G.vals.get(m);
-    if (!c || !v || !G.pos) return null;
-    const groups = gateGroups(), t = c.v;
-    for (const g of groups) {
-      let pos = 0, tot = 0;
-      for (let r = 0; r < G.N; r++) { if (g.test && !g.test(r)) continue; tot++; if (v[r] > t) pos++; }
-      g.pos = pos; g.total = tot;
-    }
-    return { m, cut: c, groups };
-  }
-  function gatePosTable() {
-    const G = S.gate, m = G.cur, c = m && G.cut.get(m);
-    if (!c) return null;
-    const key = `${m}|${c.v}|${gateGroupKey()}`;
-    if (!(G.posT && G.posT.key === key)) G.posT = { key, ...gatePosCounts(m) };
-    return G.posT;
-  }
-  // squares per cluster (the clustering on show), per region; the last column is "not in a cluster"
-  function gateClTable() {
-    const U = S.umap, G = S.gate;
-    if (!U || !U.cl || !G.pos || U.cl.length !== G.N) return null;
-    const key = `${U.clRes}|${U.setsVer}|${gateGroupKey()}`;
-    if (G.clT && G.clT.key === key) return G.clT;
-    let K = 0; for (let r = 0; r < G.N; r++) if (U.cl[r] !== UMAP_NONE && U.cl[r] + 1 > K) K = U.cl[r] + 1;
-    const groups = gateGroups(), cl = U.cl;
-    for (const g of groups) {
-      const cnt = new Float64Array(K + 1); let tot = 0;
-      for (let r = 0; r < G.N; r++) { if (g.test && !g.test(r)) continue; const c = cl[r]; cnt[c === UMAP_NONE ? K : c]++; tot++; }
-      g.counts = cnt; g.total = tot;
-    }
-    const info = umapClusterInfo();               // cell sets: their other members' numbers no longer occur
-    G.clT = { key, K, res: U.clRes, groups, gone: new Set((info && info.gone) || []) };
-    return G.clT;
-  }
-  const gateColHead = (groups) => `<tr><th></th>${groups.map((g) => `<th title="${escHtml(g.name)}">${escHtml(g.name.length > 22 ? g.name.slice(0, 21) + "…" : g.name)}</th>`).join("")}</tr>`;
-  const gatePct = (a, b) => (b ? ((100 * a) / b).toFixed(1) : "0.0");
-  const gateMoreCols = (n, what = "column") => (n === 1 ? ` A Box or Freehand selection (or a region overlay) adds a ${what}.` : "");
-  // redraws the table of whichever tool is open (cheap when nothing it counts has changed)
-  function gateCountsRefresh(force) {
-    const G = S.gate;
-    if (!G || !gateOn() || !S.gateUi || !S.gateUi.open) return;
-    if (force) { G.tableKey = ""; }
-    const mode = S.gateUi.mode, esc = escHtml, U = S.umap, W = wd();
-    if (mode === "pos") {
-      const host = $("gatePosTable"), T = gatePosTable();
-      $("gatePosCsv").disabled = !gateCutMarkers().length;
-      if (!T) { host.innerHTML = ""; return; }
-      host.innerHTML = `<table><thead><tr><th></th><th>Above the line</th><th>Tissue ${W.bins}</th><th>%</th></tr></thead><tbody>` +
-        T.groups.map((g) => `<tr><td class="lbl" title="${esc(g.name)}">${esc(g.name)}</td><td>${g.pos.toLocaleString()}</td><td>${g.total.toLocaleString()}</td><td>${gatePct(g.pos, g.total)}%</td></tr>`).join("") +
-        `</tbody></table><div class="meta gate-note">${esc(T.m)} above ${gateFmt(T.cut.v)}.${gateMoreCols(T.groups.length, "row")}` +
-        (gateCutMarkers().length > 1 ? ` The CSV holds every marker with a line: ${esc(gateCutMarkers().join(", "))}.` : "") + `</div>`;
-      return;
-    }
-    if (mode === "clusters") {
-      const host = $("gateClTable"), list = umapClusterings(), rs = $("gateClRes");
-      const opts = list.map((c) => `<option value="${escHtml(clKey(c))}">${escHtml(clLabel(c))} · ${c.n} ${clUser(c) ? "groups" : "clusters"}</option>`).join("");
-      if (rs.dataset.opts !== opts) { rs.innerHTML = opts; rs.dataset.opts = opts; }
-      if (U && U.clRes != null) rs.value = String(U.clRes);
-      $("gateClColour").checked = !!(U && U.colorBy === "cluster");
-      const T = gateClTable();
-      $("gateClCsv").disabled = !T;
-      if (!T) { host.innerHTML = `<div class="meta gate-note">${list.length ? "Loading the clusters…" : "This layer has no clusters."}</div>`; return; }
-      const rows = [];
-      for (let k = 0; k <= T.K; k++) {
-        const tot = T.groups.reduce((a, g) => a + g.counts[k], 0);
-        if (k === T.K && !tot || T.gone.has(k)) continue;
-        const none = k === T.K, [r, gg, b] = none ? GATE_GREY : sectionRgb(k);
-        rows.push(`<tr class="ph${!none && U.pick === k ? " sel" : ""}" data-k="${none ? -1 : k}"><td title="${none ? "Squares left out of the UMAP" : "Click to highlight in every view"}"><i style="background:rgb(${r},${gg},${b})"></i>${esc(none ? "Not in a cluster" : umapName(k))}</td>` +
-          T.groups.map((g) => `<td>${g.counts[k].toLocaleString()}<small>${gatePct(g.counts[k], g.total)}%</small></td>`).join("") + `</tr>`);
-      }
-      rows.push(`<tr class="tot"><td>All ${W.bins}</td>${T.groups.map((g) => `<td>${g.total.toLocaleString()}</td>`).join("")}</tr>`);
-      host.innerHTML = `<table><thead>${gateColHead(T.groups)}</thead><tbody>${rows.join("")}</tbody></table>` +
-        `<div class="meta gate-note">Names as in Clusters &amp; selection (rename with ✎ there). Click a cluster to highlight it.${gateMoreCols(T.groups.length)}</div>`;
-      host.querySelectorAll("tr.ph").forEach((tr) => { const k = +tr.dataset.k; if (k >= 0) tr.onclick = () => umapPick(k); });
-      return;
-    }
-    // combined rules
-    const host = $("gateCounts");
-    const T = G.rules.length ? gateTable() : null;
-    $("gateCsvCounts").disabled = !T; $("gateCsvSquares").disabled = !T;
-    if (!T) { host.innerHTML = ""; return; }
-    const rows = [];
-    for (let k = 0; k <= T.K; k++) {
-      const id = k === T.K ? GATE_NONE : k, [r, gg, b] = gateRuleRgb(id);
-      rows.push(`<tr class="ph${U && U.phPick === id ? " sel" : ""}" data-k="${id}"><td title="Click to highlight in every view"><i style="background:rgb(${r},${gg},${b})"></i>${esc(gatePhName(id))}</td>` +
-        T.groups.map((g) => `<td>${g.counts[k].toLocaleString()}<small>${gatePct(g.counts[k], g.total)}%</small></td>`).join("") + `</tr>`);
-    }
-    rows.push(`<tr class="tot"><td>All ${W.bins}</td>${T.groups.map((g) => `<td>${g.total.toLocaleString()}</td>`).join("")}</tr>`);
-    host.innerHTML = `<table><thead>${gateColHead(T.groups)}</thead><tbody>${rows.join("")}</tbody></table>` +
-      `<div class="meta gate-note">Click a cell type to highlight it.${gateMoreCols(T.groups.length)}</div>`;
-    host.querySelectorAll("tr.ph").forEach((tr) => { tr.onclick = () => umapPickPh(+tr.dataset.k); });
-  }
-  function umapPickPh(k) {
-    const U = S.umap; if (!U) return;
-    U.phPick = k === null || k === undefined || U.phPick === k ? null : k;
-    U.pick = null; U.sel = null; U.selN = 0; U.ctPick = null;
-    umapDirty(); syncUmapUI(); render();
-  }
-
-  // ---- exports: counts, per-square calls, the gates themselves ---------------------------------
-  const csvQ = (x) => `"${String(x).replace(/"/g, '""')}"`;
-  function gateCountsCsv() {
-    const G = S.gate, T = gateTable(); if (!T) return "";
-    const lines = ["dataset,layer,region,cell_type,count,total_squares,percent"];
-    for (const g of T.groups) for (let k = 0; k <= T.K; k++) {
-      const id = k === T.K ? GATE_NONE : k;
-      lines.push([csvQ(S.dsId), csvQ(G.key), csvQ(g.sel ? "Selection" : g.name), csvQ(gatePhName(id)), g.counts[k], g.total,
-                  g.total ? ((100 * g.counts[k]) / g.total).toFixed(3) : "0.000"].join(","));
-    }
-    return lines.join("\n") + "\n";
-  }
-  // % positive: one row per marker with a line x region
-  function gatePosCsv() {
-    const G = S.gate, ms = gateCutMarkers().filter((m) => G.vals.has(m));
-    if (!ms.length) return "";
-    const lines = ["dataset,layer,marker,cutoff,how_set,region,squares_above,total_squares,percent"];
-    for (const m of ms) {
-      const T = gatePosCounts(m);
-      for (const g of T.groups) lines.push([csvQ(S.dsId), csvQ(G.key), csvQ(m), T.cut.v, T.cut.how === "otsu" ? "otsu" : "manual",
-        csvQ(g.sel ? "Selection" : g.name), g.pos, g.total, g.total ? ((100 * g.pos) / g.total).toFixed(3) : "0.000"].join(","));
-    }
-    return lines.join("\n") + "\n";
-  }
-  function gateClCsv() {
-    const G = S.gate, T = gateClTable(); if (!T) return "";
-    const lines = ["dataset,layer,leiden_resolution,region,cluster,cluster_name,count,total_squares,percent"];
-    for (const g of T.groups) for (let k = 0; k <= T.K; k++) {
-      if (k === T.K && !g.counts[k] || T.gone.has(k)) continue;
-      lines.push([csvQ(S.dsId), csvQ(G.key), T.res, csvQ(g.sel ? "Selection" : g.name), k === T.K ? "" : k,
-        csvQ(k === T.K ? "Not in a cluster" : umapName(k)), g.counts[k], g.total, g.total ? ((100 * g.counts[k]) / g.total).toFixed(3) : "0.000"].join(","));
-    }
-    return lines.join("\n") + "\n";
-  }
-  function gateSquaresCsv() {
-    const G = S.gate; if (!G.calls) return "";
-    const ms = G.markers.filter((m) => G.cut.has(m) && G.vals.has(m));
-    const cols = ms.map((m) => ({ v: G.vals.get(m), t: G.cut.get(m).v }));
-    const names = G.rules.map((r, i) => csvQ(gatePhName(i))), none = csvQ("Unassigned");
-    const out = ["row,x_px,y_px,cell_type" + ms.map((m) => "," + csvQ(`${m}_pos`)).join("")];
-    const P = G.pos;
-    for (let r = 0; r < G.N; r++) {
-      let s = `${r},${P[2 * r].toFixed(1)},${P[2 * r + 1].toFixed(1)},${G.calls[r] === GATE_NONE ? none : names[G.calls[r]]}`;
-      for (const c of cols) s += c.v[r] > c.t ? ",1" : ",0";
-      out.push(s);
-    }
-    return out.join("\n") + "\n";
-  }
-  function gateJson() {
-    const G = S.gate, e = currentExpr();
-    const cutoffs = {};
-    for (const m of G.markers) {
-      const c = G.cut.get(m); if (!c) continue;
-      const I = G.info.get(m);
-      cutoffs[m] = { value: c.v, how: c.how === "otsu" ? "otsu" : "manual", ...(I ? { otsu: Math.round(I.otsu * 10) / 10 } : {}) };
-    }
-    return {
-      tool: "SODA gating", viewerVersion: GATE_VERSION, dataset: S.dsId, layer: G.key,
-      unit: "mean intensity per square, 0-255 as the image (8-bit); positive = above the cut-off",
-      squareUm: e && e.binSizeUm ? e.binSizeUm : null,
-      perSlide: "Cut-offs belong to the slide they were set on; check them again before using them on another slide.",
-      cutoffs,
-      rules: G.rules.map((r) => ({ name: r.name, color: r.hex, conditions: r.conds.map((c) => `${c.m}${c.s > 0 ? "+" : "-"}`) })),
-      firstMatchWins: true,
-      date: new Date().toISOString(),
-    };
-  }
-  // Apply a gates JSON (a file, or the dataset's own gates.json). Nothing is guessed: cut-offs
-  // for markers not on this panel are listed and skipped; rules keep their order and flags.
-  async function gateApply(j, source) {
-    const G = S.gate;
-    if (!j || typeof j !== "object" || (!j.cutoffs && !Array.isArray(j.rules))) { gateMsg("That file holds no cut-offs or rules.", true); return false; }
-    const notes = [];
-    if (j.dataset && j.dataset !== S.dsId) notes.push(`These cut-offs were set on ${j.dataset}, not this slide: check each one before trusting the calls.`);
-    if (j.layer && j.layer !== G.key) notes.push(`They were set on layer ${j.layer}.`);
-    const byLow = new Map(G.markers.map((m) => [m.toLowerCase(), m]));
-    const skipped = [];
-    G.cut = new Map();
-    for (const [m0, c] of Object.entries(j.cutoffs || {})) {
-      const m = byLow.get(String(m0).toLowerCase()), v = c && typeof c === "object" ? Number(c.value) : Number(c);
-      if (!m || !Number.isFinite(v)) { skipped.push(m0); continue; }
-      gateSetCut(m, v, c && c.how === "otsu" ? "otsu" : "manual");
-    }
-    if (skipped.length) notes.push(`Not on this panel, skipped: ${skipped.join(", ")}.`);
-    if (Array.isArray(j.rules)) {
-      G.rules = j.rules.slice(0, GATE_NONE).map((r, i) => ({
-        name: String((r && r.name) || `Rule ${i + 1}`).slice(0, 60),
-        hex: /^#[0-9a-f]{6}$/i.test(r && r.color) ? r.color : GATE_COLORS[i % GATE_COLORS.length],
-        conds: (Array.isArray(r && r.conditions) ? r.conditions : []).map((s) => {
-          const t = String(s).trim().replace(/−/g, "-"), sg = t.endsWith("-") ? -1 : 1, nm = t.replace(/[+-]$/, "");
-          return { m: byLow.get(nm.toLowerCase()) || nm, s: sg };
-        }).filter((c) => c.m),
-      }));
-    }
-    G.source = source;
-    try {
-      for (const m of G.cut.keys()) { await gateValues(m); if (S.gate !== G) return false; }
-    } catch (e) { notes.push(`Could not load every marker: ${e.message}`); }
-    if (S.umap) S.umap.phPick = null;
-    gateRecompute();
-    buildGateUI();
-    gateMsg(notes.join(" "));
-    syncUmapUI(); render();
-    return true;
-  }
-  async function gateLoadFile(file) {
-    let j;
-    try { j = JSON.parse(await file.text()); } catch (e) { gateMsg("Not a JSON file.", true); return; }
-    await gateEnsurePos();
-    await gateApply(j, `the file ${file.name || "you chose"}`);
-  }
-
-  // ---- drawing: positives preview on the tissue; the colour-by option ---------------------------
-  // The squares above the cut-off keep the image as it is and get a yellow outline; every other
-  // tissue square is darkened, so stained structures inside the outlines are easy to check.
-  // The outline must stand out from the marker's own stain colour: magenta, or yellow over a red stain.
-  function gateLineRgb(m) {
-    const ch = S.channels.find((c) => c.name.toLowerCase() === String(m || "").toLowerCase());
-    const [r, g, b] = ch ? ch.color : [0, 0, 0];
-    return r > 0.6 && g < 0.5 ? [255, 214, 64] : [255, 72, 220];
-  }
-  function gatePreviewLayer() {
-    const G = S.gate, e = currentExpr(), v = G.vals.get(G.cur), t = G.cut.get(G.cur).v, P = G.pos;
-    const ppu = Math.pow(2, (S.viewState && S.viewState.zoom) || 0);
-    const side = Math.max(((e && e.spotDiameterPx) || 8) * S.pointScale, HEAT_MIN_PX / ppu);
-    const CLEAR = [0, 0, 0, 0], DIM = [0, 0, 0, 170], LINE = [...gateLineRgb(G.cur), 255];
-    return new ColumnLayer({
-      id: `gateprev-${S.dsId}-${G.key}`, data: G.rowIdx,
-      getPosition: (r) => [P[2 * r], P[2 * r + 1], 0],
-      getFillColor: (r) => (v[r] > t ? CLEAR : DIM),
-      getLineColor: (r) => (v[r] > t ? LINE : CLEAR),
-      diskResolution: 4, angle: 45, radius: side / Math.SQRT2, radiusUnits: "common",
-      extruded: false, filled: true, stroked: true, lineWidthUnits: "pixels", getLineWidth: 1.25,
-      parameters: NORMAL, pickable: false,
-      updateTriggers: { getFillColor: [G.cur, t], getLineColor: [G.cur, t, LINE.join()] },
-    });
-  }
-  function syncGateColourOpt() {
-    const opt = $("colorBy").querySelector("option[value=phenotype]"), ok = gateOn() && S.gate.rules.length > 0;
-    opt.hidden = !ok; opt.disabled = !ok;
-    $("gateColour").checked = !!(S.umap && S.umap.colorBy === "phenotype");
-    $("gateClColour").checked = !!(S.umap && S.umap.colorBy === "cluster");
-  }
-  async function gateSetColour(on) {
-    const U = S.umap; if (!U) return;
-    if (on) { await gateEnsurePos(); if (!S.gate.calls) gateRecompute(); }
-    U.colorBy = on ? "phenotype" : "gene";
-    umapDirty(); syncUmapUI(); render();
-  }
-
-  function gateInit() {
-    S.gate = gateBlank();
-    S.gateUi = { open: false, mode: "pos" };
-    gateHistEvents();
-    const toggle = (mode) => gateOpenPanel(S.gateUi.open && S.gateUi.mode === mode ? null : mode);
-    $("gateOpenPos").onclick = () => toggle("pos");
-    $("gateOpenCl").onclick = () => toggle("clusters");
-    $("gateClose").onclick = () => gateOpenPanel(null);
-    $("gateCombine").onclick = () => gateOpenPanel("rules");
-    $("gateBackPos").onclick = () => gateOpenPanel("pos");
-    $("gateMarker").onchange = (e) => gateSelect(e.target.value);
-    $("gateSuggest").onclick = () => {
-      const G = S.gate, I = G.info.get(G.cur); if (!I) return;
-      gateSetCut(G.cur, I.otsu, "otsu"); gateChanged();
-    };
-    $("gateClearCut").onclick = () => {
-      const G = S.gate; if (!G.cur) return;
-      gateSetCut(G.cur, null); gateChanged();
-    };
-    $("gatePreview").onchange = (e) => {
-      const G = S.gate; G.preview = e.target.checked;
-      if (G.preview && G.cur) { gateShowStain(G.cur); if (S.umap && S.umap.view === "umap") umapSetView("sbs"); }
-      gateSentence(); umapDirty(); render();
-    };
-    $("gateMore").onclick = () => { $("gateMoreBox").hidden = !$("gateMoreBox").hidden; };
-    $("gatePosCsv").onclick = () => { const t = gatePosCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_percent_positive.csv`, t, "text/csv"); };
-    $("gateClRes").onchange = async (e) => {
-      try { await umapSetRes(clFromValue(e.target.value)); } catch (err) { gateMsg(`Could not load the clusters: ${err.message}`); }
-      syncUmapUI(); render();
-    };
-    $("gateClColour").onchange = async (e) => {
-      const U = S.umap;
-      if (e.target.checked && !U.cl) { try { await umapSetRes(U.res); } catch (err) { gateMsg(err.message); return; } }
-      U.colorBy = e.target.checked ? "cluster" : "gene";
-      umapDirty(); syncUmapUI(); render();
-    };
-    $("gateClCsv").onclick = () => { const t = gateClCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_cluster_counts_r${S.umap.clRes}.csv`, t, "text/csv"); };
-    $("gateAddRule").onclick = () => {
-      const G = S.gate;
-      G.rules.push({ name: `Cell type ${G.rules.length + 1}`, hex: GATE_COLORS[G.rules.length % GATE_COLORS.length], conds: [] });
-      gateRulesEdited().then(() => { const nm = $("gateRules").querySelectorAll("input.nm"); if (nm.length) { nm[nm.length - 1].focus(); nm[nm.length - 1].select(); } });
-    };
-    $("gateExamples").onclick = () => {
-      const G = S.gate, ex = gateExampleRules(); if (!ex.length) return;
-      for (const [name, conds] of ex) G.rules.push({ name, hex: GATE_COLORS[G.rules.length % GATE_COLORS.length], conds });
-      gateRulesEdited().then(() => gateMsg("Example rules added: edit them for your panel."));
-    };
-    $("gateColour").onchange = (e) => gateSetColour(e.target.checked);
-    $("gateCsvCounts").onclick = () => { const t = gateCountsCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_celltype_counts.csv`, t, "text/csv"); };
-    $("gateCsvSquares").onclick = () => { const t = gateSquaresCsv(); if (t) lassoDownload(`${S.dsId}_${S.gate.key}_celltype_squares.csv`, t, "text/csv"); };
-    $("gateSave").onclick = () => lassoDownload(`${S.dsId}_${S.gate.key}_gates.json`, JSON.stringify(gateJson(), null, 1), "application/json");
-    $("gateLoadBtn").onclick = () => $("gateLoad").click();
-    $("gateLoad").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) gateLoadFile(f); };
-    window.addEventListener("resize", () => { if (S.gate && S.gate.cur) drawGateHist(); });
-    window.addEventListener("soda:shown", () => { if (S.gate && S.gate.cur) drawGateHist(); });   // layout.js: a folded section or another tab opened
-    // for testing from the console: the texts the buttons would download, and loading without a file
-    Object.assign(window.__spatialViewer, {
-      gate: () => S.gate, gateUi: () => S.gateUi, gateSelect, gateOpenPanel,
-      gateSetCut: (m, v, how) => { gateSetCut(m, v, how || "manual"); gateChanged(); },
-      gatePosCsv, gateClCsv, gateCountsCsv, gateSquaresCsv, gateJson, gateApply: (j) => gateApply(j, "a test object"),
-      gateSetColour, umapPickPh, gateRulesEdited,
-    });
-  }
-
   // ---- UI: overlays -----------------------------------------------------------------
   function buildOverlayUI() {
     const list = $("overlayList"); list.innerHTML = "";
@@ -5752,7 +4567,6 @@
           status(`Loading ${o.label}…`);
           try { o.data = await S.src.overlay(S.src.kind === "static" ? o.file : o.key); } finally { status(null); }
         }
-        gateCountsRefresh();
         render();
       };
       list.appendChild(row);
@@ -6377,7 +5191,7 @@
     try { return await openDatasetNow(id); }
     finally {
       if (lay) lay.opening(false, tok);
-      window.dispatchEvent(new CustomEvent("soda:opened", { detail: { id } }));   // viewlink.js, compare.js
+      window.dispatchEvent(new CustomEvent("soda:opened", { detail: { id } }));   // viewlink.js
     }
   }
   async function openDatasetNow(id) {
@@ -6405,40 +5219,23 @@
     if (own) own.reset();
     if (measure) measure.reset();
     umapReset();
-    S.gate = gateBlank(); $("panelGate").hidden = true; $("rowGateOpen").hidden = true; $("gatePub").hidden = true;
     leaveRna();
     try {
       const d = S.datasets.find((x) => x.id === id);
       const staticRoot = params.get("static");   // ?static=http://host/folder -> <folder>/<id>/ (test exports before upload)
       let src;
-      // offline.js: where this dataset's files are (Keep this dataset for offline use), or why it is never kept
-      const slash = (u) => new URL(u, location.href).href.replace(/\/?$/, "/");
-      S.keepInfo = null;
-      if (staticRoot) {
-        src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
-        S.keepInfo = { root: slash(`${staticRoot.replace(/\/$/, "")}/${id}/`), folder: slash(staticRoot) };
-      }
+      if (staticRoot) src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
       else if (TOKEN_URL && !params.get("api") && !(d && d.base)) {   // ?api= wins: a local tile server
         const t = await ensureToken();           // asks for the password once per session
         src = staticSource(`${t.base}${id}/`, tokenQuery);
-        S.keepInfo = { why: "password" };
       }
-      else if (d && d.base) {
-        src = staticSource(d.base, d.qs ? () => d.qs : undefined);   // d.qs: a ?data= link's read pass
-        S.keepInfo = d.qs || /[?#]/.test(d.base) ? { why: "pass" }
-          : { root: slash(d.base), folder: DATA && !DATA.qs && slash(d.base).startsWith(DATA.root) ? DATA.root : null };
-      }
-      else { src = apiSource(id); S.keepInfo = { why: "server" }; }
-      if (TOKEN_URL && S.keepInfo.root) S.keepInfo = { why: "password" };   // nothing of a password-protected site is kept
+      else if (d && d.base) src = staticSource(d.base, d.qs ? () => d.qs : undefined);   // d.qs: a ?data= link's read pass
+      else src = apiSource(id);
       if (stale()) return;                       // another dataset was picked while the password box was up
       S.src = liveSource(src, seq, openCtl.signal);
       S.m = await S.src.manifest();
     } catch (e) {
-      // offline, or the data out of reach (a network error) on a page that keeps itself: say whether it is kept
-      const off = window.SodaOffline ? window.SodaOffline.state() : null;
-      const notKept = !!off && !(S.keepInfo && S.keepInfo.root && off.kept.some((k) => k.root === S.keepInfo.root));
-      if (!stale()) status(`Cannot open ${id}: ${navigator.onLine === false && notKept ? "this computer is offline, and this dataset is not kept for offline use (Save tab, Offline use)"
-        : e instanceof TypeError && notKept && !!navigator.serviceWorker && !!navigator.serviceWorker.controller ? `${e.message} (the data cannot be reached, and this dataset is not kept for offline use)` : e.message}`, true);
+      if (!stale()) status(`Cannot open ${id}: ${navigator.onLine === false ? "this computer is offline" : e.message}`, true);
       return;
     }
     if (stale()) return;
@@ -6590,12 +5387,9 @@
       };
       if (on.length) out.push({ title: "Stains", items: on.map(chanItem) });
     }
-    if (gatePreviewOn() && !umapByCat()) {
-      const G = S.gate, c = G.cut.get(G.cur);
-      out.push({ title: "% positive", items: [{ label: `${G.cur} above ${gateFmt(c.v)}`, outline: gateLineRgb(G.cur) }] });
-    } else if (umapByCat()) {
+    if (umapByCat()) {
       const U = S.umap, info = umapClusterInfo();
-      const title = U.colorBy === "celltype" ? "Suggested cell type" : U.colorBy === "phenotype" ? "Cell types (your rules)" : info ? clLabel(info) : "Clusters";
+      const title = U.colorBy === "celltype" ? "Suggested cell type" : info ? clLabel(info) : "Clusters";
       const items = domLegend($("clusterLegend"), ".cl-row:not(.off)", ".nm");
       if (items.length) out.push({ title, items });
     } else if (paint && paint.active()) {
@@ -6667,7 +5461,7 @@
       state: () => S, words: wd, layerKey: () => S.exprKey, positions: umapPositions,
       ScatterplotLayer, NORMAL, render: requestRender,
       lut: () => PALETTES.viridis, rampCss: () => rampCss("viridis"),
-      overridden: () => umapByCat() || gatePreviewOn(),
+      overridden: () => umapByCat(),
       // genes: the layer's list and one gene's values, always through the source object
       geneIndex: () => S.geneIndex || [], gene: (name) => S.src.gene(S.exprKey, name), isProt,
       // gene set scores: the layer's manifest entry, the source (its own marker list) and the page's list
@@ -6722,7 +5516,6 @@
       else if (U.colorBy === "cluster") U.colorBy = "gene";
     } catch (e) { status(`Could not show the clusters: ${e.message}`, true); setTimeout(() => status(null), 5000); }
     if (S.umap !== U) return;
-    if (S.gate) S.gate.clT = null;
     if (paint) paint.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
     if (o.emb && U.view === "sbs") fitView();
     umapDirty(); syncUmapUI(); render();
@@ -6780,19 +5573,9 @@
       showClusters: () => { const sel = $("colorBy"); sel.value = "cluster"; sel.dispatchEvent(new Event("change")); },
       dsId: () => S.dsId, layer: () => S.exprKey,
     });
-    // the same tool for the clusters of the last Draw a region run (Analyze tab)
-    if (window.SodaSets.region) window.SodaSets.region.init({
-      touch: TOUCH, NONE: LASSO_NONE, words: wd, available: runSetsOk,
-      current: () => { if (!runSetsOk()) return null; const R = S.lasso.result; return { U: runSetsU(R), ck: "run", c: R }; },
-      label: (R) => `Draw a region run (Leiden resolution ${R.resolution})`,
-      name: (c) => S.lasso.clNames[c] || `Cluster ${c}`, baseName: (c) => `Cluster ${c}`, rgb: clusterRgb,
-      changed: runSetsChanged,
-      showClusters: () => {},
-      exportCsv: lassoSaveCsv,                       // the run's Save CSV, which follows the merges
-    });
   }
 
-  // ---- Combine and export shapes (selections.js): what it needs from here --------------------------------------
+  // ---- Export shapes (selections.js): what it needs from here -------- --------------------------------------
   function shapesInit() {
     if (!window.SodaShapes) return;
     window.SodaShapes.init({
@@ -6814,7 +5597,6 @@
     outlinesInit();
     lassoInit();
     umapInit();
-    gateInit();
     measureInit();
     touchInit();
     snapshotInit();
@@ -6822,7 +5604,7 @@
     ownInit();                                      // before paintInit: a link puts the file's results back before their colouring
     paintInit();
     shapesInit();
-    // a link to a view (viewlink.js) and linked windows (compare.js): handed only what they need from here
+    // a link to a view (viewlink.js): handed only what it needs from here
     const share = {
       state: () => S, seq: () => openSeq, status, render, renderRna, setCamera, sessionState, sessionApply,
       addGene, addMolGene, addRnaGene, setColorBy, recolorGene, recolorRnaGene, hexToRgb01, hexToRgb255,
@@ -6830,20 +5612,10 @@
       umapLoad, umapSetRes, umapSetView, umapDirty, syncUmapUI,
       hasClusterings: () => umapClusterings().length > 0,
       clusterN: () => { const i = S.umap && S.umap.cl ? umapClusterInfo() : null; return i ? i.n || (i.sizes || []).length || 0xffff : 0; },
-      // the access token of a private site, for a window this one opened (never the password)
-      tokenUrl: TOKEN_URL ? new URL(TOKEN_URL, location.href).href : "",
-      token: () => (token && Date.now() < token.expires - 60000 ? { sas: token.sas, base: token.base, expires: token.expires } : null),
     };
     if (window.SodaViewLink) window.SodaViewLink.init(share);
-    if (window.SodaCompare) window.SodaCompare.init(share);
-    // offline use (offline.js): the open dataset, where its files are, and whether it may be kept
-    if (window.SodaOffline) window.SodaOffline.init({
-      dataset: () => {
-        if (!S.m || !S.dsId || !S.keepInfo) return null;
-        const d = S.datasets.find((x) => x.id === S.dsId);
-        return { id: S.dsId, label: d ? d.label : S.dsId, manifest: S.m, ...S.keepInfo };
-      },
-    });
+    // readers who used the old offline use (removed in 0.10.0): sw.js removes that service worker and its caches
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.update())); } catch (e) { /* none */ }
     const cfgSets = cfg.datasets || {};
     S.datasets = Object.keys(cfgSets).map((id) => ({ id, label: cfgSets[id].label || id,
       group: cfgSets[id].group, base: cfgSets[id].base, tags: cfgSets[id].tags }));
@@ -6976,7 +5748,6 @@
     $("molSize").oninput = (e) => { S.mol.size = +e.target.value; requestRender(); };
     $("molOpacity").oninput = (e) => { S.mol.opacity = +e.target.value; requestRender(); };
     $("tissueBins").onchange = async (e) => { S.tissue.on = e.target.checked; if (S.tissue.on && !S.tissue.positions) await loadTissue(); render(); };
-    $("qcOutline").onchange = (e) => qcSetOutline(e.target.checked);
     // The description is held with the data, not in this page. Anything written
     // into index.html is readable by anyone who opens the page - including the
     // parts of the project that are not public yet - so the body is fetched from

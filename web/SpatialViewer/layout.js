@@ -56,14 +56,10 @@
       help: "Merge clusters of the clustering on show into one named set: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour of its first cluster and counts as one group everywhere: the maps, the legend, the volcano and plot groups, Count clusters and the saved image. Rename a set in its box or with the pencil in the legend; Un-merge splits it again and Undo takes back the last change made here. Save JSON keeps the sets with the cluster names. Export CSV writes one row per bin: its row number in the export, its position in image pixels, its cluster and the set it is in (bins left out of the clustering have empty cells)." },
     panelBinQc: { more: ["bqGrey"], moreAt: "end", notes: ["bqNote"],
       help: "One histogram per measure (counts, genes detected, % mitochondrial). Move a slider or type a number to set a minimum or a maximum: bins outside are removed." },
-    panelSlideQc: { help: "Checks made when the slide was prepared: stains with no or little signal, stains at the detector's limit, tile seams, and squares where everything is bright (folds, bubbles, edges). Each marker lists every stain with its numbers." },
-    panelCount: { help: "% positive for a marker: pick a marker, put the line where real staining starts, and read the share of squares above it in each region. Count clusters: how many squares each cluster has in each region. Both give a CSV. Cut-offs can be saved and loaded (More, inside the tool)." },
     panelLasso: { more: ["lassoMode", "lassoSeed", "lassoRes"], notes: ["lassoNote"],
       help: "Pick Circle or Freehand and draw one or more shapes on the slide (Esc stops drawing). Run UMAP makes a new UMAP and clusters from only the bins inside the shapes. More options: Dots (one per bin, or one per shape with its bins added up), Seed (the same seed gives the same picture), Resolution (auto, or a number: higher gives more, smaller clusters; 0 = no clusters)." },
-    panelRunSets: {
-      help: "Merge clusters of the last Draw a region run into one named set, as Cell sets does for the whole section: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour and number of its lowest cluster and counts as one group in the run's panel, on the slide, in the volcano and plot groups and in Save CSV (which then adds the set and its name). A volcano or plot made before a merge says it is out of date. Un-merge splits a set again and Undo takes back the last change made here. Save JSON and Copy link keep the merges: they come back when the same run is made again (the same shapes, seed and resolution). A new run starts without merges." },
     panelShapes: {
-      help: "Tick two or more shapes of Draw a region and press Combine (the bins inside any of them), Overlap (the bins inside all of them) or Subtract (the bins of the first ticked shape, the highest in the list, that are in none of the others). The result is a new shape that Run UMAP, the volcano and the plots use like a drawn one; it counts the bins of every ticked shape, even where a later shape covers them. Remove the shapes used takes the ticked shapes away afterwards. Save GeoJSON writes the shapes (the ticked ones, or all) in the image's full-resolution pixels, with the pixel size in µm: an outline as a polygon, a combined shape or a selection as the centres of its bins. Load GeoJSON adds polygons from such a file; one from QuPath lines up only if QuPath opened the same full-resolution image (same crop, flip and scale). Save barcodes writes one row per bin inside the shapes with its barcode or cell id, its position and its shape; it needs the export's barcode lists, which prepare.py export writes by default (not with --no-ids)." },
+      help: "Save GeoJSON writes the Draw a region shapes (the ticked ones, or all) in the image's full-resolution pixels, with the pixel size in µm: an outline as a polygon, a selection as the centres of its bins. Load GeoJSON adds polygons from such a file; one from QuPath lines up only if QuPath opened the same full-resolution image (same crop, flip and scale). Save barcodes writes one row per bin inside the shapes with its barcode or cell id, its position and its shape; it needs the export's barcode lists, which prepare.py export writes by default (not with --no-ids)." },
     panelVolcano: { more: ["vcTest", "vcMinPct", "vcExtra"],
       help: "Compares two groups of bins gene by gene: a drawn shape, a cluster, or the rest of the section. Genes to the right are higher in A, to the left higher in B; click a dot to draw that gene on the slide. × closes the plot; while nothing has changed the button reads Show volcano and brings it back without running again. More options: the test (Wilcoxon rank-sum or Welch's t), the smallest share of bins a gene must be counted in to be tested, and extra genes to test by name." },
     panelPlots: { more: ["plTop"], moreAt: { before: "plRun" },
@@ -73,17 +69,13 @@
       help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
     panelHelp: {},
-    panelOffline: { help: "After one visit the page opens with no network (it needs https or localhost, not a file). A dataset is kept only when you press Keep: what you have looked at in it so far, and the data Draw a region needs, after you see the size. Remove takes it off this computer again. Nothing from a password-protected source is kept." },   // offline.js builds the section
-    panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated." },   // compare.js builds the section
   };
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelMeasure", "panelRna"],
-    clusters: ["panelUmap", "panelOwn", "panelSets", "panelBinQc", "panelSlideQc", "panelCount"],
-    analyze: ["panelLasso", "panelRunSets", "panelShapes", "panelVolcano", "panelPlots"],
-    save: ["panelSave", "panelImage", "panelDataset", "panelOffline", "panelHelp"],
+    clusters: ["panelUmap", "panelOwn", "panelSets", "panelBinQc"],
+    analyze: ["panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
+    save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
   };
-  // a section that lives inside another one keeps its own heading and does not fold by itself
-  const NESTED = { panelGate: "panelCount" };
 
   // ---- remembered per browser: the tab, which sections are open, which "More options" ----------
   const KEY = "soda.layout.v1";
@@ -109,7 +101,7 @@
   const phone = window.matchMedia ? window.matchMedia("(max-width: 700px)") : { matches: false };
   const sections = (tab) => [...tabBox[tab].children].filter((c) => c.matches && c.matches("section.panel"));
   const tabOf = (sec) => { const b = sec.closest(".tabpanel"); return b ? TABS.find((t) => tabBox[t] === b) : null; };
-  // the section to fold for an element: the outermost one (the gate panel sits inside Counting tools)
+  // the section to fold for an element: the outermost one
   const sectionOf = (node) => { let s = node && node.closest ? node.closest("section.panel") : null; while (s && s.parentElement && s.parentElement.closest("section.panel")) s = s.parentElement.closest("section.panel"); return s; };
   let words = null;                                 // viewer.js's wording function for the layer on show
   const say = (t) => (words ? words(t) : t);
@@ -193,23 +185,10 @@
     side.appendChild(save);
     if (lasso) mirror(jsonRow, lasso);
 
-    // Slide QC and the counting tools leave the Genes panel for the Clusters tab
-    const qcBox = $("qcBox");
-    if (qcBox) { const s = newSection("panelSlideQc", "clusters", "Slide QC"); s.appendChild(qcBox); $("panelBinQc").after(s); mirror(s, qcBox, $("panelGenes")); }
-    const gateRow = $("rowGateOpen"), gate = $("panelGate");
-    if (gateRow) {
-      const s = newSection("panelCount", "clusters", "Counting tools");
-      s.appendChild(gateRow);
-      if ($("gatePub")) s.appendChild($("gatePub"));
-      if (gate) s.appendChild(gate);
-      ($("panelSlideQc") || $("panelBinQc")).after(s);
-      mirror(s, gateRow, $("panelGenes"));
-    }
-
     // every section into its tab, in the tab's order; then its heading and body
     for (const tab of TABS) {
       const want = ORDER[tab].map($).filter(Boolean);
-      const rest = [...side.querySelectorAll(`section.panel[data-tab=${tab}]`)].filter((s) => !want.includes(s) && !(NESTED[s.id] && $(NESTED[s.id]) && $(NESTED[s.id]).contains(s)));
+      const rest = [...side.querySelectorAll(`section.panel[data-tab=${tab}]`)].filter((s) => !want.includes(s));
       for (const s of [...want, ...rest]) tabBox[tab].appendChild(s);
       const none = el("div", "tab-empty"); none.textContent = "Nothing here for this dataset."; none.hidden = true;
       tabBox[tab].appendChild(none);
@@ -468,13 +447,10 @@
       let n = box.children.length;
       new MutationObserver(() => { const now = box.children.length; if (now > n) flag(secId); n = now; }).observe(box, { childList: true });
     }
-    // a message in the gate panel while it is out of sight
-    watchMsg("gateMsg", "panelCount");
     // the user's own action sends them to another tab: show it
     const load = $("lassoLoad"), toShape = $("selToShape");
     if (load) load.addEventListener("change", () => show("panelLasso"));      // a file was chosen: the run and its messages are in Draw a region
     if (toShape) toShape.addEventListener("click", () => show("panelLasso"));
-    for (const id of ["gateOpenPos", "gateOpenCl"]) if ($(id)) $(id).addEventListener("click", () => { const s = $("panelCount"); if (s) setOpen(s, true, false); });
   }
   function watchRun(cancelId, secId) {
     const c = $(cancelId); if (!c) return;
@@ -483,14 +459,12 @@
   }
   function watchMsg(msgId, secId) {
     const m = $(msgId); if (!m) return;
-    new MutationObserver(() => { if (m.textContent.trim() && (m.style.color || msgId === "gateMsg")) flag(secId, "warn"); })
+    new MutationObserver(() => { if (m.textContent.trim() && m.style.color) flag(secId, "warn"); })
       .observe(m, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["style"] });
   }
   // after a dataset has opened: what is already on that a first look at the View tab would miss
   function flagOpenState() {
     if (txt("bqCount")) flag("panelBinQc", "warn");
-    const q = $("qcSummary");
-    if (q && up("panelSlideQc") && q.querySelector(".qc-warn")) flag("panelSlideQc", "warn");
   }
 
   // bring a section in front of the user: its tab, unfolded, in view (and on a phone the sheet up)
@@ -524,7 +498,6 @@
     panelGenes: () => names("geneList", "none picked"),
     panelPaint: () => (window.SodaPaint ? window.SodaPaint.summary() : ""),
     panelMeasure: () => (window.SodaMeasure ? window.SodaMeasure.summary() : ""),
-    panelOffline: () => (window.SodaOffline ? window.SodaOffline.summary() : ""),
     panelMolecules: () => names("molList", "none picked"),
     panelOverlays() { const n = $("overlayList") ? $("overlayList").querySelectorAll("input[type=checkbox]:checked").length : 0; return n ? `${n} on` : "off"; },
     panelRna: () => names("rnaGeneList", "clusters, no gene picked"),
@@ -534,19 +507,15 @@
       let t;
       if (by.value === "cluster") { const o = $("clusterRes") && $("clusterRes").selectedOptions[0]; t = o ? o.textContent.split(" · ")[0] : "clusters"; }
       else if (by.value === "celltype") t = "suggested cell types";
-      else if (by.value === "phenotype") t = "your cell-type rules";
       else t = `by ${(by.options[0] ? by.options[0].textContent : "genes").split(" ")[0].toLowerCase()}`;
       return sel ? `${t} · ${sel}` : t;
     },
     panelSets() { const n = $("csSets") ? $("csSets").querySelectorAll(".cs-set").length : 0; return n ? plural(n, "set") : up("csPick") ? "no sets" : ""; },
     panelBinQc: () => txt("bqCount").replace(/[()]/g, "") || "off",
-    panelSlideQc() { const q = $("qcSummary"), n = q ? q.querySelectorAll(".qc-warn").length : 0; return n ? plural(n, "warning") : "ok"; },
-    panelCount: () => (up("panelGate") ? txt("gateTitle") : up("gatePub") ? "published cut-offs" : "closed"),
     panelLasso() {
       const n = $("lassoShapes") ? $("lassoShapes").querySelectorAll(".lshape").length : 0;
       return (n ? plural(n, "shape") : "no shapes") + (up("lassoCancel") ? " · running…" : toolOn("analyze") ? " · drawing…" : "");
     },
-    panelRunSets() { const n = $("rsSets") ? $("rsSets").querySelectorAll(".cs-set").length : 0; return n ? plural(n, "set") : up("rsPick") ? "no sets" : ""; },
     panelShapes() { const n = $("shPick") ? $("shPick").querySelectorAll("input:checked").length : 0; return n ? `${n} ticked` : ""; },
     panelVolcano() {
       if (up("vcCancel")) return "running…";
@@ -558,7 +527,6 @@
       const t = txt("plTitle"), has = !!(window.SodaPlots && window.SodaPlots.result) || up("plotsPanel");
       return has && t && t !== "Plots" ? t : "not drawn";
     },
-    panelCompare: () => (window.SodaCompare ? window.SodaCompare.summary() : ""),
     panelDataset() { const p = txt("dsInfo").split(" · "); return p.length > 3 ? `${p[0]} · ${p[p.length - 1]}` : p.slice(0, 2).join(" · "); },   // size and pixel size
   };
   function paintSummaries() {
@@ -567,7 +535,7 @@
       if (!out || !f) continue;
       let t = ""; try { t = f() || ""; } catch (e) { t = ""; }
       if (out.textContent !== t) out.textContent = t;
-      out.classList.toggle("warn", s.id === "panelSlideQc" && /warning/.test(t) || s.id === "panelBinQc" && t !== "off");
+      out.classList.toggle("warn", s.id === "panelBinQc" && t !== "off");
     }
   }
   // Dataset details: the layers and their counts (the Layer menu's own lines), the stains, the molecules

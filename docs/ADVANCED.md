@@ -3,7 +3,7 @@
 The [quick start in the README](../README.md#quick-start) and
 [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) are enough to share your data. This page is for
 everything past that: your own website, a password, your own names and colours, the
-notebook's settings, your own clusters, marker lists, the code, a batch run over many datasets, and offline use.
+notebook's settings, your own clusters, marker lists, the code, and a batch run over many datasets.
 Each section is short
 and links to the full reference.
 
@@ -15,7 +15,6 @@ and links to the full reference.
 6. [Marker lists for suggested names](#6-marker-lists-for-suggested-names)
 7. [Changing the code](#7-changing-the-code)
 8. [Many datasets at once, without the notebook](#8-many-datasets-at-once-without-the-notebook)
-9. [Offline use](#9-offline-use)
 
 ---
 
@@ -325,10 +324,9 @@ When you change the page:
   signed ones as sample IDs and stops the upload.
 - `index.html` allows scripts only from the page's own site and `cdn.jsdelivr.net` (its
   Content-Security-Policy line). A library from anywhere else needs that line changed. The two
-  outside libraries are pinned by version and SHA-384 in `libs.js` ([Offline use](#9-offline-use)).
-- The service worker (`sw.js`) keeps every file `index.html` loads with a `?v=` string, and every
-  `"name.js?v=..."` a script names (the workers). Name a new worker the same way, with its
-  `?v=`, or it will be missing offline.
+  outside libraries are pinned by version and SHA-384 in `libs.js`.
+- Name a new worker the way the others are named, `"name.js?v=..."`, so a new publish is never
+  mixed with an old cached copy.
 - Test before you share: `python tests/smoke_test.py` checks the tools and the public example
   exports ([REPRODUCE.md, section 6](../REPRODUCE.md#6-the-smoke-test); and `tests/diag_test.js`
   when Node is installed). Then open your own data.
@@ -407,95 +405,3 @@ as a big Visium HD section or a whole Stereo-seq chip about 8.5 GB (the largest 
 the [README](../README.md#requirements)). Keep `--jobs 1` for whole sections unless the computer
 has the number of jobs times 8.5 GB free. The batch prints the free memory at the start and
 warns. With more than one job the BLAS threads are split between them (`--threads` sets them).
-
-## 9. Offline use
-
-SODA can open with no network: on a train, in a lab without internet, or in the desktop app.
-Two parts make that work, and you can use either on its own.
-
-### The two libraries from your own site: `prepare.py vendor`
-
-The page needs two libraries that are not in this repository: deck.gl (it draws the map) and
-umap-js (Draw a region's UMAP). By default the browser loads them from `cdn.jsdelivr.net`. To
-serve them from your own site instead, run once:
-
-```bash
-python web/SpatialViewer/prepare.py vendor          # or: python web/SpatialViewer/vendor.py
-```
-
-It downloads the two pinned files, checks each one's size and SHA-384, and writes them to
-`web/SpatialViewer/vendor/`, next to `index.html`:
-
-```text
-vendor/deck.gl@9.1.12/dist.min.js
-vendor/umap-js@1.4.0/lib/umap-js.min.js
-```
-
-The page and the UMAP worker look in `vendor/` first and use the CDN only when a file is not
-there. The browser checks the SHA-384 again before it runs a file (a changed or damaged file is
-refused and the CDN copy is used). Other options:
-
-- `--check` only checks what is in `vendor/` and downloads nothing (exit code 1 if anything is
-  missing or wrong).
-- `--from <folder>` copies the files from a folder with the same layout, for example another
-  computer's `vendor/` on a USB stick, for a machine with no internet at all.
-- `--dest <folder>` writes `vendor/` into another copy of the page (the folder that holds
-  `index.html`), for example your website's folder.
-
-`vendor/` is git-ignored: the files are not part of the repository. Copy the folder along with the
-page when you publish it (or run the command where the site is built). The versions and hashes
-are in `web/SpatialViewer/libs.js`; change them there only, and in `index.html`'s `vendor/`
-line (`tests/smoke_test.py` checks that they agree). Opened as a file (`file://`), the page
-cannot use `vendor/` (a browser does not check a file's hash there) and uses the CDN.
-
-### The page keeps itself: after one visit, it opens with no network
-
-When the page is served over `https://` or from `localhost` (`static_serve.py`, `server.py`,
-the desktop app), the browser keeps a copy of it after the first visit (a service worker,
-`sw.js`): `index.html`, every file it loads, the workers, the marker lists, deck.gl and
-umap-js (from `vendor/`, or the CDN's copy with the same hash). Online, the page still loads
-everything from the network as before; the kept copy is used only when the network fails.
-When you publish a new version (the `?v=` strings in `index.html` change), the next visit keeps
-the new version and deletes the old copy.
-
-**Data is not kept unless you ask.** An export can be gigabytes, and a private site's data sits
-behind a password, so nothing of a dataset is kept on its own. To use a dataset offline, open it,
-look at what you will need (zoom in where you will want detail, add the genes), then
-**Save tab > Offline use > Keep this dataset for offline use**. It shows the size first, then
-keeps on this computer what the page has fetched from that dataset so far plus the files Draw
-a region needs (each layer's `hvg/` chunks), at most 500 MB per dataset (`offlineMaxMB` in
-`config.js`). **Update offline copy** adds what you have looked at since; **Remove offline
-copy** and **Remove every offline copy** take it off again. Offline, a dataset that was not
-kept says so instead of opening.
-
-Never kept: a dataset of a password-protected site (`tokenEndpoint`), one whose `?data=` link
-carries a read pass, and one from `server.py`.
-
-Settings in `config.js`:
-
-| | |
-|---|---|
-| `offline: false` | no service worker on this site, and what earlier visits kept is deleted |
-| `offline: true` | on also on a password-protected site (the page only; its data is still never kept) |
-| `offlineMaxMB: 500` | the most one kept dataset may hold |
-| `offlineKeep: false` | no "Keep this dataset for offline use" (the page still keeps itself): for a page whose data is already on the reader's computer. The desktop app serves this |
-
-By default offline use is on, except on a password-protected site (`tokenEndpoint`), where no
-dataset opens without the password service anyway.
-
-Limits:
-
-- **A page opened as a file (`file://`) cannot keep itself**: browsers allow a service worker
-  only on `https://` and `localhost`. Serve the folder instead
-  (`python web/SpatialViewer/static_serve.py`, or any web server).
-- The browser may delete kept copies when the disk is nearly full, and a private window keeps
-  nothing after it closes.
-- The copies belong to one browser on one computer, and to one address: a page opened from
-  another address (another port on `localhost`, too) keeps its own.
-
-**Clearing it:** Save tab > Offline use > Remove every offline copy removes the kept datasets. To
-remove everything, the page as well, clear the site's data in the browser (Chrome and Edge:
-the padlock or site icon left of the address > Site settings > Delete data; Safari: Settings >
-Privacy > Manage Website Data; Firefox: the padlock > Clear cookies and site data), or set
-`offline: false` in `config.js`, which removes it on the next visit. The `&diag=1` panel shows
-whether the service worker is in charge and how many datasets are kept.

@@ -30,6 +30,22 @@ Fewer ways to do the same thing, so there is less to learn and less that can bre
   one dataset each. The notebook now shows the same kind names as `prepare.py` (`tiff`, `akoya`,
   `rnaseq`); the old names still work in `OPTIONS`.
 
+Removed from the page (old links and Save JSON files still open; the parts they held for these
+tools are ignored):
+
+- Counting tools for protein images: % positive for a marker, Count clusters, Combine markers,
+  saved cut-offs and a dataset's `gates.json`.
+- Compare side by side (a second, linked window).
+- Combine / Overlap / Subtract in the shapes section, now called Export shapes (Save and Load
+  GeoJSON, Save barcodes). A combined shape in an older link or file still opens.
+- Merge clusters of the run (Analyze tab). Cell sets, for the whole section's clusters, stays.
+- Compare with slide and its table (protein Draw a region). Run UMAP still sets the clusters'
+  markers against the whole slide.
+- The Slide QC box. The export still writes `qc.json` with the same checks; the page still uses
+  `qc_flags.bin` for the "Artefact?" cluster flag.
+- Offline use ("Keep this dataset" and the page keeping itself). For readers who used it,
+  `sw.js` now only deletes what it kept and removes itself on their next visit.
+
 ## 0.9.0 (19 November 2026)
 
 The first version for release, frozen for the bioRxiv preprint. It is what the paper describes.

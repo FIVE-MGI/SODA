@@ -140,10 +140,8 @@ Design points, each a deliberate difference from a plain PyInstaller app:
   same-origin here, and an open one would let any website read the export while SODA runs),
   lists no folders, never serves the `.py` tools or anything outside a chosen export folder,
   needs a per-launch token for every action (start, stop, pick, check, quit), and keeps no
-  request log (paths can name datasets). The viewer gets the app's own two-line `config.js`
-  (no site configuration is needed for local viewing) with `offlineKeep = false`: the Save tab's
-  Offline use section offers no "Keep this dataset for offline use", because the export is
-  already a folder on this computer. The page still keeps itself for offline use as on any site.
+  request log (paths can name datasets). The viewer gets the app's own one-line `config.js`
+  (no site configuration is needed for local viewing).
 - **deck.gl and umap-js inside the app** (release builds): the workflows run
   `python web/SpatialViewer/prepare.py vendor` before PyInstaller, which fetches the versions
   pinned in `libs.js` and writes a file only when its size and SHA-384 match; the build scripts
@@ -339,7 +337,7 @@ bytes, SHA-256 `8dc613d351ecb078dfe8460353b4694cae7f4171ddac1dbda0cb0a7e981eef28
    the installed app: 59 passed, 0 failed. That includes `vendor/` served with the pinned
    SHA-384, the viewer in headless Chromium with every request to cdn.jsdelivr.net blocked
    (deck.gl loaded from the app, no request to the CDN), no "Keep this dataset" in the viewer,
-   and the home page. The app wrote no file into its install folder.
+   and the home page. (That was 0.9.0; offline use was removed from the viewer in 0.10.0.) The app wrote no file into its install folder.
 3. The same setup.exe again over it (the update path): a stray file put in `_internal\` was
    removed, the rest reinstalled.
 4. `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`: exit 0, returned after the work was
