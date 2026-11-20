@@ -168,7 +168,7 @@ File formats, how barcodes are matched and how to write the files from R or Pyth
 ### Load your own results in the viewer (no new export)
 
 A reader can also bring results to a page that is already shared, with no new export:
-**Clusters tab, Your own results, Load your own results...** (or drop the file anywhere on
+**Analyze tab, More options, Your own results, Load your own results...** (or drop the file anywhere on
 the page). The file is read in the browser and never uploaded.
 
 **The file.** A CSV or TSV, gzipped or not (`.csv`, `.tsv`, `.txt`, `.gz`), one row per bin
@@ -292,7 +292,7 @@ The page, in `web/SpatialViewer/`:
 | `index.html` | every control, with its id; loads the scripts and styles below |
 | `config.js` | your settings (copied from `config.example.js`) |
 | `viewer.js` | the main viewer: opens datasets, draws image tiles, genes, molecules and clusters with deck.gl, the password and `?data=` links, the UMAP view |
-| `layout.js` | the four tabs, folding sections, "More options", the "?" notes, the phone layout. It moves controls; it makes none |
+| `layout.js` | the three tabs, folding sections, each tab's and section's "More options", the "?" notes, the phone layout. It moves controls; it makes none |
 | `dspicker.js` | the searchable dataset list |
 | `qc.js` | the quality filter: per-bin histograms and thresholds |
 | `roi.js` | what differs for GeoMx ROI layers: words, drawing, notes |

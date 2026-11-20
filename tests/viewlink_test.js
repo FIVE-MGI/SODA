@@ -41,6 +41,9 @@ const circle = (cx, cy, r, k) => Array.from({ length: k }, (_, i) => [cx + r * M
     eq(d.state.sectionClusters, st.sectionClusters, `${name}: the clustering, its names and hidden clusters survive`);
   }
   eq(VL.clean(VL.clean(st)), VL.clean(st), "clean() is idempotent");
+  // a link from before 0.10.0 named four tabs: Clusters opens Analyze, Save opens Share
+  eq(VL.clean(st).view.tab, "analyze", "an older link's Clusters tab opens the Analyze tab");
+  eq(VL.clean({ dataset: "d", view: { v: 1, tab: "save" } }).view.tab, "share", "an older link's Save tab opens the Share tab");
   // cell sets (clusters merged into named sets) travel with the clustering, as in Save JSON
   const withSets = typical();
   withSets.sectionClusters.sets = { "0.6": [{ ids: [1, 4, 7], prev: "Old name" }, { ids: [2, 3], prev: null }] };

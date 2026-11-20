@@ -30,10 +30,10 @@
     transparent: { bg: null, fg: "#1a1f2b", muted: "#555d6b", edge: "rgba(0,0,0,0.35)" },
   };
 
-  // ---- the controls: a section in the Save tab, and a button beside Fit ------------------------------
+  // ---- the controls: a section in the Share tab, and a button beside Fit ------------------------------
   function buildDom() {
     const sec = document.createElement("section");
-    sec.className = "panel"; sec.id = "panelImage"; sec.dataset.tab = "save";
+    sec.className = "panel"; sec.id = "panelImage"; sec.dataset.tab = "share";
     sec.innerHTML = `<h2>Save image</h2>
       <label class="row slim"><span>Size</span><select id="snapScale" title="How many pixels: 1x is the map as on screen; 2x and 4x draw it again, sharper, with finer image tiles"></select></label>
       <label class="row slim"><span>Background</span><select id="snapBg">
@@ -48,10 +48,10 @@
     if (window.SodaLayout) { side.appendChild(sec); window.SodaLayout.adopt(sec); }
     else { const help = $("panelHelp"); if (help) help.before(sec); else side.appendChild(sec); }
 
-    // the same, one click away: a camera beside Fit in the bar over the map (the options are the Save tab's)
+    // the same, one click away: a camera beside Fit in the bar over the map (the options are the Share tab's)
     const quick = document.createElement("button");
     quick.type = "button"; quick.id = "snapQuick"; quick.className = "snap-quick";
-    quick.title = "Save the map as a PNG image (size and options: Save tab)";
+    quick.title = "Save the map as a PNG image (size and options: Share tab)";
     quick.setAttribute("aria-label", "Save the map as a PNG image");
     quick.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
     const fit = $("btnFit");

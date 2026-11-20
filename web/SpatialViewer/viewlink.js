@@ -1,4 +1,4 @@
-// A link that restores the view: "Copy link to this view" in the Save tab.
+// A link that restores the view: "Copy link to this view" in the Share tab.
 //
 // The state is the one Save JSON writes (viewer.js: sessionState), without the UMAP run's
 // parameters and result, plus a `view` block made here: the camera, the mode, stains, genes,
@@ -27,7 +27,8 @@
   const MAX_PAYLOAD = 16000;      // longer payloads are not read at all
   const MAX_JSON = 512 * 1024;    // bytes of JSON a payload may unpack to
   const THIN_POINTS = 40;         // a freehand outline in a link that is too long keeps this many points
-  const TABS = ["view", "clusters", "analyze", "save"];
+  const TABS = ["view", "analyze", "share"];
+  const OLD_TAB = { clusters: "analyze", save: "share" };   // a link made before 0.10.0 named four tabs
   // more of the view, from other scripts (binpaint.js ...): { key, capture() -> value or null,
   // clean(value, helpers) -> value or null, apply(value or null) -> Promise of notes }. Each is one more
   // key of the view block: a file or link without it opens as before, and apply(null) puts it back to off.
@@ -170,7 +171,7 @@
     put(o, "ov", list(v.ov, 50, (s) => str(s, 120)));
     put(o, "colorBy", oneOf(v.colorBy, ["gene", "cluster", "celltype"]));
     put(o, "pick", int(v.pick, 0, 65534));
-    put(o, "tab", oneOf(v.tab, TABS));
+    put(o, "tab", oneOf(OLD_TAB[v.tab] || v.tab, TABS));
     for (const x of EXT) { if (o[x.key] !== undefined || UNSAFE_KEY.test(x.key)) continue; try { put(o, x.key, x.clean(v[x.key], HELP_FNS)); } catch (e) { /* that part is dropped */ } }
     if (isObj(v.rna)) {
       const r = {}, x = v.rna;
@@ -695,7 +696,7 @@
     } finally { busy = false; }
   }
 
-  // The Save tab's "Copy link" (layout.js builds it to copy the page's address) becomes "Copy link to this
+  // The Share tab's "Copy link" (layout.js builds it to copy the page's address) becomes "Copy link to this
   // view": its words, its click and the sentence about it in the section's "?" note. Done from here so that
   // layout.js stays as it is; without this file the button copies the address as before.
   const HELP = "Copy link to this view copies an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters, the quality filter and the open tab. Drawn shapes too big for a link are left out, and it says so. Save JSON keeps the same view in a file.";

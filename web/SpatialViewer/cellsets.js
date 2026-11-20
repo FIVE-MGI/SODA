@@ -1,4 +1,4 @@
-// Cell sets (Clusters tab): merge the clusters of the whole section on show into named sets, undo, and export one
+// Cell sets (Analyze tab, More options): merge the clusters of the whole section on show into named sets, undo, and export one
 // row per bin (SodaSets).
 //
 // The section's sets live in viewer.js's state (S.umap.sets, per clustering key) next to the names given to clusters
@@ -290,7 +290,7 @@
   }
 
   const section = make({
-    p: "cs", id: "panelSets", tab: "clusters", title: "Cell sets", after: "panelUmap",
+    p: "cs", id: "panelSets", tab: "analyze", title: "Cell sets", after: "panelUmap",
     csvTitle: "One row per bin: its row number, position, cluster and set (no barcodes)",
     none: (w) => `Merge clusters into named sets: first colour the ${w.bins} by clusters (Clusters & selection, or the button below).`,
   });

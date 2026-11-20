@@ -545,7 +545,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
   await shot(page, "outlines_xenium_gene.png");
   const hasClusters = await page.evaluate(() => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey); return !!(e.umap && (e.umap.clusterings || []).length); });
   if (hasClusters) {
-    await page.click("#tabClusters"); await page.selectOption("#colorBy", "cluster");
+    await page.click("#tabAnalyze"); await page.selectOption("#colorBy", "cluster");
     await page.waitForFunction(() => { const U = window.__spatialViewer.state.umap; return U && U.cl && U.colorBy === "cluster"; }, null, { timeout: 60000 });
     await settled(page);
     c = await page.evaluate(() => { const sv = window.__spatialViewer, col = sv.outlines._debug().col, U = sv.state.umap, N = U.pos.length / 2; let f = 0, k = 0; for (let r = 0; r < N; r++) { if (col.fill[4 * r + 3] > 0) f++; if (U.cl[r] !== 0xffff) k++; } return { filled: f, clustered: k }; });

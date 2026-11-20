@@ -21,7 +21,7 @@
         panelsBox = $("tabPanels"), topBar = $("topBar");
   if (!app || !side || !rail || !tabList || !panelsBox || !topBar) return;
 
-  const TABS = ["view", "clusters", "analyze", "save"];
+  const TABS = ["view", "analyze", "share"];
   const tabBtn = {}, tabBox = {};
   for (const t of TABS) {
     tabBtn[t] = tabList.querySelector(`[role=tab][data-tab=${t}]`);
@@ -40,7 +40,7 @@
     panelGenes: { more: ["geneOpacity", "pointScale", "tissueBins", "cellNuclei"],
       help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. Cell shapes (segmented cells that came with their boundaries): Outlines draws every cell's own outline once you zoom in, Dots keeps the dots. More options: opacity, point size, an outline of every bin in the tissue, and the nucleus outlines." },
     panelPaint: {
-      help: "Colours every bin by one number, or by two genes, instead of by the genes picked above. A value per bin: pick the value (total counts, genes detected, % mitochondrial and whatever else the export measured per bin, such as a GeoMx ROI's Q3 normalisation factor). The colours run along viridis from the From value (dark) to the to value (yellow); Auto sets them to the 1st and 99th percentile, and Log spreads out values that pile up at the low end. Hover or tap a bin to read its value. Two genes: type a gene in A and in B and press Enter; a bin counts as having a gene when its value is above that gene's number (empty: above 0, that is found at all; for markers, above the median square). Both / one only colours each bin by which of the two it has (yellow both, red A only, green B only) and counts them; Blend adds red for A to green for B, brighter for more, so bins high in both turn yellow. Bins with neither are not drawn. Gene set score: type or paste a list of genes (spaces, commas or new lines between them) and press Score or Ctrl+Enter, or pick a cell type to use its marker genes (the dataset's own list first, then SODA's generic one). Each bin's score is the mean, over the listed genes the layer has, of its normalised value: log1p(10,000 × count / the bin's total count) for sequencing bins and cells, log1p(count / Q3 factor) for GeoMx ROIs, and for markers the marker scaled from its 1st to its 99th percentile square. It is a plain mean, not a module score with control genes. Genes the layer does not have are left out and named under the list. The colours and From / to work as for a value. The legend on the map and in Save image says what the colours mean. Colour bins by cluster (Clusters tab) wins over this while it is on." },
+      help: "Colours every bin by one number, or by two genes, instead of by the genes picked above. A value per bin: pick the value (total counts, genes detected, % mitochondrial and whatever else the export measured per bin, such as a GeoMx ROI's Q3 normalisation factor). The colours run along viridis from the From value (dark) to the to value (yellow); Auto sets them to the 1st and 99th percentile, and Log spreads out values that pile up at the low end. Hover or tap a bin to read its value. Two genes: type a gene in A and in B and press Enter; a bin counts as having a gene when its value is above that gene's number (empty: above 0, that is found at all; for markers, above the median square). Both / one only colours each bin by which of the two it has (yellow both, red A only, green B only) and counts them; Blend adds red for A to green for B, brighter for more, so bins high in both turn yellow. Bins with neither are not drawn. Gene set score: type or paste a list of genes (spaces, commas or new lines between them) and press Score or Ctrl+Enter, or pick a cell type to use its marker genes (the dataset's own list first, then SODA's generic one). Each bin's score is the mean, over the listed genes the layer has, of its normalised value: log1p(10,000 × count / the bin's total count) for sequencing bins and cells, log1p(count / Q3 factor) for GeoMx ROIs, and for markers the marker scaled from its 1st to its 99th percentile square. It is a plain mean, not a module score with control genes. Genes the layer does not have are left out and named under the list. The colours and From / to work as for a value. The legend on the map and in Save image says what the colours mean. Colour bins by cluster (Clusters, Analyze tab) wins over this while it is on." },
     panelMolecules: { more: ["molSize", "molOpacity"],
       help: "Every decoded molecule of the genes picked here, one dot each, one colour per gene. Zoomed out only a share of the dots is drawn; zoom in to see them all. More options: dot size and opacity." },
     panelOverlays: { help: "Outlines that came with the dataset (regions, cells, ROIs), drawn over the picture. Tick one to show it; hover an outline to read its name." },
@@ -51,9 +51,9 @@
     panelUmap: { notes: ["umapNote"],
       help: "Colour the bins by the genes picked in View, by cluster, or by suggested cell type. Click a cluster in the list to light it in every view; the pencil renames it and the tick box hides it. Box and Freehand select bins by drawing around them, on the tissue or on the UMAP. What is selected or highlighted is named above the picture, beside Tissue / Side by side / UMAP, with Show on slide (frame it on the tissue) and Clear selection (or press Esc)." },
     panelOwn: {
-      help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering above (colours on the tissue and the UMAP, names, cell sets, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
+      help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering in the Clusters section (colours on the tissue and the UMAP, names, cell sets, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
     panelSets: {
-      help: "Merge clusters of the clustering on show into one named set: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour of its first cluster and counts as one group everywhere: the maps, the legend, the volcano and plot groups, Count clusters and the saved image. Rename a set in its box or with the pencil in the legend; Un-merge splits it again and Undo takes back the last change made here. Save JSON keeps the sets with the cluster names. Export CSV writes one row per bin: its row number in the export, its position in image pixels, its cluster and the set it is in (bins left out of the clustering have empty cells)." },
+      help: "Merge clusters of the clustering on show into one named set: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour of its first cluster and counts as one group everywhere: the maps, the legend, the volcano and plot groups and the saved image. Rename a set in its box or with the pencil in the legend; Un-merge splits it again and Undo takes back the last change made here. Save JSON keeps the sets with the cluster names. Export CSV writes one row per bin: its row number in the export, its position in image pixels, its cluster and the set it is in (bins left out of the clustering have empty cells)." },
     panelBinQc: { more: ["bqGrey"], moreAt: "end", notes: ["bqNote"],
       help: "One histogram per measure (counts, genes detected, % mitochondrial). Move a slider or type a number to set a minimum or a maximum: bins outside are removed." },
     panelLasso: { more: ["lassoMode", "lassoSeed", "lassoRes"], notes: ["lassoNote"],
@@ -71,10 +71,14 @@
     panelHelp: {},
   };
   const ORDER = {
-    view: ["panelChannels", "panelGenes", "panelPaint", "panelMolecules", "panelOverlays", "panelMeasure", "panelRna"],
-    clusters: ["panelUmap", "panelOwn", "panelSets", "panelBinQc"],
-    analyze: ["panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
-    save: ["panelSave", "panelImage", "panelDataset", "panelHelp"],
+    view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
+    analyze: ["panelUmap", "panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
+    share: ["panelImage", "panelSave", "panelDataset", "panelHelp"],
+  };
+  // the sections few people need: behind one "More options" at the end of their tab, in this order
+  const MORE = {
+    view: ["panelPaint", "panelMeasure"],
+    analyze: ["panelOwn", "panelSets", "panelBinQc"],
   };
 
   // ---- remembered per browser: the tab, which sections are open, which "More options" ----------
@@ -83,7 +87,8 @@
   try {
     const j = JSON.parse(localStorage.getItem(KEY) || "null");
     if (j && typeof j === "object") {
-      if (TABS.includes(j.tab)) store.tab = j.tab;
+      const tab = { clusters: "analyze", save: "share" }[j.tab] || j.tab;      // the four tabs before 0.10.0
+      if (TABS.includes(tab)) store.tab = tab;
       if (j.open && typeof j.open === "object") Object.assign(store.open, j.open);
       if (j.more && typeof j.more === "object") Object.assign(store.more, j.more);
       store.hidden = !!j.hidden;
@@ -99,7 +104,7 @@
   const hide = (e, v) => { if (e && e.hidden !== v) e.hidden = v; };            // only when it changes: every write wakes the observer
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   const phone = window.matchMedia ? window.matchMedia("(max-width: 700px)") : { matches: false };
-  const sections = (tab) => [...tabBox[tab].children].filter((c) => c.matches && c.matches("section.panel"));
+  const sections = (tab) => [...tabBox[tab].querySelectorAll(":scope > section.panel, :scope > .tab-more > .tab-more-box > section.panel")];
   const tabOf = (sec) => { const b = sec.closest(".tabpanel"); return b ? TABS.find((t) => tabBox[t] === b) : null; };
   // the section to fold for an element: the outermost one
   const sectionOf = (node) => { let s = node && node.closest ? node.closest("section.panel") : null; while (s && s.parentElement && s.parentElement.closest("section.panel")) s = s.parentElement.closest("section.panel"); return s; };
@@ -133,15 +138,17 @@
     if (dsRow) topBar.appendChild(dsRow);
     if (vs) {
       topBar.appendChild(vs);
-      // Speed is rarely changed: behind a small button beside Play
-      const sp = vs.querySelector(".fly-speed");
+      // Play and its speed are rarely used: behind a small button after Tissue / Side by side / UMAP
+      const sp = vs.querySelector(".fly-speed"), play = $("flyPlay");
       if (sp) {
         const more = el("button", "fly-more", "flyMore"), box = el("span", "fly-more-box", "flySpeedBox");
-        more.type = "button"; more.textContent = "…"; more.title = "Speed of the flight between the tissue and the UMAP";
-        more.setAttribute("aria-label", "Flight speed"); more.setAttribute("aria-expanded", "false"); more.setAttribute("aria-controls", "flySpeedBox");
+        more.type = "button"; more.textContent = "…"; more.title = "Play the flight between the tissue and the UMAP, and its speed";
+        more.setAttribute("aria-label", "Play and flight speed"); more.setAttribute("aria-expanded", "false"); more.setAttribute("aria-controls", "flySpeedBox");
         box.hidden = true;
-        sp.before(more); more.after(box); box.appendChild(sp);
-        more.onclick = () => { box.hidden = !box.hidden; more.setAttribute("aria-expanded", String(!box.hidden)); if (!box.hidden) { const s = $("flySpeed"); if (s) s.focus(); } };
+        (play && play.parentElement === vs ? play : sp).before(more); more.after(box);
+        if (play && play.parentElement === vs) box.appendChild(play);
+        box.appendChild(sp);
+        more.onclick = () => { box.hidden = !box.hidden; more.setAttribute("aria-expanded", String(!box.hidden)); if (!box.hidden) { const s = play && !play.hidden ? play : $("flySpeed"); if (s) s.focus(); } };
         mirror(more, sp);
       }
     }
@@ -173,7 +180,7 @@
 
     // Save and load: Save JSON and Load JSON leave the Draw a region panel; a button copies the page's address
     const lasso = $("panelLasso");
-    const save = newSection("panelSave", "save", "Save and load");
+    const save = newSection("panelSave", "share", "Save and load");
     const jsonRow = el("div", "btnrow", "saveJsonRow"), linkRow = el("div", "btnrow"), msg = el("div", "meta save-msg", "saveMsg");
     for (const id of ["lassoSaveJson", "lassoLoadBtn", "lassoLoad"]) if ($(id)) jsonRow.appendChild($(id));
     const copy = el("button", "", "btnCopyLink");
@@ -187,9 +194,10 @@
 
     // every section into its tab, in the tab's order; then its heading and body
     for (const tab of TABS) {
-      const want = ORDER[tab].map($).filter(Boolean);
-      const rest = [...side.querySelectorAll(`section.panel[data-tab=${tab}]`)].filter((s) => !want.includes(s));
+      const want = ORDER[tab].map($).filter(Boolean), extra = MORE[tab] || [];
+      const rest = [...side.querySelectorAll(`section.panel[data-tab=${tab}]`)].filter((s) => !want.includes(s) && !extra.includes(s.id));
       for (const s of [...want, ...rest]) tabBox[tab].appendChild(s);
+      if (extra.length) buildTabMore(tab);
       const none = el("div", "tab-empty"); none.textContent = "Nothing here for this dataset."; none.hidden = true;
       tabBox[tab].appendChild(none);
     }
@@ -198,6 +206,39 @@
     app.classList.add("tabbed");
     rail.hidden = false;
   }
+  // a tab's "More options": one button at the end of the tab, the sections of MORE under it (folded at first)
+  const tabMore = {};                               // tab -> { wrap, btn, box, sum, dot }
+  function buildTabMore(tab) {
+    const wrapEl = el("div", "tab-more", `tabMore-${tab}`), btn = el("button", "more-btn tab-more-btn", `tabMoreBtn-${tab}`),
+          box = el("div", "tab-more-box", `tabMoreBox-${tab}`), sum = el("span", "tab-more-sum"), dot = el("i", "sec-dot");
+    btn.type = "button"; btn.innerHTML = CHEV + "<span>More options</span>";
+    btn.setAttribute("aria-controls", box.id);
+    dot.hidden = true; dot.title = "Something changed here"; dot.setAttribute("role", "img"); dot.setAttribute("aria-label", "changed");
+    btn.append(sum, dot);
+    wrapEl.append(btn, box);
+    tabBox[tab].appendChild(wrapEl);
+    for (const s of MORE[tab].map($).filter(Boolean)) box.appendChild(s);
+    tabMore[tab] = { wrap: wrapEl, btn, box, sum, dot };
+    setTabMore(tab, !!store.more[`tab:${tab}`], false);
+    btn.onclick = () => setTabMore(tab, box.hidden, true);
+  }
+  function setTabMore(tab, open, byUser) {
+    const m = tabMore[tab]; if (!m) return;
+    m.box.hidden = !open; m.btn.setAttribute("aria-expanded", String(open)); m.btn.classList.toggle("open", open);
+    if (byUser) { store.more[`tab:${tab}`] = open; remember(); }
+    if (open) { seen(); announceShown(); }
+    schedule();
+  }
+  // the fold shows only when one of its sections does; folded, it names them
+  function paintTabMore() {
+    for (const tab of Object.keys(tabMore)) {
+      const m = tabMore[tab], live = [...m.box.children].filter((s) => s.matches("section.panel") && !s.hidden);
+      hide(m.wrap, !live.length);
+      const t = m.box.hidden ? live.map((s) => { const n = s.querySelector(":scope > .sec-head .sec-name"); return n ? n.textContent.trim() : ""; }).filter(Boolean).join(", ") : "";
+      if (m.sum.textContent !== t) m.sum.textContent = t;
+    }
+  }
+  const behindMore = (sec) => !!sec && !!sec.closest(".tab-more-box[hidden]");
   function newSection(id, tab, title) {
     const s = el("section", "panel", id), h = el("h2");
     s.dataset.tab = tab; h.textContent = title;
@@ -396,7 +437,7 @@
 
   // ---- signals: a dot on a tab and on a section header when something changed out of sight -------
   const flags = new Map();                          // section id -> "info" | "warn"
-  const onShow = (sec) => !!sec && !sec.hidden && tabOf(sec) === current && !sec.classList.contains("closed") && !bodyHidden();
+  const onShow = (sec) => !!sec && !sec.hidden && tabOf(sec) === current && !sec.classList.contains("closed") && !behindMore(sec) && !bodyHidden();
   function flag(id, kind) {
     const sec = $(id);
     if (!sec || sec.hidden || opening > 0 || onShow(sec)) return;
@@ -410,15 +451,18 @@
   }
   // a state that lasts (not a one-off change): marked for as long as it holds and its section is out of sight
   const standing = (id) => (id === "panelLasso" && up("bqStale") && up("panelBinQc") ? "warn" : null);   // the result on show was made before the quality filter changed
-  const toolOn = (tab) => (tab === "analyze" ? ["lassoCircle", "lassoFree"] : tab === "clusters" ? ["selBox", "selFree"] : []).some((id) => $(id) && $(id).classList.contains("on"));
+  const toolOn = (tab) => (tab === "analyze" ? ["lassoCircle", "lassoFree", "selBox", "selFree"] : []).some((id) => $(id) && $(id).classList.contains("on"));
   function paintFlags() {
     for (const tab of TABS) {
       let kind = null;
+      let behind = null;                            // the strongest mark among the sections behind a folded More options
       for (const s of sections(tab)) {
         const k = flags.get(s.id) || (!s.hidden && !onShow(s) ? standing(s.id) : null), d = s.querySelector(":scope > .sec-head .sec-dot");
         if (d) { hide(d, !k); d.classList.toggle("warn", k === "warn"); }
         if (k && kind !== "warn") kind = k;
+        if (k && behindMore(s) && behind !== "warn") behind = k;
       }
+      if (tabMore[tab]) { const d = tabMore[tab].dot; hide(d, !behind); d.classList.toggle("warn", behind === "warn"); }
       const away = tab !== current || bodyHidden();
       const d = tabBtn[tab].querySelector(".tab-dot"), show = away && (!!kind || toolOn(tab));
       if (d) {
@@ -432,7 +476,7 @@
   function watchSignals() {
     // a run ends (its Cancel button goes away): the result or the error is in that section
     watchRun("lassoCancel", "panelLasso");
-    // the quality thresholds changed since the last run: the warning is beside the sliders (Clusters tab); the
+    // the quality thresholds changed since the last run: the warning is beside the sliders (Analyze tab, More options); the
     // button that applies them is Run UMAP, so Draw a region says it too and carries a dot while it holds (standing)
     const stale = $("bqStale"), run = $("lassoRun");
     if (stale && run) {
@@ -477,6 +521,7 @@
     if (phone.matches) { if (sheet() === "peek") setSheet("half"); }
     else if (app.classList.contains("side-hidden")) setSideHidden(false, false);
     select(tab, true);
+    if (behindMore(sec)) setTabMore(tab, true, false);
     setOpen(sec, true, false);
     requestAnimationFrame(() => { const t = $(id); if (t && t.scrollIntoView) t.scrollIntoView({ block: "nearest" }); });
     return true;
@@ -573,7 +618,7 @@
   function schedule() { if (!timer) timer = setTimeout(refresh, 60); }
   function refresh() {
     timer = 0;
-    paintSummaries(); paintDetails();
+    paintSummaries(); paintDetails(); paintTabMore();
     if (opening === 0 && firstOpen) settle(false);
     const stains = $("chanList"), chan = $("panelChannels");
     if (stains && chan) chan.classList.toggle("no-stains", stains.hidden);
@@ -619,10 +664,11 @@
         watchRun("vcCancel", "panelVolcano"); watchMsg("vcMsg", "panelVolcano");
       } else if (node.matches && node.matches("section.panel")) {
         const tab = TABS.includes(node.dataset.tab) ? node.dataset.tab : "view";
-        const empty = tabBox[tab].querySelector(":scope > .tab-empty");
-        const order = ORDER[tab], at = order.indexOf(node.id);
-        const next = at < 0 ? null : order.slice(at + 1).map($).find((s) => s && s.parentElement === tabBox[tab]);
-        tabBox[tab].insertBefore(node, next || empty);
+        const more = tabMore[tab] && MORE[tab].includes(node.id);
+        const box = more ? tabMore[tab].box : tabBox[tab], order = more ? MORE[tab] : ORDER[tab], at = order.indexOf(node.id);
+        const next = at < 0 ? null : order.slice(at + 1).map($).find((s) => s && s.parentElement === box);
+        const end = more ? null : tabMore[tab] ? tabMore[tab].wrap : tabBox[tab].querySelector(":scope > .tab-empty");
+        box.insertBefore(node, next || end);
         wrap(node);
         if (node.id === "panelPlots") { watchRun("plCancel", "panelPlots"); watchMsg("plMsg", "panelPlots"); }
       }

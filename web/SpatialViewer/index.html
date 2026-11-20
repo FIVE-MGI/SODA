@@ -13,7 +13,7 @@
   <link href="volcano.css?v=20261111a" rel="stylesheet" />
   <link href="plots.css?v=20261111a" rel="stylesheet" />
   <link href="dspicker.css?v=20261116pf" rel="stylesheet" />
-  <link href="layout.css?v=20261119s3" rel="stylesheet" />
+  <link href="layout.css?v=20261119s4" rel="stylesheet" />
   <link href="ownres.css?v=20261117or1" rel="stylesheet" />
 </head>
 <body>
@@ -24,22 +24,19 @@
     <aside id="sidebar" class="sidebar" aria-label="Controls">
       <!-- phones only (CSS): the controls sit in a sheet under the map; tap or drag this to open it -->
       <button id="sheetHandle" class="sheet-handle" type="button" aria-controls="sidebar" aria-expanded="false"><i></i><span>Controls</span></button>
-      <!-- layout.js: four tabs, one job each. Every section.panel below names its tab in data-tab and is moved
+      <!-- layout.js: three tabs, one job each. Every section.panel below names its tab in data-tab and is moved
            into that tab's box; a tab with no visible section hides. Hidden until layout.js has run. -->
       <div id="tabRail" class="tab-rail" hidden>
         <div id="tabList" class="tab-list" role="tablist" aria-label="Control groups" aria-orientation="vertical">
           <button id="tabView" class="tab" type="button" role="tab" data-tab="view" aria-selected="true" aria-controls="tabpanelView" title="Image, stains, genes, molecules, outlines">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
             <span>View</span><i class="tab-dot" hidden></i></button>
-          <button id="tabClusters" class="tab" type="button" role="tab" data-tab="clusters" aria-selected="false" aria-controls="tabpanelClusters" tabindex="-1" title="Colour by clusters or cell types, select, quality filter">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="8" r="3"/><circle cx="16.5" cy="6.5" r="2"/><circle cx="15" cy="16" r="4"/><circle cx="6" cy="17" r="1.6"/></svg>
-            <span>Clusters</span><i class="tab-dot" hidden></i></button>
-          <button id="tabAnalyze" class="tab" type="button" role="tab" data-tab="analyze" aria-selected="false" aria-controls="tabpanelAnalyze" tabindex="-1" title="Draw a region, volcano plot, heatmap and violin">
+          <button id="tabAnalyze" class="tab" type="button" role="tab" data-tab="analyze" aria-selected="false" aria-controls="tabpanelAnalyze" tabindex="-1" title="Clusters, draw a region, volcano plot, heatmap and violin">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><circle cx="9" cy="14" r="1.4"/><circle cx="13" cy="9" r="1.4"/><circle cx="17" cy="12" r="1.4"/><circle cx="18" cy="6" r="1.4"/></svg>
             <span>Analyze</span><i class="tab-dot" hidden></i></button>
-          <button id="tabSave" class="tab" type="button" role="tab" data-tab="save" aria-selected="false" aria-controls="tabpanelSave" tabindex="-1" title="Save and load, link, dataset details, about and help">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>
-            <span>Save</span><i class="tab-dot" hidden></i></button>
+          <button id="tabShare" class="tab" type="button" role="tab" data-tab="share" aria-selected="false" aria-controls="tabpanelShare" tabindex="-1" title="Save image, copy link, save and load, dataset details, about and help">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.6M8.2 13.2l7.6 4.6"/></svg>
+            <span>Share</span><i class="tab-dot" hidden></i></button>
         </div>
         <button id="railHide" class="rail-hide" type="button" aria-expanded="true" aria-controls="tabPanels" title="Hide the controls (more room for the picture)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6l-6 6 6 6"/></svg><span class="sr-only">Hide the controls</span></button>
@@ -51,7 +48,7 @@
         <a id="lnkPaper" class="linkish" href="#" target="_blank" rel="noopener">Link to paper →</a>
       </header>
 
-      <section class="panel" id="panelDataset" data-tab="save">
+      <section class="panel" id="panelDataset" data-tab="share">
         <h2 class="lay-only">Dataset details</h2>
         <!-- dspicker.js fills this: a button that opens a searchable list of the datasets -->
         <div class="row ds-row">
@@ -117,7 +114,7 @@
         <div id="molMeta" class="meta"></div>
       </section>
 
-      <section class="panel" id="panelUmap" data-tab="clusters" hidden>
+      <section class="panel" id="panelUmap" data-tab="analyze" hidden>
         <h2>Clusters &amp; selection</h2>
         <div id="umapNote" class="meta umap-note"></div>
         <label class="row slim"><span id="lblColorBy">Colour bins by</span>
@@ -141,7 +138,7 @@
       </section>
 
       <!-- per-bin QC filter (qc.js): histograms of binqc/ values with min / max thresholds; hidden for older exports -->
-      <section class="panel" id="panelBinQc" data-tab="clusters" hidden>
+      <section class="panel" id="panelBinQc" data-tab="analyze" hidden>
         <h2>Quality filter <span id="bqCount" class="count"></span></h2>
         <div id="bqMetrics" class="bq-metrics"></div>
         <div id="bqSummary" class="meta bq-summary"></div>
@@ -206,7 +203,7 @@
         <div id="overlayList" class="list"></div>
       </section>
 
-      <section class="panel help" id="panelHelp" data-tab="save">
+      <section class="panel help" id="panelHelp" data-tab="share">
         <h2 class="lay-only">About and help</h2>
         <div class="mouse-only">Scroll to zoom · drag to pan · <kbd>R</kbd> fit</div>
         <div class="touch-only">Pinch to zoom · drag to pan · tap a spot to read it · <b>Fit</b> shows it all. While drawing, two fingers move the picture.</div>
@@ -215,9 +212,8 @@
       </section>
       <div id="tabPanels" class="tabpanels" hidden>
         <div id="tabpanelView" class="tabpanel" role="tabpanel" aria-labelledby="tabView" tabindex="-1"></div>
-        <div id="tabpanelClusters" class="tabpanel" role="tabpanel" aria-labelledby="tabClusters" tabindex="-1" hidden></div>
         <div id="tabpanelAnalyze" class="tabpanel" role="tabpanel" aria-labelledby="tabAnalyze" tabindex="-1" hidden></div>
-        <div id="tabpanelSave" class="tabpanel" role="tabpanel" aria-labelledby="tabSave" tabindex="-1" hidden></div>
+        <div id="tabpanelShare" class="tabpanel" role="tabpanel" aria-labelledby="tabShare" tabindex="-1" hidden></div>
       </div>
       <footer class="soda-mark"><b>SODA</b> · Spatial Omics Data Annex</footer>
     </aside>
@@ -281,21 +277,21 @@
   <script src="libs.js?v=20261119s3"></script>
   <script src="site.js?v=20261118sp2"></script>
   <script src="config.js?v=20261002e"></script>
-  <script src="layout.js?v=20261119s3"></script>
+  <script src="layout.js?v=20261119s4"></script>
   <script src="qc.js?v=20261116y1"></script>
   <script src="roi.js?v=20261116q3"></script>
   <script src="outlines.js?v=20261116os1"></script>
   <script src="volcano.js?v=20261119s3"></script>
   <script src="plots.js?v=20261119s3"></script>
-  <script src="snapshot.js?v=20261117sn1"></script>
-  <script src="cellsets.js?v=20261119s3"></script>
-  <script src="binpaint.js?v=20261117dm1"></script>
-  <script src="ownres.js?v=20261117dm1"></script>
+  <script src="snapshot.js?v=20261119s4"></script>
+  <script src="cellsets.js?v=20261119s4"></script>
+  <script src="binpaint.js?v=20261119s4"></script>
+  <script src="ownres.js?v=20261119s4"></script>
   <script src="selections.js?v=20261119s3"></script>
   <script src="measure.js?v=20261116vx6"></script>
   <script src="dspicker.js?v=20261116pf"></script>
-  <!-- a link to this view (Save tab): before viewer.js, which hands it its functions -->
-  <script src="viewlink.js?v=20261119s3"></script>
+  <!-- a link to this view (Share tab): before viewer.js, which hands it its functions -->
+  <script src="viewlink.js?v=20261119s4"></script>
   <script src="viewer.js?v=20261119s3"></script>
 </body>
 </html>

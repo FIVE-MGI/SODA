@@ -146,7 +146,7 @@ If your storage link has a read pass on the end (Azure's `?sv=...&sig=...`, an S
 pre-signed link), keep it: the page adds it to every file it reads. **Anyone with the link
 can then read the folder** until the pass expires, so treat that link like a password.
 
-**Copy link to this view** in the page's Save tab gives the same address plus the dataset on
+**Copy link to this view** in the page's Share tab gives the same address plus the dataset on
 show and the view as it looks now: position and zoom, genes, stains, colours, clusters and
 their names, the quality filter. The view is in the part after `#`; the `?data=` part stays
 as it is, read pass included, so that link is as private as the one you were given. Drawn

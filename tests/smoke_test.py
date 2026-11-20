@@ -837,7 +837,8 @@ def check_layout(c: Checker):
     dup = sorted({i for i in ids if ids.count(i) > 1})
     c.ok(not dup, f"index.html: an id is used twice: {dup}")
     by_id = {a["id"]: (tag, a) for tag, a in t.tags if a.get("id")}
-    tabs = {"view": "tabView", "clusters": "tabClusters", "analyze": "tabAnalyze", "save": "tabSave"}
+    tabs = {"view": "tabView", "analyze": "tabAnalyze", "share": "tabShare"}
+    c.ok("tabClusters" not in by_id and "tabSave" not in by_id, "index.html: three tabs (Clusters joined Analyze, Save became Share in 0.10.0)")
     c.ok(by_id.get("tabList", ("", {}))[1].get("role") == "tablist" and "tabRail" in by_id and "topBar" in by_id,
          "index.html: the tab rail (#tabRail, #tabList role=tablist) and the top bar (#topBar)")
     for key, tid in tabs.items():
@@ -849,7 +850,7 @@ def check_layout(c: Checker):
              f"index.html: #{tid} controls a role=tabpanel box that is labelled by it")
     c.eq(sum(1 for _, a in t.tags if a.get("role") == "tab" and a.get("aria-selected") == "true"), 1,
          "index.html: one tab is selected to begin with")
-    # every section names one of the four tabs: in the page, and in the scripts that build one
+    # every section names one of the three tabs: in the page, and in the scripts that build one
     secs = [(a.get("id", "(no id)"), a.get("data-tab")) for tag, a in t.tags
             if tag == "section" and "panel" in (a.get("class") or "").split()]
     c.ok(len(secs) >= 10, f"index.html: the sections are there ({len(secs)} section.panel)")
@@ -861,11 +862,11 @@ def check_layout(c: Checker):
     c.ok('sec.dataset.tab = "analyze"' in js["plots.js"] and "SodaLayout.adopt(sec)" in js["plots.js"],
          "plots.js: its section names its tab and is handed to the layout")
     c.ok("SodaLayout.adopt(block)" in js["volcano.js"], "volcano.js: its block is handed to the layout")
-    c.ok('sec.dataset.tab = "save"' in js["snapshot.js"] and "SodaLayout.adopt(sec)" in js["snapshot.js"],
+    c.ok('sec.dataset.tab = "share"' in js["snapshot.js"] and "SodaLayout.adopt(sec)" in js["snapshot.js"],
          "snapshot.js: its Save image section names its tab and is handed to the layout")
     c.ok("sec.dataset.tab = cfg.tab" in js["cellsets.js"] and "SodaLayout.adopt(sec)" in js["cellsets.js"]
-         and 'id: "panelSets", tab: "clusters"' in js["cellsets.js"] and "panelRunSets" not in js["cellsets.js"],
-         "cellsets.js: its Cell sets section (Clusters tab) names its tab and is handed to the layout")
+         and 'id: "panelSets", tab: "analyze"' in js["cellsets.js"] and "panelRunSets" not in js["cellsets.js"],
+         "cellsets.js: its Cell sets section (Analyze tab) names its tab and is handed to the layout")
     c.ok('sec.dataset.tab = "view"' in js["binpaint.js"] and "SodaLayout.adopt(sec)" in js["binpaint.js"],
          "binpaint.js: its Colour by a value section names its tab and is handed to the layout")
     c.ok("binpaint.js" in names and not re.search(r"\bInt(8|16|32)Array\b", js["binpaint.js"]),
@@ -885,6 +886,11 @@ def check_layout(c: Checker):
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const KEY = ")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
+    more = order[order.index("const MORE = {"):]
+    c.ok(set(re.findall(r'"(panel\w+)"', more)) == {"panelPaint", "panelMeasure", "panelOwn", "panelSets", "panelBinQc"},
+         "layout.js: Colour by a value, Measure, Your own results, Cell sets and the quality filter are behind their tab's More options")
+    c.ok("function buildTabMore(tab)" in js["layout.js"] and "if (behindMore(sec)) setTabMore(tab, true, false);" in js["layout.js"],
+         "layout.js: a tab's More options is built, and show() opens it for a section behind it")
     known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint", "panelShapes", "panelMeasure",
                                                                "panelOwn"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
@@ -920,7 +926,7 @@ def check_layout(c: Checker):
 
 def check_ownres(c: Checker, root: Path, log_path: Path):
     """Your own results (ownres.js, ownres.css): a reader's CSV / TSV (also .gz) of results they already have,
-    matched to the bins in the browser with no new export. Wired into the page (its section in the Clusters tab,
+    matched to the bins in the browser with no new export. Wired into the page (its section in the Analyze tab,
     the hooks in viewer.js and binpaint.js, the link extension), no signed typed arrays, and, when node is
     installed, tests/ownres_browser_test.js in Chromium, WebKit and Firefox (SKIPPED when not installed) on the
     public visiumhd_pub (its barcode lists): Seurat and scanpy files, .gz, partial matches, roles put right, colours by
@@ -932,7 +938,7 @@ def check_ownres(c: Checker, root: Path, log_path: Path):
          and names.index("layout.js") < names.index("ownres.js") < names.index("viewer.js"),
          "index.html loads ownres.css and ownres.js (after layout.js, before viewer.js, which starts it)")
     o = js["ownres.js"]
-    c.ok('sec.dataset.tab = "clusters"' in o and "SodaLayout.adopt(sec)" in o,
+    c.ok('sec.dataset.tab = "analyze"' in o and "SodaLayout.adopt(sec)" in o,
          "ownres.js: its Your own results section names its tab and is handed to the layout")
     c.ok(not re.search(r"Int(8|16|32)Array", o), "ownres.js uses only unsigned typed arrays (deid.py check reads the signed names as sample IDs)")
     c.ok('key: "own"' in o and "SodaViewLink.extend" in o, "ownres.js: a link to the view carries the file's fingerprint")
@@ -944,7 +950,7 @@ def check_ownres(c: Checker, root: Path, log_path: Path):
                             ("own.restore(j.ownResults)", "viewer.js", "Load JSON brings it back"),
                             ("extraCols:", "viewer.js", "hands the file's numbers to Colour by a value"),
                             ("api.extraCols", "binpaint.js", "offers the file's numbers"),
-                            ("panelOwn", "layout.js", "has the section's help and its place in the Clusters tab")):
+                            ("panelOwn", "layout.js", "has the section's help and its place in the Analyze tab")):
         c.ok(needle in js[f], f"{f}: {what} ({needle!r} not found)")
     node_test(c, log_path, "ownres_browser_test.js", ["--shots", str(root / "ownres_shots"), "--browsers", "chromium,webkit,firefox"],
               "your own results loaded in the page, in Chromium, WebKit and Firefox")

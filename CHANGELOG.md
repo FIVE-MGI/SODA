@@ -15,6 +15,14 @@ Fewer ways to do the same thing, so there is less to learn and less that can bre
 - Two places that skipped data without a word now print a warning: an `.h5ad` column of a type
   SODA cannot read, and an unreadable Xenium `gene_category`.
 
+- The page has three tabs instead of four: **View**, **Analyze** (which now also holds Clusters
+  and selection) and **Share** (Save image, Save and load, Copy link, dataset details, help).
+  The tools few people need are under **More options** at the end of their tab: Colour by a
+  value and Measure (View); Your own results, Cell sets and the Quality filter (Analyze). Play
+  (the flight between the tissue and the UMAP) is behind the **…** beside Tissue / Side by
+  side / UMAP. A link or browser that remembered the Clusters or Save tab opens Analyze or
+  Share.
+
 ### Removed
 
 - Encrypted link files (`links.py`, `linkPath` in `config.js`), deprecated in 0.9.0. Use the

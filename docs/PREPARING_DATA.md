@@ -1322,7 +1322,7 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   - **Suggested names** are scored against the whole slide, so an all-immune circle is named
     immune.
 - **Quality filter.** On exports that carry `binqc/` (see [DATA_FORMAT.md](DATA_FORMAT.md)), a
-  section of the Clusters tab shows a histogram of total counts, genes detected and % mitochondrial
+  section (Analyze tab, More options) shows a histogram of total counts, genes detected and % mitochondrial
   per bin, each with a min and a max slider (or type the number). It is **off by default**:
   nothing is removed until you move a slider, so results do not change by themselves. Bins
   outside a threshold are greyed on the slide and left out of the next run (PCA, UMAP,

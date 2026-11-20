@@ -135,14 +135,15 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
 
 ## Features
 
-- **Four tabs, one job each.** The controls sit beside the picture in four tabs: **View**
-  (image and stains, genes, molecules, outlines), **Clusters** (colour by clusters or cell
-  types, select, quality filter, cell sets),
-  **Analyze** (draw a region, volcano plot, heatmap and violin) and **Save** (save / load,
-  a link, dataset details, about and help). A tab shows only when the dataset has something
-  for it. Sections fold, and a folded one says its state on its header ("3 stains on",
-  "Leiden 0.6", "12% removed"); rarely used settings are under **More options** and each
-  section's explanation is behind its **?**. The dataset picker and the Tissue / Side by
+- **Three tabs, one job each.** The controls sit beside the picture in three tabs: **View**
+  (image and stains, genes, molecules, outlines), **Analyze** (clusters and selection, draw a
+  region, volcano plot, heatmap and violin) and **Share** (save image, save / load, a link,
+  dataset details, about and help). A tab shows only when the dataset has something for it.
+  The tools few people need are under **More options** at the end of their tab (View: Colour
+  by a value, Measure; Analyze: Your own results, Cell sets, Quality filter). Sections fold,
+  and a folded one says its state on its header ("3 stains on", "Leiden 0.6", "12% removed");
+  rarely used settings are under a section's own **More options** and each section's
+  explanation is behind its **?**. The dataset picker and the Tissue / Side by
   side / UMAP switch are in a bar over the picture.
 - **Multiplexed fluorescence.** Any number of channels, each with its own colour and
   display window (slider with histogram), blended on the GPU. Channel search, all on/off,
@@ -208,7 +209,7 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
   each with min / max thresholds. Off until you move a slider; removed bins are greyed on the
   slide and left out of Draw a region, and the thresholds are saved with the shapes and in
   the page link.
-- **Save and share.** **Copy link to this view** (Save tab) copies an address that opens the
+- **Save and share.** **Copy link to this view** (Share tab) copies an address that opens the
   dataset as it looks now: position and zoom, the Tissue / Side by side / UMAP view, the
   layer, the genes on show with their colours and ranges, stains on or off with their colours
   and display ranges, molecule genes, outlines, the colour-by, the clustering with your
@@ -238,7 +239,7 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
   off, scaled to its 99.5th percentile, asinh), empty and duplicate channels are dropped
   automatically, and the export's slide QC (`qc.json`) lists weak and saturated stains, folds
   and bright edges, and possible tile seams. No cell segmentation (yet).
-- **Save as image.** **Save image** (Save tab, or the camera beside Fit) saves the map as a
+- **Save as image.** **Save image** (Share tab, or the camera beside Fit) saves the map as a
   PNG exactly as shown in Tissue, UMAP or Side by side, with a legend, the scale bar and the
   dataset's name, at 1x, 2x or 4x the screen's pixels (finer image tiles at 2x / 4x), on a
   black, white or transparent background. The volcano plot saves as PNG or SVG, like the plots.
@@ -414,7 +415,7 @@ also checked in Playwright's Firefox, at desktop size.
 
 **Phones and tablets** open the same page and link; the layout follows the screen.
 
-- On a phone held upright the map fills the screen and the four tabs are a bar along the
+- On a phone held upright the map fills the screen and the three tabs are a bar along the
   bottom: tap a tab to open its controls in a sheet over the lower half, tap it again (or
   the sheet's handle) to close it, drag the handle for more or less of it. The dataset
   picker and the view buttons float at the top of the map. Side by side puts the tissue

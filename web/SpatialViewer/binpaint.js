@@ -33,9 +33,9 @@
 // Genes always come through the source object (viewer.js S.src.gene: loose files, a packed file or a
 // tile server alike); their values are put on positions.bin rows by position, as the UMAP does.
 //
-// The section is in the View tab (layout.js), under the genes. While it colours the bins, the genes'
+// The section is in the View tab (layout.js), under More options. While it colours the bins, the genes'
 // own density is not drawn (one colour per bin, as Colour by cluster does); a colour by cluster or
-// cell type in the Clusters tab wins over it, and the section says so. The tissue view draws its own
+// cell type in the Clusters section (Analyze tab) wins over it, and the section says so. The tissue view draws its own
 // dots here (layer()); the UMAP, Side by side and the cell outlines take the same colours per row
 // through viewer.js's gene mix (mix()).
 //
@@ -513,7 +513,7 @@
         if (document.activeElement !== el) el.value = Number.isFinite(P.pair[`t${w}`]) ? String(P.pair[`t${w}`]) : "";
       }
     }
-    if (on && api.overridden()) msg(say("The bins are coloured by the Clusters tab's choice: set Colour bins by back to genes there to see this colouring."));
+    if (on && api.overridden()) msg(say("The bins are coloured by the Clusters section's choice (Analyze tab): set Colour bins by back to genes there to see this colouring."));
     else if ($("paintMsg").textContent.startsWith("The bins are coloured")) msg("");
   }
 

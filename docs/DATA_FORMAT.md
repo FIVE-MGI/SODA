@@ -203,7 +203,7 @@ check stops the export (below) instead of leaving one list out. gzip of UTF-8 te
 layers: Xenium `cell_id`, CosMx `<cell_ID>_<fov>`, MERSCOPE `EntityID`, Stereo-seq cell id, the obs names of
 an AnnData / SpatialData cell table). GeoMx ROI layers and protein grid layers get none.
 The viewer reads it for "Save barcodes (CSV)" in Export shapes, and to match a reader's file to
-the bins in "Your own results" (Clusters tab; [ADVANCED.md](ADVANCED.md#load-your-own-results-in-the-viewer-no-new-export));
+the bins in "Your own results" (Analyze tab, More options; [ADVANCED.md](ADVANCED.md#load-your-own-results-in-the-viewer-no-new-export));
 without it both say how to add one. A host that unpacks `.gz` files itself is fine: the viewer reads the text either way.
 
 Before anything is written, every layer's ids pass two gates (layerids.py). By default a layer that fails
@@ -314,7 +314,7 @@ The manifest layer names them:
 ```
 
 `scale` is the histogram axis the viewer uses (`log` = log10(1 + x)); `min` … `q3` are over all
-rows. The viewer's **Quality filter** section (`qc.js`, Clusters tab) draws a histogram per metric with a min and
+rows. The viewer's **Quality filter** section (`qc.js`, Analyze tab, More options) draws a histogram per metric with a min and
 a max threshold. It is off until a threshold is set; a bin outside any threshold is greyed on
 the slide and left out of Draw a region (PCA, UMAP, Leiden, markers). The thresholds are stored
 in the JSON that Save JSON writes as

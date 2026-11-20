@@ -23,9 +23,9 @@
 //              both said with a warning. The match rate is reported; unmatched rows only as a count, and no id
 //              is ever shown, logged or saved.
 //
-//   Where it goes  the UMAP: the section UMAP (Clusters tab), in place of SODA's or as the only one, the reader
-//              picks which; clusterings: the Clusters tab's clusterings (tissue and UMAP colours, legend, names,
-//              cell sets, volcano / DE and plots groups); numbers: View tab, Colour by a value.
+//   Where it goes  the UMAP: the section UMAP (Analyze tab, Clusters), in place of SODA's or as the only one, the
+//              reader picks which; clusterings: the Clusters section's clusterings (tissue and UMAP colours, legend,
+//              names, cell sets, volcano / DE and plots groups); numbers: View tab, Colour by a value.
 //
 //   Privacy    the file is read here and stays in this browser: nothing is uploaded. Save JSON can carry the
 //              matched table (per positions.bin row, no ids, no file name; its size is shown first). A link to the
@@ -78,7 +78,7 @@
   // ---- the section -----------------------------------------------------------------------------------
   function buildDom() {
     const sec = document.createElement("section");
-    sec.className = "panel"; sec.id = "panelOwn"; sec.dataset.tab = "clusters"; sec.hidden = true;
+    sec.className = "panel"; sec.id = "panelOwn"; sec.dataset.tab = "analyze"; sec.hidden = true;
     sec.innerHTML = `<h2>Your own results</h2>
       <div class="btnrow"><button id="ownLoadBtn" type="button" title="A CSV or TSV (also .gz) with a barcode or cell id column and your UMAP, clusters, cell types or scores">Load your own results…</button>
         <input id="ownFile" type="file" accept=".csv,.tsv,.txt,.gz,.csv.gz,.tsv.gz,text/csv,text/tab-separated-values,text/plain,application/gzip" hidden /></div>
@@ -607,8 +607,8 @@
     if (D.applied && D.R) {
       const parts = [];
       if (D.R.emb) parts.push(`a UMAP (${D.R.embName}, ${n2(D.R.nEmb)} ${W().bins})`);
-      if (D.R.clusterings.length) parts.push(`${D.R.clusterings.length} ${D.R.clusterings.length === 1 ? "grouping" : "groupings"} (Clusters tab: Colour bins by Clusters, Clustering)`);
-      if (D.R.nums.length) parts.push(`${D.R.nums.length} ${D.R.nums.length === 1 ? "value" : "values"} (View tab: Colour by a value)`);
+      if (D.R.clusterings.length) parts.push(`${D.R.clusterings.length} ${D.R.clusterings.length === 1 ? "grouping" : "groupings"} (Analyze tab, Clusters: Colour bins by, Clustering)`);
+      if (D.R.nums.length) parts.push(`${D.R.nums.length} ${D.R.nums.length === 1 ? "value" : "values"} (View tab, More options: Colour by a value)`);
       notes.unshift(`In use: ${parts.join(", ")}.`);
     } else if (D.R && !usable(D.R)) notes.unshift("No column is in use: pick a role for at least one column.");
     msg(`${D.name}: ${T.nRows.toLocaleString()} rows, ${T.header.length} columns. ${mt.t}${notes.length ? " " + notes.join(" ") : ""}`, mt.kind);
@@ -763,7 +763,7 @@
     if (R && R.fp === x.fp) { pending = null; await applyPending(R, x); return []; }
     pending = x;
     render();
-    return [`${pendingText()} (Clusters tab, Your own results.)`];
+    return [`${pendingText()} (Analyze tab, More options: Your own results.)`];
   }
   async function applyPending(R, x) {
     x = x || pending; pending = null;
