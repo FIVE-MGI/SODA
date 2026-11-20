@@ -78,8 +78,8 @@
   // because an ROI that was measured and is low is a result.
   function rowsOf(a) {
     const on = a.genes.filter((g) => g.visible !== false);
-    // the layer's positions; without them (the live tile server has no positions file in memory
-    // until asked) the first gene's own rows stand in, and segments are drawn as discs
+    // the layer's positions; without them the first gene's own rows stand in, and segments are drawn
+    // as discs
     const pos = a.pos || (on[0] && on[0].positions);
     if (!pos || !on.length) return null;
     const N = pos.length / 2, vals = on.map((g) => byRow(g, pos));

@@ -29,8 +29,7 @@ Other places the page can live:
 
 - your own computer, for a look before anything is uploaded:
   [HOSTING.md A](HOSTING.md#a-on-your-own-computer) (the notebook's Section 6 does this for you);
-- any web server or static host: [HOSTING.md B](HOSTING.md#b-any-static-web-host-public-data);
-- a live tile server on your lab network: [HOSTING.md E](HOSTING.md#e-optional-live-tile-server-serverpy).
+- any web server or static host: [HOSTING.md B](HOSTING.md#b-any-static-web-host-public-data).
 
 Please put `soda` in your site's name, for example `yourlab-soda`.
 

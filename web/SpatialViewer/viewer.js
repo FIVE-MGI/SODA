@@ -1,4 +1,4 @@
-// SpatialViewer - a thin viewing client over server.py in this folder.
+// SpatialViewer - the page that opens a folder exported by prepare.py export, from any host.
 // Images never come to the browser whole: each visible channel is a deck.gl
 // TileLayer pulling 8-bit grey tiles, tinted + windowed on the GPU and
 // composited with MAX blending like Xenium Explorer / Viv. Transcripts are per-gene
@@ -6,8 +6,6 @@
 (function () {
   const cfg = window.SpatialViewerConfig || {};
   const params = new URLSearchParams(location.search);
-  const API = (params.get("api") || cfg.apiBase || "").replace(/\/$/, "");
-  const TILE_FMT = params.get("fmt") || cfg.tileFormat || "png";
   const GENE_COLORS = cfg.geneColors || ["#ff3355", "#33ddff", "#ffdd33", "#66ff66"];
   const NUCLEAR_CHANNEL = /^\s*(dapi|hoechst)\b/i;   // pinned to the top of the list
   const HIDE_CHANNEL = cfg.hideChannels ? new RegExp(cfg.hideChannels, "i")
@@ -180,13 +178,11 @@
     if (ms) setTimeout(() => { if (stickyErr === msg) { stickyErr = null; if ($("status").textContent === msg) status(null); } }, ms);
   }
   const noQuery = (t) => String(t).replace(/\?[^\s)"']*/g, "");   // never show a token: drop "?..." from anything printed
-  function apiUrl(p) { return `${API}/api/${p}`; }
 
   // ---- data sources -------------------------------------------------------------
-  // "static": a folder of files exported by prepare.py export, hosted anywhere.
-  //           Normally a PRIVATE blob container: `qs` appends the access token
-  //           from /api/token to every request (see below).
-  // "api":    the tile server (server.py), password protected.
+  // "static": a folder of files exported by prepare.py export, hosted anywhere (the only kind since
+  //           0.10.0 removed the live tile server, server.py). Often a PRIVATE blob container:
+  //           `qs` then appends the access token from /api/token to every request (see below).
   // ---- gene packs (genepack.py) ----------------------------------------------------------------
   // Exports made since the packs keep each layer's per-gene arrays in a few shards of ~64 MB
   // (<group>/genepack/<hash>-<i>.pack) instead of one file per gene; the listing (genes.json,
@@ -272,7 +268,7 @@
     const molDir = () => ((man && man.molecules && man.molecules.dir) || "molecules") + "/";
     return {
       kind: "static",
-      manifest: async () => { const m = await getJSON(u("manifest.json"), true); man = m; return m; },
+      manifest: async () => { const m = await getJSON(u("manifest.json")); man = m; return m; },
       tileUrl: (c, z, x, y, fmt) => u(`tiles/${c}/${z}/${x}/${y}.${fmt}`),
       genes: (key) => listing(`expr/${key}/genes.json`, srcSignal).then((l) => l.slice()),
       // The export names a gene file encodeURIComponent(name) + ".bin", so for a name with a
@@ -284,14 +280,14 @@
         const L = man && (man.expr || []).find((x) => x.key === key);
         if (L && L.genePack) return new Float32Array(await packed(`expr/${key}/`, L.genePack, `expr/${key}/genes.json`, name, srcSignal));
         const e1 = encodeURIComponent(name), e2 = encodeURIComponent(e1);
-        if (e2 === e1) return getF32(u(`expr/${key}/gene/${e1}.bin`), true);
-        try { return await getF32(u(`expr/${key}/gene/${e2}.bin`), true); }
-        catch (err) { return getF32(u(`expr/${key}/gene/${e1}.bin`), true); }
+        if (e2 === e1) return getF32(u(`expr/${key}/gene/${e1}.bin`));
+        try { return await getF32(u(`expr/${key}/gene/${e2}.bin`)); }
+        catch (err) { return getF32(u(`expr/${key}/gene/${e1}.bin`)); }
       },
-      positions: (key) => getF32(u(`expr/${key}/positions.bin`), true),
-      region: (key) => getU16(u(`expr/${key}/region.bin`), true),
-      overlay: (file) => getJSON(u(`overlays/${file}`), true),
-      json: (p) => getJSON(u(p), true),
+      positions: (key) => getF32(u(`expr/${key}/positions.bin`)),
+      region: (key) => getU16(u(`expr/${key}/region.bin`)),
+      overlay: (file) => getJSON(u(`overlays/${file}`)),
+      json: (p) => getJSON(u(p)),
       buf: async (p) => { const r = await dataFetch(u(p)); if (!r.ok) throw new Error(`${r.status} ${p}`); return r.arrayBuffer(); },
       mol: async (p) => { const r = await dataFetch(u(`molecules/${p}`)); if (!r.ok) throw new Error(`${r.status} molecules/${p}`); return r.arrayBuffer(); },
       molIndex: () => listing(`${molDir()}index.json`, srcSignal),
@@ -313,21 +309,6 @@
       },
     };
   }
-  function apiSource(dsId) {
-    return {
-      kind: "api",
-      manifest: () => getJSON(apiUrl(`datasets/${dsId}`)),
-      tileUrl: (c, z, x, y, fmt) => apiUrl(`datasets/${dsId}/tiles/${c}/${z}/${x}/${y}.${fmt}`),
-      genes: (key) => getJSON(apiUrl(`datasets/${dsId}/expr/${key}/genes`)),
-      gene: (key, name) => getF32(apiUrl(`datasets/${dsId}/expr/${key}/gene/${encodeURIComponent(name)}`)),
-      positions: (key) => getF32(apiUrl(`datasets/${dsId}/expr/${key}/positions`)),
-      region: (key) => getU16(apiUrl(`datasets/${dsId}/expr/${key}/region`)),
-      overlay: (key) => getJSON(apiUrl(`datasets/${dsId}/overlays/${key}`)),
-      mol: async (p) => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/${p}`)); if (!r.ok) throw new Error(`${r.status} molecules/${p}`); return r.arrayBuffer(); },
-      molIndex: async () => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/index.json`)); if (!r.ok) throw new Error(`${r.status} molecules/index.json`); return r.json(); },
-      molGene: async (name) => { const r = await apiFetch(apiUrl(`datasets/${dsId}/molecules/gene/${encodeURIComponent(name)}.bin`)); if (!r.ok) throw new Error(`${r.status} molecules/gene/${name}.bin`); return r.arrayBuffer(); },
-    };
-  }
   // ---- one dataset at a time, one layer at a time ---------------------------------
   // Picking a second dataset while the first is still loading used to let the first one's
   // late answers land on the second. openSeq numbers the opens and layerSeq the layer
@@ -346,7 +327,7 @@
     for (const k of Object.keys(src)) {
       const f = src[k];
       if (typeof f !== "function") continue;
-      // dataFetch / apiFetch pick srcSignal up as they start, so every method gets the signal.
+      // dataFetch picks srcSignal up as it starts, so every method gets the signal.
       // A method that answers at once (tileUrl builds a string) is passed through as it is.
       src[k] = (...a) => {
         srcSignal = signal;
@@ -374,12 +355,11 @@
   // is allowed even where links from outside are not. A ?data= on the link still wins.
   const DATA_LINKS = cfg.allowDataLinks !== undefined ? !!cfg.allowDataLinks : !TOKEN_URL;
   // site.js (kept in git, unlike config.js): the folder a page published straight from the
-  // repository opens when nothing names one; it never overrides a link, ?static=/?api= or config.js.
+  // repository opens when nothing names one; it never overrides a link, ?static= or config.js.
   const SITE_DATA = (() => {
     const s = window.SodaSite;
     const v = s && typeof s.data === "string" ? s.data.trim() : "";
-    const other = params.get("static") || params.get("api") || cfg.data || cfg.apiBase || cfg.useLocalServer
-      || TOKEN_URL || (cfg.datasets && Object.keys(cfg.datasets).length);
+    const other = params.get("static") || cfg.data || TOKEN_URL || (cfg.datasets && Object.keys(cfg.datasets).length);
     return other ? "" : v;
   })();
   const DATA = (() => {
@@ -461,22 +441,14 @@
     if (token && Date.now() > token.expires - 5 * 60000) ensureToken(true).catch(() => {});
   }, 60000);
 
-  // ---- password (HTTP Basic) ----------------------------------------------------
-  // Same-origin: the browser already asked once when the page loaded and sends
-  // the credentials itself. Cross-origin (?api=...): browsers never show the
-  // login box for fetch(), so we ask here and send the header ourselves.
-  let authHeader = null;
-  try { const s = sessionStorage.getItem("spatialviewer.auth"); if (s) authHeader = s; } catch (e) { /* ignore */ }
-  // One inline login box shared by every request that hits a 401; concurrent
-  // requests (tiles) all wait on the same submission.
+  // ---- the password box (a password-protected site: ensureToken above) -------------------
+  // One inline login box shared by every request that waits for the password.
   let loginWait = null, loginResolve = null;
   // The form must never actually submit (that would put the password in the URL).
   $("login").addEventListener("submit", (e) => {
     e.preventDefault();
     const pw = $("loginPw").value;
     if (!pw) return;
-    authHeader = "Basic " + btoa("viewer:" + pw);
-    try { sessionStorage.setItem("spatialviewer.auth", authHeader); } catch (err) { /* ignore */ }
     $("login").hidden = true;
     const r = loginResolve; loginWait = null; loginResolve = null;
     if (r) r(pw);
@@ -484,30 +456,14 @@
   function askPassword(wrong, text) {
     if (loginWait) return loginWait;
     const form = $("login"), msg = $("loginMsg"), pw = $("loginPw");
-    msg.textContent = wrong ? "Wrong password - try again." : (text || `This server (${API || location.origin}) needs a password.`);
+    msg.textContent = wrong ? "Wrong password - try again." : (text || "This viewer is password protected.");
     msg.classList.toggle("err", !!wrong);
     form.hidden = false; pw.value = ""; pw.focus();
     loginWait = new Promise((resolve) => { loginResolve = resolve; });
     return loginWait;
   }
-  async function apiFetch(url, opts = {}) {
-    if (srcSignal && !opts.signal) opts = { ...opts, signal: srcSignal };   // see liveSource
-    let r = null;
-    for (let tries = 0; tries < 6; tries++) {
-      const sent = authHeader;
-      r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...(sent ? { Authorization: sent } : {}) } });
-      if (r.status !== 401) return r;
-      if (authHeader !== sent) continue;           // a password arrived while this was in flight: just retry
-      if (sent) {                                  // this request carried the current password, so it is wrong
-        authHeader = null;
-        try { sessionStorage.removeItem("spatialviewer.auth"); } catch (e) { /* ignore */ }
-      }
-      await askPassword(!!sent);
-    }
-    return r;
-  }
-  async function getJSON(url, plain) {
-    const r = plain ? await dataFetch(url) : await apiFetch(url);
+  async function getJSON(url) {
+    const r = await dataFetch(url);
     if (!r.ok) throw new Error(`${r.status} ${url}`);
     const t = await r.text();
     try { return JSON.parse(t); } catch (e) {
@@ -517,13 +473,13 @@
       throw e;
     }
   }
-  async function getF32(url, plain) {
-    const r = plain ? await dataFetch(url) : await apiFetch(url);
+  async function getF32(url) {
+    const r = await dataFetch(url);
     if (!r.ok) throw new Error(`${r.status} ${url}`);
     return new Float32Array(await r.arrayBuffer());
   }
-  async function getU16(url, plain) {
-    const r = plain ? await dataFetch(url) : await apiFetch(url);
+  async function getU16(url) {
+    const r = await dataFetch(url);
     if (!r.ok) throw new Error(`${r.status} ${url}`);
     return new Uint16Array(await r.arrayBuffer());
   }
@@ -534,7 +490,7 @@
 
   // ---- layers -----------------------------------------------------------------
   function tileUrl(c, z, x, y) {
-    const fmt = S.src.kind === "static" ? (S.m.tileFormat || "png") : TILE_FMT;
+    const fmt = S.m.tileFormat || "png";
     return S.src.tileUrl(c, z, x, y, fmt);
   }
   // ---- tiles: decode with a fallback, and say so when one fails ----------------------
@@ -639,8 +595,7 @@
     const hit = tileCache.get(key);
     if (hit) { tileCache.delete(key); tileCache.set(key, hit); return Promise.resolve(hit); }
     const url = tileUrl(c, backendZ, x, y);
-    const req = S.src.kind === "static" ? dataFetch(url, { signal }) : apiFetch(url, { signal });
-    return req
+    return dataFetch(url, { signal })
       .then((r) => {
         if (r.ok && r.status !== 204) return r.blob();
         if (!r.ok) tileProblem(r.status === 401 || r.status === 403 ? `the data store refused the image tiles (${r.status}; the sign-in may have run out)`
@@ -1452,9 +1407,8 @@
       // for diag.js (?diag=1): fetch the way the viewer does (its token or password applied), and how tiles are being handled
       diag: () => ({
         kind: S.src && S.src.kind, tokenFlow: !!(TOKEN_URL && token), tokenLeftMin: token ? Math.round((token.expires - Date.now()) / 60000) : null,
-        fetch: (url, o) => (S.src && S.src.kind === "api" ? apiFetch(url, o) : dataFetch(url, o)),
-        tileUrl, manifestUrl: !S.src ? null : S.src.kind === "api" ? apiUrl(`datasets/${S.dsId}`)
-          : S.src.tileUrl(0, 0, 0, 0, "png").replace(/tiles\/0\/0\/0\/0\.png/, "manifest.json"),
+        fetch: (url, o) => dataFetch(url, o),
+        tileUrl, manifestUrl: !S.src ? null : S.src.tileUrl(0, 0, 0, 0, "png").replace(/tiles\/0\/0\/0\/0\.png/, "manifest.json"),
         decoder: TILE_DECODERS[tileDecoder][0], decoders: TILE_DECODERS, cached: tileCache.size, cacheMax: tileCacheMax(), touch: TOUCH,
       }) };
   }
@@ -2132,7 +2086,7 @@
     if (window.SodaVolcano) window.SodaVolcano.reset();
     if (window.SodaPlots) window.SodaPlots.reset();
     const prot = !!(isProtLayer(e) && e.mat);
-    const ok = S.src && S.src.kind === "static" && e && (e.hvg || prot) && S.mode !== "rna";
+    const ok = !!S.src && e && (e.hvg || prot) && S.mode !== "rna";
     $("panelLasso").hidden = !ok;
     if (!ok) { lassoSetTool(null); L.pos = null; L.hvg = null; L.prot = false; return; }
     const seq = layerSeq;
@@ -4565,7 +4519,7 @@
         o.on = e.target.checked;
         if (o.on && !o.data) {
           status(`Loading ${o.label}…`);
-          try { o.data = await S.src.overlay(S.src.kind === "static" ? o.file : o.key); } finally { status(null); }
+          try { o.data = await S.src.overlay(o.file); } finally { status(null); }
         }
         render();
       };
@@ -5225,12 +5179,12 @@
       const staticRoot = params.get("static");   // ?static=http://host/folder -> <folder>/<id>/ (test exports before upload)
       let src;
       if (staticRoot) src = staticSource(`${staticRoot.replace(/\/$/, "")}/${id}/`);
-      else if (TOKEN_URL && !params.get("api") && !(d && d.base)) {   // ?api= wins: a local tile server
+      else if (TOKEN_URL && !(d && d.base)) {
         const t = await ensureToken();           // asks for the password once per session
         src = staticSource(`${t.base}${id}/`, tokenQuery);
       }
       else if (d && d.base) src = staticSource(d.base, d.qs ? () => d.qs : undefined);   // d.qs: a ?data= link's read pass
-      else src = apiSource(id);
+      else throw new Error("config.js names no folder for it (give it a base, or open a ?data= link)");
       if (stale()) return;                       // another dataset was picked while the password box was up
       S.src = liveSource(src, seq, openCtl.signal);
       S.m = await S.src.manifest();
@@ -5342,7 +5296,7 @@
       const ov = S.overlays.find((o) => o.file === S.region.overlayKey || o.key === S.region.overlayKey);
       if (ov && !ov.on) {
         ov.on = true;
-        try { ov.data = await S.src.overlay(S.src.kind === "static" ? ov.file : ov.key); } catch (e) { /* leave off */ }
+        try { ov.data = await S.src.overlay(ov.file); } catch (e) { /* leave off */ }
         if (stale()) return;
         buildOverlayUI(); render();
       }
@@ -5628,7 +5582,7 @@
       const at = (id) => ({ base: `${DATA.root}${encodeURIComponent(id)}/`, qs: DATA.qs });
       const text = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
       try {
-        const cat = await getJSON(`${DATA.root}datasets.json${DATA.qs}`, true);
+        const cat = await getJSON(`${DATA.root}datasets.json${DATA.qs}`);
         S.datasets = (Array.isArray(cat.datasets) ? cat.datasets : []).filter((d) => d && d.id).map((d) => ({
           id: String(d.id), label: String(d.label || d.id), group: d.group ? String(d.group) : undefined,
           tags: folderTags(d.tags), settings: folderSettings(d), ...at(String(d.id)) }));
@@ -5644,7 +5598,7 @@
         const ds = params.get("ds");
         // the link may name one dataset's own folder (the one holding manifest.json), not the folder above
         const one = /^404 /.test(e.message) && !ds
-          ? await getJSON(`${DATA.root}manifest.json${DATA.qs}`, true).catch(() => null) : null;
+          ? await getJSON(`${DATA.root}manifest.json${DATA.qs}`).catch(() => null) : null;
         if (one) {
           const id = String(one.id || "dataset");
           S.datasets = [{ id, label: String(one.label || id), base: DATA.root, qs: DATA.qs }];
@@ -5660,21 +5614,7 @@
         }
       }
     }
-    const useServer = !DATA && !!(params.get("api") || cfg.apiBase || cfg.useLocalServer);
-    $("apiInfo").textContent = DATA ? `data: ${new URL(DATA.root).host}`
-      : useServer ? `server: ${API || location.origin}` : "data: static links (blob)";
-    if (useServer) {
-      try {
-        const fromServer = await getJSON(apiUrl("datasets"));
-        for (const d of fromServer) if (!S.datasets.some((x) => x.id === d.id)) S.datasets.push(d);
-      } catch (e) {
-        if (!S.datasets.length) {
-          status(/^401/.test(e.message) ? "Password not accepted." :
-            `No tile server at ${API || location.origin} — run run.ps1 or add ?api=http://host:8760`, true);
-          return;
-        }
-      }
-    }
+    $("apiInfo").textContent = DATA ? `data: ${new URL(DATA.root).host}` : "data: static links (blob)";
     // Grouped by what was measured. The channel count used to be appended here, but
     // it counted raw channels including the `open-*` slots the viewer hides, so it
     // disagreed with both the label and the stain list; the labels carry it now.
@@ -5878,11 +5818,10 @@
     // nothing named any data: on the shared page (no site.js data) that is a visitor without a link
     if (!S.datasets.length) {
       // (a data folder with an empty list already stopped above, at datasets.json)
-      status(useServer ? "The data server lists no datasets."
-        : DATA ? "This data folder lists no datasets."
+      status(DATA ? "This data folder lists no datasets."
         : "No data to show yet. To look at a dataset, open the SODA link you were given (it ends in ?data=…). " +
           "To share your own data, see docs/SHARE_YOUR_DATA.md in the SODA repository. " +
-          "Site owners: name a data folder in site.js or config.js (data:).", !!(DATA || useServer));
+          "Site owners: name a data folder in site.js or config.js (data:).", !!DATA);
       return;
     }
     const want = params.get("ds") || dataDefault || cfg.defaultDataset;

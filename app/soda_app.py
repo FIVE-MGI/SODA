@@ -68,7 +68,7 @@ TEXT_TYPES = {
 }
 # The viewer's config.js in the app (no site config is shipped): the page's defaults.
 APP_CONFIG_JS = b"window.SpatialViewerConfig = window.SpatialViewerConfig || {};\n"
-# Files next to the page that are never served (as server.py): the tools, not the page.
+# Files next to the page that are never served: the tools, not the page.
 _BLOCKED_SUFFIXES = (".py", ".pyc", ".ps1", ".sh", ".txt", ".md", ".password", ".csv")
 _BLOCKED_PARTS = ("__pycache__", ".venv", "soda-env", ".password")
 
@@ -877,11 +877,6 @@ def cmd_selftest(args: list[str]) -> int:
             assert e.shape == (200, 2)
             return umap.__version__ if hasattr(umap, "__version__") else ""
 
-        def server_():
-            import fastapi
-            import uvicorn  # noqa: F401
-            return fastapi.__version__
-
         def soda_modules():
             names = sorted(p.stem for p in SODA_DIR.glob("*.py"))
             bad = []
@@ -897,7 +892,7 @@ def cmd_selftest(args: list[str]) -> int:
         for name, fn in (("numpy", numpy_), ("scipy", scipy_), ("tifffile", tiff_), ("imagecodecs", codecs_),
                          ("zarr", zarr_), ("h5py", h5_), ("pyarrow", arrow_), ("pillow", pil_),
                          ("cryptography", crypto_), ("scikit-learn", sklearn_), ("numba", numba_),
-                         ("igraph+leidenalg", leiden_), ("fastapi+uvicorn", server_),
+                         ("igraph+leidenalg", leiden_),
                          ("soda modules", soda_modules)):
             t(name, fn)
         if not quick:

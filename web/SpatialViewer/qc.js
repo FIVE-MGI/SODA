@@ -9,7 +9,7 @@
 // "the data's min / max"), and a filter that removes no bin sends no mask at all, so the
 // worker runs exactly the unfiltered path.
 //
-// Older exports have no `binQc` block (or a source without .buf, the live tile server): the
+// Older exports have no `binQc` block (or a source without .buf): the
 // panel stays hidden and keepMask() is null.
 //
 // The thresholds travel with Circle -> UMAP's Save JSON (`qcFilter`) and in the page URL

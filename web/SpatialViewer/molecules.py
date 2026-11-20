@@ -21,7 +21,7 @@ sample of the gene. The viewer draws a prefix when the whole section is in view 
 dots in all) and the whole file once zoomed in, without a second file or a second request.
 Molecules outside the image are dropped and counted. Same input, same bytes.
 
-That is the cache's layout (server.py serves it as it is). The static export packs the gene
+That is the cache's layout. The export packs the gene
 files like expr/ (genepack.py): molecules/genepack/<hash>-<i>.pack, each gene's place as
 "s", "o", "b" on its index.json entry and the shard list as "genePack" on the manifest's
 "molecules" block.

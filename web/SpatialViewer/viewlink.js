@@ -602,8 +602,8 @@
 
   // ---- the link ---------------------------------------------------------------------------------------
   // what else of the address a link keeps: where the data is (?data= a shared folder, ?static= a local test
-  // folder, ?api= a tile server) and the quality filter. ?diag= and ?decode= are for looking at a problem, not for sharing.
-  const KEEP_PARAMS = ["data", "static", "api", "fmt", "qc"];
+  // folder) and the quality filter. ?diag= and ?decode= are for looking at a problem, not for sharing.
+  const KEEP_PARAMS = ["data", "static", "qc"];
   function baseUrl(dsId) {
     const now = new URLSearchParams(location.search), q = new URLSearchParams();
     q.set("ds", dsId);

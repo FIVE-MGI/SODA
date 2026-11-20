@@ -23,7 +23,6 @@ The options below are in order of effort.
 | [B. Any static web host](#b-any-static-web-host-public-data) | anyone with the link | nothing | an hour |
 | [C. Azure, private, with a password](#c-azure-private-data-with-a-password) | people you give the password | one small function | an afternoon |
 | [D. AWS (or another cloud), private](#d-aws-s3--cloudfront-or-another-backend) | people you give the password | your own token endpoint | a day, needs cloud experience |
-| [E. Live tile server](#e-optional-live-tile-server-serverpy) | people on your network | `server.py` | minutes, but a machine must stay on |
 
 Visitors need an internet connection in every case, also for option A, unless you serve the
 two libraries yourself: the page loads its drawing library (deck.gl) and, for the circle tool,
@@ -105,7 +104,7 @@ data/my_dataset/manifest.json
 data/my_dataset/tiles/...
 ```
 
-You do not need to publish the `.py` files, `requirements*.txt` or `run.ps1`. Never
+You do not need to publish the `.py` files or `requirements*.txt`. Never
 publish the prepare cache (`cache/`, which holds the full-resolution raw image) or
 the de-identification key file.
 
@@ -241,38 +240,6 @@ wildcard resource such as `https://dxxxx.cloudfront.net/*`, and its query string
 We have not built or tested this AWS setup; treat it as a design, not a recipe. The same
 reasoning applies to other clouds: it works wherever the provider can issue one
 time-limited query string that is valid for every object under a prefix.
-
-## E. Optional: live tile server (server.py)
-
-`server.py` serves the **prepare cache** directly, with no export step. It makes each tile
-on request. Use it to look at a freshly prepared dataset on a lab workstation, or to share
-it on your local network.
-
-```bash
-python web/SpatialViewer/server.py --cache cache --port 8760 --host 127.0.0.1 --password "<a password>"
-```
-
-Then open `http://localhost:8760/SpatialViewer/index.html?api=http://localhost:8760`
-and type the password into the page's login box. The server lists every dataset folder in
-the cache that has a `manifest.json`.
-
-If you have a `config.js`, it must have `tokenEndpoint: ""` for this mode. With a token
-endpoint configured, the page tries to fetch every dataset from the cloud container
-instead of from the server. (`useLocalServer: true` in `config.js` lets you leave out
-`?api=` when the page is served by `server.py` itself.)
-
-- It refuses to start without a password. Give one with `--password`, the
-  `SPATIALVIZ_PASSWORD` environment variable, or a `.password` file next to `server.py`.
-  `--no-password` is for testing on your own machine only.
-- `--host` defaults to `0.0.0.0`, which accepts connections from other computers.
-  Use `--host 127.0.0.1` to keep it to your own machine. The password travels as plain
-  HTTP Basic authentication, so put the server behind HTTPS (a reverse proxy) before
-  exposing it beyond a trusted network.
-- It serves images, gene layers and overlays. The whole-section UMAP, Leiden clusters,
-  the circle → UMAP tool and region linking are made by `prepare.py export` and only work
-  with exported data (options A-D).
-- A page served over `https://` cannot read from an `http://` server (the browser blocks
-  mixed content), so `?api=` from a hosted page only works if the server also has HTTPS.
 
 ---
 

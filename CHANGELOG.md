@@ -42,6 +42,11 @@ Fewer ways to do the same thing, so there is less to learn and less that can bre
   folder straight in the inputs folder; a folder holding several datasets is still split into
   one dataset each. The notebook now shows the same kind names as `prepare.py` (`tiff`, `akoya`,
   `rnaseq`); the old names still work in `OPTIONS`.
+- The live tile server (`server.py`, `run.ps1`), which showed the prepare cache on a lab network
+  without an export. With it go `?api=` and `?fmt=` in the address, `apiBase`, `useLocalServer`
+  and `tileFormat` in `config.js`, and FastAPI, Uvicorn and the 17 packages only they needed. To
+  look at a dataset on your own computer, export it and use the SODA app's **Open viewer** or
+  [HOSTING.md A](docs/HOSTING.md#a-on-your-own-computer).
 
 Removed from the page (old links and Save JSON files still open; the parts they held for these
 tools are ignored):

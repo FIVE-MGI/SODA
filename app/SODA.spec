@@ -73,7 +73,6 @@ hiddenimports = (
     SODA_MODULES
     + ["_buildinfo"]
     + collect_submodules("imagecodecs")     # codecs are loaded by name
-    + collect_submodules("uvicorn")         # server.py: loop/protocol chosen at run time
     + collect_submodules("numcodecs")
     + ["sklearn.neighbors", "sklearn.decomposition", "umap", "pynndescent", "igraph", "leidenalg",
        "pyarrow.parquet", "pyarrow.csv", "pyarrow.compute", "h5py", "cryptography",

@@ -748,9 +748,8 @@ top-left corner, as Xenium writes them) or `frame` (the platform's own coordinat
 global pixels, MERSCOPE global µm). The same checks apply: outlines in the wrong units or from
 another run are refused with a message, and nothing is changed.
 
-Not offered: outlines on the live tile server (`server.py`; static exports only), outlines for
-bins, marker squares and GeoMx ROIs (those are drawn as they are), and computing a
-segmentation.
+Not offered: outlines for bins, marker squares and GeoMx ROIs (those are drawn as they are),
+and computing a segmentation.
 
 ## Multiplexed immunofluorescence
 
@@ -1344,7 +1343,6 @@ tissue and get a UMAP of just the bins inside them, computed in the browser. It 
   the shape name. It needs the export's barcode lists, which `prepare.py export` writes by default
   (not with `--no-ids`; `prepare.py ids` adds them to an export made without); see `ids.txt.gz` in
   [DATA_FORMAT.md](DATA_FORMAT.md).
-- It works with exported data only, not with the live tile server.
 
 ## Region overlays
 

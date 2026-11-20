@@ -120,7 +120,7 @@ SODA app) or [GETTING_STARTED.md](GETTING_STARTED.md) (the notebook, step by ste
 - **Single-cell RNA-seq.** UMAP from AnnData (`.h5ad`) or 10x output, coloured by cluster
   with automatically placed labels, plus up to twelve gene expression panels.
 - **Host it yourself.** Static files work on any web host. Optional password protection
-  for private data on Azure, or a small live tile server for a lab network.
+  for private data on Azure.
 - **De-identification tools.** Sample IDs are replaced by numbers through a private key,
   and a check command gates uploads. They know only our lab's ID formats: edit `_ID` in
   `deid.py` for yours first (see [DEIDENTIFICATION.md](DEIDENTIFICATION.md)). Barcode and
@@ -251,7 +251,7 @@ email wbuchser@wustl.edu with any questions about hosting.
   have not run it on a Mac. Intel Macs, Linux on ARM and Python 3.14 are not covered by the
   lock file yet.
 - Packages, as ranges (the human-edited lists the lock file is made from):
-  `web/SpatialViewer/requirements.txt` (reading images and counts, export, tile server) and
+  `web/SpatialViewer/requirements.txt` (reading images and counts, export, de-identification) and
   `web/SpatialViewer/requirements-clustering.txt` (optional: whole-section UMAP and Leiden
   clusters with scikit-learn, umap-learn, igraph, leidenalg). Installing these by hand needs
   Python 3.10 or newer (NumPy 2, SciPy 1.14) and gets the newest versions they allow.

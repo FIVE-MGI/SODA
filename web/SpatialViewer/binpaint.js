@@ -30,8 +30,8 @@
 //                     "how much of these genes, on the usual log scale". Genes not in the layer are
 //                     left out and named. On the same viridis ramp and range controls as a value.
 //
-// Genes always come through the source object (viewer.js S.src.gene: loose files, a packed file or a
-// tile server alike); their values are put on positions.bin rows by position, as the UMAP does.
+// Genes always come through the source object (viewer.js S.src.gene: loose files or a packed file
+// alike); their values are put on positions.bin rows by position, as the UMAP does.
 //
 // The section is in the View tab (layout.js), under More options. While it colours the bins, the genes'
 // own density is not drawn (one colour per bin, as Colour by cluster does); a colour by cluster or

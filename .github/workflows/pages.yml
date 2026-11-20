@@ -43,7 +43,7 @@ jobs:
           find _site -name '*.py' -delete
           find _site -name '__pycache__' -type d -prune -exec rm -rf {} +
           find _site \( -iname 'sample_id_key.csv' -o -iname '*_key.csv' -o -name '*.zarr' \) -prune -exec rm -rf {} +
-          rm -f _site/requirements*.txt _site/run.ps1
+          rm -f _site/requirements*.txt
           if [ -f _site/config.js ]; then
             echo "config.js found: the site opens the data it names"
           else

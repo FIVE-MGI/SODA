@@ -720,7 +720,7 @@ and `shapes/<set>/`. What differs:
 
 Written by `prepare.py xenium` (`molecules.py`, platform-neutral; `xenium.py` reads
 `transcripts.parquet` when present, else `transcripts.zarr.zip` level 0). The cache holds one
-file per gene (`gene/<NAME>.bin`, which `server.py` serves as it is); `export` packs them in
+file per gene (`gene/<NAME>.bin`); `export` packs them in
 `index.json` order (`molecules/genepack/`, each gene's `s`, `o`, `b` on its `index.json` entry and
 `genePack` on the manifest's `molecules` block, as described under "Gene packs"). A gene is fetched only when it is picked in
 the Molecules panel.

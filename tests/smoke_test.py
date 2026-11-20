@@ -641,7 +641,7 @@ def check_viewer_page(c: Checker, root: Path, log_path: Path):
     c.ok("site.js" in names and "config.js" in names and names.index("site.js") < names.index("config.js") < names.index("viewer.js"),
          "index.html: site.js loads before config.js and viewer.js")
     c.ok(all(k in js for k in ("window.SodaSite", 'params.get("static")', "TOKEN_URL || (cfg.datasets", '|| SITE_DATA;')),
-         "viewer.js: site.js's folder is used only when no link, ?static=/?api=, config.js data/datasets/server or password names data")
+         "viewer.js: site.js's folder is used only when no link, ?static=, config.js data/datasets or password names data")
     c.ok("No datasets: add entries to config.js" not in js and "open the SODA link you were given" in js,
          "viewer.js: the page with no data says in plain words how to open a link")
     dj = (APP / "diag.js").read_text(encoding="utf-8")
@@ -997,7 +997,7 @@ def check_sharing(c: Checker, log_path: Path):
          "viewlink.js: only unsigned typed arrays (the de-identification check reads the signed names as sample IDs)")
     lines = [ln for ln in t.splitlines() if re.search(r"\b(local|session)Storage\.", ln)]
     c.ok(all("try" in ln for ln in lines), f"viewlink.js: a storage access outside try / catch: {[ln.strip()[:60] for ln in lines if 'try' not in ln]}")
-    c.ok('KEEP_PARAMS = ["data", "static", "api", "fmt", "qc"]' in t and "location.hash" in t and "fetch(" not in t,
+    c.ok('KEEP_PARAMS = ["data", "static", "qc"]' in t and "location.hash" in t and "fetch(" not in t,
          "viewlink.js: the view travels after #, the link keeps ?data= / ?static= / ?qc=, and it fetches nothing itself")
     node = shutil.which("node")
     if not node:

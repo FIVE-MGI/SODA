@@ -65,11 +65,6 @@ window.SpatialViewerConfig = {
   // which only makes sense when the data is public or served locally.
   tokenEndpoint: "/api/token",
 
-  // A live tile server (server.py) instead of, or as well as, static exports.
-  // Empty means none; ?api=http://host at runtime also works.
-  apiBase: "",
-  useLocalServer: false,
-
   // ---- UMAP cluster labels --------------------------------------------------------
   // Hand-placed label positions in UMAP coordinates, keyed by dataset then cluster.
   // Anything listed wins over the automatic placement; anything missing is placed by
@@ -103,7 +98,6 @@ window.SpatialViewerConfig = {
   // A JavaScript regex source string; omit to use the built-in default.
   // hideChannels: "^\\s*(open|blank|empty|unused)([\\s_-]|$)",
 
-  tileFormat: "png",    // "jpg" is ~4x smaller per tile (server mode only)
   tileCacheSize: 400,   // decoded tiles held per page, all channels together
 
   // Window-slider axis. Fluorescence piles up near zero, so a linear 0-255 slider

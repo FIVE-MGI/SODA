@@ -25,8 +25,6 @@ PACKAGES = [
     ("h5py", "h5py", "core"),
     ("pyarrow", "pyarrow", "core"),
     ("cryptography", "cryptography", "core"),
-    ("fastapi", "fastapi", "tile server"),
-    ("uvicorn", "uvicorn", "tile server"),
     ("sklearn", "scikit-learn", "UMAP and clusters"),
     ("umap", "umap-learn", "UMAP and clusters"),
     ("igraph", "igraph", "UMAP and clusters"),
