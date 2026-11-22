@@ -2,7 +2,7 @@
 
 What is in each version of SODA, in plain words. The details are in the [docs](README.md#documentation).
 
-## 0.10.0 (not released yet): simpler
+## 0.10.0 (22 November 2026): simpler
 
 Fewer ways to do the same thing, so there is less to learn and less that can break.
 
