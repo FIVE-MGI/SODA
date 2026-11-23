@@ -11,9 +11,10 @@
 # MACOS_CERT_PASSWORD, MACOS_CODESIGN_ID ("Developer ID Application: ..."), and for notarisation
 # MACOS_NOTARY_APPLE_ID, MACOS_NOTARY_TEAM_ID, MACOS_NOTARY_PASSWORD (an app-specific password).
 #
-# Guard: like pages.yml, this does nothing on its own in the FIVE-MGI repositories. There it only
-# runs when started by hand (Actions tab -> Run workflow), and a manual run only produces a
-# downloadable artifact, never a Release. In a copy of SODA a v* tag builds and publishes.
+# Guard: this never starts on its own, in the FIVE-MGI repositories or in a copy of SODA ("Use
+# this template"): it runs only when started by hand (Actions tab -> "Build SODA app (macOS)" ->
+# Run workflow). Started on a branch it only produces a downloadable artifact; started on a v* tag
+# ("Use workflow from" -> the tag) it also publishes the files as that tag's GitHub Release.
 name: Build SODA app (macOS)
 
 on:
@@ -23,16 +24,14 @@ on:
         description: "Version string baked into the app and filenames"
         required: false
         default: "0.0.0-dev"
-  push:
-    tags:
-      - "v*"
 
 permissions:
-  contents: write        # attach the .dmg to a Release on a tag push
+  contents: write        # attach the .dmg to a Release when started on a v* tag
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || (github.repository != 'FIVE-MGI/SODA' && github.repository != 'FIVE-MGI/spatial-viewer-v2')
+    # by hand only (see the top); kept as a second guard should a push trigger be added back
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:

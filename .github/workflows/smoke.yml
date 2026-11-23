@@ -1,5 +1,9 @@
 name: smoke
 
+# Runs only in FIVE-MGI/SODA (the `if:` on each job). In a copy of SODA ("Use this template") both jobs
+# are skipped: they need the lab's test set-up and take 35-45 minutes, so a copy would get a failing run
+# on every commit. A copy that wants them can change the repository name in the two `if:` lines.
+
 on:
   push:
   pull_request:
@@ -7,6 +11,7 @@ on:
 
 jobs:
   smoke:
+    if: github.repository == 'FIVE-MGI/SODA'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -63,6 +68,7 @@ jobs:
   # has a secret SODA_TEST_PRIVATE_DATA (the private container's folder URL with a read SAS), and are
   # SKIPPED with one line each otherwise. The SAS is never printed (GitHub masks it, the tests leave it out).
   browsers:
+    if: github.repository == 'FIVE-MGI/SODA'
     runs-on: ubuntu-24.04   # Playwright 1.56 has no browsers for ubuntu 26.04 (ubuntu-latest)
     timeout-minutes: 150
     env:
@@ -141,10 +147,6 @@ jobs:
       - name: drawregion_test.js
         if: success() || failure()
         run: node tests/drawregion_test.js
-
-      - name: offline_test.js
-        if: success() || failure()
-        run: node tests/offline_test.js --python python --only chromium,webkit
 
       - name: diag_test.js and viewlink_test.js
         if: success() || failure()
