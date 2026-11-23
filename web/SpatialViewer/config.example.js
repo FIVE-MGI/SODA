@@ -98,7 +98,7 @@ window.SpatialViewerConfig = {
   // A JavaScript regex source string; omit to use the built-in default.
   // hideChannels: "^\\s*(open|blank|empty|unused)([\\s_-]|$)",
 
-  tileCacheSize: 400,   // decoded tiles held per page, all channels together
+  tileCacheSize: 400,   // decoded tiles held per page, all channels together (on a computer at most ~1 GB of them)
 
   // Window-slider axis. Fluorescence piles up near zero, so a linear 0-255 slider
   // crams every useful window into the first few percent of travel. Positions map

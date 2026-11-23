@@ -255,7 +255,8 @@
         if (Object.keys(per).length) s.names[rk] = per;
       }
       s.hidden = list(c.hidden, 2000, (x) => int(x, 0, 65534)) || [];
-      // cell sets (cellsets.js): clusters merged into one set, per clustering. viewer.js cleans them again as it reads them.
+      // cell sets (clusters merged into one set; cut after 0.10.0) of a link made before: kept, cleaned, only so that
+      // viewer.js (clOldSets) gives each set's lowest member its own name back; the sets themselves are ignored
       if (isObj(c.sets)) {
         const sets = {};
         for (const rk of Object.keys(c.sets).slice(0, 40)) {
@@ -297,7 +298,7 @@
     if (st.sampling === "exact" || st.sampling === "fast") o.sampling = st.sampling;
     if (Array.isArray(st.shapes) && st.shapes.length) o.shapes = st.shapes;
     const sc = st.sectionClusters;
-    if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [], ...(sc.sets ? { sets: sc.sets } : {}) };
+    if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [] };
     if (st.qcFilter && st.qcFilter.thresholds) o.qcFilter = { layer: st.qcFilter.layer, thresholds: st.qcFilter.thresholds };
     if (st.view) o.view = st.view;
     return o;
@@ -511,7 +512,9 @@
         const on = view.ov.some((k) => k === S.overlays[i].key), box = boxes[i];
         if (!box || box.checked === on) continue;
         box.checked = on;
-        try { await box.onchange({ target: box }); } catch (e) { notes.push(`The outline ${S.overlays[i].label} could not be loaded.`); }
+        // (an outline that will not load unticks itself and says so on the page: noted here too)
+        try { await box.onchange({ target: box }); if (on && !box.checked) throw new Error("not loaded"); }
+        catch (e) { notes.push(`The outline ${S.overlays[i].label} could not be loaded.`); }
         if (stale()) return notes;
       }
     }
@@ -696,9 +699,8 @@
     } finally { busy = false; }
   }
 
-  // The Share tab's "Copy link" (layout.js builds it to copy the page's address) becomes "Copy link to this
-  // view": its words, its click and the sentence about it in the section's "?" note. Done from here so that
-  // layout.js stays as it is; without this file the button copies the address as before.
+  // The Share tab's "Copy link" button (layout.js builds it, with no click of its own) becomes "Copy link to this
+  // view": its words, its click and the sentence about it in the section's "?" note.
   const HELP = "Copy link to this view copies an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters, the quality filter and the open tab. Drawn shapes too big for a link are left out, and it says so. Save JSON keeps the same view in a file.";
   function takeButton() {
     const b = $("btnCopyLink");

@@ -568,26 +568,6 @@ async function selectionChecks(B, browser, DATA, URL0) {
     check(c.lit === c.inCluster && c.over, "a highlighted cluster: only its cells are filled, above the dimmed slide", c);
     await shot(page, "outlines_xenium_cluster_picked.png");
     await page.evaluate(() => { const b = document.getElementById("selChipClear"); if (!b.closest("[hidden]")) b.click(); });
-    // Cell sets: two clusters merged into one set: the second one's cells take the set's colour, as their dots do
-    await page.evaluate(() => { const b = document.getElementById("csShowCl"); if (b && !b.closest("[hidden]")) b.click(); });
-    const csReady = await page.waitForFunction(() => document.querySelectorAll("#csPick input[data-c]").length >= 2, null, { timeout: 30000 }).then(() => true, () => false);
-    if (csReady) {
-      const before = await page.evaluate(() => Array.from(window.__spatialViewer.state.umap.cl));
-      const codes = await page.evaluate(() => [...document.querySelectorAll("#csPick input[data-c]")].slice(0, 2).map((i) => Number(i.dataset.c)));
-      await page.evaluate((c) => window.SodaSets._merge(c, "Outline test set"), codes);
-      await settled(page);
-      c = await page.evaluate(([before, codes]) => {
-        const sv = window.__spatialViewer, col = sv.outlines._debug().col, U = sv.state.umap, f = col.fill;
-        const rgb = (r) => `${f[4 * r]},${f[4 * r + 1]},${f[4 * r + 2]},${f[4 * r + 3]}`;
-        const a = [], b = [];
-        for (let r = 0; r < before.length; r++) { if (before[r] === codes[0]) a.push(rgb(r)); else if (before[r] === codes[1]) b.push(rgb(r)); }
-        const ua = [...new Set(a)], ub = [...new Set(b)];
-        return { set: U.cl[before.indexOf(codes[1])], head: codes[0], first: ua, second: ub, n: [a.length, b.length] };
-      }, [before, codes]);
-      check(c.first.length === 1 && c.second.length === 1 && c.first[0] === c.second[0] && c.set === c.head && c.n[1] > 0,
-        "Cell sets: clusters merged into a set fill their cells' outlines in the set's one colour", c);
-      await shot(page, "outlines_xenium_cell_set.png");
-    } else check(false, "Cell sets: the section lists the clusters to merge");
   } else console.log("  (no clusters in this export: cluster checks skipped)");
   if (await page.evaluate(() => !!(window.__spatialViewer.binQc && window.__spatialViewer.binQc.available()))) {
     const q = await page.evaluate(() => { const sv = window.__spatialViewer; sv.binQc.setState({ thresholds: { total: { min: 45, max: null } } }); return sv.binQc.removed(); });

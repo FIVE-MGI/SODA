@@ -817,7 +817,7 @@ def check_layout(c: Checker):
     from html.parser import HTMLParser
 
     html = (APP / "index.html").read_text(encoding="utf-8")
-    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js", "cellsets.js", "binpaint.js", "selections.js", "measure.js")}
+    js = {f: (APP / f).read_text(encoding="utf-8") for f in ("layout.js", "viewer.js", "volcano.js", "plots.js", "qc.js", "roi.js", "snapshot.js", "binpaint.js", "selections.js")}
     names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
     c.ok("layout.js" in names and "layout.css" in names, "index.html loads layout.js and layout.css")
     c.ok("layout.js" in names and "viewer.js" in names and names.index("layout.js") < names.index("viewer.js"),
@@ -864,34 +864,32 @@ def check_layout(c: Checker):
     c.ok("SodaLayout.adopt(block)" in js["volcano.js"], "volcano.js: its block is handed to the layout")
     c.ok('sec.dataset.tab = "share"' in js["snapshot.js"] and "SodaLayout.adopt(sec)" in js["snapshot.js"],
          "snapshot.js: its Save image section names its tab and is handed to the layout")
-    c.ok("sec.dataset.tab = cfg.tab" in js["cellsets.js"] and "SodaLayout.adopt(sec)" in js["cellsets.js"]
-         and 'id: "panelSets", tab: "analyze"' in js["cellsets.js"] and "panelRunSets" not in js["cellsets.js"],
-         "cellsets.js: its Cell sets section (Analyze tab) names its tab and is handed to the layout")
+    c.ok("cellsets.js" not in names and not (APP / "cellsets.js").exists() and "panelSets" not in js["layout.js"],
+         "Cell sets (cellsets.js) are gone (cut in the final release): no script, no section")
     c.ok('sec.dataset.tab = "view"' in js["binpaint.js"] and "SodaLayout.adopt(sec)" in js["binpaint.js"],
          "binpaint.js: its Colour by a value section names its tab and is handed to the layout")
     c.ok("binpaint.js" in names and not re.search(r"\bInt(8|16|32)Array\b", js["binpaint.js"]),
          "index.html loads binpaint.js, which uses only unsigned typed arrays (deid.py check reads the signed names as sample IDs)")
-    c.ok('sec.dataset.tab = "view"' in js["measure.js"] and "SodaLayout.adopt(sec)" in js["measure.js"] and "measure.js" in names
-         and names.index("measure.js") < names.index("viewer.js") and not re.search(r"\bInt(8|16|32)Array\b", js["measure.js"]),
-         "measure.js: its Measure section names its tab and is handed to the layout, loaded before viewer.js, unsigned arrays only")
+    c.ok("measure.js" not in names and not (APP / "measure.js").exists() and "panelMeasure" not in js["layout.js"],
+         "Measure (measure.js) is gone (cut in the final release): no script, no section")
     c.ok('sec.dataset.tab = "analyze"' in js["selections.js"] and "SodaLayout.adopt(sec)" in js["selections.js"],
          "selections.js: its Export shapes section names its tab and is handed to the layout")
     # ids the layout makes must be new; ids it moves must exist (in the page or in the script that builds them)
     new_ids = set(i for i, _ in made) | set(re.findall(r'el\("\w+", "[^"]*", "(\w+)"\)', js["layout.js"]))
     clash = sorted(new_ids & set(ids))
     c.ok(not clash, f"layout.js makes ids that index.html already has: {clash}")
-    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"] + js["cellsets.js"] + js["binpaint.js"] + js["selections.js"] + js["measure.js"])) | set(ids) | new_ids
+    built = set(re.findall(r'id="(\w+)"', js["volcano.js"] + js["plots.js"] + js["snapshot.js"] + js["binpaint.js"] + js["selections.js"])) | set(ids) | new_ids
     block = js["layout.js"][js["layout.js"].index("const SECTIONS = {"):js["layout.js"].index("const ORDER = {")]
     moved = set(re.findall(r'"(\w+)"', " ".join(re.findall(r'(?:more|notes): \[([^\]]*)\]', block))))
     c.ok(len(moved) >= 15 and not (moved - built), f"layout.js moves controls that do not exist: {sorted(moved - built)}")
     order = js["layout.js"][js["layout.js"].index("const ORDER = {"):js["layout.js"].index("const KEY = ")]
     ordered = set(re.findall(r'"(panel\w+)"', order))
     more = order[order.index("const MORE = {"):]
-    c.ok(set(re.findall(r'"(panel\w+)"', more)) == {"panelPaint", "panelMeasure", "panelOwn", "panelSets", "panelBinQc"},
-         "layout.js: Colour by a value, Measure, Your own results, Cell sets and the quality filter are behind their tab's More options")
+    c.ok(set(re.findall(r'"(panel\w+)"', more)) == {"panelPaint", "panelOwn", "panelBinQc"},
+         "layout.js: Colour by a value, Your own results and the quality filter are behind their tab's More options")
     c.ok("function buildTabMore(tab)" in js["layout.js"] and "if (behindMore(sec)) setTabMore(tab, true, false);" in js["layout.js"],
          "layout.js: a tab's More options is built, and show() opens it for a section behind it")
-    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelSets", "panelPaint", "panelShapes", "panelMeasure",
+    known = {sid for sid, _ in secs} | {i for i, _ in made} | {"panelPlots", "panelImage", "panelPaint", "panelShapes",
                                                                "panelOwn"}
     c.ok(not (ordered - known), f"layout.js orders sections that do not exist: {sorted(ordered - known)}")
     for needle, f, what in (("lay.opening(false, tok)", "viewer.js", "tells the layout when a dataset starts and stops opening"),
@@ -930,7 +928,7 @@ def check_ownres(c: Checker, root: Path, log_path: Path):
     the hooks in viewer.js and binpaint.js, the link extension), no signed typed arrays, and, when node is
     installed, tests/ownres_browser_test.js in Chromium, WebKit and Firefox (SKIPPED when not installed) on the
     public visiumhd_pub (its barcode lists): Seurat and scanpy files, .gz, partial matches, roles put right, colours by
-    pixel, the volcano and cell sets on a loaded grouping, Save JSON and the view link, junk files, 375 px."""
+    pixel, the volcano on a loaded grouping, Save JSON and the view link, junk files, 375 px."""
     html = (APP / "index.html").read_text(encoding="utf-8")
     names = [r.partition("?")[0] for r in re.findall(r'<(?:script|link)[^>]+?(?:src|href)="([^"]+)"', html)]
     js = {f: (APP / f).read_text(encoding="utf-8") for f in ("ownres.js", "viewer.js", "binpaint.js", "layout.js")}

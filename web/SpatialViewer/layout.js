@@ -1,4 +1,4 @@
-// The control layout: four tabs on a rail, sections that fold, "More options", "?" notes, a top
+// The control layout: three tabs on a rail (View, Analyze, Share), sections that fold, "More options", "?" notes, a top
 // bar over the map, and on phones a bottom bar with a sheet.
 //
 // Nothing here makes or replaces a control. index.html holds every control with its id, exactly
@@ -44,16 +44,12 @@
     panelMolecules: { more: ["molSize", "molOpacity"],
       help: "Every decoded molecule of the genes picked here, one dot each, one colour per gene. Zoomed out only a share of the dots is drawn; zoom in to see them all. More options: dot size and opacity." },
     panelOverlays: { help: "Outlines that came with the dataset (regions, cells, ROIs), drawn over the picture. Tick one to show it; hover an outline to read its name." },
-    panelMeasure: {
-      help: "Ruler: click two points on the tissue, or press and drag, to read the distance between them in µm. Area: click the corners of a shape and close it with a double-click, Enter, Finish or a click on its first corner, or press and drag round it; you get its area in µm² and its perimeter in µm. The numbers come from the export's microns per pixel (an export without one gives image pixels and says so). On a touch screen one finger draws (drag, or tap the points) and two fingers move the picture; Done drawing puts the tool away. By keyboard: turning a tool on with Enter moves the focus to the map, where the arrow keys move the picture, + and - zoom, Enter or Space puts a point at the centre cross, Enter again without moving closes an area, Backspace takes the last point back and Escape stops. Each measurement is listed here (✕ removes it), drawn on the map, kept in Save image with its numbers in the legend, and saved in Save JSON and the view link." },
     panelRna: { more: ["rnaBin", "rnaPointSize"], moreAt: "end",
       help: "Each dot is a cell, placed by the UMAP that came with the data and coloured by its cluster. Add a gene to get one small UMAP per gene, coloured by how much of it each cell has. View: Normal draws the cells, Density a smoothed map. More options: bin size (Density) and point size." },
     panelUmap: { notes: ["umapNote"],
       help: "Colour the bins by the genes picked in View, by cluster, or by suggested cell type. Click a cluster in the list to light it in every view; the pencil renames it and the tick box hides it. Box and Freehand select bins by drawing around them, on the tissue or on the UMAP. What is selected or highlighted is named above the picture, beside Tissue / Side by side / UMAP, with Show on slide (frame it on the tissue) and Clear selection (or press Esc)." },
     panelOwn: {
-      help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering in the Clusters section (colours on the tissue and the UMAP, names, cell sets, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
-    panelSets: {
-      help: "Merge clusters of the clustering on show into one named set: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour of its first cluster and counts as one group everywhere: the maps, the legend, the volcano and plot groups and the saved image. Rename a set in its box or with the pencil in the legend; Un-merge splits it again and Undo takes back the last change made here. Save JSON keeps the sets with the cluster names. Export CSV writes one row per bin: its row number in the export, its position in image pixels, its cluster and the set it is in (bins left out of the clustering have empty cells)." },
+      help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering in the Clusters section (colours on the tissue and the UMAP, names, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
     panelBinQc: { more: ["bqGrey"], moreAt: "end", notes: ["bqNote"],
       help: "One histogram per measure (counts, genes detected, % mitochondrial). Move a slider or type a number to set a minimum or a maximum: bins outside are removed." },
     panelLasso: { more: ["lassoMode", "lassoSeed", "lassoRes"], notes: ["lassoNote"],
@@ -64,7 +60,7 @@
       help: "Compares two groups of bins gene by gene: a drawn shape, a cluster, or the rest of the section. Genes to the right are higher in A, to the left higher in B; click a dot to draw that gene on the slide. × closes the plot; while nothing has changed the button reads Show volcano and brings it back without running again. More options: the test (Wilcoxon rank-sum or Welch's t), the smallest share of bins a gene must be counted in to be tested, and extra genes to test by name." },
     panelPlots: { more: ["plTop"], moreAt: { before: "plRun" },
       help: "Draws genes across groups (clusters, drawn shapes, regions or annotations) as a heatmap, a dot plot or violins. Pick the grouping, type gene names or let it take each group's top marker genes (how many: More options), then Draw plots. + shown genes adds the genes now on the picture. × closes the plots; while nothing has changed the button reads Show plots and brings them back without drawing again." },
-    panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link copies this page's address: it opens this dataset, with the quality filter if one is set (not the genes, stains or zoom)." },
+    panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link to this view copies an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters, the quality filter and the open tab. Drawn shapes too big for a link are left out, and it says so. Save JSON keeps the same view in a file." },
     panelImage: { more: ["snapBar", "snapName"], moreAt: "end",
       help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
@@ -77,8 +73,8 @@
   };
   // the sections few people need: behind one "More options" at the end of their tab, in this order
   const MORE = {
-    view: ["panelPaint", "panelMeasure"],
-    analyze: ["panelOwn", "panelSets", "panelBinQc"],
+    view: ["panelPaint"],
+    analyze: ["panelOwn", "panelBinQc"],
   };
 
   // ---- remembered per browser: the tab, which sections are open, which "More options" ----------
@@ -138,18 +134,17 @@
     if (dsRow) topBar.appendChild(dsRow);
     if (vs) {
       topBar.appendChild(vs);
-      // Play and its speed are rarely used: behind a small button after Tissue / Side by side / UMAP
-      const sp = vs.querySelector(".fly-speed"), play = $("flyPlay");
-      if (sp) {
-        const more = el("button", "fly-more", "flyMore"), box = el("span", "fly-more-box", "flySpeedBox");
-        more.type = "button"; more.textContent = "…"; more.title = "Play the flight between the tissue and the UMAP, and its speed";
-        more.setAttribute("aria-label", "Play and flight speed"); more.setAttribute("aria-expanded", "false"); more.setAttribute("aria-controls", "flySpeedBox");
+      // Play is rarely used: behind a small button after Tissue / Side by side / UMAP
+      const play = $("flyPlay");
+      if (play && play.parentElement === vs) {
+        const more = el("button", "fly-more", "flyMore"), box = el("span", "fly-more-box", "flyPlayBox");
+        more.type = "button"; more.textContent = "…"; more.title = "Play the flight between the tissue and the UMAP";
+        more.setAttribute("aria-label", "Play the flight"); more.setAttribute("aria-expanded", "false"); more.setAttribute("aria-controls", "flyPlayBox");
         box.hidden = true;
-        (play && play.parentElement === vs ? play : sp).before(more); more.after(box);
-        if (play && play.parentElement === vs) box.appendChild(play);
-        box.appendChild(sp);
-        more.onclick = () => { box.hidden = !box.hidden; more.setAttribute("aria-expanded", String(!box.hidden)); if (!box.hidden) { const s = play && !play.hidden ? play : $("flySpeed"); if (s) s.focus(); } };
-        mirror(more, sp);
+        play.before(more); more.after(box);
+        box.appendChild(play);
+        more.onclick = () => { box.hidden = !box.hidden; more.setAttribute("aria-expanded", String(!box.hidden)); if (!box.hidden && !play.hidden) play.focus(); };
+        mirror(more, play);
       }
     }
     if (fit) topBar.appendChild(fit);
@@ -178,14 +173,14 @@
       help.insertBefore(about, h ? h.nextSibling : help.firstChild);
     }
 
-    // Save and load: Save JSON and Load JSON leave the Draw a region panel; a button copies the page's address
+    // Save and load: Save JSON and Load JSON leave the Draw a region panel; "Copy link" is wired by viewlink.js
+    // (Copy link to this view)
     const lasso = $("panelLasso");
     const save = newSection("panelSave", "share", "Save and load");
     const jsonRow = el("div", "btnrow", "saveJsonRow"), linkRow = el("div", "btnrow"), msg = el("div", "meta save-msg", "saveMsg");
     for (const id of ["lassoSaveJson", "lassoLoadBtn", "lassoLoad"]) if ($(id)) jsonRow.appendChild($(id));
     const copy = el("button", "", "btnCopyLink");
-    copy.type = "button"; copy.textContent = "Copy link"; copy.title = "Copy this page's address: it opens this dataset, with the quality filter if one is set";
-    copy.onclick = copyLink;
+    copy.type = "button"; copy.textContent = "Copy link";
     linkRow.appendChild(copy);
     msg.setAttribute("role", "status");
     save.append(jsonRow, linkRow, msg);
@@ -492,9 +487,8 @@
       new MutationObserver(() => { const now = box.children.length; if (now > n) flag(secId); n = now; }).observe(box, { childList: true });
     }
     // the user's own action sends them to another tab: show it
-    const load = $("lassoLoad"), toShape = $("selToShape");
+    const load = $("lassoLoad");
     if (load) load.addEventListener("change", () => show("panelLasso"));      // a file was chosen: the run and its messages are in Draw a region
-    if (toShape) toShape.addEventListener("click", () => show("panelLasso"));
   }
   function watchRun(cancelId, secId) {
     const c = $(cancelId); if (!c) return;
@@ -542,7 +536,6 @@
     },
     panelGenes: () => names("geneList", "none picked"),
     panelPaint: () => (window.SodaPaint ? window.SodaPaint.summary() : ""),
-    panelMeasure: () => (window.SodaMeasure ? window.SodaMeasure.summary() : ""),
     panelMolecules: () => names("molList", "none picked"),
     panelOverlays() { const n = $("overlayList") ? $("overlayList").querySelectorAll("input[type=checkbox]:checked").length : 0; return n ? `${n} on` : "off"; },
     panelRna: () => names("rnaGeneList", "clusters, no gene picked"),
@@ -555,7 +548,6 @@
       else t = `by ${(by.options[0] ? by.options[0].textContent : "genes").split(" ")[0].toLowerCase()}`;
       return sel ? `${t} · ${sel}` : t;
     },
-    panelSets() { const n = $("csSets") ? $("csSets").querySelectorAll(".cs-set").length : 0; return n ? plural(n, "set") : up("csPick") ? "no sets" : ""; },
     panelBinQc: () => txt("bqCount").replace(/[()]/g, "") || "off",
     panelLasso() {
       const n = $("lassoShapes") ? $("lassoShapes").querySelectorAll(".lshape").length : 0;
@@ -597,21 +589,6 @@
     ul.dataset.key = key; ul.textContent = "";
     for (const t of lines) { const li = el("li"); li.textContent = t; ul.appendChild(li); }
   }
-  async function copyLink() {
-    const msg = $("saveMsg"), url = location.href;
-    let ok = false;
-    try { await navigator.clipboard.writeText(url); ok = true; }
-    catch (e) {
-      // no clipboard permission (an http page, an older browser): the old way
-      try {
-        const ta = el("textarea"); ta.value = url; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;left:0;top:0;opacity:0;font-size:16px";
-        document.body.appendChild(ta); ta.select(); ok = document.execCommand("copy"); ta.remove();
-      } catch (e2) { ok = false; }
-    }
-    if (msg) msg.textContent = ok
-      ? `Link copied. It opens this dataset${new URLSearchParams(location.search).get("qc") ? " with the quality filter" : ""}; genes, stains and zoom are not in it.`
-      : "Could not copy: copy the address from the browser's address bar instead.";
-  }
 
   // ---- keeping up with the page -----------------------------------------------------------------
   let timer = 0, opening = 0, openTok = 0, firstOpen = false;
@@ -648,7 +625,7 @@
       for (const p of side.querySelectorAll("[data-text]")) { const t = say(p.dataset.text); if (p.textContent !== t) p.textContent = t; }
       schedule();
     },
-    // volcano.js, plots.js, snapshot.js, cellsets.js, selections.js: a block or a section built after this file ran
+    // volcano.js, plots.js, snapshot.js, selections.js: a block or a section built after this file ran
     adopt(node) {
       if (!node) return;
       if (node.id === "volcanoBlock") {

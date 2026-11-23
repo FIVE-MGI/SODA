@@ -31,9 +31,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .brand .linkish { display: block; width: fit-content; margin: 12px auto 0; }
 .brand a.linkish { margin-top: 6px; }
 .brand .sub { color: var(--muted); font-size: 11px; }
-.brand .authors { margin: 8px 0 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
-.brand .authors strong { color: var(--text); }
-.brand .welcome { margin: 8px 0 0; font-size: 12px; color: var(--text); line-height: 1.55; }
 .linkish { background: none; border: 0; padding: 0; margin-top: 12px; color: var(--accent);
   cursor: pointer; font: inherit; font-size: 12px; display: inline-block; }
 .linkish:hover { text-decoration: underline; border-color: transparent; }
@@ -97,9 +94,6 @@ button { background: var(--panel2); color: var(--text); border: 1px solid var(--
   padding: 5px 9px; font: inherit; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 .btnrow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-/* its label flips between "Image off" and "Image on"; without a fixed width the row
-   reflows on every click and the neighbouring buttons jump */
-.btnrow #btnImage { min-width: 86px; }
 
 .list { display: flex; flex-direction: column; gap: 3px; }
 .chan { display: grid; grid-template-columns: 18px 24px 1fr auto; grid-template-areas: "cb col name x" ". . range range";
@@ -172,19 +166,6 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 3
 .paint-gene input[type=number] { width: 72px; }
 .paint-set textarea { display: block; box-sizing: border-box; width: 100%; min-height: 54px; margin: 4px 0; resize: vertical; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; font-size: 12px; line-height: 1.4; }
 .paint-set select { max-width: 100%; }
-/* Measure (measure.js): the list of measurements, and the centre cross the keyboard puts points at */
-.meas-hint { margin-top: 6px; }
-.meas-list { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; }
-.meas-list li { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; border-top: 1px solid var(--line); }
-.meas-list .nm { flex: 0 0 auto; color: var(--muted); }
-.meas-list .v { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.meas-list .v small { color: var(--muted); font-size: 11px; }
-.meas-list .x { flex: 0 0 auto; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 2px 6px; font: inherit; }
-.meas-list .x:hover, .meas-list .x:focus-visible { color: var(--text); }
-.meas-pad:focus { outline: none; }
-.meas-pad:focus-visible { box-shadow: inset 0 0 0 2px rgba(255, 214, 10, .7); }
-.meas-pad:focus-visible::after { content: "+"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -54%); color: #ffd60a;
-  font: 700 28px/1 system-ui, sans-serif; text-shadow: 0 0 3px #000, 0 0 2px #000; pointer-events: none; }
 .rs { position: relative; height: 48px; margin: 2px 0 0; }
 .rs .rs-hist { position: absolute; left: 0; right: 0; top: 0; width: 100%; height: 34px; opacity: .95; pointer-events: none; }
 .rs .rs-track { position: absolute; left: 0; right: 0; top: 34px; height: 4px; background: #3a4356; border-radius: 2px; }
@@ -300,9 +281,6 @@ button.on { border-color: var(--accent); background: #1f3550; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button:disabled:hover { border-color: var(--line); }
 .view-switch .fly-play { padding: 6px 10px; font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.5); }
-.view-switch .fly-speed { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; font-size: 12px;
-  color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,.5); }
-.view-switch .fly-speed select { font-size: 12px; padding: 3px 4px; }
 /* side by side: tissue left, section UMAP right; the circle -> UMAP panel takes the UMAP pane's lower half */
 .sbs-caps { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
 .sbs-caps::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; border-left: 1px solid #3a4356; }
@@ -313,7 +291,7 @@ button:disabled:hover { border-color: var(--line); }
 /* the circle panel fills the UMAP pane's lower half: its caption moves to the middle line */
 .main.sbs.lp-open .sbs-caps .cap-r { bottom: calc(50% + 10px); }
 .main.sbs .scalebar { right: calc(50% + 14px); }
-.main.sbs #drawPad, .main.sbs #measurePad { right: 50%; }
+.main.sbs #drawPad { right: 50%; }
 .main.sbs .lasso-panel { top: calc(50% + 4px); left: calc(50% + 6px); right: 6px; bottom: 8px; width: auto; height: auto; }
 /* side by side on a tall screen (a phone held upright): tissue on top, UMAP below, and the
    circle -> UMAP panel covers the whole UMAP pane while it is open */
@@ -321,7 +299,7 @@ button:disabled:hover { border-color: var(--line); }
 .main.sbs.stack .sbs-caps .cap-l { right: 10px; bottom: calc(50% + 40px); }
 .main.sbs.stack .sbs-caps .cap-r, .main.sbs.stack.lp-open .sbs-caps .cap-r { right: 10px; bottom: 12px; }
 .main.sbs.stack .scalebar { right: 14px; bottom: calc(50% + 12px); }
-.main.sbs.stack #drawPad, .main.sbs.stack #measurePad { right: 0; bottom: 50%; }
+.main.sbs.stack #drawPad { right: 0; bottom: 50%; }
 .main.sbs.stack .lasso-panel { top: calc(50% + 4px); left: 6px; right: 6px; bottom: 8px; }
 .lasso-panel .lp-head { flex-wrap: wrap; gap: 4px; }
 .lasso-panel .lp-head b { flex: 1 1 160px; min-width: 0; }
@@ -396,7 +374,7 @@ button:disabled:hover { border-color: var(--line); }
 @media (pointer: coarse) {
   .mouse-only { display: none !important; }
   /* targets a fingertip can hit: about 34px where a mouse needs 24 */
-  button:not(.linkish):not(.sg):not(.rmc), select { min-height: 34px; }
+  button:not(.linkish):not(.sg), select { min-height: 34px; }
   .linkish { padding: 6px 0; }
   input[type=checkbox] { width: 20px; height: 20px; }
   input[type=range] { height: 28px; }
