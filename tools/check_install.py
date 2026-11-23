@@ -25,7 +25,6 @@ PACKAGES = [
     ("PIL", "pillow", "core"),
     ("h5py", "h5py", "core"),
     ("pyarrow", "pyarrow", "core"),
-    ("cryptography", "cryptography", "core"),
     ("sklearn", "scikit-learn", "UMAP and clusters"),
     ("umap", "umap-learn", "UMAP and clusters"),
     ("igraph", "igraph", "UMAP and clusters"),

@@ -11,4 +11,3 @@ pillow>=10
 h5py>=3.12
 pyarrow>=17
 scipy>=1.14
-cryptography>=42

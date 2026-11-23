@@ -89,7 +89,7 @@ def _need_work():
 def check_packages():
     """Print ok / MISSING for every package SODA needs, and WRONG VERSION for zarr 3 or a new tifffile."""
     need = {"numpy": "core", "tifffile": "core", "zarr": "core", "imagecodecs": "core", "PIL": "core",
-            "h5py": "core", "pyarrow": "core", "scipy": "core", "cryptography": "core",
+            "h5py": "core", "pyarrow": "core", "scipy": "core",
             "sklearn": "UMAP (optional)", "umap": "UMAP (optional)", "igraph": "UMAP (optional)",
             "leidenalg": "UMAP (optional)"}
     missing = []
