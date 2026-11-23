@@ -491,9 +491,8 @@
       new MutationObserver(() => { const now = box.children.length; if (now > n) flag(secId); n = now; }).observe(box, { childList: true });
     }
     // the user's own action sends them to another tab: show it
-    const load = $("lassoLoad"), toShape = $("selToShape");
+    const load = $("lassoLoad");
     if (load) load.addEventListener("change", () => show("panelLasso"));      // a file was chosen: the run and its messages are in Draw a region
-    if (toShape) toShape.addEventListener("click", () => show("panelLasso"));
   }
   function watchRun(cancelId, secId) {
     const c = $(cancelId); if (!c) return;

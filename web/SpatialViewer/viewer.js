@@ -1759,7 +1759,7 @@
     ["#viewSwitch button[data-v=tissue]", "title", null], ["#viewSwitch button[data-v=sbs]", "title", null],
     ["#viewSwitch button[data-v=umap]", "title", null], ["#flyPlay", "title", null],
     ["#lassoMode option[value=bins]", "textContent", null],
-    ["#lassoSaveCsv", "title", null], ["#selToShape", "title", null],
+    ["#lassoSaveCsv", "title", null],
     ["#bqGrey + span", "textContent", null], ["#bqReset", "title", null],
     ["#lblVcMinPct", "textContent", null], ["#lblVcMinPct", "title", null], ["#vcCsv", "title", null],
     ["#plCsv", "title", null], ["#lblPlPts", "title", null],
@@ -2239,8 +2239,8 @@
         if (a[i] !== LASSO_NONE) { const o = L.shapes[a[i]]; o.bins--; o.lost++; s.shared++; }
         a[i] = si; s.bins++;
       };
-      // a shape made from a selection (Tissue / UMAP "Use selection as a shape") is a list of
-      // bins, not an outline: it can be any set of bins, scattered over the section
+      // a shape that is a list of bins, not an outline (from Export shapes, or a saved file made when a selection
+      // could be added as a shape): it can be any set of bins, scattered over the section
       if (s.rows) { for (const i of s.rows) if (i < n) take(i); return; }
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const [x, y] of s.pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
@@ -4204,22 +4204,6 @@
     U.sel = n ? sel : null; U.selN = n; U.selEmb = emb; U.pick = null; U.ctPick = null;
     umapDirty(); syncUmapUI(); render();
   }
-  // The selection becomes one more Circle -> UMAP shape: a list of bins rather than an outline.
-  function umapSelToShape() {
-    const U = S.umap, L = S.lasso;
-    if (!U.sel || !L || !L.pos || L.pos.length !== U.sel.length * 2) return;
-    const rows = [];
-    for (let r = 0; r < U.sel.length; r++) if (U.sel[r]) rows.push(r);
-    const id = L.next++, name = `Selection ${id}`;
-    L.shapes.push({ id, name, kind: "rows", pts: [], rows: Uint32Array.from(rows),
-                    hex: LASSO_COLORS[(id - 1) % LASSO_COLORS.length], bins: 0, shared: 0, lost: 0 });
-    // the shape carries these bins from here on; keeping the selection lit as well would
-    // stack two highlights on the same bins
-    U.sel = null; U.selN = 0; umapDirty(); syncUmapUI();
-    lassoShapesChanged();
-    status(`Added "${name}" (${rows.length.toLocaleString()} ${wd().bins}) to Draw a region`);
-    setTimeout(() => status(null), 3500);
-  }
 
   // ---- legend: one row per cluster ----------------------------------------------------------
   // Colour, name (✎ renames it: "Schwann cells"), size and the top marker genes. Click a row
@@ -4572,7 +4556,6 @@
         `Switch between Tissue, Side by side and UMAP in the bar above the picture; genes, clusters and selections stay.`;
     const ctLit = umapCtLit(), has = !!(U.sel || U.pick !== null || ctLit);
     const lpTxt = !has ? lassoPickTxt() : "";
-    $("selToShape").hidden = !U.sel || $("panelLasso").hidden;
     const selTxt = U.sel ? `${U.selN.toLocaleString()} ${U.selN === 1 ? W.bin : W.bins} selected` : U.pick !== null ? `${umapName(U.pick)} highlighted`
       : ctLit ? `${ctName(U.ctPick)} highlighted` : "";
     $("selMsg").textContent = U.sel
@@ -4634,7 +4617,6 @@
     $("selFree").onclick = () => umapStartTool("free");
     $("selChipClear").onclick = umapClearSel;
     $("selChipShow").onclick = showLitOnSlide;
-    $("selToShape").onclick = umapSelToShape;
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || !S.umap) return;
       if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
