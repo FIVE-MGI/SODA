@@ -1,4 +1,4 @@
-// The control layout: four tabs on a rail, sections that fold, "More options", "?" notes, a top
+// The control layout: three tabs on a rail (View, Analyze, Share), sections that fold, "More options", "?" notes, a top
 // bar over the map, and on phones a bottom bar with a sheet.
 //
 // Nothing here makes or replaces a control. index.html holds every control with its id, exactly
@@ -64,7 +64,7 @@
       help: "Compares two groups of bins gene by gene: a drawn shape, a cluster, or the rest of the section. Genes to the right are higher in A, to the left higher in B; click a dot to draw that gene on the slide. × closes the plot; while nothing has changed the button reads Show volcano and brings it back without running again. More options: the test (Wilcoxon rank-sum or Welch's t), the smallest share of bins a gene must be counted in to be tested, and extra genes to test by name." },
     panelPlots: { more: ["plTop"], moreAt: { before: "plRun" },
       help: "Draws genes across groups (clusters, drawn shapes, regions or annotations) as a heatmap, a dot plot or violins. Pick the grouping, type gene names or let it take each group's top marker genes (how many: More options), then Draw plots. + shown genes adds the genes now on the picture. × closes the plots; while nothing has changed the button reads Show plots and brings them back without drawing again." },
-    panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link copies this page's address: it opens this dataset, with the quality filter if one is set (not the genes, stains or zoom)." },
+    panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link to this view copies an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters, the quality filter and the open tab. Drawn shapes too big for a link are left out, and it says so. Save JSON keeps the same view in a file." },
     panelImage: { more: ["snapBar", "snapName"], moreAt: "end",
       help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
@@ -178,14 +178,14 @@
       help.insertBefore(about, h ? h.nextSibling : help.firstChild);
     }
 
-    // Save and load: Save JSON and Load JSON leave the Draw a region panel; a button copies the page's address
+    // Save and load: Save JSON and Load JSON leave the Draw a region panel; "Copy link" is wired by viewlink.js
+    // (Copy link to this view)
     const lasso = $("panelLasso");
     const save = newSection("panelSave", "share", "Save and load");
     const jsonRow = el("div", "btnrow", "saveJsonRow"), linkRow = el("div", "btnrow"), msg = el("div", "meta save-msg", "saveMsg");
     for (const id of ["lassoSaveJson", "lassoLoadBtn", "lassoLoad"]) if ($(id)) jsonRow.appendChild($(id));
     const copy = el("button", "", "btnCopyLink");
-    copy.type = "button"; copy.textContent = "Copy link"; copy.title = "Copy this page's address: it opens this dataset, with the quality filter if one is set";
-    copy.onclick = copyLink;
+    copy.type = "button"; copy.textContent = "Copy link";
     linkRow.appendChild(copy);
     msg.setAttribute("role", "status");
     save.append(jsonRow, linkRow, msg);
@@ -596,21 +596,6 @@
     if (ul.dataset.key === key) return;
     ul.dataset.key = key; ul.textContent = "";
     for (const t of lines) { const li = el("li"); li.textContent = t; ul.appendChild(li); }
-  }
-  async function copyLink() {
-    const msg = $("saveMsg"), url = location.href;
-    let ok = false;
-    try { await navigator.clipboard.writeText(url); ok = true; }
-    catch (e) {
-      // no clipboard permission (an http page, an older browser): the old way
-      try {
-        const ta = el("textarea"); ta.value = url; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;left:0;top:0;opacity:0;font-size:16px";
-        document.body.appendChild(ta); ta.select(); ok = document.execCommand("copy"); ta.remove();
-      } catch (e2) { ok = false; }
-    }
-    if (msg) msg.textContent = ok
-      ? `Link copied. It opens this dataset${new URLSearchParams(location.search).get("qc") ? " with the quality filter" : ""}; genes, stains and zoom are not in it.`
-      : "Could not copy: copy the address from the browser's address bar instead.";
   }
 
   // ---- keeping up with the page -----------------------------------------------------------------

@@ -1,4 +1,4 @@
-/* The tabbed layout (layout.js): a rail of four tabs, sections that fold, a top bar over the map,
+/* The tabbed layout (layout.js): a rail of three tabs (View, Analyze, Share), sections that fold, a top bar over the map,
    and on phones a bottom bar with a sheet. Everything here applies only once layout.js has put
    .tabbed on .app; without it the page is the plain sidebar of styles.css. */
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -184,7 +184,7 @@
 }
 /* ---- fingers: targets of at least 40 px ------------------------------------------------------------ */
 @media (pointer: coarse) {
-  .app.tabbed button:not(.linkish):not(.sg):not(.rmc), .app.tabbed select, .app.tabbed input[type=text] { min-height: 40px; }
+  .app.tabbed button:not(.linkish):not(.sg), .app.tabbed select, .app.tabbed input[type=text] { min-height: 40px; }
   .sec-toggle { min-height: 44px; }
   /* the "?" keeps its small circle; the area a finger can hit is 40 px */
   .sec-q { position: relative; width: 40px; height: 40px; font-size: 13px; border-color: transparent; background: none; }

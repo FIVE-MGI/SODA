@@ -1,4 +1,4 @@
-/* Your own results (ownres.js): the Clusters tab's section and the page-wide drop target. */
+/* Your own results (ownres.js): the Analyze tab's section and the page-wide drop target. */
 .own-msg { word-break: normal; overflow-wrap: anywhere; line-height: 1.45; }
 .own-msg.err { color: #ff8f8f; }
 .own-msg.warn { color: #e0b070; }

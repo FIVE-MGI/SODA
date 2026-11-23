@@ -31,9 +31,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .brand .linkish { display: block; width: fit-content; margin: 12px auto 0; }
 .brand a.linkish { margin-top: 6px; }
 .brand .sub { color: var(--muted); font-size: 11px; }
-.brand .authors { margin: 8px 0 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
-.brand .authors strong { color: var(--text); }
-.brand .welcome { margin: 8px 0 0; font-size: 12px; color: var(--text); line-height: 1.55; }
 .linkish { background: none; border: 0; padding: 0; margin-top: 12px; color: var(--accent);
   cursor: pointer; font: inherit; font-size: 12px; display: inline-block; }
 .linkish:hover { text-decoration: underline; border-color: transparent; }
@@ -97,9 +94,6 @@ button { background: var(--panel2); color: var(--text); border: 1px solid var(--
   padding: 5px 9px; font: inherit; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 .btnrow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-/* its label flips between "Image off" and "Image on"; without a fixed width the row
-   reflows on every click and the neighbouring buttons jump */
-.btnrow #btnImage { min-width: 86px; }
 
 .list { display: flex; flex-direction: column; gap: 3px; }
 .chan { display: grid; grid-template-columns: 18px 24px 1fr auto; grid-template-areas: "cb col name x" ". . range range";
@@ -396,7 +390,7 @@ button:disabled:hover { border-color: var(--line); }
 @media (pointer: coarse) {
   .mouse-only { display: none !important; }
   /* targets a fingertip can hit: about 34px where a mouse needs 24 */
-  button:not(.linkish):not(.sg):not(.rmc), select { min-height: 34px; }
+  button:not(.linkish):not(.sg), select { min-height: 34px; }
   .linkish { padding: 6px 0; }
   input[type=checkbox] { width: 20px; height: 20px; }
   input[type=range] { height: 28px; }

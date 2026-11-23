@@ -696,9 +696,8 @@
     } finally { busy = false; }
   }
 
-  // The Share tab's "Copy link" (layout.js builds it to copy the page's address) becomes "Copy link to this
-  // view": its words, its click and the sentence about it in the section's "?" note. Done from here so that
-  // layout.js stays as it is; without this file the button copies the address as before.
+  // The Share tab's "Copy link" button (layout.js builds it, with no click of its own) becomes "Copy link to this
+  // view": its words, its click and the sentence about it in the section's "?" note.
   const HELP = "Copy link to this view copies an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters, the quality filter and the open tab. Drawn shapes too big for a link are left out, and it says so. Save JSON keeps the same view in a file.";
   function takeButton() {
     const b = $("btnCopyLink");
