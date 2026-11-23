@@ -138,18 +138,17 @@
     if (dsRow) topBar.appendChild(dsRow);
     if (vs) {
       topBar.appendChild(vs);
-      // Play and its speed are rarely used: behind a small button after Tissue / Side by side / UMAP
-      const sp = vs.querySelector(".fly-speed"), play = $("flyPlay");
-      if (sp) {
-        const more = el("button", "fly-more", "flyMore"), box = el("span", "fly-more-box", "flySpeedBox");
-        more.type = "button"; more.textContent = "…"; more.title = "Play the flight between the tissue and the UMAP, and its speed";
-        more.setAttribute("aria-label", "Play and flight speed"); more.setAttribute("aria-expanded", "false"); more.setAttribute("aria-controls", "flySpeedBox");
+      // Play is rarely used: behind a small button after Tissue / Side by side / UMAP
+      const play = $("flyPlay");
+      if (play && play.parentElement === vs) {
+        const more = el("button", "fly-more", "flyMore"), box = el("span", "fly-more-box", "flyPlayBox");
+        more.type = "button"; more.textContent = "…"; more.title = "Play the flight between the tissue and the UMAP";
+        more.setAttribute("aria-label", "Play the flight"); more.setAttribute("aria-expanded", "false"); more.setAttribute("aria-controls", "flyPlayBox");
         box.hidden = true;
-        (play && play.parentElement === vs ? play : sp).before(more); more.after(box);
-        if (play && play.parentElement === vs) box.appendChild(play);
-        box.appendChild(sp);
-        more.onclick = () => { box.hidden = !box.hidden; more.setAttribute("aria-expanded", String(!box.hidden)); if (!box.hidden) { const s = play && !play.hidden ? play : $("flySpeed"); if (s) s.focus(); } };
-        mirror(more, sp);
+        play.before(more); more.after(box);
+        box.appendChild(play);
+        more.onclick = () => { box.hidden = !box.hidden; more.setAttribute("aria-expanded", String(!box.hidden)); if (!box.hidden && !play.hidden) play.focus(); };
+        mirror(more, play);
       }
     }
     if (fit) topBar.appendChild(fit);
