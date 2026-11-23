@@ -5,7 +5,8 @@ r"""Quick check that SODA's Python packages import and have the right versions.
 
 install.ps1 and install.sh run it at the end. It imports every package the tools need,
 prints its version, and checks the version rules the code depends on (zarr 2.x, tifffile
-older than 2025, Python 3.12 or 3.13). It takes about 5-10 seconds, up to a minute right
+older than 2025, numcodecs older than 0.16, Python 3.12 or 3.13; prepare.py checks the same
+three packages when it starts). It takes about 5-10 seconds, up to a minute right
 after a fresh install (Python compiles every package once, and umap-learn some code with
 numba). Exit code 0 means everything is fine.
 """
@@ -62,6 +63,8 @@ def main():
         problems.append(f"zarr {versions['zarr']}: must be 2.x, images cannot be written with zarr 3")
     if "tifffile" in versions and (major(versions["tifffile"]) or 0) >= 2025:
         problems.append(f"tifffile {versions['tifffile']}: must be older than 2025 (newer needs zarr 3)")
+    if "numcodecs" in versions and tuple(int(x) for x in versions["numcodecs"].split(".")[:2] if x.isdigit()) >= (0, 16):
+        problems.append(f"numcodecs {versions['numcodecs']}: must be older than 0.16 (newer is for zarr 3)")
     if "numpy" in versions and (major(versions["numpy"]) or 0) < 2:
         problems.append(f"numpy {versions['numpy']}: must be 2.x")
 

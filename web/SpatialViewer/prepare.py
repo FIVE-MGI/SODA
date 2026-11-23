@@ -78,6 +78,41 @@ from pathlib import Path
 import threadcap                                   # first: caps the BLAS / OpenMP threads before numpy loads
 threadcap.apply(threadcap.from_argv(sys.argv))     # --threads N, else SODA_THREADS, else min(8, usable CPUs)
 
+# The image and expression stores use the zarr 2 API (create_dataset ...), so zarr, tifffile and numcodecs are
+# held on the zarr-2 line (requirements.txt; tools/check_install.py checks the same). With zarr 3 the first
+# image would stop with "'Group' object has no attribute 'create_dataset'": say what is wrong instead.
+VERSION_RULES = (("zarr", (3,), "zarr 2 (2.18 or newer, below 3)"),
+                 ("tifffile", (2025,), "tifffile older than 2025 (2024.x)"),
+                 ("numcodecs", (0, 16), "numcodecs older than 0.16"))
+
+
+def _version_tuple(v: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3])
+
+
+def check_versions() -> list[str]:
+    """One line per package that is missing or on the wrong side of VERSION_RULES; [] when all is well."""
+    import importlib
+    problems = []
+    for module, too_new, need in VERSION_RULES:
+        try:
+            v = getattr(importlib.import_module(module), "__version__", "")
+        except Exception as e:                         # ImportError, or a broken binary
+            problems.append(f"{module} does not load ({type(e).__name__}: {e}); SODA needs {need}")
+            continue
+        if v and _version_tuple(v) >= too_new:
+            problems.append(f"{module} {v} is installed; SODA needs {need}")
+    return problems
+
+
+_problems = check_versions()
+if _problems:
+    sys.exit("SODA cannot run with this Python's packages:\n" + "".join(f"  - {p}\n" for p in _problems)
+             + f"This Python ({sys.executable}) is not SODA's own environment. Run the installer "
+               f"(install.ps1 on Windows, install.sh on Mac / Linux) and use the soda-env it makes "
+               f"(soda-env\\Scripts\\python on Windows, soda-env/bin/python on Mac / Linux; in the notebook, "
+               f"the soda-env kernel), or use the SODA desktop app.")
+
 import cellshapes
 import pyramid
 import stereoseq
