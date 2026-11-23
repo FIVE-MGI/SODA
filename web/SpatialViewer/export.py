@@ -157,6 +157,12 @@ def export_static(ds_dir: Path, dest: Path, fmt: str = "jpg", workers: int = 8, 
     ids_plan = layerids.plan(ds_dir, m, log=log, strict=ids_strict) if write_ids else {}
     out = Path(dest) / m["id"]
     out.mkdir(parents=True, exist_ok=True)
+    # an export that fails part-way must not leave the old manifest.json behind: batch.py would skip the dataset
+    # as done and catalog.py list it. It is written again as the last step below.
+    old = out / "manifest.json"
+    if old.is_file():
+        old.unlink()
+        log(f"[export] removed the old manifest.json of {m['id']}; written again when this export finishes")
     r = PyramidReader(ds_dir, m)
     T = r.tile
     ext = "jpg" if fmt == "jpg" else "png"

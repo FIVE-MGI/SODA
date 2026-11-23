@@ -168,7 +168,7 @@ def build(root, title=None, count=False, fresh=False, log=print):
             entries.append(e)
             kept.add(did)
         elif did not in found:
-            log(f"[catalog] dropped {did}: its folder is gone")
+            log(f"[catalog] dropped {did}: its folder is gone, or has no manifest.json (an export that did not finish)")
     # then any new ones
     for did, m in found.items():
         if did in kept:

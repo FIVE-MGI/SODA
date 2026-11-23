@@ -23,6 +23,8 @@ This is the notebook (notebooks/SODA_pipeline.ipynb, Sections 2 to 5) without th
    process, so a dataset that fails or runs out of memory does not stop the others.
 3. Resumable: a dataset whose <export>/<id>/manifest.json exists is skipped, and one whose
    <cache>/<id>/manifest.json exists is not prepared again (export then fills in what is missing).
+   prepare and export remove that manifest.json when they start and write it last, so a step that
+   failed part-way is run again next time instead of being taken as done.
    --rebuild does both again (old tiles stay: delete <export>/<id>/ first for a clean export).
 4. catalog.py writes <export>/datasets.json, then the sample ID check (deid.py) reads the export
    and the logs. With a key file it is a gate (exit code 3), as in the notebook; without one it
