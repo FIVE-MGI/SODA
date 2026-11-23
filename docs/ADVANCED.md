@@ -386,11 +386,15 @@ the export, as it holds local paths): `batch_<date>_<time>.md`, a table to read,
 as `.json` and `.csv`. One row per dataset, then the last lines of each failure's error and
 what to add for each skipped one. Each step's full output is in `<id>_prepare.log` and
 `<id>_export.log`. Anything that looks like a sample ID is written as `[sample ID]`, and a
-folder whose name looks like one is skipped (rename it).
+folder whose name looks like one is skipped (rename it). A failed dataset's note is the last error
+line of its step; one that ran out of memory says so ("ran out of memory - try fewer datasets at
+once, or a computer with more RAM"). A dataset is only taken as done when its `manifest.json` is
+there, and prepare and export remove the old one when they start, so one that fails part-way is
+done again on the next run.
 
 | id | kind | status | time | peak memory | export size | note |
 |---|---|---|---|---|---|---|
-| bx_broken | xenium (molecules) | failed | 12 s | 0.08 GB |  | prepare failed (exit 1) |
+| bx_broken | xenium (molecules) | failed | 12 s | 0.08 GB |  | prepare failed (exit 1): [xenium] no positions to draw a background from |
 | bx_cosmx | cosmx (molecules) | ok | 31 s | 0.12 GB | 17 files, 0.2 MB |  |
 | bx_two_runs | merscope (cells+molecules) | skipped |  |  |  | not sure: ... a choice is open: 2 folders hold cell_by_gene + cell_metadata (segmentation runs); which one? |
 

@@ -78,6 +78,41 @@ from pathlib import Path
 import threadcap                                   # first: caps the BLAS / OpenMP threads before numpy loads
 threadcap.apply(threadcap.from_argv(sys.argv))     # --threads N, else SODA_THREADS, else min(8, usable CPUs)
 
+# The image and expression stores use the zarr 2 API (create_dataset ...), so zarr, tifffile and numcodecs are
+# held on the zarr-2 line (requirements.txt; tools/check_install.py checks the same). With zarr 3 the first
+# image would stop with "'Group' object has no attribute 'create_dataset'": say what is wrong instead.
+VERSION_RULES = (("zarr", (3,), "zarr 2 (2.18 or newer, below 3)"),
+                 ("tifffile", (2025,), "tifffile older than 2025 (2024.x)"),
+                 ("numcodecs", (0, 16), "numcodecs older than 0.16"))
+
+
+def _version_tuple(v: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3])
+
+
+def check_versions() -> list[str]:
+    """One line per package that is missing or on the wrong side of VERSION_RULES; [] when all is well."""
+    import importlib
+    problems = []
+    for module, too_new, need in VERSION_RULES:
+        try:
+            v = getattr(importlib.import_module(module), "__version__", "")
+        except Exception as e:                         # ImportError, or a broken binary
+            problems.append(f"{module} does not load ({type(e).__name__}: {e}); SODA needs {need}")
+            continue
+        if v and _version_tuple(v) >= too_new:
+            problems.append(f"{module} {v} is installed; SODA needs {need}")
+    return problems
+
+
+_problems = check_versions()
+if _problems:
+    sys.exit("SODA cannot run with this Python's packages:\n" + "".join(f"  - {p}\n" for p in _problems)
+             + f"This Python ({sys.executable}) is not SODA's own environment. Run the installer "
+               f"(install.ps1 on Windows, install.sh on Mac / Linux) and use the soda-env it makes "
+               f"(soda-env\\Scripts\\python on Windows, soda-env/bin/python on Mac / Linux; in the notebook, "
+               f"the soda-env kernel), or use the SODA desktop app.")
+
 import cellshapes
 import pyramid
 import stereoseq
@@ -87,6 +122,16 @@ from expr import build_cell_layer, build_expr, find_visium_layers
 
 def log(*a):
     print(*a, flush=True)
+
+
+def drop_manifest(folder: Path) -> None:
+    """A (re)build of <folder> starts: its old manifest.json goes first and is written again only at the very
+    end, so a run that fails part-way leaves none, and batch.py (which skips a dataset whose manifest.json is
+    there) and catalog.py (which lists only those) do not take the half-rebuilt folder for a finished one."""
+    mp = Path(folder) / "manifest.json"
+    if mp.is_file():
+        mp.unlink()
+        log(f"[prepare] removed the old {mp.name} of {Path(folder).name}; written again when this run finishes")
 
 
 VISIUM_DEFAULT_BINS = ("008um", "016um")   # Visium HD layers kept without --bins; --bins all keeps every one
@@ -445,6 +490,7 @@ def main(argv=None):
 
     if args.kind == "rnaseq":
         import rnaseq
+        drop_manifest(Path(args.dest) / args.id)                        # written straight to the export
         if args.h5ad and Path(args.h5ad).stat().st_size > 2e9:          # large files: stream, never load
             rnaseq.export_h5ad_streaming(Path(args.h5ad), Path(args.dest), args.id, args.label or args.id,
                                          embedding=args.embedding, tmpdir=args.tmp, log=log)
@@ -505,12 +551,14 @@ def main(argv=None):
         return
 
     if args.kind == "geomx":
+        drop_manifest(Path(args.out) / args.id)
         _geomx.prepare(args, log=log, geojson=parse_geojson_args)
         return
 
     ds_dir = Path(args.out) / args.id
     made_dir = not ds_dir.exists()
     ds_dir.mkdir(parents=True, exist_ok=True)
+    drop_manifest(ds_dir)                         # image.zarr etc. are rewritten: the old manifest is no longer true
     t0 = time.time()
     manifest = {"id": args.id, "label": args.label or args.id, "kind": args.kind,
                 "pixelSizeUm": args.pixel_size, "created": datetime.now().isoformat(timespec="seconds"),
@@ -634,8 +682,6 @@ def main(argv=None):
     manifest["overlays"] = parse_geojson_args(args.geojson, ds_dir)
     with open(ds_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=1)
-    if hasattr(plat, "cleanup"):
-        plat.cleanup(args, log=log)                                        # xenium: the files copied out of a zip
     log(f"[done] {ds_dir}\\manifest.json  ({time.time() - t0:.0f}s)")
 
 

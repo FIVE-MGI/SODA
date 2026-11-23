@@ -16,17 +16,17 @@
 # Silicon (arm64), and that nothing outside this list gets pulled in. The CI installs it on
 # Linux, Python 3.12, and runs the smoke test. Not run on a Mac by us.
 # Not covered: Python 3.11 or older (imagecodecs, numpy, scipy here need 3.12+), Python 3.14
-# (no numcodecs 0.15 wheels), Intel Macs (no cryptography / llvmlite wheels), Linux on ARM
+# (no numcodecs 0.15 wheels), Intel Macs (no llvmlite wheels), Linux on ARM
 # (no numcodecs wheels). Use the manual install in the README there.
 #
 # Platform-only packages: colorama is Windows-only (tqdm).
 # 20 November 2026 (0.10.0): fastapi, uvicorn and the 17 packages only they pulled in were taken
 # out with the live tile server (server.py); nothing else changed, so the tested set is the same.
+# 23 November 2026: cryptography, and cffi / pycparser (only it pulled them in), taken out: nothing
+# imports it since links.py was removed; nothing else changed.
 asciitree==1.0.0
-cffi==2.1.1 ; platform_python_implementation != "PyPy"
 cloudpickle==3.1.2
 colorama==0.4.6 ; sys_platform == "win32"
-cryptography==50.0.2
 Deprecated==3.0.1
 fasteners==0.20
 h5py==3.16.0
@@ -41,7 +41,6 @@ numcodecs==0.15.2
 numpy==2.5.5
 pillow==13.0.0
 pyarrow==26.0.1
-pycparser==3.12 ; platform_python_implementation != "PyPy"
 pynndescent==0.7.0
 scikit-learn==1.9.1
 scipy==1.18.1

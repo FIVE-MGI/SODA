@@ -23,6 +23,8 @@ This is the notebook (notebooks/SODA_pipeline.ipynb, Sections 2 to 5) without th
    process, so a dataset that fails or runs out of memory does not stop the others.
 3. Resumable: a dataset whose <export>/<id>/manifest.json exists is skipped, and one whose
    <cache>/<id>/manifest.json exists is not prepared again (export then fills in what is missing).
+   prepare and export remove that manifest.json when they start and write it last, so a step that
+   failed part-way is run again next time instead of being taken as done.
    --rebuild does both again (old tiles stay: delete <export>/<id>/ first for a clean export).
 4. catalog.py writes <export>/datasets.json, then the sample ID check (deid.py) reads the export
    and the logs. With a key file it is a gate (exit code 3), as in the notebook; without one it
@@ -79,6 +81,16 @@ import detect      # noqa: E402
 PREPARE = HERE / "prepare.py"
 CATALOG = HERE / "catalog.py"
 TAIL_LINES = 15                 # last lines of a failed step kept in the log
+REASON_CHARS = 300              # the error line quoted in a failed dataset's reason, at most
+# A step that ran out of memory says so in its last lines (Python's MemoryError, numpy's "Unable to allocate ...",
+# the C library's "Cannot allocate memory", C++'s bad_alloc) or is killed: on Linux and macOS the system kills a
+# process that takes too much memory with SIGKILL, which Popen reports as exit -9 (a step stopped with Ctrl+C is
+# killed the same way: that case is told apart by the stop flag). On Windows a step out of memory ends with one of
+# the messages, or with STATUS_NO_MEMORY / STATUS_COMMITMENT_LIMIT as its exit code; any other crash code is not
+# taken to mean memory and is shown as it is.
+OUT_OF_MEMORY = re.compile(r"MemoryError|Unable to allocate|Cannot allocate memory|std::bad_alloc|out of memory", re.I)
+OOM_EXIT = {-9, 0xC0000017, 0xC000012D}
+OOM_TEXT = "ran out of memory - try fewer datasets at once, or a computer with more RAM"
 WHOLE_SECTION_GB = 8.5          # largest measured peak (README, Requirements): a whole Stereo-seq chip's export
 
 # The notebook's OPTIONS keys (Section 2), plus "markers" (a marker list for this dataset only).
@@ -561,6 +573,31 @@ def run_step(argv: list[str], log_path: Path, threads: int | None, running: set)
             "tail": list(tail) if rc != 0 else [], "warning": warned}
 
 
+def error_line(tail: list[str]) -> str:
+    """The line of a failed step's output that says what went wrong: the last one that is not part of a
+    traceback's frames (Python prints the error itself last; a refusal is a single SystemExit line)."""
+    for line in reversed(tail):
+        s = line.strip()
+        if not s or s.startswith(("File \"", "Traceback ", "During handling of", "The above exception", "===")):
+            continue
+        if not s.strip("^~ "):                     # the ^^^^ markers under the failing expression
+            continue
+        return s if len(s) <= REASON_CHARS else s[:REASON_CHARS - 3] + "..."
+    return ""
+
+
+def failure_reason(step: str, st: dict) -> str:
+    """The reason a failed step gives in the log table and the app's result table: what ran out (memory),
+    else the step's own last error line, with its exit code."""
+    rc, tail = st["exit"], st.get("tail") or []
+    peak = f" (peak {gb(st['peakBytes'])})" if st.get("peakBytes") else ""
+    if rc in OOM_EXIT or any(OUT_OF_MEMORY.search(x) for x in tail if not x.lstrip().startswith("[")):
+        return f"{step} {OOM_TEXT}{peak}"
+    code = f"exit {rc}" + (f" = 0x{rc:08X}" if rc >= 0xC0000000 else "") + (f", signal {-rc}" if rc < 0 else "")
+    line = error_line(tail)
+    return f"{step} failed ({code})" + (f": {line}" if line else "")
+
+
 def process(d: dict, a, n: int, total: int, logs: Path, threads: int | None, running: set, stop: threading.Event):
     """Prepare then export one dataset; fills in d["status"], d["reason"], d["steps"]."""
     tag = f"[batch] [{n}/{total}] {d['id']}:"
@@ -579,7 +616,8 @@ def process(d: dict, a, n: int, total: int, logs: Path, threads: int | None, run
             say(f"{tag} prepare ({d['kind']}{', ' + d['variant'] if d['variant'] else ''}) ...")
             st = d["steps"]["prepare"] = run_step(prepare_argv(d, a), logs / f"{d['id']}_prepare.log", threads, running)
             if st["exit"] != 0:
-                d["status"], d["reason"] = "failed", f"prepare failed (exit {st['exit']})"
+                d["status"], d["reason"] = "failed", ("prepare stopped (Ctrl+C)" if stop.is_set() else
+                                                      failure_reason("prepare", st))
                 return
         if stop.is_set():
             d["status"], d["reason"] = "failed", "stopped (Ctrl+C) before the export"
@@ -588,7 +626,8 @@ def process(d: dict, a, n: int, total: int, logs: Path, threads: int | None, run
             say(f"{tag} export ...")
             st = d["steps"]["export"] = run_step(export_argv(d, a), logs / f"{d['id']}_export.log", threads, running)
             if st["exit"] != 0:
-                d["status"], d["reason"] = "failed", f"export failed (exit {st['exit']})"
+                d["status"], d["reason"] = "failed", ("export stopped (Ctrl+C)" if stop.is_set() else
+                                                      failure_reason("export", st))
                 return
             if st["warning"]:
                 d["notes"].append(f"the export log has a *** line: read {st['log']} before uploading")

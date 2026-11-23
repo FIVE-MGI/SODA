@@ -47,6 +47,12 @@ jobs:
         if: success() || failure()
         run: soda-env/bin/python tests/app_test.py --work "$RUNNER_TEMP/app-test"
 
+      # A prepare or export that fails part-way leaves no manifest.json, so the next batch run does it again;
+      # batch.py's failure reasons. A small TIFF made by the test itself, no data needed (about 15 s).
+      - name: Batch resume after a failure (tests/resume_test.py)
+        if: success() || failure()
+        run: soda-env/bin/python tests/resume_test.py
+
       - name: Upload the log on failure
         if: failure()
         uses: actions/upload-artifact@v4

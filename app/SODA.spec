@@ -75,7 +75,7 @@ hiddenimports = (
     + collect_submodules("imagecodecs")     # codecs are loaded by name
     + collect_submodules("numcodecs")
     + ["sklearn.neighbors", "sklearn.decomposition", "umap", "pynndescent", "igraph", "leidenalg",
-       "pyarrow.parquet", "pyarrow.csv", "pyarrow.compute", "h5py", "cryptography",
+       "pyarrow.parquet", "pyarrow.csv", "pyarrow.compute", "h5py",
        "tkinter", "tkinter.filedialog"]
 )
 binaries = collect_dynamic_libs("imagecodecs")
