@@ -89,7 +89,9 @@
       <label for="title">A name for the whole collection (optional)</label>
       <input type="text" id="title" style="width:100%">
       <label for="jobs">Datasets at the same time</label>
-      <input type="number" id="jobs" min="1" max="8" value="1" style="width:6em">
+      <input type="number" id="jobs" min="1" max="1" value="1" style="width:6em" aria-describedby="jobsHint">
+      <p class="hint" id="jobsHint">Each dataset can need up to about 8.5 GB of memory while it is prepared, so SODA
+        allows one at a time for every 12 GB of memory this computer has.</p>
       <label><input type="checkbox" id="rebuild"> Prepare again even what is already done</label>
       <label title="Each layer's barcodes or cell ids (expr/&lt;layer&gt;/ids.txt.gz), so people can save the bins inside a drawn shape with them. A layer whose ids look like sample IDs, or do not fit the instrument's id format where SODA knows it, is left out with a message. You decide what you publish."><input type="checkbox" id="ids" checked> Include barcode / cell id lists (checked for sample IDs; untick to leave them out)</label>
     </details>
@@ -169,7 +171,7 @@ $("prepare").addEventListener("click", async () => {
   $("log").textContent = ""; since = 0;
   try {
     await post("/app/api/prepare", { src: $("src").value, work: $("work").value, options: $("options").value,
-                                     title: $("title").value, jobs: +$("jobs").value || 1, rebuild: $("rebuild").checked,
+                                     title: $("title").value, jobs: Math.min(+$("jobs").value || 1, +$("jobs").max || 1), rebuild: $("rebuild").checked,
                                      ids: $("ids").checked });
   } catch (e) { $("result").append(banner("bad", e.message)); return; }
   $("logbox").classList.remove("hidden"); $("logbox").open = true;
@@ -266,6 +268,12 @@ $("quit").addEventListener("click", async () => {
 (async () => {
   try {
     const s = await (await fetch("/app/api/status")).json();
+    // how many datasets at the same time this computer's memory allows (the app caps it again on Prepare)
+    const mj = Math.max(1, Math.floor(+s.maxJobs || 1));
+    $("jobs").max = String(mj);
+    $("jobsHint").textContent = s.memoryGB
+      ? `Up to ${mj} on this computer (${s.memoryGB} GB of memory): each dataset can need up to about 8.5 GB while it is prepared, so SODA allows one at a time for every 12 GB.`
+      : "1 on this computer: SODA could not read how much memory it has, and each dataset can need up to about 8.5 GB while it is prepared.";
     $("keyinfo").textContent = s.keyFound
       ? `De-identification key: ${s.keyFile}`
       : "The sample ID check runs on every Prepare.";
