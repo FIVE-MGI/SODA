@@ -138,6 +138,8 @@
   // detail nobody can see at arm's length. 2x is as sharp to the eye.
   const DEVICE_PX = TOUCH ? Math.min(window.devicePixelRatio || 1, 2) : true;
   const tileCache = new Map();   // "ds/c/z/x/y" -> ImageBitmap (LRU)
+  let tileCacheBytes = 0;        // what the decoded tiles in tileCache take (4 bytes a pixel)
+  const tileBytes = (b) => 4 * ((b && b.width) || 0) * ((b && b.height) || 0);
   // On touch the decoded tiles kept for a quick return get ~256 MB (4 bytes a pixel), not 1500 tiles.
   // config.js's tileCacheSize is a desktop number (the example ships 400 = 1.6 GB of 1024 px
   // tiles), so on touch it can only lower that limit, never raise it.
@@ -146,6 +148,12 @@
     const touchMax = Math.max(32, Math.floor(256e6 / (4 * S.m.image.tileSize * S.m.image.tileSize)));
     return Math.min(cfg.tileCacheSize || touchMax, touchMax);
   };
+  // ...and by bytes: 1500 tiles of 1024 px would be ~6 GB. A desktop keeps at most ~1 GB of them, whatever the
+  // tile size; tileCacheSize (config.js) can only lower that, by its number of tiles. Touch keeps its own limit
+  // above (~256 MB).
+  const TILE_CACHE_BYTES = 1024 * 1048576;
+  const tileCacheBytesMax = () => (TOUCH ? Infinity : TILE_CACHE_BYTES);
+  function tileCacheClear() { tileCache.clear(); tileCacheBytes = 0; }
   // On touch each stain's tile layer keeps at most this many tiles (GPU textures) between them,
   // rather than deck's five screens' worth per stain
   const TOUCH_TILE_BUDGET = 96;
@@ -178,6 +186,20 @@
     if (ms) setTimeout(() => { if (stickyErr === msg) { stickyErr = null; if ($("status").textContent === msg) status(null); } }, ms);
   }
   const noQuery = (t) => String(t).replace(/\?[^\s)"']*/g, "");   // never show a token: drop "?..." from anything printed
+  // Part of a dataset would not load (a layer's gene list, an overlay, the bin positions, ...): say so in plain words
+  // and keep the page usable. The line stays up for a while (stickyStatus), so the "Loading…" lines that end
+  // around it do not wipe it; opening another layer or dataset clears it (partMsgClear).
+  let partMsg = null;
+  function partProblem(what, e) {
+    if (e && (e.name === "AbortError")) return;            // another dataset was picked: not a failure
+    console.error(e);
+    const why = noQuery((e && e.message) || e || "unknown error").slice(0, 160);
+    try { window.__sodaDiag.note("data", `${what}: ${why}`); } catch (err) { /* diag.js not loaded */ }
+    partMsg = `${what} could not be loaded (${navigator.onLine === false ? "this computer is offline" : why}). ` +
+      "The rest of the page still works: try again, pick another layer or dataset, or reload the page.";
+    stickyStatus(partMsg, 20000);
+  }
+  function partMsgClear() { if (partMsg && stickyErr === partMsg) { stickyErr = null; status(null); } partMsg = null; }
 
   // ---- data sources -------------------------------------------------------------
   // "static": a folder of files exported by prepare.py export, hosted anywhere (the only kind since
@@ -427,12 +449,57 @@
   }
   // A URL built with a token that expired while it was queued: sign it again.
   const reSign = (url) => (token ? url.split("?")[0] + tokenQuery() : url);
+  // A request that hangs (a stalled connection, a host that never answers) must not leave a "Loading…" up for
+  // ever, nor a shared promise (umapLoad's U.busy, a listing) that everything after it waits on. So each request
+  // gets FETCH_WAIT_MS for its answer to start, and then that again plus time for its size at a slow 64 kB/s
+  // (5 minutes more when the host does not say its size) for the body to arrive: past that it is stopped with a
+  // TimeoutError (not an AbortError, which means someone else stopped it). An answer that never started is asked
+  // for once more; a second time out fails with a plain message the callers show.
+  const FETCH_WAIT_MS = Math.max(10, Number(cfg.fetchTimeoutS) || 60) * 1000;
+  function timedFetch(url, opts) {
+    const outer = opts.signal, ctl = new AbortController();
+    let timedOut = null;
+    const stop = (why) => { try { ctl.abort(why); } catch (e) { ctl.abort(); } };
+    const onOuter = () => stop(outer.reason);
+    if (outer) { if (outer.aborted) onOuter(); else outer.addEventListener("abort", onOuter, { once: true }); }
+    const unhook = () => { if (outer) outer.removeEventListener("abort", onOuter); };
+    const late = (ms, what) => setTimeout(() => {
+      unhook();                                                  // its time is up either way: nothing left to pass on
+      if (ctl.signal.aborted) return;
+      timedOut = new Error(what); timedOut.name = "TimeoutError"; timedOut.timeout = true; stop(timedOut);
+    }, ms);
+    let timer = late(FETCH_WAIT_MS, `no answer from the data store within ${FETCH_WAIT_MS / 1000} s`);
+    return fetch(url, { ...opts, signal: ctl.signal }).then((r) => {
+      clearTimeout(timer);
+      const len = Number(r.headers.get("Content-Length")) || 0;
+      const ms = FETCH_WAIT_MS + (len ? len / 64 : 300000);
+      // left to run: once the body is in, stopping the request does nothing
+      timer = late(ms, `a download stalled (not complete after ${Math.round(ms / 1000)} s): the connection is slow or broken`);
+      return r;
+    }, (e) => {
+      clearTimeout(timer); unhook();
+      throw timedOut && !(outer && outer.aborted) ? timedOut : e;   // an older browser says AbortError for our own stop
+    });
+  }
+  async function fetchOnce(url, opts) {
+    try { return await timedFetch(url, opts); }
+    catch (e) {
+      if (!(e && e.timeout) || (opts.signal && opts.signal.aborted)) throw e;
+      try { return await timedFetch(url, opts); }               // timed out: once more
+      catch (e2) {
+        if (!(e2 && e2.timeout)) throw e2;
+        const err = new Error(`the data store did not answer (waited ${FETCH_WAIT_MS / 1000} s, twice). Check the internet connection and try again`);
+        err.name = "TimeoutError"; err.timeout = true;
+        throw err;
+      }
+    }
+  }
   async function dataFetch(url, opts = {}) {
     if (srcSignal && !opts.signal) opts = { ...opts, signal: srcSignal };   // see liveSource
-    let r = await fetch(url, opts);
+    let r = await fetchOnce(url, opts);
     if ((r.status === 403 || r.status === 401) && TOKEN_URL && token) {
       await ensureToken(true);
-      r = await fetch(reSign(url), opts);
+      r = await fetchOnce(reSign(url), opts);
     }
     return r;
   }
@@ -585,7 +652,7 @@
     canvas.addEventListener("webglcontextlost", () => {
       noGraphics = true;
       diagNote("draw", "the graphics context was lost (webglcontextlost)");
-      tileCache.clear();
+      tileCacheClear();
       stickyStatus("The browser took back the map's graphics memory (a phone does this when memory runs short). " +
         "Reload the page to draw it again; fewer stains on at once keeps it from happening.");
     });
@@ -605,9 +672,16 @@
       .then((b) => (b ? decodeTile(b) : null))
       .then((bmp) => {
         if (bmp) {
+          if (!tileCache.has(key)) tileCacheBytes += tileBytes(bmp);
+          else tileCacheBytes += tileBytes(bmp) - tileBytes(tileCache.get(key));
           tileCache.set(key, bmp);
           // never close() evicted bitmaps: deck may still be drawing them; GC reclaims them
-          while (tileCache.size > tileCacheMax()) tileCache.delete(tileCache.keys().next().value);
+          const max = tileCacheMax(), maxBytes = tileCacheBytesMax();
+          while (tileCache.size > 1 && (tileCache.size > max || tileCacheBytes > maxBytes)) {
+            const old = tileCache.keys().next().value;
+            tileCacheBytes -= tileBytes(tileCache.get(old));
+            tileCache.delete(old);
+          }
         }
         return bmp;
       })
@@ -1409,7 +1483,7 @@
         kind: S.src && S.src.kind, tokenFlow: !!(TOKEN_URL && token), tokenLeftMin: token ? Math.round((token.expires - Date.now()) / 60000) : null,
         fetch: (url, o) => dataFetch(url, o),
         tileUrl, manifestUrl: !S.src ? null : S.src.tileUrl(0, 0, 0, 0, "png").replace(/tiles\/0\/0\/0\/0\.png/, "manifest.json"),
-        decoder: TILE_DECODERS[tileDecoder][0], decoders: TILE_DECODERS, cached: tileCache.size, cacheMax: tileCacheMax(), touch: TOUCH,
+        decoder: TILE_DECODERS[tileDecoder][0], decoders: TILE_DECODERS, cached: tileCache.size, cachedMB: Math.round(tileCacheBytes / 1048576), cacheMax: tileCacheMax(), touch: TOUCH,
       }) };
   }
 
@@ -1722,6 +1796,9 @@
       if (isProt()) list.sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: true, sensitivity: "base" }));
       else list.sort((a, b) => b.t - a.t);
       S.geneIndex = list;
+    } catch (e) {
+      // no gene list: the layer still opens (image, regions, Draw a region...); only the search is empty
+      if (seq === layerSeq) partProblem(`The ${wd().gene} list of this layer`, e);
     } finally { if (seq === layerSeq) status(null); }
   }
   function showGeneResults(q) {
@@ -1821,10 +1898,22 @@
       list.appendChild(row);
     }
   }
-  // Resolves true when the layer is fully loaded, false when another layer (or dataset) was
-  // picked while it loaded: the newer call does the work, this one stops where it is.
+  // Resolves true when the layer is the one on show (loaded, or as far as it would load: a part that failed
+  // says so on the page, partProblem), false when another layer (or dataset) was picked while it loaded:
+  // the newer call does the work, this one stops where it is. Never rejects: the callers (the layer picker,
+  // opening a dataset, a link or a JSON file) can all go on.
   async function setExprKey(key) {
     const seq = ++layerSeq, stale = () => seq !== layerSeq;
+    partMsgClear();
+    try { return await setExprKeyNow(key, stale); }
+    catch (e) {
+      if (stale()) return false;
+      partProblem("Part of this layer", e);
+      try { render(); syncUmapUI(); } catch (e2) { console.error(e2); }
+      return true;
+    }
+  }
+  async function setExprKeyNow(key, stale) {
     S.exprKey = key || null;
     S.genes = []; S.tissue.positions = null; S.heat = null; S.tissue.key = key;
     // One square per bin, always: the layer already sets the resolution, and a
@@ -2528,16 +2617,36 @@
   // also sets the clusters' markers against the whole slide, from the slide-wide mean and sd that
   // mat/index.json carries (older exports: worked out once from every chunk, lassoSlideStats).
 
+  // The chunks downloaded are kept for the next run (L.chunks, least recently used first), up to
+  // LASSO_CHUNK_BYTES between them. A chunk that does not fit (a run larger than that) is handed out without being
+  // kept: such a buffer belongs to that one run alone, so it can be moved to the worker instead of copied
+  // (lassoTransferable). A buffer that was ever kept may still be in use by another run: always copied.
+  const LASSO_CHUNK_BYTES = (TOUCH ? 64 : 512) * 1048576;
+  const lassoKept = new WeakSet();
+  function lassoKeep(L, k, b, inUse) {
+    const size = (x) => x.byteLength || 0;
+    let bytes = 0;
+    for (const v of L.chunks.values()) bytes += size(v);
+    for (const [k2, v] of L.chunks) {                           // oldest first; never the ones this run needs
+      if (bytes + size(b) <= LASSO_CHUNK_BYTES) break;
+      if (inUse.has(k2)) continue;
+      L.chunks.delete(k2); bytes -= size(v);
+    }
+    if (bytes + size(b) > LASSO_CHUNK_BYTES) return;            // no room: this run's alone
+    L.chunks.set(k, b); lassoKept.add(b);
+  }
+  // the buffers of `bufs` that only this run holds: moved to a worker (transfer), not copied
+  const lassoTransferable = (bufs) => [...new Set(bufs)].filter((b) => b && b.byteLength && !lassoKept.has(b));
   // the chunks with these keys, from the cache or the server (6 at a time)
   async function lassoFetch(keys) {
-    const L = S.lasso, have = new Set(L.hvg.chunks.map((c) => `${c.tx}_${c.ty}`)), bufs = [], missing = [];
+    const L = S.lasso, have = new Set(L.hvg.chunks.map((c) => `${c.tx}_${c.ty}`)), bufs = [], missing = [], inUse = new Set(keys);
     let next = 0;
     const one = async () => {
       while (next < keys.length) {
         const k = keys[next++];
-        if (L.chunks.has(k)) { bufs.push(L.chunks.get(k)); continue; }
+        if (L.chunks.has(k)) { const b = L.chunks.get(k); L.chunks.delete(k); L.chunks.set(k, b); bufs.push(b); continue; }
         if (!have.has(k)) { missing.push(k); continue; }
-        try { const b = await S.src.buf(`expr/${S.exprKey}/${L.prot ? "mat" : "hvg"}/${k}.bin`); L.chunks.set(k, b); bufs.push(b); }
+        try { const b = await S.src.buf(`expr/${S.exprKey}/${L.prot ? "mat" : "hvg"}/${k}.bin`); lassoKeep(L, k, b, inUse); bufs.push(b); }
         catch (e) { missing.push(k); }
       }
     };
@@ -2574,11 +2683,10 @@
     if (TOUCH && mb > 30) return { error: "This export has no slide-wide averages, and working them out needs more than a phone should download: run it on a computer, or re-export." };
     say(`This export has no slide-wide averages yet: reading every square once (${mb.toFixed(0)} MB)…`);
     const all = H.chunks.map((c) => `${c.tx}_${c.ty}`);
-    let { missing } = await lassoFetch(all);
-    // a busy server can drop a few of hundreds of requests: those again, twice (the rest are cached)
-    for (let t = 0; t < 2 && missing.length; t++) missing = (await lassoFetch(missing)).missing;
+    let { bufs, missing } = await lassoFetch(all);
+    // a busy server can drop a few of hundreds of requests: those again, twice
+    for (let t = 0; t < 2 && missing.length; t++) { const more = await lassoFetch(missing); bufs = bufs.concat(more.bufs); missing = more.missing; }
     if (missing.length) return { error: `${missing.length} of ${all.length} chunks would not load, so the slide-wide averages are unknown: try again.` };
-    const bufs = all.map((k) => L.chunks.get(k));
     const xp = protXp(H), sc = H.scale, sx = new Float64Array(K), sxx = new Float64Array(K), sv = new Float64Array(K);
     let n = 0;
     protEach(bufs, K, (r, q, at) => {
@@ -2591,7 +2699,31 @@
     return L.slideStats;
   }
 
+  // The worker of Draw a region: when it fails (its script would not load, it ran out of memory, its answer could
+  // not be read) the run stops with a message, never a "Computing…" that stays forever.
+  function lassoNewWorker() {
+    const w = new Worker("lasso_worker.js?v=20261119s3");
+    w.onerror = (e) => { if (e && e.preventDefault) e.preventDefault(); lassoFailed(w, (e && e.message) || ""); };
+    w.onmessageerror = () => lassoFailed(w, "its answer could not be read");
+    return w;
+  }
+  function lassoFailed(w, why, always) {
+    const L = S.lasso;
+    if (!L || (w && L.worker !== w)) return;          // an older worker, already replaced
+    if (L.worker) { try { L.worker.terminate(); } catch (e) { /* gone */ } L.worker = null; }
+    const was = L.running;
+    L.running = false; $("lassoCancel").hidden = true; lassoWake(false);
+    if (!was && !always) return;                       // nothing was running: the next run starts a new worker
+    $("lassoMsg").textContent = "The UMAP stopped" + (why ? ` (${noQuery(why).slice(0, 160)})` : "") +
+      ". The browser may have run out of memory: try smaller or fewer shapes, close other tabs, or reload the page.";
+    $("lassoMsg").style.color = "#ff8f8f";
+    buildLassoUI();
+  }
   async function lassoRun() {
+    try { await lassoRunNow(); }
+    catch (e) { console.error(e); lassoFailed(null, (e && e.message) || String(e), true); }
+  }
+  async function lassoRunNow() {
     const L = S.lasso;
     if (L.running || !L.hvg || !L.assign) return;
     const qcKeep = binQc && !L.prot ? binQc.keepMask() : null, qcState = binQc && !L.prot ? binQc.state() : null, qcTxt = qcKeep ? binQc.describe() : "", qcNote = L.qcNote || "";
@@ -2622,7 +2754,7 @@
     L.running = true; $("lassoCancel").hidden = false; buildLassoUI();
     lassoWake(true);
     // started now, so it loads umap-js while the chunks download
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261119s3");
+    if (!L.worker) L.worker = lassoNewWorker();
     msg(`Fetching ${need.size} data chunk(s)…`);
     const { bufs, missing } = await lassoFetch([...need.keys()]);
     if (!L.running) return;                         // cancelled while fetching
@@ -2639,7 +2771,7 @@
     if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { L.hvgGenes = null; } }
     const markerSet = mode === "bins" && clustering ? await (L.prot ? loadProteinMarkerSet() : loadMarkerSet()) : null;
     if (!L.running) return;                         // cancelled meanwhile
-    if (!L.worker) L.worker = new Worker("lasso_worker.js?v=20261119s3");
+    if (!L.worker) L.worker = lassoNewWorker();
     const sig = L.shapes.map((s) => `${s.id}:${s.bins}`).join(",");
     const sampling = L.prot ? "exact" : L.sampling || "auto";
     const params = { mode, seed, minUmi: LASSO.minUmi, cap: LASSO_CAP, minPoints: LASSO.minPoints,
@@ -2699,15 +2831,37 @@
                                mean: st ? st.mean : null, sd: st ? st.sd : null } : null;
     const flags = L.prot && S.qc.flags && S.qc.key === S.exprKey ? S.qc.flags : null;   // for the "Artefact?" name
     // dataKey: the worker keeps the last layout, and re-clusters it when only the clustering settings changed
+    // the chunks no other run holds are moved, not copied (the rest, and rowShape, flags, qcKeep, stay in use here)
     L.worker.postMessage({ chunks: bufs, rowShape: L.assign, nShapes: L.shapes.length, nGenes: L.hvg.nGenes, params, resolution,
-                           geneNames: L.hvgGenes || null, markerSet, protein, flags, qcKeep, dataKey: `${S.dsId}|${S.exprKey}` });
+                           geneNames: L.hvgGenes || null, markerSet, protein, flags, qcKeep, dataKey: `${S.dsId}|${S.exprKey}` },
+                         lassoTransferable(bufs));
     L.qcNote = null; $("bqStale").hidden = true;
   }
 
   // ---- the UMAP panel: its own small deck --------------------------------------------
+  // It cannot draw (a layer failed, or the browser took its graphics memory back): say so once, in the panel's
+  // message and on the status line. The run's results stay (Save CSV, the volcano); a reload draws it again.
+  let lpProblems = 0;
+  function lpProblem(err, lost) {
+    const why = noQuery((err && err.message) || err || "").slice(0, 160);
+    if (err) console.error(err);
+    diagNote("draw", `UMAP panel: ${lost ? "the graphics context was lost (webglcontextlost)" : why}`);
+    if (lpProblems++) return;
+    const m = lost
+      ? "The browser took back the UMAP panel's graphics memory (it does this when memory runs short). " +
+        "The results are kept (Save CSV and the volcano still work); reload the page to see the panel again."
+      : `The UMAP panel could not be drawn (${why}). The results are kept; reload the page to see it again.`;
+    $("lassoMsg").textContent = m; $("lassoMsg").style.color = "#ff8f8f";
+    stickyStatus(m, 20000);
+  }
   function lpEnsureDeck() {
     if (lpDeck) return lpDeck;
     lpDeck = new Deck({
+      onError: (err) => lpProblem(err, false),
+      onDeviceInitialized: (device) => {
+        const canvas = device && device.canvasContext && device.canvasContext.canvas;
+        if (canvas && canvas.addEventListener) canvas.addEventListener("webglcontextlost", () => lpProblem(null, true));
+      },
       parent: $("lpHost"),
       views: [new OrthographicView({ id: "lp", flipY: false,
         controller: { dragPan: false, dragRotate: false, doubleClickZoom: false, keyboard: false, scrollZoom: { speed: 0.01, smooth: false } } })],
@@ -3098,7 +3252,7 @@
     window.__spatialViewer.lassoFast = (above, sample) => { LASSO.fastAbove = above; LASSO.fastSample = sample; buildLassoUI(); };
     // volcano plots (volcano.js, de_worker.js): handed only what they need from here
     if (window.SodaVolcano) window.SodaVolcano.init({
-      state: () => S, touch: TOUCH, fetchChunks: lassoFetch, chunkOf: lassoChunkOf, addGene, download: lassoDownload,
+      state: () => S, touch: TOUCH, fetchChunks: lassoFetch, transferable: lassoTransferable, chunkOf: lassoChunkOf, addGene, download: lassoDownload,
       say: (t) => (isRois() ? toRoiWords(t) : isCells() ? toCellWords(t) : t),
       geneXyv: (name) => S.src.gene(S.exprKey, name),
       hvgGenes: async () => { const L = S.lasso; if (!L.hvgGenes) { try { L.hvgGenes = await S.src.json(`expr/${S.exprKey}/hvg/genes.json`); } catch (e) { return null; } } return L.hvgGenes; },
@@ -3470,8 +3624,12 @@
   }
 
   // force: the person asked to watch the flight (Play), so it runs even with reduced motion
+  // A click during the flight is not lost: the view asked for last is kept (U.wantView) and applied when the flight
+  // ends (umapFly).
   async function umapSetView(v, force) {
     const U = S.umap;
+    if (U && U.anim === "fly") { U.wantView = v === U.flyTo ? null : { v, force }; return; }
+    if (U) U.wantView = null;
     if (!U || U.anim || v === U.view || (v !== "tissue" && (!U.key || !umapAvail() || umapNoEmb()))) return;
     if (v !== "tissue") {
       try {
@@ -3518,11 +3676,14 @@
     const U = S.umap, vs0 = vsFrom || S.viewState || vsTo;
     const done = () => {
       if (U.anim !== "fly") return;                               // already finished
-      U.anim = null;
+      U.anim = null; U.flyTo = null;
       if (S.umap !== U) return;
       S.viewState = vsTo; deckgl.setProps({ viewState: deckVs() }); updateHud(); syncUmapUI(); render();
+      // a view asked for during the flight: now
+      const want = U.wantView; U.wantView = null;
+      if (want && want.v !== U.view) umapSetView(want.v, want.force);
     };
-    U.anim = "fly";
+    U.anim = "fly"; U.flyTo = toUmap ? "umap" : "tissue"; U.wantView = null;
     const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if ((reduce && !force) || document.hidden) { done(); return; }
     const F = umapCloud("fly");
@@ -4514,12 +4675,17 @@
     for (const o of S.overlays) {
       const row = document.createElement("label");
       row.className = "row check";
-      row.innerHTML = `<input type="checkbox" ${o.on ? "checked" : ""}/><span>${o.label}</span>`;
-      row.querySelector("input").onchange = async (e) => {
+      // the label comes from the data folder (manifest.json): text, never markup
+      const cb = document.createElement("input"), name = document.createElement("span");
+      cb.type = "checkbox"; cb.checked = !!o.on; name.textContent = String(o.label == null ? "" : o.label);
+      row.append(cb, name);
+      cb.onchange = async (e) => {
         o.on = e.target.checked;
         if (o.on && !o.data) {
           status(`Loading ${o.label}…`);
-          try { o.data = await S.src.overlay(o.file); } finally { status(null); }
+          try { o.data = await S.src.overlay(o.file); }
+          catch (err) { o.on = false; e.target.checked = false; partProblem(`The overlay "${o.label}"`, err); }
+          finally { status(null); }
         }
         render();
       };
@@ -5143,6 +5309,10 @@
   async function openDataset(id) {
     const lay = window.SodaLayout, tok = lay ? lay.opening(true) : 0;
     try { return await openDatasetNow(id); }
+    catch (e) {
+      // a part that failed half-way (molecules, an overlay...): say so and leave what did open on show
+      partProblem(`Part of ${id}`, e);
+    }
     finally {
       if (lay) lay.opening(false, tok);
       window.dispatchEvent(new CustomEvent("soda:opened", { detail: { id } }));   // viewlink.js
@@ -5158,9 +5328,10 @@
     openCtl = new AbortController();
     status("Opening dataset…");
     S.dsId = id;
-    tileCache.clear();
+    tileCacheClear();
     tileProblems = 0; drawProblems = 0; tileRetries = 0; tilesFailed = false;
     if (stickyErr && stickyErr === tileMsg) stickyErr = null;
+    partMsgClear();
     S.channels = []; S.overlays = []; S.m = null;
     deckgl.setProps({ layers: [] });           // drop the previous dataset's layers right away
     S.genes = []; S.tissue.positions = null; S.heat = null;
@@ -5687,7 +5858,14 @@
     };
     $("molSize").oninput = (e) => { S.mol.size = +e.target.value; requestRender(); };
     $("molOpacity").oninput = (e) => { S.mol.opacity = +e.target.value; requestRender(); };
-    $("tissueBins").onchange = async (e) => { S.tissue.on = e.target.checked; if (S.tissue.on && !S.tissue.positions) await loadTissue(); render(); };
+    $("tissueBins").onchange = async (e) => {
+      S.tissue.on = e.target.checked;
+      if (S.tissue.on && !S.tissue.positions) {
+        try { await loadTissue(); }
+        catch (err) { S.tissue.on = false; e.target.checked = false; partProblem(`The ${wd().bin} positions (Show all in-tissue ${wd().bins})`, err); }
+      }
+      render();
+    };
     // The description is held with the data, not in this page. Anything written
     // into index.html is readable by anyone who opens the page - including the
     // parts of the project that are not public yet - so the body is fetched from
@@ -5898,5 +6076,8 @@
     });
   }
 
-  init();
+  init().catch((e) => {
+    console.error(e);
+    status(`The page could not start (${noQuery((e && e.message) || e).slice(0, 160)}). Reload the page; if it stays, add &diag=1 to the address for details.`, true);
+  });
 })();

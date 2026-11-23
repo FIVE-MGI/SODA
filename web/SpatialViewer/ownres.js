@@ -42,8 +42,12 @@
   const $ = (id) => document.getElementById(id);
   const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const NONE = 0xffff, NOROW = 0xffffffff;
-  const MAX_FILE = 1024 * 1024 * 1024;           // bytes of the file as picked
-  const MAX_TEXT = 512 * 1024 * 1024;            // bytes once unpacked
+  // A phone or tablet (a finger for a pointer, as viewer.js decides it) has a fraction of a computer's memory and
+  // iOS reloads a tab that outgrows ~1-1.5 GB: a file is read whole and then parsed, so far less there.
+  const TOUCH = !!(window.matchMedia && matchMedia("(pointer: coarse)").matches);
+  const MAX_FILE = (TOUCH ? 150 : 1024) * 1024 * 1024;       // bytes of the file as picked
+  const MAX_TEXT = (TOUCH ? 200 : 512) * 1024 * 1024;        // bytes once unpacked
+  const ON_DEVICE = TOUCH ? " on a phone or tablet (a computer reads up to 1 GB)" : " in a browser";
   const MAX_CATEGORIES = 200, MAX_INT_CATEGORIES = 30;
   const MIN_MATCH = 0.5;                         // below this share of the file's rows matched: not used until asked
   const SAMPLE_IDS = 400;                        // values of a column tried against the id list to find the id column
@@ -485,8 +489,8 @@
     if (window.SodaLayout && $("panelOwn") && !$("panelOwn").hidden) window.SodaLayout.show("panelOwn");
     if (!ctx) { api.status("Open a spatial dataset first: your own results are matched to its bins.", true); setTimeout(() => api.status(null), 5000); return; }
     if (busy) { msg("Still reading the last file…", "warn"); return; }
-    if (/\.json$/i.test(file.name || "") && dropped) { msg("A .json file is a saved view: load it with Load JSON (Analyze tab, Draw a region). Your own results come as a CSV or TSV.", "err"); return; }
-    if (file.size > MAX_FILE) { msg(`This file is ${(file.size / 1073741824).toFixed(1)} GB: too big to read in a browser. Keep only the columns you need (and gzip it).`, "err"); return; }
+    if (/\.json$/i.test(file.name || "") && dropped) { msg("A .json file is a saved view: load it with Load JSON (Share tab, Save and load). Your own results come as a CSV or TSV.", "err"); return; }
+    if (file.size > MAX_FILE) { msg(`This file is ${(file.size / 1048576).toFixed(0)} MB: too big to read${ON_DEVICE}. Keep only the columns you need (and gzip it).`, "err"); return; }
     busy = true;
     msg(`Reading ${file.name || "the file"}…`);
     try {
@@ -494,7 +498,7 @@
       if (u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b) {
         try { u8 = await gunzip(u8); } catch (e) { throw new Error(`Could not unpack this .gz file: ${e && e.message ? e.message : e}`); }
       }
-      if (u8.length > MAX_TEXT) throw new Error(`This file is more than ${MAX_TEXT / 1048576} MB of text: too big to read in a browser. Keep only the columns you need.`);
+      if (u8.length > MAX_TEXT) throw new Error(`This file is more than ${MAX_TEXT / 1048576} MB of text: too big to read${ON_DEVICE}. Keep only the columns you need.`);
       const bad = notTable(u8, file.name);
       if (bad) throw new Error(bad);
       const fp = fingerprint(u8);

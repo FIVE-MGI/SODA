@@ -212,7 +212,9 @@
       const cp = L.hvg.chunkPx, keys = new Set();
       for (let r = 0; r < g.length; r++) if (g[r]) keys.add(api.chunkOf(L.pos[2 * r], L.pos[2 * r + 1], cp));
       const total = L.hvg.chunks.length, mb = L.hvg.chunks.filter((c) => keys.has(`${c.tx}_${c.ty}`)).reduce((s, c) => s + c.bytes, 0) / 1e6;
-      if (api.touch && mb > 40 && !confirm(`This comparison reads ${keys.size} of ${total} data chunks (${mb.toFixed(0)} MB). Go on?`)) { msg("Not run."); return; }
+      // a phone above 40 MB, a computer above 300 MB (a whole section): ask first, it takes a while and a lot of memory
+      if (mb > (api.touch ? 40 : 300) && !confirm(`This comparison reads ${keys.size} of ${total} data chunks (${mb.toFixed(0)} MB), ` +
+          "which takes a while and a lot of the browser's memory. Go on?")) { msg("Not run."); return; }
       msg(`Fetching ${keys.size} data chunk(s) (${mb.toFixed(1)} MB; cached ones are not fetched again)…`);
       let { bufs, missing } = await api.fetchChunks([...keys]);
       for (let t = 0; t < 2 && missing.length; t++) {                    // a busy server can drop a few: those again
@@ -252,9 +254,15 @@
           if (d.type === "progress") { msg(`${d.step}… ${Math.round(d.frac * 100)}%`); return; }
           if (d.type === "error") reject(new Error(d.message)); else resolve(d);
         };
-        worker.onerror = (e) => reject(new Error(e.message || "worker failed"));
+        // a worker that fails (out of memory, its script would not load) is dropped: the next run starts a new one
+        const failed = (why) => { if (worker) { worker.terminate(); worker = null; }
+          reject(new Error(`The test stopped (${why}). The browser may have run out of memory: compare smaller groups, close other tabs, or reload the page.`)); };
+        worker.onerror = (e) => { if (e && e.preventDefault) e.preventDefault(); failed(e.message || "the worker failed"); };
+        worker.onmessageerror = () => failed("its answer could not be read");
+        // the chunks only this run holds are moved to the worker, not copied (api.transferable; the rest stay cached)
         worker.postMessage({ chunks: bufs, group: g, nGenes: genes.length, extra, positions: extra.length ? L.pos : null, scale,
-                             params: { minUmi: DEFAULTS.minUmi, cap, seed: DEFAULTS.seed, minPct: minPct / 100, test } });
+                             params: { minUmi: DEFAULTS.minUmi, cap, seed: DEFAULTS.seed, minPct: minPct / 100, test } },
+                           api.transferable ? api.transferable(bufs) : []);
       });
       if (!running) return;
       T.worker = performance.now() - t0 - T.fetch - T.extra;
