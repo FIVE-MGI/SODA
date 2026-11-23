@@ -1,13 +1,19 @@
 name: pages
 
-# Publishes the SODA page (web/SpatialViewer) as this repository's GitHub Pages site. In
-# FIVE-MGI/SODA that site is the shared SODA page, https://soda.mgifive.org/ (custom domain, set in the repository's Settings -> Pages) ; a
-# copy of SODA ("Use this template" on GitHub) gets its own address with no server to run.
-# See docs/SHARE_YOUR_DATA.md ("Make it your own"). It needs Settings -> Pages -> Source:
-# "GitHub Actions" once.
+# Publishes the SODA page (web/SpatialViewer) as this repository's GitHub Pages site, at
+# <site address>/SODA/ :
+#   with your own domain (Settings -> Pages -> Custom domain)   https://<your domain>/SODA/
+#   without one                                                 https://<owner>.github.io/<repository>/SODA/
+# The site's front door (<site address>/) forwards to SODA/, keeping anything after the address
+# (?data=... links and #... views), so either address opens SODA.
 #
-# Only the page is published. The .py tools stay in the repository, and data never goes
-# here: it lives in your own storage and config.js (or a ?data= link) points at it.
+# A copy of SODA ("Use this template" on GitHub) gets its own site this way, with no server to run.
+# It needs GitHub Pages turned on once: Settings -> Pages -> Source: "GitHub Actions". Until then
+# this workflow ends without an error and says so in its summary; turn Pages on, then re-run it.
+# FIVE-MGI/SODA's own site is published the same way (soda.mgifive.org/SODA/ once its domain is set).
+#
+# Only the page is published. The .py tools stay in the repository, and data never goes here:
+# it lives in your own storage, and config.js (data: "...") or a ?data= link points at it.
 
 on:
   push:
@@ -24,32 +30,106 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish:
+  # Is GitHub Pages turned on, with "GitHub Actions" as its source? Asks GitHub with this run's own
+  # token (no secret to set up). Not turned on: a notice and a green run, never a red failure.
+  check:
     # On in FIVE-MGI/SODA (the shared page) and in every copy; off only in the private working
     # repository, FIVE-MGI/spatial-viewer-v2.
     if: github.repository != 'FIVE-MGI/spatial-viewer-v2'
     runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.pages.outputs.ready }}
+    steps:
+      - id: pages
+        name: Is GitHub Pages turned on?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          code=$(curl -sS -o "$RUNNER_TEMP/pages.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pages" || echo "000")
+          build=$(jq -r '.build_type // ""' "$RUNNER_TEMP/pages.json" 2>/dev/null || true)
+          settings="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/settings/pages"
+          if [ "$code" = "200" ] && [ "$build" = "workflow" ]; then
+            echo "GitHub Pages is on, source: GitHub Actions"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$code" = "404" ]; then
+            why="GitHub Pages is not turned on for this repository yet."
+          elif [ "$code" = "200" ]; then
+            why="GitHub Pages is on, but its source is \"Deploy from a branch\", so this workflow cannot publish SODA."
+          else
+            # GitHub did not say (HTTP $code): try to publish; the next steps report any real problem
+            echo "::warning::Could not ask GitHub whether Pages is on (HTTP $code); publishing anyway"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Turn on GitHub Pages::$why Turn on Pages: Settings → Pages → Source: GitHub Actions, then re-run this workflow."
+          {
+            echo "## Your SODA site is not published yet"
+            echo
+            echo "$why Nothing is wrong with your copy of SODA; it only needs this switched on once."
+            echo
+            echo "**Turn on Pages:** Settings → Pages → Source: **GitHub Actions** ([open the Pages settings]($settings)),"
+            echo "then re-run this workflow (the **Re-run all jobs** button at the top of this page)."
+            echo
+            echo "Your site will then be at \`https://$GITHUB_REPOSITORY_OWNER.github.io/${GITHUB_REPOSITORY#*/}/SODA/\`"
+            echo "(or \`https://<your domain>/SODA/\` if you set a custom domain on the same settings page)."
+            echo
+            echo "No Pages section, or no \"GitHub Actions\" choice? On a free GitHub account, Pages works only for a"
+            echo "public repository: Settings → General → Danger Zone → Change visibility."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url }}SODA/
     steps:
       - uses: actions/checkout@v5
 
       - name: Collect the page files
         run: |
-          mkdir _site
-          cp -r web/SpatialViewer/. _site/
+          mkdir -p _site/SODA
+          cp -r web/SpatialViewer/. _site/SODA/
           # the Python tools, caches and anything private never go on the site
           find _site -name '*.py' -delete
           find _site -name '__pycache__' -type d -prune -exec rm -rf {} +
           find _site \( -iname 'sample_id_key.csv' -o -iname '*_key.csv' -o -name '*.zarr' \) -prune -exec rm -rf {} +
-          rm -f _site/requirements*.txt
-          if [ -f _site/config.js ]; then
-            echo "config.js found: the site opens the data it names"
+          rm -f _site/SODA/requirements*.txt
+          # the front door: <site address>/ forwards to SODA/, keeping ?data=... and #...
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>SODA</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <script>location.replace("SODA/" + location.search + location.hash);</script>
+            <noscript><meta http-equiv="refresh" content="0; url=SODA/"></noscript>
+          </head>
+          <body style="background:#0e1117;color:#e6e9ef;font:15px system-ui,sans-serif;padding:24px">
+            <p>Opening SODA&hellip; If nothing happens, <a href="SODA/" style="color:#4da3ff">open SODA here</a>.</p>
+          </body>
+          </html>
+          HTML
+          # what the site will open (config.js is in the repository; its data: line names the folder)
+          cfg=_site/SODA/config.js
+          if [ -f "$cfg" ] && grep -Eq '^[[:space:]]*data:[[:space:]]*"https?://' "$cfg"; then
+            echo "config.js names a data folder: the site opens it"
           else
-            echo "no config.js: the site opens data only from ?data= links (see docs/SHARE_YOUR_DATA.md)"
+            echo "::notice title=No data connected yet::The site shows \"No data connected yet\" until you paste your storage folder's address into web/SpatialViewer/config.js (data: \"...\"). ?data= links work meanwhile. See docs/SHARE_YOUR_DATA.md."
+          fi
+          if [ -f "$cfg" ] && grep -Eq '^[[:space:]]*tokenEndpoint:[[:space:]]*"[^"]' "$cfg"; then
+            echo "::warning title=Password in config.js::config.js sets tokenEndpoint (a password check), which GitHub Pages cannot run: readers would be asked for a password that never works. Remove that line for a GitHub Pages site."
           fi
           touch _site/.nojekyll
+          find _site -maxdepth 2 | sort | head -20
 
       - uses: actions/configure-pages@v5
 
@@ -59,3 +139,11 @@ jobs:
 
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: Job summary
+        run: |
+          {
+            echo "## SODA is published"
+            echo
+            echo "Open it at **${{ steps.deploy.outputs.page_url }}SODA/**"
+          } >> "$GITHUB_STEP_SUMMARY"
