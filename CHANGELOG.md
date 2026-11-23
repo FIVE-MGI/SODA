@@ -2,7 +2,7 @@
 
 What is in each version of SODA, in plain words. The details are in the [docs](README.md#documentation).
 
-## Unreleased (0.10.1)
+## 0.10.1 (23 November 2026): your own SODA site, fewer ways to crash
 
 Your own SODA website is now the main way to share, and the page and the preparing steps say
 more clearly what went wrong.

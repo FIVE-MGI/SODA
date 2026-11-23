@@ -111,7 +111,7 @@ formats: spatial AnnData, OME-Zarr and SpatialData.
 ## Citing
 
 Manuscript in preparation. Until it is published, please cite this repository: GitHub's
-**Cite this repository** button reads [CITATION.cff](CITATION.cff) (version 0.10.0; no DOI yet).
+**Cite this repository** button reads [CITATION.cff](CITATION.cff) (version 0.10.1; no DOI yet).
 <!-- CITATION PLACEHOLDER: replace with the paper reference and DOI once available. -->
 
 ## Licence
