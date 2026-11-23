@@ -17,6 +17,11 @@
 //             plot's PNG; the QC filter; Save image at 1x, 2x and 4x (the
 //             PNG's size read from the file); Copy link to this view, and that link opened in a new tab
 //             (same dataset, layer, genes, mode and camera).
+//   compare   Compare side by side (compare.js) on ?data=<folder>/ with a datasets.json: the Compare button in
+//             the top bar beside Fit, a second dataset opened in a linked window (both draw, both join the group,
+//             they split the tile cache: ~512 MB each), Link views moves the other window to the same place in µm
+//             at the same scale (A to B and B to A), a gene added in one follows into the other (or the other
+//             says it does not have it), and closing the second window leaves the first alone with the whole cache.
 //   links     ?data=<folder>/&ds=<id> (no datasets.json), and ?data=<folder>/ with a datasets.json
 //             carrying tags: the picker lists every dataset, a tag filter narrows the list, a row opens.
 //   outlines  a cells layer with segmentation boundaries (xenium_pub), Cell shapes on Outlines, zoomed in
@@ -27,11 +32,12 @@
 //             picture (map, name and legend) fits the phone's limit, and the largest one saved at that size;
 //             WebKit compared with Chromium by pixels. firefox-phone: the same 375 x 812 window without touch
 //             (clicked, not tapped); the touch-only checks (the page sees a touch screen, the phone's Save image
-//             limits) are left out there and the page is checked to use the desktop limits instead.
+//             limits) are left out there and the page is checked to use the desktop limits instead. The Compare button
+//             is not shown on a phone (no linked windows there).
 //
 //   node tests/browsers_test.js                         (the public exports: SODA_TEST_DATA or --data-root, see tests/test_data.js)
 //   node tests/browsers_test.js --only webkit,msedge --shots <dir> --data-root <url or folder> --ports 8892,8893 (default: free ports)
-//        --ds visiumhd_pub,xenium_pub (only these datasets)  --skip probe,datasets,walk,links,outlines
+//        --ds visiumhd_pub,xenium_pub (only these datasets)  --skip probe,datasets,walk,compare,links,outlines
 //   browsers: chromium, webkit, msedge (Edge; skipped when it is not installed), firefox (skipped when Playwright's
 //             Firefox is not installed), webkit-phone, chromium-phone, firefox-phone
 //
@@ -68,7 +74,7 @@ const ONLY = arg("--only", "");
 const SHOTS = arg("--shots", "");
 const ALL = process.argv.includes("--all");
 const DS = arg("--ds", "");                                          // e.g. visiumhd_pub,xenium_pub: only these
-const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, links, hardening, outlines
+const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, compare, links, hardening, outlines
 const PORTS = arg("--ports", "0,0").split(",").map(Number);         // data server, page server; 0 = any free port
 const OPEN_MS = 120000;                                             // the public exports are large, and may come over the internet
 
@@ -796,6 +802,113 @@ async function links(browser, eng, urls) {
 }
 const ev2 = (P, f, a) => P.evaluate(f, a);
 
+// ---- Compare side by side (compare.js): a second dataset in a linked window ------------------------------
+// where a window shows in the frame the group shares: µm from its own offset, and log2(screen px per µm)
+const sharedOf = (P) => P.evaluate(() => {
+  const S = window.__spatialViewer.state, C = window.SodaCompare.state(), um = S.m.pixelSizeUm > 0 ? S.m.pixelSizeUm : 1, vs = S.viewState;
+  return { c: [vs.target[0] * um - C.off.o[0], vs.target[1] * um - C.off.o[1]], s: vs.zoom - Math.log2(um) };
+});
+const sameShared = (a, b) => Math.abs(a.s - b.s) < 1e-3 && Math.hypot(a.c[0] - b.c[0], a.c[1] - b.c[1]) < 0.5 + 2 * Math.pow(2, -a.s);
+async function compare(browser, eng, urls) {
+  const F = "Compare side by side (linked window)";
+  const A_ID = "visiumhd_pub", B_ID = CAT_IDS.find((x) => x !== A_ID) || A_ID;
+  if (!CAT_IDS.includes(A_ID)) { console.log("  (visiumhd_pub is not in the catalog: Compare not checked)"); return; }
+  const t = await openPage(browser, eng, `${urls.page}/index.html?data=${urls.data}/cat/&ds=${A_ID}`, "compare", F);
+  const P = t.page, ev = (f, a) => P.evaluate(f, a);
+  let b = null;
+  const bLog = { pageErrors: [], console: [], bad: [] };
+  try {
+    // the second window is a page of the same context: config.js answered there too
+    await t.ctx.route("**/config.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript", body: "window.SpatialViewerConfig = {};" }));
+    const ready = (pg, id) => until(pg, (id) => { const sv = window.__spatialViewer, S = sv && sv.state; return S && S.m && S.m.id === id && S.exprKey && S.geneIndex && S.geneIndex.length && sv.diag().cached > 0 && window.SodaCompare.state().ready; }, id);
+    t.ok(await ready(P, A_ID), `${A_ID} opens from the catalog`);
+    await settled(P);
+    // the Compare button: in the top bar, just before Fit; it brings up the Share tab's Compare section
+    const btn = await ev(() => { const b = document.getElementById("btnCompare"), s = b && getComputedStyle(b);
+      return b ? { inBar: b.parentElement && b.parentElement.id === "topBar", next: b.nextElementSibling ? b.nextElementSibling.id : null, shown: s.display !== "none" && !!b.offsetParent, text: b.textContent } : null; });
+    t.ok(btn && btn.inBar && btn.next === "btnFit" && btn.shown && btn.text === "Compare", `Compare button in the top bar before Fit: ${JSON.stringify(btn)}`);
+    await P.click("#btnCompare");
+    await P.waitForTimeout(300);
+    const sec = await ev(() => { const L = window.SodaLayout.state(), q = (id) => document.getElementById(id), c = q("panelCompare");
+      const before = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+      return { tab: L.tab, open: L.open.includes("panelCompare"), shown: !!(c && c.offsetParent), order: before(q("panelSave"), c) && before(c, q("panelDataset")),
+               canLink: window.SodaCompare.state().canLink, peers: document.getElementById("cmpPeers").textContent }; });
+    t.ok(sec.tab === "share" && sec.open && sec.shown && sec.order && sec.canLink, `the button opens Compare side by side in the Share tab, under Save and load: ${JSON.stringify(sec)}`);
+    const mem0 = await ev(() => window.__spatialViewer.diag());
+    t.ok(mem0.memWindows === 1 && mem0.cacheMaxMB === 1024, `alone: the whole tile cache (${mem0.cacheMaxMB} MB, ${mem0.memWindows} window)`);
+    // open the other dataset beside it (as the dataset list in the section does)
+    const popup = t.ctx.waitForEvent("page", { timeout: 30000 });
+    await ev((id) => window.SodaCompare.open(id), B_ID);
+    b = await popup;
+    b.on("pageerror", (e) => bLog.pageErrors.push(String(e.message || e).split("\n")[0]));
+    b.on("console", (m) => { if (m.type() === "error") bLog.console.push({ text: m.text(), url: (m.location() || {}).url || "" }); });
+    b.on("response", (r) => { if (r.status() >= 400) bLog.bad.push({ url: r.url(), status: r.status() }); });
+    const bReady = await ready(b, B_ID);
+    const joined = await until(P, () => { const C = window.SodaCompare.state(); return C.peers.length === 1 && C.peers[0].ready && C.linked; }, null, 60000);
+    const bJoined = await until(b, () => { const C = window.SodaCompare.state(); return C.peers.length === 1 && C.linked; }, null, 30000);
+    t.ok(bReady && joined && bJoined, `${B_ID} opens in a second window, both join one group and are linked (${await ev(() => document.getElementById("cmpPeers").textContent)})`);
+    await settled(P); await settled(b);
+    const rA = await lookDrawn(P, 0.01), rB = await lookDrawn(b, 0.01);
+    t.ok(rA.lit > 0.01 && !rA.err && rB.lit > 0.01 && !rB.err, `both windows draw (lit ${rA.lit.toFixed(3)} and ${rB.lit.toFixed(3)})`);
+    await t.shot("compare_a");
+    if (SHOTS) await b.screenshot({ path: path.join(SHOTS, eng.name, "compare_b.png") }).catch(() => {});
+    // memory: the two windows split the ~1 GB tile cache (and Draw a region's kept chunks)
+    const mA = await ev(() => window.__spatialViewer.diag()), mB = await b.evaluate(() => window.__spatialViewer.diag());
+    t.ok(mA.memWindows === 2 && mB.memWindows === 2 && mA.cacheMaxMB === 512 && mB.cacheMaxMB === 512 && mA.cachedMB <= 512 && mB.cachedMB <= 512,
+      `two windows split the tile cache: ${mA.cacheMaxMB} + ${mB.cacheMaxMB} MB (holding ${mA.cachedMB} + ${mB.cachedMB} MB)`);
+    // linked: the centres lined up when the second window came; pan and zoom A, B goes to the same place in µm
+    const s0A = await sharedOf(P), s0B = await sharedOf(b);
+    t.ok(sameShared(s0A, s0B), `linked from the start: the same place and scale (${JSON.stringify(s0A)} / ${JSON.stringify(s0B)})`);
+    await ev(() => { const sv = window.__spatialViewer, S = sv.state, i = S.m.image;
+      sv.deck.props.onViewStateChange({ viewState: { ...S.viewState, target: [i.width * 0.4, i.height * 0.55, 0], zoom: S.viewState.zoom + 1 }, viewId: "ortho" }); });
+    const wantA = await sharedOf(P);
+    const followB = await until(b, (w) => { const S = window.__spatialViewer.state, C = window.SodaCompare.state(), um = S.m.pixelSizeUm > 0 ? S.m.pixelSizeUm : 1, vs = S.viewState;
+      const c = [vs.target[0] * um - C.off.o[0], vs.target[1] * um - C.off.o[1]], s = vs.zoom - Math.log2(um);
+      return Math.abs(s - w.s) < 1e-3 && Math.hypot(c[0] - w.c[0], c[1] - w.c[1]) < 0.5 + 2 * Math.pow(2, -w.s); }, wantA, 15000);
+    t.ok(followB && sameShared(wantA, await sharedOf(b)), `pan + zoom in the first window: the second follows (${JSON.stringify(await sharedOf(b))})`);
+    // and the other way round
+    await b.evaluate(() => { const sv = window.__spatialViewer, S = sv.state;
+      sv.deck.props.onViewStateChange({ viewState: { ...S.viewState, target: [S.viewState.target[0] * 1.1, S.viewState.target[1] * 0.9, 0], zoom: S.viewState.zoom - 0.5 }, viewId: "ortho" }); });
+    const wantB = await sharedOf(b);
+    const followA = await until(P, (w) => { const S = window.__spatialViewer.state, C = window.SodaCompare.state(), um = S.m.pixelSizeUm > 0 ? S.m.pixelSizeUm : 1, vs = S.viewState;
+      const c = [vs.target[0] * um - C.off.o[0], vs.target[1] * um - C.off.o[1]], s = vs.zoom - Math.log2(um);
+      return Math.abs(s - w.s) < 1e-3 && Math.hypot(c[0] - w.c[0], c[1] - w.c[1]) < 0.5 + 2 * Math.pow(2, -w.s); }, wantB, 15000);
+    t.ok(followA && sameShared(wantB, await sharedOf(P)), `pan + zoom in the second window: the first follows (${JSON.stringify(await sharedOf(P))})`);
+    // a gene picked in the first window: it follows when the other dataset has it, else that window names it as missing
+    const namesB = new Set((await b.evaluate(() => window.__spatialViewer.state.geneIndex.map((g) => g.n.toLowerCase()))));
+    const keyA = await ev(() => window.__spatialViewer.state.exprKey);
+    const gA = await geneOf(A_ID, keyA);
+    const common = namesB.has(gA.name.toLowerCase()) ? gA.name
+      : await ev((nb) => { const s = new Set(nb); const g = window.__spatialViewer.state.geneIndex.find((x) => s.has(x.n.toLowerCase()) && !(x.b <= 0)); return g ? g.n : null; }, [...namesB]);
+    const gene = common || gA.name;
+    await pickFromSearch(P, "geneSearch", "geneResults", gene);
+    await until(P, () => window.__spatialViewer.state.genes.length > 0, null, 60000);
+    if (common) {
+      const got = await until(b, (n) => window.__spatialViewer.state.genes.some((g) => g.name.toLowerCase() === n.toLowerCase()), gene, 60000);
+      t.ok(got, `gene ${gene} picked in the first window is drawn in the second (${(await b.evaluate(() => window.__spatialViewer.state.genes.map((g) => g.name))).join(", ") || "none"})`);
+    } else {
+      const said = await until(b, (n) => document.getElementById("cmpMsg").textContent.includes(n), gene, 30000);
+      t.ok(said, `gene ${gene} is not in ${B_ID}: the second window says so ("${await b.evaluate(() => document.getElementById("cmpMsg").textContent)}")`);
+    }
+    await t.shot("compare_gene");
+    // close the second window: the first is alone again, with the whole cache. Its "bye" (pagehide) says so at once
+    // where the browser sends it; otherwise its heartbeat stops and the first window drops it after 7 s
+    await b.close();
+    const alone = await until(P, () => window.SodaCompare.state().peers.length === 0 && window.__spatialViewer.diag().memWindows === 1, null, 30000);
+    const mE = await ev(() => ({ ...window.__spatialViewer.diag(), msg: document.getElementById("cmpMsg").textContent, btn: document.getElementById("btnCompare").textContent }));
+    t.ok(alone && /was closed|stopped answering/.test(mE.msg) && mE.cacheMaxMB === 1024 && mE.btn === "Compare", `closing the second window: the first is alone (${mE.msg || "no message"}), the whole cache back (${mE.cacheMaxMB} MB)`);
+    // the second window's own errors (the first's are checked below)
+    const allow = (u) => OPTIONAL.some((re) => re.test(String(u).split("?")[0]));
+    const bCons = bLog.console.filter((c) => !(/Failed to load resource|status of 404/.test(c.text) && (!c.url || allow(c.url)))
+      && !(eng.type === pw.firefox && FIREFOX_QUIET.some((re) => re.test(c.text))));
+    const bBad = bLog.bad.filter((x) => !allow(x.url));
+    t.ok(!bLog.pageErrors.length && !bCons.length && !bBad.length, `second window: no page error, console error or failed request${bLog.pageErrors.length + bCons.length + bBad.length
+      ? ": " + [...bLog.pageErrors, ...bCons.map((c) => `${c.text} ${c.url}`), ...bBad.map((x) => `${x.status} ${x.url}`)].slice(0, 3).join(" / ") : ""}`);
+    checkClean(t, F);
+  } catch (e) { t.ok(false, `crashed: ${String(e.message).split("\n")[0]}`); }
+  finally { if (b && !b.isClosed()) await b.close().catch(() => {}); await t.ctx.close(); }
+}
+
 // ---- phone layout ----------------------------------------------------------------------------------------
 async function phone(browser, eng, urls) {
   const id = "visiumhd_pub";
@@ -816,6 +929,9 @@ async function phone(browser, eng, urls) {
     t.ok(L.sw <= L.iw + 1, `no sideways scrolling (page ${L.sw} px wide, window ${L.iw})`);
     t.ok(L.rail && L.rail.vis, `tab rail on screen ${JSON.stringify(L.rail)}`);
     t.ok(L.vp.w >= 300 && L.vp.h >= 250, `map ${Math.round(L.vp.w)} x ${Math.round(L.vp.h)} px`);
+    // Compare: no button in a phone's top bar; on a touch screen the section opens a plain new tab (no linked windows)
+    const cmp = await ev2(P, () => { const b = document.getElementById("btnCompare"); return { display: b ? getComputedStyle(b).display : "missing", canLink: window.SodaCompare ? window.SodaCompare.state().canLink : null }; });
+    t.ok(cmp.display === "none" && (eng.noTouch || cmp.canLink === false), `no Compare button on a phone (${JSON.stringify(cmp)})`);
     const k = `${eng.group}|phone`; (thumbs[k] = thumbs[k] || {})[eng.name] = r.thumb;
     await t.shot("phone_open");
     // a tab opens its sheet (tapped)
@@ -919,6 +1035,7 @@ async function phone(browser, eng, urls) {
         if (!SKIP.includes("probe")) await probe(browser, eng, urls);
         if (!SKIP.includes("datasets")) for (const [kind, id] of picked) await checkDataset(browser, eng, urls, kind, id);
         if (!SKIP.includes("walk")) await walk(browser, eng, urls);
+        if (!SKIP.includes("compare")) await compare(browser, eng, urls);
         if (!SKIP.includes("links")) await links(browser, eng, urls);
         if (!SKIP.includes("hardening")) await hardening(browser, eng, urls);
         if (!SKIP.includes("outlines")) { if (OUTLINE_DS) await cellOutlines(browser, eng, urls); else console.log("  (no export with cell outlines: outlines not checked)"); }

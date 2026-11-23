@@ -152,8 +152,21 @@
   // tile size; tileCacheSize (config.js) can only lower that, by its number of tiles. Touch keeps its own limit
   // above (~256 MB).
   const TILE_CACHE_BYTES = 1024 * 1048576;
-  const tileCacheBytesMax = () => (TOUCH ? Infinity : TILE_CACHE_BYTES);
+  // Compare side by side (compare.js): the windows of one group are on one computer, often in one browser process,
+  // so they split the ~1 GB (and Draw a region's kept chunks) between them: two windows ~512 MB each, four ~256 MB.
+  // compare.js says how many windows the group has (memShare); touch has no linked windows.
+  let memWindows = 1;
+  const tileCacheBytesMax = () => (TOUCH ? Infinity : TILE_CACHE_BYTES / memWindows);
   function tileCacheClear() { tileCache.clear(); tileCacheBytes = 0; }
+  // drop the least recently used tiles until the cache is within its limits again
+  function tileCacheTrim() {
+    const max = tileCacheMax(), maxBytes = tileCacheBytesMax();
+    while (tileCache.size > 1 && (tileCache.size > max || tileCacheBytes > maxBytes)) {
+      const old = tileCache.keys().next().value;
+      tileCacheBytes -= tileBytes(tileCache.get(old));
+      tileCache.delete(old);
+    }
+  }
   // On touch each stain's tile layer keeps at most this many tiles (GPU textures) between them,
   // rather than deck's five screens' worth per stain
   const TOUCH_TILE_BUDGET = 96;
@@ -436,6 +449,8 @@
     tokenWait = (async () => {
       try {
         let t = await requestToken(null);                  // cookie still valid? then no prompt
+        // a window opened beside another one (compare.js): that one already has a token, so no second prompt
+        if (!t && window.SodaCompare) t = await window.SodaCompare.askToken(new URL(TOKEN_URL, location.href).href);
         for (let tries = 0; !t && tries < 6; tries++) {
           const pw = await askPassword(tries > 0, "This viewer is password protected.");
           t = await requestToken(pw);
@@ -676,12 +691,7 @@
           else tileCacheBytes += tileBytes(bmp) - tileBytes(tileCache.get(key));
           tileCache.set(key, bmp);
           // never close() evicted bitmaps: deck may still be drawing them; GC reclaims them
-          const max = tileCacheMax(), maxBytes = tileCacheBytesMax();
-          while (tileCache.size > 1 && (tileCache.size > max || tileCacheBytes > maxBytes)) {
-            const old = tileCache.keys().next().value;
-            tileCacheBytes -= tileBytes(tileCache.get(old));
-            tileCache.delete(old);
-          }
+          tileCacheTrim();
         }
         return bmp;
       })
@@ -1389,7 +1399,8 @@
     if (umapSbs() && S.umap.sideVs) out.uside = S.umap.sideVs;
     return out;
   }
-  // The camera goes somewhere: by the mouse (deck's controller) or by a link to a view (viewlink.js).
+  // The camera goes somewhere: by the mouse (deck's controller), by a link to a view (viewlink.js)
+  // or by a linked window (compare.js).
   function setCamera(viewState, viewId) {
     autoFit = false;
     $("tapTip").hidden = true;                   // it pointed at a spot that has just moved
@@ -1482,7 +1493,8 @@
         kind: S.src && S.src.kind, tokenFlow: !!(TOKEN_URL && token), tokenLeftMin: token ? Math.round((token.expires - Date.now()) / 60000) : null,
         fetch: (url, o) => dataFetch(url, o),
         tileUrl, manifestUrl: !S.src ? null : S.src.tileUrl(0, 0, 0, 0, "png").replace(/tiles\/0\/0\/0\/0\.png/, "manifest.json"),
-        decoder: TILE_DECODERS[tileDecoder][0], decoders: TILE_DECODERS, cached: tileCache.size, cachedMB: Math.round(tileCacheBytes / 1048576), cacheMax: tileCacheMax(), touch: TOUCH,
+        decoder: TILE_DECODERS[tileDecoder][0], decoders: TILE_DECODERS, cached: tileCache.size, cachedMB: Math.round(tileCacheBytes / 1048576), cacheMax: tileCacheMax(),
+        cacheMaxMB: TOUCH ? null : Math.round(tileCacheBytesMax() / 1048576), memWindows, touch: TOUCH,
       }) };
   }
 
@@ -2621,17 +2633,18 @@
   // kept: such a buffer belongs to that one run alone, so it can be moved to the worker instead of copied
   // (lassoTransferable). A buffer that was ever kept may still be in use by another run: always copied.
   const LASSO_CHUNK_BYTES = (TOUCH ? 64 : 512) * 1048576;
+  const lassoChunkMax = () => LASSO_CHUNK_BYTES / memWindows;   // split between Compare's windows, as the tile cache
   const lassoKept = new WeakSet();
   function lassoKeep(L, k, b, inUse) {
     const size = (x) => x.byteLength || 0;
     let bytes = 0;
     for (const v of L.chunks.values()) bytes += size(v);
     for (const [k2, v] of L.chunks) {                           // oldest first; never the ones this run needs
-      if (bytes + size(b) <= LASSO_CHUNK_BYTES) break;
+      if (bytes + size(b) <= lassoChunkMax()) break;
       if (inUse.has(k2)) continue;
       L.chunks.delete(k2); bytes -= size(v);
     }
-    if (bytes + size(b) > LASSO_CHUNK_BYTES) return;            // no room: this run's alone
+    if (bytes + size(b) > lassoChunkMax()) return;              // no room: this run's alone
     L.chunks.set(k, b); lassoKept.add(b);
   }
   // the buffers of `bufs` that only this run holds: moved to a worker (transfer), not copied
@@ -5232,7 +5245,7 @@
     }
     finally {
       if (lay) lay.opening(false, tok);
-      window.dispatchEvent(new CustomEvent("soda:opened", { detail: { id } }));   // viewlink.js
+      window.dispatchEvent(new CustomEvent("soda:opened", { detail: { id } }));   // viewlink.js, compare.js
     }
   }
   async function openDatasetNow(id) {
@@ -5607,7 +5620,7 @@
     ownInit();                                      // before paintInit: a link puts the file's results back before their colouring
     paintInit();
     shapesInit();
-    // a link to a view (viewlink.js): handed only what it needs from here
+    // a link to a view (viewlink.js) and linked windows (compare.js): handed only what they need from here
     const share = {
       state: () => S, seq: () => openSeq, status, render, renderRna, setCamera, sessionState, sessionApply,
       addGene, addMolGene, addRnaGene, setColorBy, recolorGene, recolorRnaGene, hexToRgb01, hexToRgb255,
@@ -5615,8 +5628,14 @@
       umapLoad, umapSetRes, umapSetView, umapDirty, syncUmapUI,
       hasClusterings: () => umapClusterings().length > 0,
       clusterN: () => { const i = S.umap && S.umap.cl ? umapClusterInfo() : null; return i ? i.n || (i.sizes || []).length || 0xffff : 0; },
+      // the access token of a private site, for a window this one opened (never the password)
+      tokenUrl: TOKEN_URL ? new URL(TOKEN_URL, location.href).href : "",
+      token: () => (token && Date.now() < token.expires - 60000 ? { sas: token.sas, base: token.base, expires: token.expires } : null),
+      // how many windows of a Compare group share this computer's memory (1 = this one alone)
+      memShare: (n) => { memWindows = Math.max(1, Math.min(8, Math.floor(n) || 1)); tileCacheTrim(); },
     };
     if (window.SodaViewLink) window.SodaViewLink.init(share);
+    if (window.SodaCompare) window.SodaCompare.init(share);
     // readers who used the old offline use (removed in 0.10.0): sw.js removes that service worker and its caches
     try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.update())); } catch (e) { /* none */ }
     const cfgSets = cfg.datasets || {};

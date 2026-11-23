@@ -63,13 +63,14 @@
     panelSave: { help: "Save JSON writes a file with the drawn shapes, the layer, the UMAP settings, the clustering on show with your cluster names, and the quality filter. Load JSON reads such a file and runs it again. Copy link to this view copies an address that opens this dataset as it looks now: position and zoom, layer, genes, stains, colours, clusters, the quality filter and the open tab. Drawn shapes too big for a link are left out, and it says so. Save JSON keeps the same view in a file." },
     panelImage: { more: ["snapBar", "snapName"], moreAt: "end",
       help: "Saves the map as it is on screen (Tissue, UMAP or Side by side) as a PNG file, with a legend of the colours on show, the scale bar and the dataset's name. 1x is the screen's own pixels; 2x and 4x draw the same view again with more pixels and finer image tiles, which takes a moment while the tiles load. Panels over the map (volcano, plots) are not in the picture: they have their own Save buttons. The camera beside Fit saves with these settings." },
+    panelCompare: { help: "Opens another dataset in a second window beside this one. While Link views is on, moving or zooming one window moves the others to the same place at the same scale (in µm). Link from here keeps what each window shows now as the same place; Line up centres matches the middle of each picture. Views are not rotated. The windows share this computer's memory for image tiles. On a phone or tablet the dataset opens in a new tab, not linked." },   // compare.js builds the section
     panelDataset: { help: "The size of the image, its pixel size, and how many bins and genes each layer holds." },
     panelHelp: {},
   };
   const ORDER = {
     view: ["panelChannels", "panelGenes", "panelMolecules", "panelOverlays", "panelRna"],
     analyze: ["panelUmap", "panelLasso", "panelShapes", "panelVolcano", "panelPlots"],
-    share: ["panelImage", "panelSave", "panelDataset", "panelHelp"],
+    share: ["panelImage", "panelSave", "panelCompare", "panelDataset", "panelHelp"],
   };
   // the sections few people need: behind one "More options" at the end of their tab, in this order
   const MORE = {
@@ -564,6 +565,7 @@
       const t = txt("plTitle"), has = !!(window.SodaPlots && window.SodaPlots.result) || up("plotsPanel");
       return has && t && t !== "Plots" ? t : "not drawn";
     },
+    panelCompare: () => (window.SodaCompare ? window.SodaCompare.summary() : ""),
     panelDataset() { const p = txt("dsInfo").split(" · "); return p.length > 3 ? `${p[0]} · ${p[p.length - 1]}` : p.slice(0, 2).join(" · "); },   // size and pixel size
   };
   function paintSummaries() {
