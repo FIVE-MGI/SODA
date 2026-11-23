@@ -390,7 +390,7 @@ folder whose name looks like one is skipped (rename it).
 
 | id | kind | status | time | peak memory | export size | note |
 |---|---|---|---|---|---|---|
-| bx_broken | xenium (molecules) | failed | 12 s | 0.08 GB |  | prepare failed (exit 1) |
+| bx_broken | xenium (molecules) | failed | 12 s | 0.08 GB |  | prepare failed (exit 1): [xenium] no positions to draw a background from |
 | bx_cosmx | cosmx (molecules) | ok | 31 s | 0.12 GB | 17 files, 0.2 MB |  |
 | bx_two_runs | merscope (cells+molecules) | skipped |  |  |  | not sure: ... a choice is open: 2 folders hold cell_by_gene + cell_metadata (segmentation runs); which one? |
 
