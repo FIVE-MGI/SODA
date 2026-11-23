@@ -14,7 +14,7 @@
 //   walk      visiumhd_pub: Tissue / UMAP / Side by side; Draw a region with the mouse (two circles)
 //             and Run UMAP (a worker that loads umap-js); Save JSON and Save CSV (file downloads);
 //             volcano (its worker) and its PNG (an SVG drawn on a canvas); heatmap / violin and the
-//             plot's PNG; Cell sets merge and its CSV; the QC filter; Save image at 1x, 2x and 4x (the
+//             plot's PNG; the QC filter; Save image at 1x, 2x and 4x (the
 //             PNG's size read from the file); Copy link to this view, and that link opened in a new tab
 //             (same dataset, layer, genes, mode and camera).
 //   links     ?data=<folder>/&ds=<id> (no datasets.json), and ?data=<folder>/ with a datasets.json
@@ -552,21 +552,6 @@ async function walk(browser, eng, urls) {
         const z = png && pngSize(png.buf);
         t.ok(!!z && z.w > 100, `plot Save PNG: ${png ? png.name : "nothing"} ${z ? `${z.w} x ${z.h}` : ""}`, "volcano / plot PNG (SVG on a canvas)");
       }
-    });
-
-    // Cell sets: merge two clusters of the section's clustering, the CSV
-    await step("Cell sets merge", async () => {
-      await ev(() => { const b = document.getElementById("csShowCl"); if (b && !b.closest("[hidden]")) b.click(); });
-      const ready = await until(P, () => document.querySelectorAll("#csPick input[data-c]").length >= 2, null, 30000);
-      const codes = await ev(() => [...document.querySelectorAll("#csPick input[data-c]")].slice(0, 2).map((i) => Number(i.dataset.c)));
-      const txt = ready ? await ev((c) => window.SodaSets._merge(c, "Browser test set"), codes) : "no clusters on show";
-      const sets = await ev(() => document.querySelectorAll("#csSets .cs-set").length);
-      t.ok(ready && sets === 1, `merged clusters ${codes.join(" + ")}: ${sets} set ("${String(txt).slice(0, 100)}")`, "Cell sets merge");
-      const csv = await download(t, () => ev(() => document.getElementById("csCsv").click()), 20000);
-      const n = csv && csv.buf ? csv.buf.toString("utf-8").trim().split("\n").length : 0;
-      t.ok(n > 100 && /Browser test set/.test(csv.buf.toString("utf-8")), `cell sets CSV: ${csv ? csv.name : "nothing"} (${n} lines)`, "Cell sets merge");
-      await t.shot("walk_cellsets");
-      await ev(() => window.SodaSets._undo());
     });
 
     // the QC filter: total counts >= the median removes about half the bins

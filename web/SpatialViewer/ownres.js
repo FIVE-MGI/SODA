@@ -25,7 +25,7 @@
 //
 //   Where it goes  the UMAP: the section UMAP (Analyze tab, Clusters), in place of SODA's or as the only one, the
 //              reader picks which; clusterings: the Clusters section's clusterings (tissue and UMAP colours, legend,
-//              names, cell sets, volcano / DE and plots groups); numbers: View tab, Colour by a value.
+//              names, volcano / DE and plots groups); numbers: View tab, Colour by a value.
 //
 //   Privacy    the file is read here and stays in this browser: nothing is uploaded. Save JSON can carry the
 //              matched table (per positions.bin row, no ids, no file name; its size is shown first). A link to the

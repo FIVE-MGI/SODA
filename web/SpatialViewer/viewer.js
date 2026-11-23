@@ -3261,9 +3261,7 @@
         if (!c) return null;
         const names = { ...(c.categories || []) }, own = (S.umap.names && S.umap.names[clKey(c)]) || {};
         Object.assign(names, own);
-        // gone: numbers merged into a cell set (no bins of their own any more); sets: changes when the sets do
-        return { n: c.n, res: clKey(c), label: clLabel(c), sizes: c.sizes || null, names, user: clUser(c),
-                 gone: c.gone || null, sets: c.sets ? JSON.stringify(c.sets) : "" };
+        return { n: c.n, res: clKey(c), label: clLabel(c), sizes: c.sizes || null, names, user: clUser(c) };
       },
       loadSectionClusters: async () => { await umapSetRes(S.umap.res); return S.umap.cl ? { cl: S.umap.cl, res: S.umap.clRes } : null; },
     });
@@ -3271,7 +3269,7 @@
     if (window.SodaPlots) window.SodaPlots.init({
       state: () => S, touch: TOUCH, download: lassoDownload, addGene, addRnaGene, rnaColorBy: setColorBy, fetchChunks: lassoFetch, chunkOf: lassoChunkOf,
       qc: () => binQc, clusterings: umapClusterings, clusterRgb, catRgb: (i) => liftForDark(catColor(i)), lightRows: umapLightRows,
-      // a clustering's codes per bin with the cell sets applied (null: read the file as before)
+      // a clustering's codes per bin (null: read the file as before)
       clusterCodes: (c) => clCodes(c).catch(() => null),
     });
     buildLassoUI();
@@ -3291,9 +3289,6 @@
   const FLY_MS = 1300;
   const umapBlank = () => ({ key: null, index: null, pos: null, uxy: null, box: null, nEmb: 0, radius: 1,
     clusters: new Map(), cl: null, clRes: null, res: null, centroids: new Map(), names: {}, hidden: new Set(),
-    // cell sets (cellsets.js): the clusters files as read (clusters holds them with the sets applied), and the sets
-    // per clustering key: [{ ids: [lowest member first, ...], prev: the lowest member's own name before the merge }]
-    clRaw: new Map(), sets: {}, setsVer: 0,
     pick: null, sel: null, selN: 0, selEmb: 0, view: "tissue", colorBy: "gene", tool: null, hover: -1, grid: null,
     tissueVs: null, umapVs: null, sideVs: null, anim: null, lastFly: null, rowOf: null, mix: null, ver: 0,
     cloud: new Map(), drawn: new Map(), busy: null,
@@ -3306,7 +3301,7 @@
   const umapByCluster = () => !!(S.umap && S.umap.colorBy === "cluster" && S.umap.cl);
   const umapClusterings = () => {
     const U = S.umap, m = umapMeta();
-    return clWithSets(ownWith((U && U.index && U.index.clusterings) || (m && m.clusterings) || []));
+    return ownWith((U && U.index && U.index.clusterings) || (m && m.clusterings) || []);
   };
   // no embedding to switch to (GeoMx groupings; your own groupings without a UMAP on a layer without SODA's)
   const umapNoEmb = () => { const m = umapMeta(), R = ownCur(); return !m || (m.embedding === "none" && !(R && R.emb)); };
@@ -3340,78 +3335,34 @@
   };
   function umapDirty() { if (S.umap) S.umap.ver++; }
 
-  // ---- cell sets: clusters merged into one set (cellsets.js makes them, Save JSON keeps them) ----------
-  // A set takes the number of its lowest member and its name lives in U.names like any cluster's, so its
-  // colour, name and place follow everywhere; the other members' numbers no longer occur. Applied where the
-  // codes and the clusterings are read (clSetsApply, umapClusterings), so the legend, both maps, the labels,
-  // volcano and plot groups, Count clusters and the saved image all see the sets, not the clusters.
-  const clSetsOf = (ck) => (S.umap && S.umap.sets[ck]) || [];
-  const clSetHead = (c) => clSetsOf(S.umap && S.umap.clRes).some((s) => s.ids[0] === c);
-  function clSetsApply(U, ck) {
-    const raw = U.clRaw.get(ck); if (!raw) return null;
-    const sets = U.sets[ck] || [];
-    let arr = raw;
-    if (sets.length) {
-      const to = new Uint16Array(65536);
-      for (let i = 0; i < 65536; i++) to[i] = i;
-      for (const s of sets) for (const c of s.ids) to[c] = s.ids[0];
-      arr = new Uint16Array(raw.length);
-      for (let r = 0; r < raw.length; r++) arr[r] = to[raw[r]];
-    }
-    U.clusters.set(ck, arr); U.centroids.delete(ck);
-    if (U.clRes === ck) U.cl = arr;
-    return arr;
-  }
-  // the clusterings as the export describes them, with a set's sizes and markers in its lowest member's place
-  // and the other members listed in `gone` (empty: the legend, volcano and Count clusters skip them)
-  let setsDesc = { src: null, U: null, ver: -1, out: null };
-  function clWithSets(list) {
-    const U = S.umap;
-    if (!U || !list.some((c) => clSetsOf(clKey(c)).length)) return list;
-    if (setsDesc.src === list && setsDesc.U === U && setsDesc.ver === U.setsVer) return setsDesc.out;
-    const out = list.map((c) => {
-      const sets = clSetsOf(clKey(c));
-      if (!sets.length) return c;
-      const sizes = Array.isArray(c.sizes) ? c.sizes.slice() : null, mk = Array.isArray(c.markers) ? c.markers.slice() : null, gone = [];
-      for (const s of sets) {
-        const [h, ...rest] = s.ids;
-        if (sizes) sizes[h] = s.ids.reduce((a, k) => a + (c.sizes[k] || 0), 0);
-        if (mk) {                                   // the members' top markers in turn (their numbers belong to the members alone)
-          const lists = s.ids.map((k) => c.markers[k] || []), seen = new Set(), m = [];
-          for (let i = 0; m.length < 20 && lists.some((l) => i < l.length); i++) for (const l of lists) {
-            const g = l[i] && (typeof l[i] === "string" ? l[i] : l[i].gene);
-            if (g != null && !seen.has(g)) { seen.add(g); m.push({ gene: g }); }
-          }
-          mk[h] = m;
-        }
-        for (const k of rest) { gone.push(k); if (sizes) sizes[k] = 0; if (mk) mk[k] = []; }
-      }
-      return { ...c, sizes: sizes || c.sizes, markers: mk || c.markers, gone, sets: sets.map((s) => s.ids.slice()) };
-    });
-    setsDesc = { src: list, U, ver: U.setsVer, out };
-    return out;
-  }
-  // a clustering's codes per bin row (sets applied); the clusters files are read here and nowhere else
+  // a clustering's codes per bin row; the clusters files are read here and nowhere else
   async function clCodes(c) {
     const U = S.umap, ck = clKey(c);
     if (!U || !U.key || U.key !== S.exprKey) return null;
     if (U.clusters.has(ck)) return U.clusters.get(ck);
-    if (!U.clRaw.has(ck)) {
-      const raw = c.own ? c.codes : new Uint16Array(await S.src.buf(`expr/${U.key}/umap/${c.file || `clusters_r${c.resolution}.bin`}`));
-      if (S.umap !== U) return null;
-      if (U.pos && raw.length !== U.pos.length / 2) throw new Error(`clusters file has ${raw.length} rows, positions.bin ${U.pos.length / 2}`);
-      U.clRaw.set(ck, raw);
-    }
-    return clSetsApply(U, ck);
+    const arr = c.own ? c.codes : new Uint16Array(await S.src.buf(`expr/${U.key}/umap/${c.file || `clusters_r${c.resolution}.bin`}`));
+    if (S.umap !== U) return null;
+    if (U.pos && arr.length !== U.pos.length / 2) throw new Error(`clusters file has ${arr.length} rows, positions.bin ${U.pos.length / 2}`);
+    U.clusters.set(ck, arr); U.centroids.delete(ck);
+    if (U.clRes === ck) U.cl = arr;
+    return arr;
   }
-  // cellsets.js changed the sets (or the names) of clustering ck: apply and redraw
-  function clSetsChanged(ck) {
-    const U = S.umap; if (!U) return;
-    if (U.clRaw.has(ck)) clSetsApply(U, ck);
-    U.setsVer++;
-    umapDirty(); syncUmapUI(); render();
-    if (window.SodaVolcano) window.SodaVolcano.refresh();          // their group menus list the sets
-    if (window.SodaPlots) window.SodaPlots.refresh();
+  // Cell sets (clusters merged into one named set) were cut after 0.10.0. A Save JSON file or a link made before
+  // can still hold them (sectionClusters.sets): a set kept its name under its lowest member, so that member gets
+  // its own name back (prev) and the rest of the set is ignored.
+  function clOldSets(names, sets) {
+    if (!names || typeof names !== "object" || !sets || typeof sets !== "object") return;
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    for (const ck of Object.keys(sets)) {
+      if (!own(names, ck) || !Array.isArray(sets[ck])) continue;
+      const per = names[ck];
+      if (!per || typeof per !== "object") continue;
+      for (const st of sets[ck]) {
+        const head = st && Array.isArray(st.ids) ? Number(st.ids[0]) : NaN;
+        if (!Number.isInteger(head) || head < 0 || head > 65534) continue;
+        if (typeof st.prev === "string" && st.prev) per[head] = st.prev.slice(0, 60); else delete per[head];
+      }
+    }
   }
 
   // ---- the flight: one ScatterplotLayer, two positions per dot, mixed on the GPU --------
@@ -4232,7 +4183,6 @@
       host.appendChild(head);
     }
     for (let c = 0; c < o.n; c++) {
-      if (o.skip && o.skip(c)) continue;                            // merged into a cell set
       const off = !!(o.hidden && o.hidden.has(c));
       const mk = o.markers[c] || [];
       const top = mk.slice(0, 3).map(markerName).filter(Boolean);
@@ -4372,8 +4322,7 @@
   const umapCtAvail = () => { const m = umapMeta(); return !!(m && m.celltypes); };
   const umapByType = () => !!(S.umap && S.umap.colorBy === "celltype" && S.umap.ct);
   const umapByCat = () => umapByCluster() || umapByType();      // one colour per bin replaces the genes
-  // (none for a cell set: the suggestion was made for its lowest member alone)
-  const umapSuggest = (c) => { const U = S.umap, a = U.ctInfo && U.ctInfo.byRes.get(U.clRes); return (a && a[c] && !clSetHead(c) && a[c]) || null; };
+  const umapSuggest = (c) => { const U = S.umap, a = U.ctInfo && U.ctInfo.byRes.get(U.clRes); return (a && a[c]) || null; };
 
   // the suggestions per clustering: loaded with the clusters, quietly absent for older exports
   async function umapLoadCtInfo() {
@@ -4475,10 +4424,8 @@
     const n = info.n || sizes.length;
     const setName = (c, t) => { (U.names[U.clRes] = U.names[U.clRes] || {})[c] = t; };
     const hasSug = !!(U.ctInfo && U.ctInfo.byRes.get(U.clRes));
-    const gone = new Set(info.gone || []);
     clusterLegend(host, {
       n, sizes, markers: info.markers || [], picked: U.pick, hidden: U.hidden, name: umapName, rgb: sectionRgb,
-      skip: gone.size ? (c) => gone.has(c) : null,
       onPick: (c) => umapPick(c),
       onRename: (c, t) => {
         if (t) setName(c, t);
@@ -4519,7 +4466,7 @@
     // groupings without an embedding (GeoMx ROIs): the Tissue / UMAP switch has nothing to switch to
     const noEmb = ok && umapNoEmb();
     for (const el of $("viewSwitch").querySelectorAll(".seg, .fly-play")) el.hidden = noEmb || !ok;
-    if (!ok) { $("selChip").hidden = !lpOnly; $("selChipTxt").textContent = lpOnly; if (window.SodaSets) window.SodaSets.refresh(); return; }
+    if (!ok) { $("selChip").hidden = !lpOnly; $("selChipTxt").textContent = lpOnly; return; }
     $("viewSwitch").querySelectorAll("button[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === U.view));
     $("flyPlay").disabled = !!U.anim;
     const list = umapClusterings();
@@ -4562,26 +4509,21 @@
       : `Draw a box or a loop around dots, on the tissue or the UMAP, to light the same ${W.bins} in both.`;
     $("selChip").hidden = !has && !lpTxt;
     $("selChipTxt").textContent = selTxt || lpTxt;
-    if (window.SodaSets) window.SodaSets.refresh();
   }
 
-  // Saved with Circle -> UMAP's JSON: which whole-section clustering, the names given to clusters and the
-  // cell sets (per clustering key; files saved before cell sets have none, and load as before).
+  // Saved with Circle -> UMAP's JSON: which whole-section clustering and the names given to clusters (cell sets
+  // in a file saved before they were cut are ignored: clOldSets).
   function umapSaveState() {
     const U = S.umap;
     if (!U || !U.key || U.clRes == null) return null;
-    const sets = {};
-    for (const [ck, l] of Object.entries(U.sets)) if (l && l.length) sets[ck] = l.map((x) => ({ ids: x.ids.slice(), prev: x.prev == null ? null : x.prev }));
-    return { layer: U.key, resolution: U.clRes, names: U.names, hidden: [...U.hidden], ...(Object.keys(sets).length ? { sets } : {}) };
+    return { layer: U.key, resolution: U.clRes, names: U.names, hidden: [...U.hidden] };
   }
   function umapLoadState(o) {
     const U = S.umap;
     if (!o || !U || o.layer !== U.key || !o.names || typeof o.names !== "object") return;
+    clOldSets(o.names, o.sets);
     U.names = o.names;
-    U.sets = window.SodaSets ? window.SodaSets.clean(o.sets) : {};
-    for (const ck of U.clRaw.keys()) clSetsApply(U, ck);
     if (U.pick !== null && U.cl && !U.cl.includes(U.pick)) U.pick = null;
-    U.setsVer++;
     umapDirty(); syncUmapUI(); render();
   }
 
@@ -5583,7 +5525,7 @@
     return ownMemo.out;
   }
   // the results changed (loaded, roles changed, the UMAP picked, removed): the section UMAP and clusters again, as
-  // for a new layer, keeping the names and cell sets given so far and the clustering on show (o.show: show this one).
+  // for a new layer, keeping the names given so far and the clustering on show (o.show: show this one).
   // One at a time: each starts from what the one before it left.
   let ownChain = Promise.resolve();
   function ownChanged(o) {
@@ -5595,15 +5537,11 @@
   async function ownChangedNow(o) {
     o = o || {};
     if (!S.m || S.mode === "rna" || !S.exprKey || !S.umap) return;
-    const old = S.umap, keep = { key: old.key, names: old.names, sets: old.sets, res: old.clRes, colorBy: old.colorBy };
+    const old = S.umap, keep = { key: old.key, names: old.names, res: old.clRes, colorBy: old.colorBy };
     ownMemo = { base: null, R: null, out: null }; secLut = { key: null, lut: null };    // the same keys may now mean other groups and colours
     await umapOnLayer();
     const U = S.umap;
-    if (U.key && keep.key === U.key) {
-      U.names = keep.names; U.sets = keep.sets;
-      for (const ck of U.clRaw.keys()) clSetsApply(U, ck);
-      U.setsVer++;
-    }
+    if (U.key && keep.key === U.key) U.names = keep.names;
     const has = (k) => k != null && umapClusterings().some((c) => clKey(c) === k);
     const want = has(o.show) ? o.show : has(keep.res) ? keep.res : null;
     try {
@@ -5641,21 +5579,6 @@
     if (window.__spatialViewer) window.__spatialViewer.own = own;     // for testing from the console
   }
 
-  // ---- Cell sets (cellsets.js): what it needs from here -------------------------------------------------
-  function cellSetsInit() {
-    if (!window.SodaSets) return;
-    window.SodaSets.init({
-      state: () => S, touch: TOUCH, NONE: UMAP_NONE, download: lassoDownload, words: wd,
-      // a whole-section clustering can be shown here (the section may still have to load it)
-      available: () => !!(S.mode !== "rna" && S.umap && !$("panelUmap").hidden && umapClusterings().length),
-      clustering: umapClusterInfo, label: clLabel, name: umapName, rgb: sectionRgb,
-      baseName: (c) => { const i = umapClusterInfo(); return i && i.categories && i.categories[c] != null ? String(i.categories[c]) : `Cluster ${c}`; },
-      changed: clSetsChanged,
-      showClusters: () => { const sel = $("colorBy"); sel.value = "cluster"; sel.dispatchEvent(new Event("change")); },
-      dsId: () => S.dsId, layer: () => S.exprKey,
-    });
-  }
-
   // ---- Export shapes (selections.js): what it needs from here -------- --------------------------------------
   function shapesInit() {
     if (!window.SodaShapes) return;
@@ -5680,7 +5603,6 @@
     umapInit();
     touchInit();
     snapshotInit();
-    cellSetsInit();
     ownInit();                                      // before paintInit: a link puts the file's results back before their colouring
     paintInit();
     shapesInit();

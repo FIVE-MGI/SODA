@@ -243,7 +243,7 @@
     }
     const pos = await positions(), N = pos.length / 2;
     if (gv.startsWith("sec:")) {
-      // the viewer's own description first: with cell sets (merged clusters) it says which numbers are gone
+      // the viewer's own description first (your own results' groupings are only there)
       const own0 = (api.clusterings() || []).find((x) => String(clKey(x)) === gv.slice(4));
       const idx = own0 ? null : await sectionIndex(), c = own0 || (idx.clusterings || []).find((x) => String(clKey(x)) === gv.slice(4));
       if (!c) throw new Error("That clustering is not in this layer.");

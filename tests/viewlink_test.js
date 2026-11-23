@@ -44,10 +44,12 @@ const circle = (cx, cy, r, k) => Array.from({ length: k }, (_, i) => [cx + r * M
   // a link from before 0.10.0 named four tabs: Clusters opens Analyze, Save opens Share
   eq(VL.clean(st).view.tab, "analyze", "an older link's Clusters tab opens the Analyze tab");
   eq(VL.clean({ dataset: "d", view: { v: 1, tab: "save" } }).view.tab, "share", "an older link's Save tab opens the Share tab");
-  // cell sets (clusters merged into named sets) travel with the clustering, as in Save JSON
+  // cell sets (clusters merged into named sets) were cut after 0.10.0: a link made before still opens, its sets cleaned
+  // (viewer.js only gives the members their own names back from them); a new link never carries any
   const withSets = typical();
   withSets.sectionClusters.sets = { "0.6": [{ ids: [1, 4, 7], prev: "Old name" }, { ids: [2, 3], prev: null }] };
-  eq((await VL.decode(await VL.encode(VL.forLink(withSets)))).state.sectionClusters.sets, withSets.sectionClusters.sets, "cell sets survive the link");
+  eq((await VL.decode(await VL.encode(withSets))).state.sectionClusters.sets, withSets.sectionClusters.sets, "an older link with cell sets still opens");
+  eq(VL.forLink(withSets).sectionClusters.sets, undefined, "a new link carries no cell sets");
   eq(VL.clean({ dataset: "d", sectionClusters: { layer: "l", resolution: 1, names: {}, hidden: [], sets: JSON.parse('{"__proto__": [{"ids": [1, 2]}], "1": [{"ids": [5]}, {"ids": [3, "x", 9], "prev": "<b>n</b>"}, "junk"]}') } }).sectionClusters.sets,
      { 1: [{ ids: [3, 9], prev: "bn/b" }] }, "cell sets: unsafe keys, one-member sets and non-numbers are dropped, text is stripped");
   // non-ASCII text (µ, accents, CJK) survives both forms

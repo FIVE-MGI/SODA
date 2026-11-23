@@ -8,7 +8,7 @@
 //   colours on the tissue and on the file's UMAP checked by pixel, Colour by a value with the file's number;
 //   a scanpy-style TSV, gzipped (obs.to_csv: "-1-0" endings, leiden as text, X_umap1 / X_umap2), with an uns-style
 //   colour list pasted in the role table; a partial match (Use anyway); a file whose roles are guessed wrong and put
-//   right in the table; DE (the volcano) on a loaded clustering; cell sets on it; Save JSON with the table in it and
+//   right in the table; DE (the volcano) on a loaded clustering; Save JSON with the table in it and
 //   Load JSON on a fresh page; a link to the view (a fingerprint: it asks for the file, then the colouring comes back);
 //   drag and drop; junk files (each a clear message, no page error); a layer without a barcode list (how to add it, and
 //   a "# soda row order" file) and a layer without SODA's UMAP; and the section at 375 px phone width. The layers
@@ -273,7 +273,7 @@ async function run(B, browser, URL0, DATA) {
   await setVal(page, "paintMode", "off");
   await setVal(page, "colorBy", "cluster"); await settle(page);
 
-  // ---- 2. DE (volcano) on a loaded clustering; cell sets on it -----------------------------------------------------
+  // ---- 2. DE (volcano) on a loaded clustering -------------------------------------------------------------------------
   await setVal(page, "clusterRes", "own:cell_type"); await settle(page);
   await page.evaluate(() => window.SodaVolcano.refresh());
   const groups = await page.evaluate(() => {
@@ -289,12 +289,6 @@ async function run(B, browser, URL0, DATA) {
   const sizes = [0, 0, 0]; for (let rr = 0; rr < N; rr++) if (rr % 10 !== 3) sizes[band(rr)]++;
   check(vok && V.tested > 5 && V.a === sizes[0] && V.b === sizes[2], `${B}: DE (volcano) on the loaded clustering: Left band vs Right band, with their sizes`, { V, sizes });
   await page.evaluate(() => { const p = document.getElementById("volcanoPanel"); if (p) p.hidden = true; });
-  const before = await page.evaluate(() => Array.from(window.__spatialViewer.state.umap.cl.slice(0, 4000)));
-  await page.evaluate(() => window.SodaSets._merge([0, 1], "Left and middle"));
-  await settle(page);
-  const cs = await page.evaluate((bf) => { const U = window.__spatialViewer.state.umap; let ok = 0, n = 0; for (let r = 0; r < bf.length; r++) if (bf[r] === 1) { n++; if (U.cl[r] === 0) ok++; } return { ok, n, sets: U.sets["own:cell_type"] }; }, before);
-  check(cs.n > 0 && cs.ok === cs.n && cs.sets && cs.sets.length === 1, `${B}: cell sets: two of the file's groups merged into one`, cs);
-  await page.evaluate(() => window.SodaSets._unmerge(0)); await settle(page);
 
   // ---- 3. a link to the view: a fingerprint, the file asked for, the colouring back --------------------------------
   const fp = await page.evaluate(() => window.SodaOwn.current(window.__spatialViewer.state.dsId, window.__spatialViewer.state.exprKey).fp);

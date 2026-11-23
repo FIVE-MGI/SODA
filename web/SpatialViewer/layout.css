@@ -114,22 +114,15 @@
 .snap-quick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .top-bar #btnFit + .snap-quick { margin-left: -6px; }
 .snap-msg { white-space: pre-line; }
-/* Cell sets (cellsets.js): a tick box per cluster, then the sets with a name to edit and Un-merge */
+/* A row of chips with a tick box each (Export shapes, selections.js) */
 .cs-pick { display: flex; flex-wrap: wrap; gap: 4px; max-height: 168px; overflow-y: auto; margin: 6px 0 4px; padding: 1px; }
 .cs-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-width: 0; padding: 2px 8px 2px 4px; border: 1px solid var(--line);
   border-radius: 12px; background: var(--panel2); font-size: 12px; cursor: pointer; }
 .cs-chip input { margin: 0; flex: none; }
 .cs-chip i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .cs-chip span { min-width: 0; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cs-chip.set span { font-weight: 600; }
 .cs-chip.on { border-color: var(--accent); background: #1f3550; }
 .cs-chip:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
-.cs-sets { margin-top: 6px; }
-.cs-set { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 3px 6px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); }
-.cs-set i { width: 10px; height: 10px; border-radius: 2px; }
-.cs-set input[type=text] { padding: 2px 5px; font-size: 12px; }
-.cs-set button { padding: 2px 8px; font-size: 12px; white-space: nowrap; }
-.cs-set small { grid-column: 2 / -1; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .cs-note, .cs-msg { word-break: normal; }
 
 @media (min-width: 701px) {
@@ -180,7 +173,6 @@
   .app.tabbed .cl-legend { max-height: 300px; }
   .cs-chip { padding: 5px 10px 5px 6px; font-size: 13px; }
   .cs-chip span { max-width: 220px; }
-  .cs-set input[type=text] { font-size: 16px; }
 }
 /* ---- fingers: targets of at least 40 px ------------------------------------------------------------ */
 @media (pointer: coarse) {

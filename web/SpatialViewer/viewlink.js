@@ -255,7 +255,8 @@
         if (Object.keys(per).length) s.names[rk] = per;
       }
       s.hidden = list(c.hidden, 2000, (x) => int(x, 0, 65534)) || [];
-      // cell sets (cellsets.js): clusters merged into one set, per clustering. viewer.js cleans them again as it reads them.
+      // cell sets (clusters merged into one set; cut after 0.10.0) of a link made before: kept, cleaned, only so that
+      // viewer.js (clOldSets) gives each set's lowest member its own name back; the sets themselves are ignored
       if (isObj(c.sets)) {
         const sets = {};
         for (const rk of Object.keys(c.sets).slice(0, 40)) {
@@ -297,7 +298,7 @@
     if (st.sampling === "exact" || st.sampling === "fast") o.sampling = st.sampling;
     if (Array.isArray(st.shapes) && st.shapes.length) o.shapes = st.shapes;
     const sc = st.sectionClusters;
-    if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [], ...(sc.sets ? { sets: sc.sets } : {}) };
+    if (sc) o.sectionClusters = { layer: sc.layer, resolution: sc.resolution, names: sc.names || {}, hidden: sc.hidden || [] };
     if (st.qcFilter && st.qcFilter.thresholds) o.qcFilter = { layer: st.qcFilter.layer, thresholds: st.qcFilter.thresholds };
     if (st.view) o.view = st.view;
     return o;

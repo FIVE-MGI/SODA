@@ -49,9 +49,7 @@
     panelUmap: { notes: ["umapNote"],
       help: "Colour the bins by the genes picked in View, by cluster, or by suggested cell type. Click a cluster in the list to light it in every view; the pencil renames it and the tick box hides it. Box and Freehand select bins by drawing around them, on the tissue or on the UMAP. What is selected or highlighted is named above the picture, beside Tissue / Side by side / UMAP, with Show on slide (frame it on the tissue) and Clear selection (or press Esc)." },
     panelOwn: {
-      help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering in the Clusters section (colours on the tissue and the UMAP, names, cell sets, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
-    panelSets: {
-      help: "Merge clusters of the clustering on show into one named set: tick two or more, type a name (or leave it empty to join their names) and press Merge. A set takes the colour of its first cluster and counts as one group everywhere: the maps, the legend, the volcano and plot groups and the saved image. Rename a set in its box or with the pencil in the legend; Un-merge splits it again and Undo takes back the last change made here. Save JSON keeps the sets with the cluster names. Export CSV writes one row per bin: its row number in the export, its position in image pixels, its cluster and the set it is in (bins left out of the clustering have empty cells)." },
+      help: "Load results you already have for these bins, with no new export: a CSV or TSV (also .gz) with one row per bin, a barcode or cell id column, and any of a UMAP (two columns such as UMAP_1, UMAP_2), groupings (seurat_clusters, leiden, cell_type, sample …), numbers (scores, QC) and a colour per group (a column named like cell_type_color with #rrggbb). Press Load your own results or drop the file anywhere on the page. The file is read in this browser and never uploaded. Each column's use is guessed from its name and values; change it in the table (a colour list in the order of the groups, as scanpy keeps it, can be pasted under a grouping). The rows are matched to the bins by id, also with a -1 style ending or a sample prefix that differs; the share matched is shown, and unmatched rows are counted, never listed. The groupings then appear under Clustering in the Clusters section (colours on the tissue and the UMAP, names, volcano and plots), the numbers in View, Colour by a value, and the UMAP in the Tissue / UMAP switch (UMAP shown picks yours or SODA's). Matching needs the export's barcode list (prepare.py ids adds it). Save JSON can keep the matched table (its size is shown first); a link to the view keeps only a fingerprint of the file and asks for the same file. How to write the file from Seurat or scanpy: docs/ADVANCED.md." },
     panelBinQc: { more: ["bqGrey"], moreAt: "end", notes: ["bqNote"],
       help: "One histogram per measure (counts, genes detected, % mitochondrial). Move a slider or type a number to set a minimum or a maximum: bins outside are removed." },
     panelLasso: { more: ["lassoMode", "lassoSeed", "lassoRes"], notes: ["lassoNote"],
@@ -76,7 +74,7 @@
   // the sections few people need: behind one "More options" at the end of their tab, in this order
   const MORE = {
     view: ["panelPaint"],
-    analyze: ["panelOwn", "panelSets", "panelBinQc"],
+    analyze: ["panelOwn", "panelBinQc"],
   };
 
   // ---- remembered per browser: the tab, which sections are open, which "More options" ----------
@@ -550,7 +548,6 @@
       else t = `by ${(by.options[0] ? by.options[0].textContent : "genes").split(" ")[0].toLowerCase()}`;
       return sel ? `${t} · ${sel}` : t;
     },
-    panelSets() { const n = $("csSets") ? $("csSets").querySelectorAll(".cs-set").length : 0; return n ? plural(n, "set") : up("csPick") ? "no sets" : ""; },
     panelBinQc: () => txt("bqCount").replace(/[()]/g, "") || "off",
     panelLasso() {
       const n = $("lassoShapes") ? $("lassoShapes").querySelectorAll(".lshape").length : 0;
@@ -628,7 +625,7 @@
       for (const p of side.querySelectorAll("[data-text]")) { const t = say(p.dataset.text); if (p.textContent !== t) p.textContent = t; }
       schedule();
     },
-    // volcano.js, plots.js, snapshot.js, cellsets.js, selections.js: a block or a section built after this file ran
+    // volcano.js, plots.js, snapshot.js, selections.js: a block or a section built after this file ran
     adopt(node) {
       if (!node) return;
       if (node.id === "volcanoBlock") {

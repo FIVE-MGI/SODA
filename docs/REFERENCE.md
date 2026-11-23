@@ -12,7 +12,7 @@ SODA app) or [GETTING_STARTED.md](GETTING_STARTED.md) (the notebook, step by ste
   region, volcano plot, heatmap and violin) and **Share** (save image, save / load, a link,
   dataset details, about and help). A tab shows only when the dataset has something for it.
   The tools few people need are under **More options** at the end of their tab (View: Colour
-  by a value, Measure; Analyze: Your own results, Cell sets, Quality filter). Sections fold,
+  by a value; Analyze: Your own results, Quality filter). Sections fold,
   and a folded one says its state on its header ("3 stains on", "Leiden 0.6", "12% removed");
   rarely used settings are under a section's own **More options** and each section's
   explanation is behind its **?**. The dataset picker and the Tissue / Side by

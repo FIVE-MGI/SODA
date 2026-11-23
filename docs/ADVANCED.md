@@ -205,7 +205,7 @@ Both show a warning, because nothing checks that the rows really belong to those
 
 **What you get.** The groupings appear first under **Clustering**, named `<column> (your
 file)`. The first one is shown with its colours on the tissue and the UMAP, and works with
-names, cell sets and the volcano plot, as SODA's own clusterings do. Numbers
+names and the volcano plot, as SODA's own clusterings do. Numbers
 appear in **View, Colour by a value**. If the file has a UMAP, **UMAP shown** picks between
 yours and SODA's. A layer with no SODA UMAP uses yours. The results belong to one layer; each
 layer can have its own.
