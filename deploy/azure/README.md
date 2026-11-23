@@ -1,5 +1,8 @@
 # Hosting on Azure with a password
 
+**Needs your IT or cloud administrator** (or someone at ease with the Azure portal and GitHub).
+For public data the simple way is [docs/SHARE_YOUR_DATA.md](../../docs/SHARE_YOUR_DATA.md).
+
 This folder sets up the viewer the way it is run in production:
 
 - the page is an **Azure Static Web App** (free plan is enough),
@@ -230,23 +233,11 @@ az staticwebapp appsettings set --name <app-name> --resource-group <rg> \
 
 ## 6. Write config.js
 
-`config.js` names your datasets and your institution. It is listed in `.gitignore` so it
-is never committed by accident to the public repository, but the Static Web App deploys
-from your fork, so in your fork it must be committed.
-
-macOS / Linux:
-
-```bash
-cp web/SpatialViewer/config.example.js web/SpatialViewer/config.js
-```
-
-Windows (PowerShell):
-
-```powershell
-Copy-Item web\SpatialViewer\config.example.js web\SpatialViewer\config.js
-```
-
-Edit it. The parts that matter for this setup:
+`config.js` names your datasets and your institution. It is in the repository, so edit it in
+your fork: on GitHub open `web/SpatialViewer/config.js`, click the pencil icon, change it, and
+**Commit changes** (or edit it on your computer, commit and push). Each commit redeploys the
+site. Every other option is explained in `config.example.js` next to it; copy only the lines
+you need. The parts that matter for this setup:
 
 ```js
 window.SpatialViewerConfig = {
@@ -255,22 +246,14 @@ window.SpatialViewerConfig = {
   },
   defaultDataset: "my_dataset",
   tokenEndpoint: "/api/token",
-  // ...the rest as in config.example.js
+  brand: { title: "SODA", logos: [], byline: "" },
 };
-```
-
-Then commit it on purpose and push:
-
-```bash
-git add -f web/SpatialViewer/config.js
-git commit -m "Site configuration"
-git push
 ```
 
 `config.js` is served to every visitor of the site, before the password. Keep anything
 you would not show publicly out of it, including dataset ids and labels that identify
-a person. Logos go in `web/SpatialViewer/logos/`, which is also git-ignored: add them
-with `git add -f` the same way.
+a person. Logo files go next to `config.js`, in `web/SpatialViewer/` (on GitHub: **Add file →
+Upload files**).
 
 ## 7. Test
 
@@ -341,9 +324,22 @@ shows the image. If it stays blank, open the browser's developer console (F12):
   left open for a long time keeps working.
 - Responses are `Cache-Control: no-store`. Errors name missing setting names, never values.
 
-Any other backend can replace it: the viewer only needs
-`POST {password} → {base, sas, expires}` and, optionally, cookie-based `GET` renewal
-(see [docs/HOSTING.md](../../docs/HOSTING.md)).
+Any other backend can replace it. The viewer only needs an endpoint that answers:
+
+```
+POST <tokenEndpoint>   body {"password": "..."}   (Content-Type: application/json)
+  200  {"base": "https://.../", "sas": "<query string>", "expires": <ms since 1970>}
+  401  wrong password          429  too many attempts (the page shows "wait a few minutes")
+
+GET  <tokenEndpoint>   (no body; the browser sends its cookies)
+  200  the same JSON, if a session cookie set by an earlier POST is still valid
+  401  otherwise (the page then asks for the password)
+```
+
+The page then fetches `<base><dataset id>/<file>?<sas>` for every file, so `sas` must be one
+query string valid for every file under `base`, and calls the endpoint again a few minutes
+before `expires`. Cookie renewal works only when the endpoint is on the same site as the page.
+No other backend has been built or tested.
 
 ---
 
@@ -374,5 +370,5 @@ or your lab's web server (see [docs/HOSTING.md](../../docs/HOSTING.md)).
 ### B. Private container, a link with a read pass
 
 Keep the data in a private container and share a link that carries a read pass (a SAS); see
-[docs/SHARE_YOUR_DATA.md, Step 5](../../docs/SHARE_YOUR_DATA.md#step-5-make-the-link). Anyone who
+[docs/ADVANCED.md, A link with a read pass](../../docs/ADVANCED.md#a-link-with-a-read-pass). Anyone who
 holds the link can read the data until the pass expires, so treat the link like a password.

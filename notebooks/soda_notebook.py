@@ -652,7 +652,7 @@ def storage_kind(link):
 
 def cors_fix(link, origin):
     """The setting to change, per storage provider (as in docs/SHARE_YOUR_DATA.md, Step 4)."""
-    o = origin or "<the SODA page's address, e.g. https://soda.mgifive.org>"
+    o = origin or "<your site's address, e.g. https://yourname.github.io>"
     kind = storage_kind(link)
     if kind == "azure":
         return (f"Azure: Storage account -> Resource sharing (CORS) -> Blob service: Allowed origins {o},\n"

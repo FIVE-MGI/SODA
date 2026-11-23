@@ -13,20 +13,21 @@ web browser. Readers zoom into the tissue like a map, colour it by any gene or p
 which cells or spots are alike (the UMAP and clusters). **Readers install nothing**: they open a
 link.
 
-See it before you start: **[the example datasets](https://soda.mgifive.org/index.html?data=https://fivestore.blob.core.windows.net/soda/examples/)**.
+See it before you start: **[the example datasets](https://sidolans01.mgifive.org/SODA-examples/)**.
 Pick a dataset from the **Dataset** menu, scroll to zoom, type a gene into **Search gene**, and
 try **Tissue | Side by side | UMAP** at the top.
 
 To publish your own data you do three things, once per collection of datasets:
 
 ```
-1. PREPARE  (your computer)        2. UPLOAD  (your cloud storage)      3. SHARE  (one link)
-   the files your instrument  ───►    a folder online that you   ───►     soda.mgifive.org/?data=<your folder>
-   wrote become web-ready files       own and pay for                     opens your data for anyone
+1. PREPARE  (your computer)        2. UPLOAD  (your cloud storage)      3. YOUR SITE  (GitHub, free)
+   the files your instrument  ───►    a folder online that you   ───►     your copy of SODA, which
+   wrote become web-ready files       own and pay for                     opens that folder for anyone
 ```
 
-Your data never goes onto SODA's website: the page only reads it from **your** storage while
-someone is looking.
+This guide covers step 1. Steps 2 and 3 are in [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md). Your
+data never goes onto GitHub: your site only reads it from **your** storage while someone is
+looking.
 
 **What you need**
 - A Windows or Mac computer with free disk space of about 3 times the size of your raw data.
@@ -34,15 +35,19 @@ someone is looking.
   image), Xenium, CosMx, MERSCOPE, Stereo-seq, GeoMx DSP, PhenoCycler / CODEX / other OME-TIFF
   and QPTIFF images, or single-cell RNA-seq (`.h5ad`). Exactly what each needs:
   [PREPARING_DATA.md](PREPARING_DATA.md).
-- Cloud storage that can serve files to a web page. This guide uses **Microsoft Azure** (Step 8);
-  Amazon S3 and Google Cloud work too ([SHARE_YOUR_DATA.md, Step 3](SHARE_YOUR_DATA.md#step-3-upload-the-whole-export-folder)).
-  Box, Google Drive, Dropbox and OneDrive do **not** work.
+- To publish: cloud storage that can serve files to a web page (Microsoft Azure, Amazon S3 or
+  Google Cloud; Box, Google Drive, Dropbox and OneDrive do **not** work) and a free GitHub
+  account. Both are explained in [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md).
 - About 1 to 2 hours the first time, most of it waiting.
 
 **Two ways to prepare.** Both run the same code and make the same export:
 - **The SODA app** (easiest, no code): [Part A](#part-a-the-soda-app-no-code), then Part 3.
 - **The notebook** (more control: every setting, in a page you can read and change): Parts 1
   and 2, then Part 3.
+
+**How much memory?** Most datasets need a few GB; the largest (Visium HD with 2 µm bins, a 5K
+Xenium panel, a whole Stereo-seq chip) need 8 to 16 GB. The table:
+[DESKTOP_APP.md, How much memory do I need?](DESKTOP_APP.md#how-much-memory-do-i-need).
 
 **No data of your own yet?** Practise with a small public dataset: the MERSCOPE human fetal
 colon sample (275 MB, Zenodo record 19450420, CC BY 4.0). Download link and command:
@@ -58,14 +63,12 @@ gives a folder `AAN4`: in Step 5, put that folder in `inputs/` as your dataset.
 | **Notebook** | a page in your browser made of boxes ("cells"). Each box runs one step; its answer appears under it. |
 | **Run a cell** | click inside the box and press **Shift + Enter**. `[*]` beside it means "working"; a number means "done". |
 | **Export** | the web-ready copy of your data that SODA writes. Only this is uploaded. |
-| **Container** | a folder in Azure storage. |
-| **CORS** | a setting on your storage that lets the SODA page read your files. Set once. |
 
 ## Before you publish: is this data allowed to be public?
 
 Anyone with your link can view **and download** the exported data. Publish only data that may be
 public: published or example data, with nothing that identifies a patient or donor. If not, see
-[If your data must stay private](#if-your-data-must-stay-private) instead of Part 3.
+[SHARE_YOUR_DATA.md, Before you start](SHARE_YOUR_DATA.md#before-you-start-who-may-see-the-data).
 
 ---
 
@@ -107,7 +110,7 @@ Click **Open viewer**: your datasets open in a new tab, **only on your computer*
 dataset looks right. To stop SODA: close its black window (Windows) or press **Quit SODA** on its
 page (Mac).
 
-Then go to [Part 3](#part-3-upload-and-share-public-data) with the `export` folder inside your
+Then go to [Part 3](#part-3-put-it-online) with the `export` folder inside your
 output folder. More about the app: [DESKTOP_APP.md](DESKTOP_APP.md).
 
 ---
@@ -215,7 +218,7 @@ use a plain name such as `mouse_brain_hd`, never a patient ID, a sample number o
 1. In the cell that starts with `WORK =` (under **Settings: edit this cell**), put your work folder:
    ```python
    WORK = r"D:\SODA_work"      # Mac: WORK = "/Users/<you>/SODA_work"
-   CLOUD_URL = ""              # leave empty for now; Step 9 fills it in
+   CLOUD_URL = ""              # leave empty for now (Part 3)
    ```
    Run it.
 2. Run the **Advanced settings** cell as it is. (Optional: `TITLE = "My lab's atlas"` names
@@ -242,101 +245,27 @@ Run these sections in order; each says when it is done.
 
 ---
 
-## Part 3. Upload and share (public data)
+## Part 3. Put it online
 
-### Step 8. Make your storage on Azure (once)
+Your `export` folder (inside the app's output folder, or `SODA_work/export` from the notebook)
+is ready. Follow [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) from
+[Step 2](SHARE_YOUR_DATA.md#step-2-make-your-cloud-storage-once):
 
-You need an Azure account (many universities provide one; otherwise https://azure.microsoft.com/free).
-Azure charges a little for storage and for what readers download; small collections cost very little.
+- **Step 2-4:** make your cloud storage (public read), upload the `export` folder with an
+  upload tool, and set the CORS rule that lets your site read it.
+- **Step 5-7:** click **Use this template** on https://github.com/FIVE-MGI/SODA, turn on
+  GitHub Pages, and paste your storage folder's address into `web/SpatialViewer/config.js`.
 
-1. Go to https://portal.azure.com and sign in.
-2. **Create the storage account.** Search bar → **Storage accounts** → **+ Create**:
-   - Resource group: **Create new** → `soda`
-   - Storage account name: lowercase letters and digits, unique worldwide, e.g. `smithlabsoda`
-   - Region: near you. Performance: **Standard**. Redundancy: **LRS**.
-   - **Advanced** tab: tick **Allow enabling anonymous access on individual containers**.
-   - **Review + create** → **Create**. Wait for "Your deployment is complete" → **Go to resource**.
-3. **Create the container.** Left menu **Data storage → Containers** → **+ Container**:
-   - Name: `soda`
-   - Anonymous access level: **Blob (anonymous read access for blobs only)**
-   - **Create**.
-4. **Let the SODA page read it (CORS).** Left menu **Settings → Resource sharing (CORS)** →
-   **Blob service** tab → fill one row → **Save**:
+✅ Your site, `https://<your GitHub name>.github.io/<your copy>/SODA/`, lists your datasets and
+genes load.
 
-   | Allowed origins | Allowed methods | Allowed headers | Exposed headers | Max age |
-   |---|---|---|---|---|
-   | `https://soda.mgifive.org` | `GET`, `HEAD`, `OPTIONS` | `*` | `*` | `3600` |
+**Notebook users:** Section 7 can print the upload command and test your storage the way a
+browser would. Put your storage folder's address in `CLOUD_URL` (Settings cell) and your site's
+address in `SODA_PAGE` (Advanced settings), run both cells, then Section 7 and `test_link()`.
 
-### Step 9. Upload the export folder
-
-The easiest way is **Azure Storage Explorer**, a free drag-and-drop app:
-
-1. Download it from https://azure.microsoft.com/products/storage/storage-explorer/, install,
-   open, and **Sign in with Azure** (the person icon on the left).
-2. In the left tree: your subscription → **Storage Accounts** → your account → **Blob Containers** → `soda`.
-3. Click **Upload → Upload Folder…** → choose your `SODA_work/export` folder → **Upload**.
-   It appears in the container as a folder named `export`.
-   ✅ The activity bar at the bottom says the transfer completed, with no failures.
-
-Upload **only** `export`. Never `cache`, `inputs` or any key file.
-
-Your folder's address is now:
-```
-https://<your storage account name>.blob.core.windows.net/soda/export
-```
-
-### Step 10. Get your link and test it
-
-1. In the notebook's **Settings** cell, put that address in `CLOUD_URL` and run the cell:
-   ```python
-   CLOUD_URL = "https://smithlabsoda.blob.core.windows.net/soda/export"
-   ```
-2. Under **7. Upload and share**, set `IS_THIS_DATA_PUBLIC = "yes"` and run the cell.
-   It prints **THE LINK TO SHARE**. (It also prints an upload command: you already uploaded in
-   Step 9, so skip it.)
-3. Run **`test_link()`** below it. ✅ **OK**. If it reports a CORS problem, check Step 8.4 (the
-   origin must be exactly `https://soda.mgifive.org`), wait a minute, and run it again.
-4. Open the link in a **private browser window**. ✅ your datasets are in the **Dataset** menu
-   and genes load.
-
-**Done.** That link is what you put in your paper, your lab page or an email. It looks like:
-```
-https://soda.mgifive.org/?data=https%3A%2F%2Fsmithlabsoda.blob.core.windows.net%2Fsoda%2Fexport%2F
-```
-
-### Changing names later
-
-Edit `datasets.json` in `SODA_work/export` with any text editor (names, groups, order, title),
-then upload just that one file again (Storage Explorer: open the `export` folder → **Upload →
-Upload Files**, overwrite). Reload the page. Every setting:
-[SHARE_YOUR_DATA.md, What you can change in datasets.json](SHARE_YOUR_DATA.md#what-you-can-change-in-datasetsjson).
-
-### Adding more datasets later
-
-Put the new folder in `SODA_work/inputs`, run the notebook's Sections 1 to 6 again (datasets
-already done are skipped), and upload the `export` folder again (Storage Explorer asks about
-files that already exist: **Replace**). The same link now lists the new dataset too.
-
----
-
-## Optional: your own SODA website
-
-Your own copy of the SODA page at your own address, with your title and logos, opening your data
-without the `?data=` part: [SHARE_YOUR_DATA.md, 2. Make it your own](SHARE_YOUR_DATA.md#2-make-it-your-own)
-(about 30 minutes in the browser, with a free GitHub account). Add your site's address to the CORS
-row from Step 8.4.
-
-## If your data must stay private
-
-Prepare the same way (Part A, or Parts 1 and 2). Then, instead of Part 3:
-- **A few people, for a while:** keep the container **Private**, and share a link carrying a
-  read-only pass (Azure SAS, set as `READ_PASS` in the notebook's advanced settings). Anyone with
-  that link can read the data until the pass expires: send it like a password, never put it in a paper.
-- **Your lab, long term:** a password-protected SODA site on Azure: [deploy/azure/README.md](../deploy/azure/README.md).
-- **Only you:** upload nothing; Section 6's preview is enough.
-
-Details: [SHARE_YOUR_DATA.md, Start here](SHARE_YOUR_DATA.md#start-here-who-may-see-the-data).
-Sample IDs and the key file: [DEIDENTIFICATION.md](DEIDENTIFICATION.md).
+**Adding datasets later:** put the new folder with the others, prepare again (datasets already
+done are skipped), and upload the `export` folder again (replace existing files). Your site
+lists the new dataset by itself.
 
 ## If something goes wrong
 
@@ -346,10 +275,8 @@ Sample IDs and the key file: [DEIDENTIFICATION.md](DEIDENTIFICATION.md).
 | Step 3: red text, no `SODA is installed` | run the same line again (it is safe); if it fails again, copy the last 20 lines into a [GitHub issue](https://github.com/FIVE-MGI/SODA/issues) |
 | Step 4: `jupyter` not found | Step 3's third line did not finish: run it again |
 | Step 7.2: NOT SURE / missing | follow what the table says; what each instrument needs: [PREPARING_DATA.md](PREPARING_DATA.md) |
-| Step 7.3: the computer runs out of memory | prepare one dataset at a time; [ADVANCED.md](ADVANCED.md) |
+| Step 7.3 or the app: a dataset failed with "ran out of memory" | prepare one dataset at a time, or use a computer with more memory ([how much](DESKTOP_APP.md#how-much-memory-do-i-need)) |
 | Step 7.5: names listed | rename and redo, as Step 7.5 says |
-| The link says "could not reach" your folder | CORS (Step 8.4), or the address in `CLOUD_URL` is not the folder that holds `datasets.json` |
-| The link says the folder is private / 403 | the container's access level must be **Blob** (Step 8.3), and the account must allow it (Step 8.2, Advanced tab) |
-| A dataset is missing from the list | its folder was not uploaded, or `datasets.json` was uploaded before Section 4 finished |
+| Your site shows a message, or no data | [SHARE_YOUR_DATA.md, If something goes wrong](SHARE_YOUR_DATA.md#if-something-goes-wrong) |
 
-More: [HOSTING.md](HOSTING.md), [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md), and the full README.
+More: [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) and the [README](../README.md#troubleshooting).

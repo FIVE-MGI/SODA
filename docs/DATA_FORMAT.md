@@ -560,7 +560,7 @@ The viewer draws dots while the median cell (`spotDiameterPx`) is under 5 screen
 outlines alone from 9, both cross-faded in between, and stays on dots when more than 120,000
 outlines (20,000 on a touch device) would be in view (`config.js` `outlineFromPx`,
 `outlineFullPx`, `outlineBudget`). Colour never rebuilds a polygon: whatever colours or picks out
-cells (genes, clusters, cell sets, Colour by a value, Draw a region's shapes, a region picked with a
+cells (genes, clusters, Colour by a value, Draw a region's shapes, a region picked with a
 click, the quality filter) is one RGBA per row that the outline layers read. A link to the view
 carries the Outlines / Dots choice as the view block's `cs` entry (`{"m": "outlines" | "dots", "n": 1}`
 with nucleus outlines on); a link without it leaves the viewer's own choice.
@@ -964,5 +964,5 @@ your own trusted content there.
 For reference: `prepare.py` writes `<cache>/<id>/manifest.json`, `image.zarr/` (an
 OME-NGFF 0.4 multiscale image with `omero` channel metadata, readable by napari and
 other OME-Zarr tools), `expr/<key>.zarr/` (a gene-major sparse count matrix plus bin
-positions and, from 11 November 2026, the barcode of each bin, by which `userclusters.py` matches a lab's own clusters and `cellshapes.py` a platform's or a lab's own cell outlines), `shapes/` (the cell outlines, already in their export format) and `overlays/`. `server.py` and `prepare.py export` read it. It holds the
+positions and, from 11 November 2026, the barcode of each bin, by which `userclusters.py` matches a lab's own clusters and `cellshapes.py` a platform's or a lab's own cell outlines), `shapes/` (the cell outlines, already in their export format) and `overlays/`. `prepare.py export` reads it. It holds the
 full-resolution raw image and local file paths, so it should stay on your machine.

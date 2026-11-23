@@ -1,7 +1,9 @@
-// Copy to config.js and edit. config.js is gitignored: it names your datasets,
-// your institution and your storage, none of which belong in this repository.
+// Every setting config.js can have, explained. Do not copy this whole file over config.js: copy
+// only the lines you need into config.js (next to this file, in git, with data: "" until you
+// connect your storage folder). In FIVE-MGI/SODA config.js stays empty of any study's settings;
+// your copy of SODA keeps its own.
 //
-// The viewer reads nothing else. Everything specific to a study lives here.
+// The viewer reads nothing else. Everything specific to a study lives in config.js.
 window.SpatialViewerConfig = {
 
   // ---- datasets -----------------------------------------------------------------
@@ -39,7 +41,7 @@ window.SpatialViewerConfig = {
   brand: {
     title: "SODA",
     logos: [
-      // { src: "logos/institution.png", alt: "Institution", className: "logo-wide" },
+      // { src: "institution.png", alt: "Institution", className: "logo-wide" },   // the file next to config.js
     ],
     byline: "",
   },
@@ -52,17 +54,17 @@ window.SpatialViewerConfig = {
   // Set this and leave `datasets` above empty: the page then lists every dataset in that
   // folder, with the titles, groups and settings in its datasets.json.
   // data: "https://yourstorage.example.org/soda-export/",
-  // (site.js, kept in git, can name a folder too: the page opens it only when neither the
-  // link nor this file names any data. This file wins.)
+  // (While nothing names any data, the page shows "No data connected yet"; site.js draws it.)
 
   // Whether this page also opens other people's folders from a link
   // (index.html?data=<their folder>). On by default, off when tokenEndpoint is set.
   // allowDataLinks: true,
 
   // ---- data access ----------------------------------------------------------------
-  // The managed function that checks the shared password and returns a short-lived,
-  // read-only SAS for the private container. Empty disables the password entirely,
-  // which only makes sense when the data is public or served locally.
+  // Only for a password site on Azure (deploy/azure/README.md): the managed function that
+  // checks the shared password and returns a short-lived, read-only SAS for the private
+  // container. Leave it out (or "") for public data. On GitHub Pages there is no such
+  // function: this line there gives a password prompt that never works.
   tokenEndpoint: "/api/token",
 
   // ---- UMAP cluster labels --------------------------------------------------------
@@ -89,6 +91,9 @@ window.SpatialViewerConfig = {
   // page keeps it and cuts the genes out of it (slower), above it the gene is refused with a
   // message. Use a host that answers Range requests (blob storage, S3, GitHub Pages, nginx).
   // packWholeMaxMB: 160,
+
+  // Seconds a request for one file may take before the page gives up and says so (at least 10).
+  // fetchTimeoutS: 60,
 
   // Smallest bin layer offered. Below roughly 8 um a bin holds a single transcript
   // nearly everywhere, which makes a density map of it a presence map.

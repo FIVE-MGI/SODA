@@ -85,7 +85,7 @@ SODA app) or [GETTING_STARTED.md](GETTING_STARTED.md) (the notebook, step by ste
   dataset as it looks now: position and zoom, the Tissue / Side by side / UMAP view, the
   layer, the genes on show with their colours and ranges, stains on or off with their colours
   and display ranges, molecule genes, outlines, the colour-by, the clustering with your
-  cluster names, cell sets and hidden clusters, the quality filter and the open tab. Drawn shapes are in
+  cluster names and hidden clusters, the quality filter and the open tab. Drawn shapes are in
   it when they fit: a link is kept to about 2,000 characters, so long outlines are simplified
   or left out, and the message under the button says so. The view travels in the part of the
   address after `#`, which the browser never sends to a server; `ds=`, `qc=` and a `data=` or
@@ -221,20 +221,20 @@ To test the code: `python tests/smoke_test.py`. What it runs and what it needs i
    app ([ADVANCED.md](ADVANCED.md#barcode-and-cell-id-lists)).
 2. **[De-identify and check](DEIDENTIFICATION.md)** before anything leaves your
    computer.
-3. **[Share it](SHARE_YOUR_DATA.md), one of two ways:**
-   - **Share a link.** Upload the export folder to your own storage and add its address
-     to the SODA page's link (`index.html?data=<your folder>`). Names, groups and which
-     stains show are set in one text file next to your data. No code, no website of your own.
-   - **Make it your own.** Copy SODA on GitHub ("Use this template") and get your own
-     SODA website that you can change however you like, still reading your data from your
-     storage.
+3. **[Share it](SHARE_YOUR_DATA.md):** upload the export folder to your own cloud storage,
+   copy SODA on GitHub ("Use this template"), turn on GitHub Pages, and paste the storage
+   folder's address into your copy's `web/SpatialViewer/config.js`. Names, groups and which
+   stains show are set in `datasets.json` next to your data.
 
-   For everything else (your own computer, any web server, privately on Azure with a
-   password) see [Hosting](HOSTING.md) and the [Azure steps](../deploy/azure/README.md).
+   For everything else (a `?data=` link, your own computer, any web server, privately on
+   Azure with a password) see [ADVANCED.md, section 1](ADVANCED.md#1-other-places-for-your-data-and-the-page)
+   and the [Azure steps](../deploy/azure/README.md).
 
-The page reads `web/SpatialViewer/config.js` for your dataset list, institution name,
-logos and password endpoint. Copy `config.example.js` to `config.js`; every option is
-explained in that file. `config.js` is listed in `.gitignore`.
+The page reads `web/SpatialViewer/config.js` for your data folder (or dataset list), title,
+logos and, on a password site, the password endpoint. The file is in the repository with an
+empty `data: ""`; edit it in your copy. Every option is explained in `config.example.js` next
+to it: copy only the lines you need. (Do not copy that whole file: its
+`tokenEndpoint: "/api/token"` turns on a password screen, which on GitHub Pages never works.)
 
 **Rather not set it up yourself?** We can prepare and host your datasets for you. Please
 email wbuchser@wustl.edu with any questions about hosting.
