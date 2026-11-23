@@ -2,6 +2,51 @@
 
 What is in each version of SODA, in plain words. The details are in the [docs](README.md#documentation).
 
+## Unreleased (0.10.1)
+
+Your own SODA website is now the main way to share, and the page and the preparing steps say
+more clearly what went wrong.
+
+### Changed
+
+- Sharing: prepare with the SODA app, upload the `export` folder to your own cloud storage,
+  click **Use this template** on GitHub, turn on GitHub Pages and paste the storage folder's
+  address into `web/SpatialViewer/config.js`. The site is at
+  `https://<owner>.github.io/<repository>/SODA/` (its root forwards there), or
+  `https://<your domain>/SODA/` with a custom domain. Step by step:
+  [SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md).
+- `web/SpatialViewer/config.js` is now in git (no longer in `.gitignore`), with `data: ""`,
+  the title "SODA" and no password endpoint. A copy edits its own on GitHub (pencil icon).
+  Logos go next to `config.js`. Until data is connected the page shows a calm "No data
+  connected yet" panel; it no longer opens the FIVE lab's examples by default.
+- The pages workflow: in a copy it publishes the page under `/SODA/`; while GitHub Pages is
+  off it ends green with a notice saying how to turn it on; it warns when `config.js` sets a
+  password endpoint (`tokenEndpoint`), which GitHub Pages cannot run. FIVE-MGI/SODA's own site
+  (the SODA home page) only forwards to the repository page. The example datasets are at
+  https://sidolans01.mgifive.org/SODA-examples/, also the notebook's default `SODA_PAGE`.
+- Workflows: `smoke` runs only in FIVE-MGI/SODA; the Windows and macOS app builds run only when
+  started by hand, also in copies.
+- The app's **Datasets at the same time** allows at most one per 12 GB of memory (1 to 8).
+- The page says when part of a dataset fails to load or a worker fails, gives up on a request
+  after 60 seconds (`fetchTimeoutS` in `config.js`), keeps at most about 1 GB of image tiles
+  on a computer, asks before a volcano plot reads more than 300 MB, and accepts Your own results
+  files up to 150 MB on phones.
+- Preparing: a failed re-run no longer leaves a finished-looking dataset (`manifest.json` is
+  removed when prepare or export starts); a wrong zarr (3 or newer), tifffile (2025 or newer)
+  or numcodecs (0.16 or newer) stops with a plain message; a failed dataset's note says why,
+  including "ran out of memory". New test: `tests/resume_test.py`.
+- Docs: rewritten for the steps above, for people new to all of it. Your own computer, any web
+  server and links with a read pass moved to [ADVANCED.md](docs/ADVANCED.md); a memory table is
+  in [DESKTOP_APP.md](docs/DESKTOP_APP.md#how-much-memory-do-i-need).
+
+### Removed
+
+- From the page: the flight Speed menu (the flight always takes 1.3 s; Play stays behind
+  **…**), Use selection as a shape, Measure, and Cell sets. Older links and saved files still
+  open; those parts are ignored.
+- The unused `cryptography` dependency.
+- The AWS CloudFront password design from the docs (never built or tested).
+
 ## 0.10.0 (22 November 2026): simpler
 
 Fewer ways to do the same thing, so there is less to learn and less that can break.
