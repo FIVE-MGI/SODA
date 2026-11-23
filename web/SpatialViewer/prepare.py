@@ -682,8 +682,6 @@ def main(argv=None):
     manifest["overlays"] = parse_geojson_args(args.geojson, ds_dir)
     with open(ds_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=1)
-    if hasattr(plat, "cleanup"):
-        plat.cleanup(args, log=log)                                        # xenium: the files copied out of a zip
     log(f"[done] {ds_dir}\\manifest.json  ({time.time() - t0:.0f}s)")
 
 

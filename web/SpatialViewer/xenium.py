@@ -454,9 +454,6 @@ class Plan:
             if mol:
                 manifest["molecules"] = mol
 
-    def cleanup(self, args, log=print):
-        pass
-
 
 def outline_sets(folder, um: float, log=print) -> list:
     import cellshapes
