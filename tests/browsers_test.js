@@ -737,7 +737,7 @@ async function hardening(browser, eng, urls) {
     t.ok(applied && (res == null || (a.n0 === "Zero" && a.n2 === "Two")),
       `an older link opens; its cell set is ignored and cluster 0 has its own name back (${JSON.stringify(a)}${res == null ? "; no clustering here" : ""})`, feat3);
     await ev((res) => { const sv = window.__spatialViewer, S = sv.state;
-      sv.lassoLoad({ dataset: S.dsId, layer: S.exprKey, seed: 42, view: { meas: [{ k: "area", pts: [[0, 0], [9, 0], [9, 9]] }] },
+      sv.lassoLoad({ dataset: S.dsId, layer: S.exprKey, seed: 42, shapes: [], view: { meas: [{ k: "area", pts: [[0, 0], [9, 0], [9, 9]] }] },
         ...(res != null ? { sectionClusters: { layer: S.exprKey, resolution: res, names: { [res]: { 0: "File set" } }, hidden: [],
                                                 sets: { [res]: [{ ids: [0, 3], prev: null }] } } } : {}) }); }, res);
     await P.waitForTimeout(1500);

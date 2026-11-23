@@ -2524,6 +2524,7 @@
       if (TOUCH && total > 5000) m += ` On a phone this takes about ${secs}-${3 * secs} s: keep this page open until it finishes.`;
       else if (total > LASSO.softCap) m += ` This will take about ${secs} s.`;
       $("lassoMsg").textContent = L.prot ? toProtWords(m) : isCells() ? toCellWords(m) : isRois() ? toRoiWords(m) : m;
+      $("lassoMsg").style.color = "";
     }
     $("lassoRun").disabled = L.running || !L.shapes.some((s) => s.bins > 0);
     $("lassoSaveCsv").disabled = !R;
@@ -2712,10 +2713,10 @@
     const was = L.running;
     L.running = false; $("lassoCancel").hidden = true; lassoWake(false);
     if (!was && !always) return;                       // nothing was running: the next run starts a new worker
+    buildLassoUI();                                    // first: it writes the shapes' count over the message
     $("lassoMsg").textContent = "The UMAP stopped" + (why ? ` (${noQuery(why).slice(0, 160)})` : "") +
       ". The browser may have run out of memory: try smaller or fewer shapes, close other tabs, or reload the page.";
     $("lassoMsg").style.color = "#ff8f8f";
-    buildLassoUI();
   }
   async function lassoRun() {
     try { await lassoRunNow(); }
@@ -2781,7 +2782,7 @@
       const d = ev.data;
       if (d.type === "progress") { msg(`${d.step}… ${Math.round(d.frac * 100)}%`); return; }
       L.running = false; $("lassoCancel").hidden = true; lassoWake(false);
-      if (d.type === "error") { msg(d.message, true); buildLassoUI(); return; }
+      if (d.type === "error") { buildLassoUI(); msg(d.message, true); return; }   // buildLassoUI first: it writes over the message
       if (sig !== L.shapes.map((s) => `${s.id}:${s.bins}`).join(",")) { buildLassoUI(); return; }   // shapes moved on
       const idxOfRow = new Map(); d.rows.forEach((r, j) => idxOfRow.set(r, j));
       d.info.mode = mode;
@@ -3209,7 +3210,7 @@
     $("lassoClear").onclick = () => { S.lasso.shapes = []; S.lasso.next = 1; S.lasso.selShape = null; lassoShapesChanged(); };
     $("lassoRun").onclick = lassoRun;
     $("lpMkVs").onclick = (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.lasso.mkVs = v; renderLassoPanel(); };
-    $("lassoCancel").onclick = () => { lassoCancel(); $("lassoMsg").textContent = "Cancelled."; buildLassoUI(); };
+    $("lassoCancel").onclick = () => { lassoCancel(); buildLassoUI(); $("lassoMsg").textContent = "Cancelled."; };
     $("lassoMode").onchange = () => { if (S.lasso.result) lassoRun(); };
     $("lassoSaveJson").onclick = lassoSaveJson;
     $("lassoSaveCsv").onclick = lassoSaveCsv;
