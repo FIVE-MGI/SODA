@@ -68,7 +68,7 @@ const ONLY = arg("--only", "");
 const SHOTS = arg("--shots", "");
 const ALL = process.argv.includes("--all");
 const DS = arg("--ds", "");                                          // e.g. visiumhd_pub,xenium_pub: only these
-const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, links, outlines
+const SKIP = arg("--skip", "").split(",").filter(Boolean);           // steps to leave out: probe, datasets, walk, links, hardening, outlines
 const PORTS = arg("--ports", "0,0").split(",").map(Number);         // data server, page server; 0 = any free port
 const OPEN_MS = 120000;                                             // the public exports are large, and may come over the internet
 
@@ -237,7 +237,7 @@ const OPTIONAL = [/\/gates\.json$/, /\/markers\/[\w.-]+\.json$/, /\/about\.html$
 const FIREFOX_QUIET = [/integrity attribute match the content of the subresource at .[^ ]*\/vendor\//,
   /Content-Security-Policy: .*blocked WebAssembly .*Missing 'wasm-unsafe-eval'/];
 
-async function openPage(browser, eng, url, label, feature) {
+async function openPage(browser, eng, url, label, feature, before) {
   // serviceWorkers "block": an old service worker of the removed offline use must not answer requests out of
   // page.route's sight
   const ctx = await browser.newContext({ ...(eng.device || { viewport: { width: 1280, height: 800 } }), acceptDownloads: true, serviceWorkers: "block" });
@@ -258,6 +258,7 @@ async function openPage(browser, eng, url, label, feature) {
       return c;
     };
   });
+  if (before) await before(page);                                 // routes of a failure check, set before the page loads
   await page.goto(url, { waitUntil: "load" });
   const ok = (cond, what, feat) => {
     if (cond) pass++; else { fail++; failures.push(`${eng.name} | ${label} | ${what}`); }
@@ -673,6 +674,81 @@ async function cellOutlines(browser, eng, urls) {
   finally { await t.ctx.close(); }
 }
 
+// ---- when things fail: the page says so in plain words and stays usable ------------------------------------
+// (1) the layer's gene list (genes.json) will not load: the layer still opens, with a message; (2) Draw a region's
+// worker fails as it starts: the run stops with a message, never a "Computing…" that stays; (3) a Save JSON file and
+// a link made by an older page, with parts since cut (Measure's meas, the flight speed, cell sets): they open with
+// those parts ignored, and a cell set's lowest member gets its own name back.
+async function hardening(browser, eng, urls) {
+  const id = "visiumhd_pub", url = `${urls.page}/index.html?static=${urls.data}/plain&ds=${id}`;
+  const errs = (t) => t.log.pageErrors.filter((e) => !/the worker fails/.test(e));
+  // (1)
+  let feature = "a layer whose gene list will not load: message, page usable";
+  let t = await openPage(browser, eng, url, "genes.json refused", feature,
+    (page) => page.route(/\/expr\/[^/]+\/genes\.json/, (rt) => rt.fulfill({ status: 500, body: "refused by the test" })));
+  try {
+    const P = t.page;
+    const ok = await until(P, () => { const S = window.__spatialViewer && window.__spatialViewer.state, st = document.getElementById("status");
+      return S && S.m && S.exprKey && st && !st.hidden && /could not be loaded/.test(st.textContent); }, null, 90000);
+    const r = await P.evaluate(() => { const S = window.__spatialViewer.state;
+      return { status: document.getElementById("status").textContent.slice(0, 200), genes: S.geneIndex.length };
+    });
+    t.ok(ok && r.genes === 0 && /list of this layer could not be loaded/.test(r.status), `the page says the gene list could not be loaded ("${r.status}")`, feature);
+    const lasso = await until(P, () => { const S = window.__spatialViewer.state; return !document.getElementById("panelLasso").hidden && !!(S.lasso && S.lasso.pos); }, null, 60000);
+    t.ok(lasso, "the rest of the layer still opened (Draw a region has its bins)", feature);
+    const e = errs(t);
+    t.ok(!e.length, `no page error${e.length ? ": " + e.slice(0, 3).join(" / ") : ""}`, feature);
+    await t.shot("hardening_genes_refused");
+  } catch (e) { t.ok(false, `crashed: ${String(e.message).split("\n")[0]}`, feature); }
+  finally { await t.ctx.close(); }
+  // (2) and (3), on one page
+  feature = "Draw a region worker that fails: message, no stuck Computing";
+  t = await openPage(browser, eng, url, "worker fails", feature,
+    (page) => page.route("**/lasso_worker.js*", (rt) => rt.fulfill({ status: 200, contentType: "text/javascript", body: "throw new Error('the worker fails (test)');" })));
+  try {
+    const P = t.page, ev = (f, a) => P.evaluate(f, a);
+    const ready = await until(P, () => { const S = window.__spatialViewer && window.__spatialViewer.state; return S && S.m && S.exprKey && S.lasso && S.lasso.pos && S.lasso.hvg; }, null, 90000);
+    if (!t.ok(ready, "opened, with Draw a region ready", feature)) return;
+    await settled(P);
+    // two squares round bins a third and two thirds down the list, then Run (lassoLoad runs it, as Load JSON does)
+    await ev(() => { const sv = window.__spatialViewer, pos = sv.state.lasso.pos, n = pos.length / 2;
+      const sq = (f) => { const r = Math.floor(n * f), x = pos[2 * r], y = pos[2 * r + 1], d = 300; return [[x - d, y - d], [x + d, y - d], [x + d, y + d], [x - d, y + d]]; };
+      sv.lassoLoad({ shapes: [{ name: "A", kind: "free", points: sq(0.37) }, { name: "B", kind: "free", points: sq(0.63) }], seed: 42, resolution: "auto", mode: "bins" }); });
+    const done = await until(P, () => { const L = window.__spatialViewer.state.lasso, m = document.getElementById("lassoMsg").textContent;
+      return L && !L.running && /UMAP stopped/.test(m); }, null, 90000);
+    const r = await ev(() => ({ msg: document.getElementById("lassoMsg").textContent.slice(0, 200), running: window.__spatialViewer.state.lasso.running, cancel: !document.getElementById("lassoCancel").hidden }));
+    t.ok(done && !r.running && !r.cancel && !/Computing/.test(r.msg), `the run stops with a message ("${r.msg}")`, feature);
+    await t.shot("hardening_worker_fails");
+    // (3) an older link, then an older Save JSON
+    const feat3 = "an older link and Save JSON (speed, Measure, cell sets) open";
+    // the section's UMAP and clusters loaded (as a reader does with the UMAP button), so a clustering is on hand
+    await ev(() => window.__spatialViewer.umapSetView("umap"));
+    await until(P, () => { const U = window.__spatialViewer.state.umap; return U && U.view === "umap" && !U.anim; }, null, 60000);
+    const res = await ev(() => { const U = window.__spatialViewer.state.umap; return U && U.res != null ? U.res : null; });
+    const st = await ev((res) => { const S = window.__spatialViewer.state;
+      return { dataset: S.dsId, layer: S.exprKey,
+        view: { v: window.SodaViewLink.VIEW_V, mode: "tissue", tab: "analyze", meas: [{ k: "ruler", pts: [[10, 10], [200, 200]] }], fly: 8000 },
+        ...(res != null ? { sectionClusters: { layer: S.exprKey, resolution: res, names: { [res]: { 0: "Old set", 2: "Two" } }, hidden: [],
+                                                sets: { [res]: [{ ids: [0, 1], prev: "Zero" }] } } } : {}) }; }, res);
+    await ev(async (st) => { location.hash = "v=" + (await window.SodaViewLink.encode(st)); }, st);
+    const applied = await until(P, () => !window.SodaViewLink.pending() && window.SodaViewLink.notes() !== null, null, 60000);
+    const a = await ev((res) => { const U = window.__spatialViewer.state.umap, n = U && res != null ? (U.names[res] || {}) : null;
+      return { notes: window.SodaViewLink.notes(), n0: n && n[0], n2: n && n[2] }; }, res);
+    t.ok(applied && (res == null || (a.n0 === "Zero" && a.n2 === "Two")),
+      `an older link opens; its cell set is ignored and cluster 0 has its own name back (${JSON.stringify(a)}${res == null ? "; no clustering here" : ""})`, feat3);
+    await ev((res) => { const sv = window.__spatialViewer, S = sv.state;
+      sv.lassoLoad({ dataset: S.dsId, layer: S.exprKey, seed: 42, view: { meas: [{ k: "area", pts: [[0, 0], [9, 0], [9, 9]] }] },
+        ...(res != null ? { sectionClusters: { layer: S.exprKey, resolution: res, names: { [res]: { 0: "File set" } }, hidden: [],
+                                                sets: { [res]: [{ ids: [0, 3], prev: null }] } } } : {}) }); }, res);
+    await P.waitForTimeout(1500);
+    const b = await ev((res) => { const U = window.__spatialViewer.state.umap; return { n0: U && res != null ? (U.names[res] || {})[0] : null }; }, res);
+    t.ok(res == null || b.n0 === undefined, `an older Save JSON opens; its cell set is ignored (cluster 0 named: ${JSON.stringify(b.n0)})`, feat3);
+    const e = errs(t);
+    t.ok(!e.length, `no page error${e.length ? ": " + e.slice(0, 3).join(" / ") : ""}`, feat3);
+  } catch (e) { t.ok(false, `crashed: ${String(e.message).split("\n")[0]}`, feature); }
+  finally { await t.ctx.close(); }
+}
+
 // ---- ?data= links: one dataset without datasets.json; the list with tags --------------------------------
 async function links(browser, eng, urls) {
   const id = CAT_IDS[1] || CAT_IDS[0];
@@ -844,6 +920,7 @@ async function phone(browser, eng, urls) {
         if (!SKIP.includes("datasets")) for (const [kind, id] of picked) await checkDataset(browser, eng, urls, kind, id);
         if (!SKIP.includes("walk")) await walk(browser, eng, urls);
         if (!SKIP.includes("links")) await links(browser, eng, urls);
+        if (!SKIP.includes("hardening")) await hardening(browser, eng, urls);
         if (!SKIP.includes("outlines")) { if (OUTLINE_DS) await cellOutlines(browser, eng, urls); else console.log("  (no export with cell outlines: outlines not checked)"); }
       } finally { await browser.close(); }
     }
