@@ -10,7 +10,7 @@ SODA app) or [GETTING_STARTED.md](GETTING_STARTED.md) (the notebook, step by ste
 - **Three tabs, one job each.** The controls sit beside the picture in three tabs: **View**
   (image and stains, genes, molecules, outlines), **Analyze** (clusters and selection, draw a
   region, volcano plot, heatmap and violin) and **Share** (save image, save / load, a link,
-  dataset details, about and help). A tab shows only when the dataset has something for it.
+  compare side by side, dataset details, about and help). A tab shows only when the dataset has something for it.
   The tools few people need are under **More options** at the end of their tab (View: Colour
   by a value; Analyze: Your own results, Quality filter). Sections fold,
   and a folded one says its state on its header ("3 stains on", "Leiden 0.6", "12% removed");
@@ -94,6 +94,15 @@ SODA app) or [GETTING_STARTED.md](GETTING_STARTED.md) (the notebook, step by ste
   of a Draw a region run (the shapes come back; press Run UMAP). **Save JSON** writes the same
   view to a file together with the shapes in full, every setting and the run's result, and
   **Load JSON** on the same dataset puts it back and runs it again.
+- **Compare side by side.** **Compare** (top bar, beside Fit, or the Share tab) opens another
+  dataset in a second window beside the first. While **Link views** is on, moving or zooming
+  one window moves the other to the same place at the same scale in micrometres, whatever the
+  two datasets' pixel sizes; **Link from here** keeps what each window shows now as the same
+  place, **Line up centres** goes back to the middle of each picture. Genes picked, the
+  colour-by and the Tissue / UMAP view follow where the other dataset has them. Up to four
+  windows can be linked; they split the page's image-tile memory (about 1 GB) between them.
+  Views are not rotated or mirrored. On a private site the second window does not ask for the
+  password again. On a phone or tablet the other dataset opens in a new tab, not linked.
 - **Heatmap, dot plot and violin plots.** Compare genes across groups: the section's clusters
   at any resolution, the shapes you drew, the clusters of a Draw a region run, the regions of an overlay,
   or (single-cell datasets) any annotation column. Genes are each group's top markers plus any
@@ -282,7 +291,8 @@ Safari's engine (WebKit); what was tested there is below.
 **Copy link to this view** was checked with automated tests in Chromium and in Playwright's
 WebKit build (the engine behind Safari), at desktop size and at 390 × 844, and in Playwright's
 Firefox at desktop size; it has not been tried in Safari itself or on a real phone. A link
-made in one browser opens in the other.
+made in one browser opens in the other. **Compare** (two linked windows) is checked the same
+way at desktop size.
 
 **Phones and tablets** open the same page and link; the layout follows the screen.
 

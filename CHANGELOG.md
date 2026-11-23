@@ -35,6 +35,9 @@ more clearly what went wrong.
   removed when prepare or export starts); a wrong zarr (3 or newer), tifffile (2025 or newer)
   or numcodecs (0.16 or newer) stops with a plain message; a failed dataset's note says why,
   including "ran out of memory". New test: `tests/resume_test.py`.
+- **Compare side by side** is back (it was removed in 0.10.0): **Compare** in the top bar, or
+  the Share tab, opens another dataset in a linked window beside the first. The windows split
+  the page's image-tile memory between them, so two windows use no more than one did.
 - Docs: rewritten for the steps above, for people new to all of it. Your own computer, any web
   server and links with a read pass moved to [ADVANCED.md](docs/ADVANCED.md); a memory table is
   in [DESKTOP_APP.md](docs/DESKTOP_APP.md#how-much-memory-do-i-need).

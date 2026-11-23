@@ -343,6 +343,7 @@ The page, in `web/SpatialViewer/`:
 | `viewer.js` | the main viewer: opens datasets, draws image tiles, genes, molecules and clusters with deck.gl, the password and `?data=` links, the UMAP view |
 | `layout.js` | the three tabs, folding sections, each tab's and section's "More options", the "?" notes, the phone layout. It moves controls; it makes none |
 | `dspicker.js` | the searchable dataset list |
+| `compare.js`, `compare.css` | Compare side by side: a second, linked window on another dataset |
 | `qc.js` | the quality filter: per-bin histograms and thresholds |
 | `roi.js` | what differs for GeoMx ROI layers: words, drawing, notes |
 | `plots.js`, `plots_worker.js` | heatmap, dot plot and violin plots; the worker does the numbers |

@@ -278,6 +278,9 @@ their names, the quality filter), in the part after `#`. Drawn shapes are in it 
 (the message under the button says when they do not). To pass on a Draw a region result, send
 the file from **Save JSON**; the other person opens the same dataset and uses **Load JSON**.
 
+**Compare** (top bar) opens a second dataset of the same site in a window beside the first,
+with the two views linked.
+
 ---
 
 ## If something goes wrong

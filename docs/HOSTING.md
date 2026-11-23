@@ -189,7 +189,11 @@ the viewer runs in production. Step-by-step instructions, including CORS, upload
 AzCopy and the Static Web App setup:
 **[deploy/azure/README.md](../deploy/azure/README.md)**.
 
-The access token is kept in memory only (not in the address, not in browser storage). A link
+The access token is kept in memory only (not in the address, not in browser storage).
+**Compare** (a second window beside the first) does not ask for the password again: the new
+window asks the window that opened it for its token, over a channel only the windows of that
+group share and that never leaves the browser, and gets it only when both are the same page
+with the same `tokenEndpoint`. The token is handed over, never the password. A link
 made with **Copy link to this view** holds neither the token nor the password: whoever opens it is asked for the password first, then sees
 the view.
 
