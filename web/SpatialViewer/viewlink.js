@@ -511,7 +511,9 @@
         const on = view.ov.some((k) => k === S.overlays[i].key), box = boxes[i];
         if (!box || box.checked === on) continue;
         box.checked = on;
-        try { await box.onchange({ target: box }); } catch (e) { notes.push(`The outline ${S.overlays[i].label} could not be loaded.`); }
+        // (an outline that will not load unticks itself and says so on the page: noted here too)
+        try { await box.onchange({ target: box }); if (on && !box.checked) throw new Error("not loaded"); }
+        catch (e) { notes.push(`The outline ${S.overlays[i].label} could not be loaded.`); }
         if (stale()) return notes;
       }
     }
