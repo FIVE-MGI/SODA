@@ -5874,6 +5874,8 @@
     // nothing named any data: on the shared page (no site.js data) that is a visitor without a link
     if (!S.datasets.length) {
       // (a data folder with an empty list already stopped above, at datasets.json)
+      // nothing named at all: site.js's calm "No data connected yet" panel; the line below if it has none
+      if (!DATA && window.SodaSite && typeof window.SodaSite.showNoData === "function" && window.SodaSite.showNoData()) return;
       status(DATA ? "This data folder lists no datasets."
         : "No data to show yet. To look at a dataset, open the SODA link you were given (it ends in ?data=…). " +
           "To share your own data, see docs/SHARE_YOUR_DATA.md in the SODA repository. " +

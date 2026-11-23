@@ -1,7 +1,7 @@
-# The only file that names a particular study: its datasets, institution and logos.
-web/SpatialViewer/config.js
+# web/SpatialViewer/config.js is tracked: every copy of SODA ("Use this template") edits its own
+# (its data folder, title, logos). A private study's settings belong in a private copy, not here.
 
-# Local branding assets that go with config.js
+# Local branding assets (an older layout kept logos here; a copy's own logos go next to config.js)
 web/SpatialViewer/logos/
 
 # deck.gl and umap-js, put there by `python web/SpatialViewer/prepare.py vendor` (pinned in libs.js; not committed)

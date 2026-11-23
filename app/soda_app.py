@@ -66,8 +66,15 @@ TEXT_TYPES = {
     ".gz": "application/gzip", ".wasm": "application/wasm", ".csv": "text/csv; charset=utf-8",
     ".txt": "text/plain; charset=utf-8", ".woff2": "font/woff2",
 }
-# The viewer's config.js in the app (no site config is shipped): the page's defaults.
+# The viewer's config.js in the app: the page's defaults. Always this one, never the config.js next to
+# the page (that is a published site's own file: its data folder, title, maybe a password check);
+# the app names the data itself, in the viewer's address (?data= / ?static=).
 APP_CONFIG_JS = b"window.SpatialViewerConfig = window.SpatialViewerConfig || {};\n"
+# Datasets prepared at the same time (Prepare's "Datasets at the same time"): one per this much memory.
+# batch.py measured 8.5 GB (WHOLE_SECTION_GB) as the largest peak of one dataset; the rest of the
+# 12 GB is left for the system, the browser and this app. At least 1, at most 8.
+GB_PER_JOB = 12
+MAX_JOBS = 8
 # Files next to the page that are never served: the tools, not the page.
 _BLOCKED_SUFFIXES = (".py", ".pyc", ".ps1", ".sh", ".txt", ".md", ".password", ".csv")
 _BLOCKED_PARTS = ("__pycache__", ".venv", "soda-env", ".password")
@@ -115,6 +122,18 @@ def workdir() -> Path:
         d = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / APP_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def max_jobs() -> tuple[int, float | None]:
+    """(how many datasets Prepare may run at the same time on this computer, its memory in GB or None):
+    one per GB_PER_JOB GB of memory, at least 1, at most MAX_JOBS; 1 when the memory cannot be read."""
+    try:
+        mem = soda_import("batch").memory_gb()
+    except Exception:
+        mem = None
+    if not mem or not mem[0]:
+        return 1, None
+    return max(1, min(MAX_JOBS, int(mem[0] // GB_PER_JOB))), round(mem[0], 1)
 
 
 def soda_import(name: str):
@@ -416,8 +435,10 @@ class App:
 
     def status(self) -> dict:
         key = Path(os.environ.get("SPATIALVIZ_KEY") or Path.home() / "private" / "soda" / "sample_id_key.csv")
+        jobs, mem = max_jobs()
         return {"app": APP_NAME, "version": self.version, "frozen": FROZEN, "port": self.port,
                 "keyFile": str(key), "keyFound": key.exists(), "update": self.update,
+                "maxJobs": jobs, "memoryGB": mem,
                 "jobRunning": bool(self.job and self.job.running), "workdir": str(self.wd)}
 
     def serve(self):
@@ -519,8 +540,8 @@ class App:
                             return self._json({"none": True})
                         since = int(urllib.parse.parse_qs(url.query).get("since", ["0"])[0] or 0)
                         return self._json(app.job.view(since))
-                    if path == "/viewer/config.js" and not (SODA_DIR / "config.js").is_file():
-                        # config.js is each site's own file and is not shipped; local viewing needs only the defaults
+                    if path == "/viewer/config.js":
+                        # config.js is a published site's own file; local viewing needs only the defaults
                         return self._send(200, APP_CONFIG_JS, TEXT_TYPES[".js"], head=head)
                     if path.startswith("/viewer/"):
                         return self._file(SODA_DIR, path[len("/viewer/"):], head, blocked=True)
@@ -580,9 +601,9 @@ class App:
                 extra += ["--options", str(Path(str(b["options"]).strip()).expanduser().resolve())]
             if str(b.get("title", "")).strip():
                 extra += ["--title", str(b["title"]).strip()]
-            jobs = int(b.get("jobs") or 1)
+            jobs = min(max(int(b.get("jobs") or 1), 1), max_jobs()[0])
             if jobs > 1:
-                extra += ["--jobs", str(min(jobs, 8))]
+                extra += ["--jobs", str(jobs)]
             if b.get("rebuild"):
                 extra.append("--rebuild")
             if b.get("ids") is False:                  # the barcode / cell id lists are written unless unticked
@@ -835,12 +856,6 @@ def cmd_selftest(args: list[str]) -> int:
             import PIL
             return PIL.__version__
 
-        def crypto_():
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            k = AESGCM.generate_key(bit_length=256)
-            n = os.urandom(12)
-            assert AESGCM(k).decrypt(n, AESGCM(k).encrypt(n, b"x", None), None) == b"x"
-
         def sklearn_():
             import numpy as np
             from sklearn.neighbors import NearestNeighbors
@@ -891,7 +906,7 @@ def cmd_selftest(args: list[str]) -> int:
 
         for name, fn in (("numpy", numpy_), ("scipy", scipy_), ("tifffile", tiff_), ("imagecodecs", codecs_),
                          ("zarr", zarr_), ("h5py", h5_), ("pyarrow", arrow_), ("pillow", pil_),
-                         ("cryptography", crypto_), ("scikit-learn", sklearn_), ("numba", numba_),
+                         ("scikit-learn", sklearn_), ("numba", numba_),
                          ("igraph+leidenalg", leiden_),
                          ("soda modules", soda_modules)):
             t(name, fn)
