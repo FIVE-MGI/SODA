@@ -45,7 +45,7 @@ Where it was run:
 | System | Python | How |
 |---|---|---|
 | Windows 11 x64 | 3.13 | the lock file was made here (pip freeze of a clean 3.13.9 venv) and the smoke test passes |
-| Ubuntu (GitHub Actions) | 3.12 | `.github/workflows/smoke.yml` installs with `install.sh` and runs the smoke test on every push |
+| Ubuntu (GitHub Actions) | 3.12 | `.github/workflows/smoke.yml` installs with `install.sh` and runs the smoke test on every push to FIVE-MGI/SODA (copies of SODA skip it) |
 | macOS 12+ (Apple Silicon), Linux x86_64 | 3.12, 3.13 | every pinned version has a ready-made wheel (checked with a resolver); not run by us on a Mac |
 
 Not covered by the lock file: Python 3.11 or older, Python 3.14, Intel Macs, Linux on ARM.
@@ -158,7 +158,6 @@ them. To run one by itself:
 |---|---|
 | `node tests/browsers_test.js` | the page on every example dataset in Chromium, WebKit (Safari's engine), Firefox and Edge, plus phone-sized windows; pixel comparison with Chromium |
 | `node tests/phone_browser_test.js` | the image path in phone browsers (WebKit as an iPhone, Chromium), with each failure injected. Not run by the smoke test |
-| `node tests/offline_test.js` | the page and a kept dataset open with no network |
 | `node tests/outlines_browser_test.js` | cell outlines, and what draws a subset of the cells with them |
 | `node tests/ownres_browser_test.js` | loading your own results (CSV / TSV) into the page |
 | `node tests/stdformats_browser_test.js` | the standard-format exports open |

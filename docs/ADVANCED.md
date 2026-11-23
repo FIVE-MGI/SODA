@@ -2,12 +2,13 @@
 
 The [quick start in the README](../README.md#quick-start) and
 [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) are enough to share your data. This page is for
-everything past that: your own website, a password, your own names and colours, the
-notebook's settings, your own clusters, marker lists, the code, and a batch run over many datasets.
+everything past that: other places for the data and the page, a password, your own names and
+colours, the notebook's settings, your own clusters, marker lists, the code, and a batch run
+over many datasets.
 Each section is short
 and links to the full reference.
 
-1. [Your own copy and website](#1-your-own-copy-and-website)
+1. [Other places for your data and the page](#1-other-places-for-your-data-and-the-page)
 2. [Private data with a password](#2-private-data-with-a-password)
 3. [Your own labels, groups, colours and stains](#3-your-own-labels-groups-colours-and-stains)
 4. [Every notebook setting](#4-every-notebook-setting)
@@ -18,18 +19,66 @@ and links to the full reference.
 
 ---
 
-## 1. Your own copy and website
+## 1. Other places for your data and the page
 
-Copy SODA on GitHub, turn on its free website and point it at your data folder with one
-line in `config.js` (`data: "<your export folder's link>"`). The steps are in
-[SHARE_YOUR_DATA.md, "Make it your own"](SHARE_YOUR_DATA.md#2-make-it-your-own), including
-how to pull in SODA's later fixes.
+The main way (data in your cloud storage, the page as your own copy of SODA on GitHub Pages) is
+[SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md). The other ways:
 
-Other places the page can live:
+### Your own computer
 
-- your own computer, for a look before anything is uploaded:
-  [HOSTING.md A](HOSTING.md#a-on-your-own-computer) (the notebook's Section 6 does this for you);
-- any web server or static host: [HOSTING.md B](HOSTING.md#b-any-static-web-host-public-data).
+To look at an export before anything is uploaded (the app's **Open viewer** and the notebook's
+Section 6 do this for you), from the repository folder with the environment active:
+
+```bash
+python web/SpatialViewer/static_serve.py export 8765
+python -m http.server 8766 --directory web/SpatialViewer
+```
+
+then open `http://localhost:8766/index.html?static=http://localhost:8765&ds=<dataset id>`.
+Details: [HOSTING.md A](HOSTING.md#a-on-your-own-computer).
+
+### A `?data=` link
+
+Any SODA site without a password opens another folder named in its address:
+`<SODA site>/?data=<storage folder address>`, for example on the FIVE lab's examples page,
+`https://sidolans01.mgifive.org/SODA-examples/?data=https://smithlabsoda.blob.core.windows.net/soda/export/`.
+No GitHub needed, but the storage's CORS rule must allow that site's address
+(`https://sidolans01.mgifive.org`), and the page's title and settings are that site's, apart
+from what your `datasets.json` sets. A password site opens such links only with
+`allowDataLinks: true` in its `config.js`.
+
+### A link with a read pass
+
+The folder stays private; the link carries a read-only pass. On Azure: container → **Shared
+access tokens** → Permissions **Read** only, an expiry date → **Generate SAS token and URL**.
+Put the folder address with the pass after `?data=` (the notebook's `READ_PASS` setting builds
+the link for you). The page adds the pass to every file it reads. **Anyone with the link can
+read the folder until the pass expires**, so send it like a password, never put it in a paper,
+and never in `config.js` (it is public). **Copy link to this view** keeps the pass, so that
+link is as private as the one you were given.
+
+### Any web server
+
+Copy the page (`web/SpatialViewer/`) and the export to a lab or department web server, or a
+static host (Netlify, Cloudflare Pages): [HOSTING.md B](HOSTING.md#b-any-static-web-host-public-data),
+with the nginx and IIS settings in [Host notes](HOSTING.md#host-notes) and
+[what the host must do](HOSTING.md#what-the-host-must-do) (Range requests, CORS).
+
+### Getting SODA's later fixes
+
+Your copy does not change when SODA does. The easiest way to a newer SODA: rename your old
+copy (**Settings → General → Repository name**), make a new copy with the old name (**Use this
+template** again, so the address stays the same), paste your `config.js` into it, upload your
+logos, turn on its Pages as before, then archive the old copy. With git on your own computer
+you can instead merge SODA into your copy:
+
+```bash
+git remote add soda https://github.com/FIVE-MGI/SODA.git            # once
+git pull soda main --allow-unrelated-histories                       # the first time; later: git pull soda main
+```
+
+A copy made with "Use this template" starts its own history, hence that option the first time;
+git then asks you to pick wherever SODA and you changed the same file (at least `config.js`).
 
 Please put `soda` in your site's name, for example `yourlab-soda`.
 
@@ -37,9 +86,8 @@ Please put `soda` in your site's name, for example `yourlab-soda`.
 
 | Way | How it works | Steps |
 |---|---|---|
-| **Password site on Azure** (what runs in production) | The data stays in a private blob container. A small function, `/api/token`, checks one shared password and gives the browser a read-only pass that expires after an hour by default (`TOKEN_HOURS`, at most 24). The storage key stays on the server. In `config.js`: `tokenEndpoint: "/api/token"`. | [HOSTING.md C](HOSTING.md#c-azure-private-data-with-a-password), then [deploy/azure/README.md](../deploy/azure/README.md) |
-| **A link with a read pass** | The folder stays private; the link carries a read-only pass (an Azure SAS, an S3 pre-signed link). In the notebook: `READ_PASS`. Anyone holding the link can read the data until the pass expires, so treat the link like a password. | [SHARE_YOUR_DATA.md Step 5](SHARE_YOUR_DATA.md#step-5-make-the-link) |
-| **AWS or another cloud** | Your own token endpoint that behaves like the Azure one. A design, not built or tested. | [HOSTING.md D](HOSTING.md#d-aws-s3--cloudfront-or-another-backend) |
+| **Password site on Azure** (what runs in production; needs your IT or cloud administrator) | The data stays in a private blob container. A small function, `/api/token`, checks one shared password and gives the browser a read-only pass that expires after an hour by default (`TOKEN_HOURS`, at most 24). The storage key stays on the server. In `config.js`: `tokenEndpoint: "/api/token"`. | [HOSTING.md C](HOSTING.md#c-azure-private-data-with-a-password), then [deploy/azure/README.md](../deploy/azure/README.md) |
+| **A link with a read pass** | The folder stays private; the link carries a read-only pass (an Azure SAS). In the notebook: `READ_PASS`. Anyone holding the link can read the data until the pass expires, so treat the link like a password. | [A link with a read pass](#a-link-with-a-read-pass) |
 
 Keep in mind:
 
@@ -56,16 +104,17 @@ There are two places for these settings:
 - **`datasets.json`**, next to your data (written by `catalog.py` or the notebook). It works
   on the shared SODA page and on your own copy. Edit it in any text editor and upload only
   that file again.
-- **`web/SpatialViewer/config.js`**, in your own copy only. Copy it from `config.example.js`,
-  which explains every option. If `config.js` has `data:`, the dataset list, names and
-  groups come from that folder's `datasets.json`, so set them there.
+- **`web/SpatialViewer/config.js`**, in your own copy only (edit it on GitHub with the pencil
+  icon). `config.example.js` next to it explains every option; copy the lines you need. If
+  `config.js` has `data:`, the dataset list, names and groups come from that folder's
+  `datasets.json`, so set them there.
 
 | What | In `datasets.json` | In `config.js` |
 |---|---|---|
 | title at the top of the page | `title` | `brand.title` |
 | line under the title | `byline` | `brand.byline` |
 | "Link to paper" | `paper` | `paperUrl` |
-| logos | (none) | `brand.logos`; make a folder `web/SpatialViewer/logos/` for the files (git ignores it: add them with `git add -f`) |
+| logos | (none) | `brand.logos`; put the image files next to `config.js`, in `web/SpatialViewer/` |
 | dataset opened first | `default` | `defaultDataset` |
 | a dataset's name in the list | `label` | `datasets.<id>.label` |
 | the heading it sits under | `group`: the heading text; headings appear in the order they first occur | `datasets.<id>.group`: a key of `groups`, whose order sets the order of the headings |
@@ -99,7 +148,7 @@ Section 0. Run that cell even if you change nothing.
 | `CLOUD_URL` | empty | your cloud folder's address, without any key or `?sv=...` pass. Needed before Section 7 |
 | `KEY_FILE` | the file named by the `SPATIALVIZ_KEY` environment variable, else `sample_id_key.csv` in `private/soda/` in your home folder | the de-identification key. Keep it outside `WORK` and the repository; never upload it. Section 5 checks for sample IDs only when it exists |
 | `ALWAYS_CHECK_IDS` | `False` | `True` runs the sample ID check even without a key file |
-| `SODA_PAGE` | `"https://soda.mgifive.org/"` | the address of the SODA page your link opens: the shared SODA page, or your own copy's address. Section 7 builds the link from it |
+| `SODA_PAGE` | `"https://sidolans01.mgifive.org/SODA-examples/"` | the address of the SODA page your link opens and `test_link()` tests against: your own site's address (`https://<you>.github.io/<copy>/SODA/`), or the FIVE lab's examples page for a `?data=` link. Section 7 builds the link from it |
 | `TITLE` | empty | the name of the whole collection at the top of the page (passed to `catalog.py`); empty keeps the title already in `datasets.json` |
 | `READ_PASS` | empty | private folder only: a read-only pass (Azure SAS, starts with `sv=`), added to the link. Never a write pass |
 | `TILE_FORMAT` | `"jpg"` | image tiles as JPEG (several times smaller) or `"png"` (lossless, for exact intensities) |
@@ -272,8 +321,8 @@ To write your own, copy one and edit it: a `name`, and a list of `types`, each w
 - notebook: `MARKERS` in the advanced settings;
 - command line: `prepare.py export --markers my_markers.json`;
 - in the browser, for Draw a region on gene data: `markerSet` in `config.js`. Without that
-  line the page uses `markers/rna_generic.json`; `config.example.js` sets
-  `markers/nerve.json`, so change or remove it.
+  line the page uses `markers/rna_generic.json` (`config.example.js` shows
+  `markers/nerve.json` as an example).
 
 How a name is scored, and the confidence shown:
 [PREPARING_DATA.md, "Suggested cluster names"](PREPARING_DATA.md#suggested-cluster-names-marker-lists).
@@ -281,7 +330,7 @@ How a name is scored, and the confidence shown:
 ## 7. Changing the code
 
 In your own copy you can change anything. Start with the table in
-[SHARE_YOUR_DATA.md, Step 4](SHARE_YOUR_DATA.md#step-4-change-what-you-want). The page is
+[SHARE_YOUR_DATA.md, Changing things later](SHARE_YOUR_DATA.md#changing-things-later). The page is
 plain HTML, CSS and JavaScript with no build step: edit a file, reload the page.
 
 The page, in `web/SpatialViewer/`:
@@ -289,7 +338,8 @@ The page, in `web/SpatialViewer/`:
 | File | What it does |
 |---|---|
 | `index.html` | every control, with its id; loads the scripts and styles below |
-| `config.js` | your settings (copied from `config.example.js`) |
+| `config.js` | your settings: the data folder, title, logos (every option is explained in `config.example.js`) |
+| `site.js` | what the page does when nothing names any data: the "No data connected yet" panel |
 | `viewer.js` | the main viewer: opens datasets, draws image tiles, genes, molecules and clusters with deck.gl, the password and `?data=` links, the UMAP view |
 | `layout.js` | the three tabs, folding sections, each tab's and section's "More options", the "?" notes, the phone layout. It moves controls; it makes none |
 | `dspicker.js` | the searchable dataset list |

@@ -1,172 +1,240 @@
-# Share your data: two ways
+# Share your data: your own SODA website
 
-## Start here: who may see the data?
+At the end of this guide you have **your own SODA website**, at an address such as
+`https://smithlab.github.io/smithlab-soda/SODA/`, that opens your data for anyone with the link.
+Readers install nothing.
 
-This is the last step, after the export and the de-identification check.
+Your data and the website live in two different places, both yours:
 
 ```mermaid
-flowchart TD
-    A["Your export folder is ready<br/>(export, then the de-identification check)"] --> Q{"Can anyone see this data?"}
-    Q -->|"Yes, public"| P1["Upload export/ to your own cloud storage, public-read"]
-    P1 --> P2["Allow https://soda.mgifive.org to read it:<br/>a CORS rule that also allows Range"]
-    P2 --> P3["A link on the shared page:<br/>soda.mgifive.org/?data=&lt;your folder&gt;<br/>(the link that goes in a paper)"]
-    P2 --> P4["Or your own copy of SODA:<br/>Use this template, then GitHub Pages"]
-    Q -->|"No, private"| W{"Who needs to see it?"}
-    W -->|"A few people, for a while"| V1["Private folder plus a read pass (SAS) on the link.<br/>Send it privately; never put it in a paper"]
-    W -->|"Your lab, long term"| V2["A password-protected SODA site on Azure<br/>(deploy/azure/README.md)"]
-    W -->|"Only you"| V3["Upload nothing: the notebook's preview (Section 6)<br/>or the desktop app (DESKTOP_APP.md)"]
+flowchart LR
+    A["1. Prepare<br/>(the SODA app, on your computer)"] --> B["2-4. Your cloud storage<br/>(holds the data, readable by anyone)"]
+    C["5-6. Your copy of SODA on GitHub<br/>(holds the page, free website)"] --> D["7. config.js names<br/>your storage folder"]
+    B --> D
+    D --> E["Your site:<br/>https://&lt;you&gt;.github.io/&lt;copy&gt;/SODA/"]
 ```
 
-- **Public, shared page:** [1. Share a link](#1-share-a-link) below.
-- **Public, your own copy:** [2. Make it your own](#2-make-it-your-own) below.
-- **Private:** the same upload and link steps with a private folder and a read pass;
-  for a password site see [deploy/azure/README.md](../deploy/azure/README.md) and
-  [HOSTING.md](HOSTING.md). Only you: [DESKTOP_APP.md](DESKTOP_APP.md).
+**Time:** about an hour the first time, after the data is prepared. **Cost:** GitHub is free;
+cloud storage charges a little for what is stored and for what readers download.
 
-GitHub holds only the SODA page, never your data. Box, Google Drive and Dropbox cannot
-serve the data (no Range requests, no CORS rule), so use cloud storage that can (the table
-in Step 3).
+## Before you start: who may see the data?
+
+Anyone with your site's address can view **and download** the data. Follow this guide only for
+data that may be public: published or example data, with nothing that identifies a patient or
+donor.
+
+- **Must stay private, for your lab:** a password-protected SODA site on Azure. This needs
+  your IT or cloud administrator: [deploy/azure/README.md](../deploy/azure/README.md).
+- **Only you:** upload nothing. The SODA app's **Open viewer** shows your data on your own
+  computer.
+- More ways (a link with a read pass, your own web server):
+  [ADVANCED.md, section 1](ADVANCED.md#1-other-places-for-your-data-and-the-page).
+
+## Words you will meet
+
+| Word | Meaning |
+|---|---|
+| **Cloud storage** | space you rent from Microsoft (Azure Blob Storage), Amazon (AWS S3) or Google (Google Cloud Storage) where every file gets its own web address. Box, Google Drive, Dropbox and OneDrive do **not** work: their links open a preview page, not the file. |
+| **Container / bucket** | a top-level folder in cloud storage (Azure says container; AWS and Google say bucket). |
+| **Public read** | anyone who knows a file's address may download it. Your site needs this. |
+| **CORS** | a setting on your storage that lets your website read the files. Set once (Step 4). |
+| **GitHub** | a free website that keeps code. Your copy of SODA lives there, and GitHub publishes it as a website (GitHub Pages). |
+| **Repository** | one project's folder of files on GitHub. "Your copy of SODA" is a repository. |
+| **Commit** | GitHub's word for "save a change". |
 
 ---
 
-You have prepared your data (one folder per dataset, from `prepare.py export` or the
-notebook). There are two ways to let other people look at it.
+## Step 1. Prepare your data with the SODA app
 
-| | **1. Share a link** | **2. Make it your own** |
-|---|---|---|
-| What you get | a link that opens your data on the shared SODA page | your own SODA website, which you can change |
-| What you change | names, groups, title, which stains show: in one text file next to your data | anything: the same, plus the code itself |
-| Where your data lives | your own storage | your own storage |
-| Needs | storage that serves files over https | the same, plus a free GitHub account |
-| Fixes and new features | arrive by themselves | you pull them in yourself |
-| Effort | about 15 minutes after the upload | about 30 minutes the first time |
+Download the app from **https://github.com/FIVE-MGI/SODA/releases/latest**, pick your data
+folder, and click **Prepare**. Every click: [GETTING_STARTED.md, Part A](GETTING_STARTED.md#part-a-the-soda-app-no-code).
 
-Most people only need the first. Start there; you can switch to the second later without
-redoing anything, because both read the same data folder.
+✅ The app shows a **green** banner ("clean: the export folder can be shared"). The folder to
+upload is the `export` folder inside the output folder you picked. It holds one folder per
+dataset and a file called `datasets.json`.
 
-Either way, **your data is never copied onto anyone else's website.** The page only reads
-your files from your storage while someone is looking at them.
+(Used the notebook instead? Your folder is `SODA_work/export` after its Section 5. Made the
+export on the command line? First run `python web/SpatialViewer/catalog.py <export folder>`
+and `python web/SpatialViewer/deid.py check <export folder>`, see
+[DEIDENTIFICATION.md](DEIDENTIFICATION.md).)
 
-**Using the notebook?** `notebooks/SODA_pipeline.ipynb` does most of the first way for you.
-Its Section 4 runs `catalog.py` (Step 1; the title is `TITLE` in its advanced settings),
-Section 5 runs the check (Step 2) when you have a de-identification key file, and Section 7
-asks whether the data is public, prints the upload command (Step 3) and the link (Step 5,
-built from `SODA_PAGE`), then tests the CORS rule (Step 4) and prints the exact fix for
-your storage if it is missing.
+## Step 2. Make your cloud storage (once)
 
----
+You need an account with one of the three. Many universities provide Azure; ask your IT.
+This guide clicks through **Azure**; AWS and Google are below.
 
-## 1. Share a link
+> **Universities often switch off public storage.** If an option below is greyed out or
+> refused ("disallowed by policy"), ask your IT to allow public read for one storage
+> account, or keep the data private with the password option
+> ([deploy/azure/README.md](../deploy/azure/README.md), needs your IT or cloud administrator).
 
-**Used the SODA app or the notebook?** They have done Steps 1 and 2 for you (they write
-`datasets.json` and run the sample ID check: the app's green banner, the notebook's Section 5).
-Start at [Step 3](#step-3-upload-the-whole-export-folder). Steps 1 and 2 are for an export made
-from the command line.
+**Azure:**
 
-### Step 1. List your datasets
+1. Go to https://portal.azure.com and sign in.
+2. In the search bar at the top, type **Storage accounts**, open it, click **+ Create**:
+   - Resource group: **Create new** → `soda`
+   - Storage account name: lowercase letters and digits, unique worldwide, e.g. `smithlabsoda`
+   - Region: near you. Performance: **Standard**. Redundancy: **LRS**.
+   - **Advanced** tab: tick **Allow enabling anonymous access on individual containers**.
+   - **Review + create** → **Create**. ✅ "Your deployment is complete" → **Go to resource**.
+3. Left menu **Data storage → Containers** → **+ Container**: name `soda`, Anonymous access
+   level **Blob (anonymous read access for blobs only)** → **Create**. ✅ `soda` is in the list
+   with access level Blob.
 
-From the repository folder, with the environment active:
+**AWS S3:** create a bucket, untick **Block all public access**, and add a bucket policy that
+allows `s3:GetObject` for everyone (`"Principal": "*"`).
+**Google Cloud Storage:** create a bucket with uniform access, then **Permissions → Grant
+access**: `allUsers`, role **Storage Object Viewer**.
 
-```bash
-python web/SpatialViewer/catalog.py <your export folder> --title "Our nerve atlas"
-```
+## Step 3. Upload the export folder
 
-This writes `datasets.json` in the export folder: the list of every dataset, the name the
-page shows for each, and the heading it sits under. Open it in any text editor to rename or
-regroup things (see [what you can change](#what-you-can-change-in-datasetsjson)). Running
-`catalog.py` again later keeps your edits, adds new datasets and drops ones you deleted.
+Upload the whole `export` folder as it is, keeping every file name and sub-folder. It holds
+thousands of small files, so use an upload tool, **not** drag-and-drop on the storage's web
+page (it stops part-way or takes hours).
 
-It stops, and says why, if it finds a private key file (`sample_id_key.csv`) or a prepare
-cache in the folder: neither may be uploaded.
+- **Azure, by clicking (easiest):** install **Azure Storage Explorer**
+  (https://azure.microsoft.com/products/storage/storage-explorer/), open it, **Sign in with
+  Azure** (the person icon on the left). In the left tree: your subscription → **Storage
+  Accounts** → your account → **Blob Containers** → `soda`. Click **Upload → Upload
+  Folder…**, choose the `export` folder → **Upload**. ✅ The bar at the bottom says the
+  transfer completed, with no failures.
+- **Azure, command line:** `azcopy login`, then
+  `azcopy copy "<path to>/export" "https://<account>.blob.core.windows.net/soda/" --recursive`
+  (your account needs the *Storage Blob Data Contributor* role; ask IT).
+- **AWS:** `aws s3 sync "<path to>/export" s3://<bucket>/export/`
+- **Google:** `gcloud storage cp -r "<path to>/export" gs://<bucket>/`
 
-### Step 2. De-identify and check
+Upload **only** `export`. Never the `cache` or `inputs` folders, or any key file.
 
-```bash
-python web/SpatialViewer/deid.py check <your export folder>
-```
+Your **storage folder address** is the web address of that uploaded folder, ending in `/`:
 
-It must say clean before anything is uploaded. See [DEIDENTIFICATION.md](DEIDENTIFICATION.md).
+| Storage | Address |
+|---|---|
+| Azure | `https://<account>.blob.core.windows.net/soda/export/` |
+| AWS S3 | `https://<bucket>.s3.<region>.amazonaws.com/export/` |
+| Google | `https://storage.googleapis.com/<bucket>/export/` |
 
-### Step 3. Upload the whole export folder
+✅ Check it: open that address followed by `datasets.json` in your browser (e.g.
+`https://smithlabsoda.blob.core.windows.net/soda/export/datasets.json`). You see a page of
+text starting with `{`. An error page means the folder is not public (Step 2) or the address
+is wrong.
 
-Upload the folder as it is, keeping every file name and sub-folder, to storage that gives
-each file its own web address:
+## Step 4. Let your site read your storage (CORS, once)
 
-| Storage | Works? | Notes |
-|---|---|---|
-| Azure Blob Storage | yes | public container, or a private one with a read-only SAS link |
-| Amazon S3 | yes | public bucket, or a pre-signed / CloudFront link |
-| Google Cloud Storage | yes | public bucket |
-| A lab or department web server | yes | any server that serves files by name |
-| GitHub Pages | small datasets only | a site is limited to 1 GB |
-| Box, Google Drive, Dropbox, OneDrive | **no** | their share links open a preview page, not the files, and they do not let other sites read them |
+Browsers only let a website read files from another website if that one allows it. This
+setting is called CORS. You allow **your site's address**: `https://<your GitHub name>.github.io`,
+in small letters, with nothing after `.io` (not `/SODA/`, no `/` at the end). If you do not
+have a GitHub account yet, make one first (Step 5) to know your name.
 
-### Step 4. Let the SODA page read it (one setting, once)
+- **Azure:** storage account → left menu **Settings → Resource sharing (CORS)** → **Blob
+  service** tab → fill one row → **Save**:
 
-Browsers only let a page read files from another website if that website says so. This is
-called CORS. Set it once on your storage, allowing the address of the SODA page.
+  | Allowed origins | Allowed methods | Allowed headers | Exposed headers | Max age |
+  |---|---|---|---|---|
+  | `https://<your GitHub name>.github.io` | `GET`, `HEAD`, `OPTIONS` | `*` | `*` | `3600` |
 
-The page reads one gene at a time out of the export's gene packs (a few large files per layer)
-with an HTTP **Range** request ("bytes 4,128 to 6,563 of this file"). So the rule must also
-allow the `Range` request header (some browsers ask first, in a "preflight") and let the page
-see the `Content-Range` answer header. The rules below do both:
-
-- **Azure:** Storage account → Resource sharing (CORS) → Blob service: Allowed origins
-  `https://soda.mgifive.org` (the shared SODA page; you may add `https://five-mgi.github.io` too, its GitHub address, which redirects there; for your own copy of SODA, its address), Allowed methods `GET, HEAD, OPTIONS`,
-  Allowed headers `*`, Exposed headers `*`, Max age `3600`. (`*` includes `Range` and
-  `Content-Range`. If you list headers instead, allow at least `range` and expose
-  `content-range, content-length`.) Blob storage answers Range requests by itself, also
-  through a read pass (SAS) on the link.
-- **Amazon S3:** Bucket → Permissions → CORS:
+- **AWS S3:** bucket → **Permissions → Cross-origin resource sharing (CORS) → Edit**, paste:
   ```json
-  [{ "AllowedOrigins": ["https://soda.mgifive.org"], "AllowedMethods": ["GET", "HEAD"],
+  [{ "AllowedOrigins": ["https://<your GitHub name>.github.io"], "AllowedMethods": ["GET", "HEAD"],
      "AllowedHeaders": ["*"], "ExposeHeaders": ["Content-Range", "Content-Length"], "MaxAgeSeconds": 3600 }]
   ```
-- **Google Cloud Storage:** save the same rule as `cors.json`
-  (`[{"origin": ["https://soda.mgifive.org"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`)
-  and run `gcloud storage buckets update gs://<bucket> --cors-file=cors.json`.
-- **A web server:** see the nginx example in [HOSTING.md](HOSTING.md#host-notes). Apache,
-  nginx and IIS answer Range requests for static files by default.
+- **Google:** save
+  `[{"origin": ["https://<your GitHub name>.github.io"], "method": ["GET", "HEAD"], "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length"], "maxAgeSeconds": 3600}]`
+  as `cors.json` and run `gcloud storage buckets update gs://<bucket> --cors-file=cors.json`.
 
-If you skip this, the page says it "could not reach" your folder and points here. If the
-storage does not answer Range requests at all (a few file-sharing services and proxies), a
-gene comes back as its whole pack: the page copes with packs up to 160 MB, slowly, and
-otherwise says the host does not support Range requests. Use storage that answers Range
-requests (blob storage, S3, GitHub Pages, nginx).
+Why `Range`: the page reads one gene at a time out of a few large files, asking for "bytes
+4,128 to 6,563 of this file" (an HTTP Range request). The rules above allow that. Several
+addresses can share one rule: add one per line (Azure) or inside the `[...]` list.
 
-### Step 5. Make the link
+## Step 5. Make your own copy of SODA
 
-Take the web address of your export folder (the folder that holds `datasets.json`), and
-put it after `?data=` on the address of the shared SODA page, https://soda.mgifive.org/
-(or of your own copy of SODA):
+1. Make a free GitHub account at https://github.com/signup if you have none. Your **GitHub
+   name** (or your lab's organisation name) is part of your site's address.
+2. Open **https://github.com/FIVE-MGI/SODA** and click the green **Use this template** button
+   → **Create a new repository**.
+3. Owner: you (or your lab's organisation). Repository name: something with `soda` in it,
+   e.g. `smithlab-soda`. Choose **Public** (free GitHub websites need it). Click **Create
+   repository**.
+
+✅ You are on your copy's page, `https://github.com/<your GitHub name>/<repository name>`,
+with the same files as SODA.
+
+## Step 6. Turn on its website
+
+1. In your copy, click **Settings** (top) → **Pages** (left) → under **Build and deployment**,
+   **Source: GitHub Actions**.
+2. Click **Actions** (top) → **pages** (left) → **Run workflow** → **Run workflow**.
+
+Creating the copy has probably started this workflow once already. That first run ends
+**green**, with a notice "Turn on GitHub Pages": nothing is wrong, it is telling you to do
+point 1, then run it again (point 2).
+
+✅ After a minute or two the run has a green tick, and its summary says "SODA is published" with
+your site's address:
 
 ```
-https://soda.mgifive.org/index.html?data=https://yourstorage.blob.core.windows.net/soda/our-atlas/
+https://<your GitHub name>.github.io/<repository name>/SODA/
 ```
 
-Open it yourself first. You should see your title and every dataset in the list. Then
-share it: anyone with the link sees your data, nobody else's.
+(`https://<your GitHub name>.github.io/<repository name>/` forwards there.) Open it: it shows
+**"No data connected yet"**. That is right: Step 7 connects your data.
 
-If your storage link has a read pass on the end (Azure's `?sv=...&sig=...`, an S3
-pre-signed link), keep it: the page adds it to every file it reads. **Anyone with the link
-can then read the folder** until the pass expires, so treat that link like a password.
+No **Pages** in Settings, or no **GitHub Actions** choice? The copy must be Public:
+**Settings → General → Danger Zone → Change visibility**.
 
-**Copy link to this view** in the page's Share tab gives the same address plus the dataset on
-show and the view as it looks now: position and zoom, genes, stains, colours, clusters and
-their names, the quality filter. The view is in the part after `#`; the `?data=` part stays
-as it is, read pass included, so that link is as private as the one you were given. Drawn
-shapes are in it when they fit (the message under the button says when they do not). To pass
-on a Draw a region result, send the file from **Save JSON**; the other person opens the same
-dataset and uses **Load JSON**.
+## Step 7. Connect your data
 
-If something is wrong, the page says what in plain words: no `datasets.json` in the folder
-(run Step 1 and upload again), the storage refused (the folder is private and the link has
-no read pass), or it could not be reached (Step 4, or a wrong link).
+1. In your copy on GitHub, open the folders **web** → **SpatialViewer** and click
+   **config.js**.
+2. Click the **pencil** icon (top right of the file, "Edit this file").
+3. Find the line `data: "",` and paste your storage folder address (Step 3) between the two
+   quotes:
+   ```js
+   data: "https://smithlabsoda.blob.core.windows.net/soda/export/",
+   ```
+   Optional, in the same file: the title at the top of the page (`title: "SODA",`) and a line
+   of small print (`byline: "",`).
+4. Click **Commit changes…**, then **Commit changes** in the box that opens.
+
+✅ About two minutes later (the **Actions** tab shows the run), reload your site. Your datasets
+are in the **Dataset** menu and genes load. Check it once in a private browser window too.
+
+That address is what you put in your paper, your lab page or an email. Every later change
+you commit republishes the site by itself.
+
+## Step 8 (optional). Your own address
+
+To use an address such as `https://gliaportal.mgifive.org/SODA/` instead of the github.io one:
+
+1. Ask whoever runs your domain (often IT) for a **CNAME record**: name `gliaportal` (the
+   part before your domain), pointing to `<your GitHub name>.github.io`.
+2. In your copy: **Settings → Pages → Custom domain**, type `gliaportal.mgifive.org` →
+   **Save**. When GitHub has checked it (minutes to a day), tick **Enforce HTTPS**.
+3. Add `https://gliaportal.mgifive.org` to your storage's CORS rule (Step 4).
+
+✅ Your site is now at `https://gliaportal.mgifive.org/SODA/` (the old github.io address
+forwards there).
+
+---
+
+## Changing things later
+
+| To change | Where |
+|---|---|
+| dataset names, groups, order, which stains show, the collection's title | `datasets.json` in your storage folder (below) |
+| the site's title, logos, small print, paper link | `web/SpatialViewer/config.js` in your copy (pencil icon, as in Step 7) |
+| colours, gene limits and every other page setting | the same `config.js`; each option is explained in `config.example.js` next to it |
+| add a dataset | prepare it, upload the `export` folder again (replace existing files), done: the site lists it |
+
+**Logos:** in your copy, open **web → SpatialViewer**, click **Add file → Upload files**, add
+the image, and commit. Then in `config.js` remove the `//` in front of the logos example line
+and put your file's name in it (`src: "my-lab-logo.png"`).
 
 ### What you can change in datasets.json
 
-Everything below is optional. Edit the file in any text editor, save, and upload it again
-(only this one file). Reload the page to see the change.
+Open `datasets.json` (in the `export` folder on your computer) in any text editor, change it,
+save, and upload only that file again (Storage Explorer: open the folder → **Upload → Upload
+Files**, overwrite). Reload the page. Everything is optional:
 
 ```json
 {
@@ -202,88 +270,49 @@ Do not change `id`: it is the folder's name. You can also put an `about.html` ne
 `datasets.json`; the page shows it under "About" (headings, paragraphs, lists, bold and
 italic, and https links are kept; anything else is removed).
 
+### Links to one view
+
+**Copy link to this view** in the page's Share tab gives your site's address plus the dataset
+on show and the view as it looks now (position and zoom, genes, stains, colours, clusters and
+their names, the quality filter), in the part after `#`. Drawn shapes are in it when they fit
+(the message under the button says when they do not). To pass on a Draw a region result, send
+the file from **Save JSON**; the other person opens the same dataset and uses **Load JSON**.
+
 ---
 
-## 2. Make it your own
+## If something goes wrong
 
-Your own copy of SODA, on your own free web address, that you can change however you
-like. Your data still lives in your storage (Steps 1–4 above); your copy just opens it
-without the `?data=` part, and can have your name, logos and code changes.
+The page says what is wrong in plain words.
 
-Passwords, every label and colour setting, the notebook's settings and a map of the code
-are in one guide: [ADVANCED.md](ADVANCED.md).
-
-### Step 1. Copy SODA on GitHub
-
-On SODA's GitHub page, click **Use this template → Create a new repository**. Pick a name
-with `soda` in it (for example `yourlab-soda`) and make it **Public** (free GitHub Pages
-sites have to be).
-
-### Step 2. Turn on its website
-
-In your new repository: **Settings → Pages → Build and deployment → Source: GitHub
-Actions.** Then **Actions → pages → Run workflow**. A minute later your site is at
-
-```
-https://<your GitHub name>.github.io/<repository name>/
-```
-
-From now on, every change you save to the `main` branch republishes it by itself.
-
-### Step 3. Point it at your data
-
-In your repository, **Add file → Create new file**, name it `web/SpatialViewer/config.js`,
-paste this, change the two lines marked, and **Commit changes**:
-
-```js
-window.SpatialViewerConfig = {
-  data: "https://yourstorage.blob.core.windows.net/soda/our-atlas/",   // ← your export folder's link
-  brand: { title: "Our nerve atlas", logos: [], byline: "Smith lab" },   // ← your names
-  tokenEndpoint: "",
-};
-```
-
-Your site now opens your data directly. The title, groups and other settings in your
-`datasets.json` still apply. Add your site's address to the CORS rule of your storage
-(Step 4 of the first way), e.g. `https://<your GitHub name>.github.io`.
-
-(`config.js` is in `.gitignore` so that the main SODA repository never holds anyone's
-settings. Creating it on the GitHub website, as above, works anyway. If you work with git
-on your own computer, add it once with `git add -f web/SpatialViewer/config.js`.)
-
-### Step 4. Change what you want
-
-Edit files right on GitHub (the pencil icon) or on your computer. What people usually
-change, from easiest to hardest:
-
-| To change | Edit |
+| What you see | What to do |
 |---|---|
-| names, groups, order, which stains show | `datasets.json` in your data folder (no code) |
-| title, logos, byline, paper link, colours, gene limits | `web/SpatialViewer/config.js`; every option is explained in `config.example.js` |
-| marker lists for suggested cluster names | `web/SpatialViewer/markers/*.json` |
-| how the page looks | `web/SpatialViewer/styles.css`, `layout.css` |
-| what the page does | `web/SpatialViewer/viewer.js` and the other `.js` files |
+| "No data connected yet" | `config.js` has no address yet, or the change is not published: check the **Actions** tab for a green run (Step 7) |
+| "Could not reach" your folder | the CORS rule (Step 4): exactly `https://<your GitHub name>.github.io` (or your own address), small letters, no `/` at the end; or the address in `config.js` is not the folder that holds `datasets.json` |
+| "… is not readable (403)" | the storage is not public read (Step 2) |
+| "No datasets.json in …" | upload the whole `export` folder (Step 3), not only the dataset folders; the address must be the folder that holds `datasets.json` |
+| a dataset is missing from the list | its folder was not uploaded, or an older `datasets.json` was |
+| genes do not load, or a message that the host does not answer Range requests | use Azure, AWS or Google storage; on your own web server see [HOSTING.md](HOSTING.md#what-the-host-must-do) |
+| the pages run failed (red) | open it: the summary says which step and why |
 
-Logos go in `web/SpatialViewer/logos/` (also in `.gitignore`; add them on the website or
-with `git add -f`).
+Still stuck: open a [GitHub issue](https://github.com/FIVE-MGI/SODA/issues).
 
-### Getting SODA's later fixes
+## Other ways
 
-Your copy does not change when SODA does. To bring in a newer SODA, on your computer:
+- **No GitHub: a `?data=` link.** Put your storage folder address after `?data=` on the FIVE
+  lab's examples page:
+  `https://sidolans01.mgifive.org/SODA-examples/?data=https://smithlabsoda.blob.core.windows.net/soda/export/`.
+  Your storage's CORS rule must then allow `https://sidolans01.mgifive.org`. The same works on
+  your own site (`https://<you>.github.io/<copy>/SODA/?data=<another folder>`).
+- **Private data with a password:** an Azure Static Web App
+  ([deploy/azure/README.md](../deploy/azure/README.md)). Needs your IT or cloud administrator.
+- **A link with a read pass, your own computer, your own web server:**
+  [ADVANCED.md, section 1](ADVANCED.md#1-other-places-for-your-data-and-the-page).
 
-```bash
-git remote add soda https://github.com/FIVE-MGI/SODA.git      # once
-git pull soda main
-```
+## Keep in mind
 
-Git merges SODA's changes with yours; if you both changed the same lines it asks you to
-pick. If you changed only `config.js`, `datasets.json` and logos, there is nothing to pick.
-
-### Keep in mind
-
-- **Public repository, public code.** Never put the de-identification key, a prepare cache
-  or anything private in it. Data does not belong in it either: keep data in storage.
-- **Your copy, your fixes.** If you change the code, test it on your own data before you
-  share the link.
-- **Name your site after SODA**, for example `yourlab-soda`, so visitors know what they are
+- **Your copy is public.** Never put a password, a key, a read-pass link, the
+  de-identification key file or data in it. Data lives in your storage only.
+- **Your copy does not update itself** when SODA does. To bring in later fixes:
+  [ADVANCED.md, section 1](ADVANCED.md#getting-sodas-later-fixes).
+- **Name your site after SODA** (e.g. `smithlab-soda`), so visitors know what they are
   using, and cite SODA in anything you publish with it (see the [README](../README.md#citing)).

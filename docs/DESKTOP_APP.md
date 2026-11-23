@@ -179,8 +179,8 @@ soda-env/bin/python web/SpatialViewer/prepare.py vendor
 ./app/build_release_mac.sh --version 0.1.0 --require-vendor
 ```
 
-**CI.** Besides the two build workflows (run by hand, or on a `v*` tag in a copy of SODA), the
-`smoke` workflow (every push and pull request, Ubuntu) runs `tests/app_test.py` from source after
+**CI.** Besides the two build workflows (only ever started by hand, also in a copy of SODA), the
+`smoke` workflow (every push and pull request in FIVE-MGI/SODA, Ubuntu; skipped in copies) runs `tests/app_test.py` from source after
 `tests/smoke_test.py`: the launcher's selftest, Prepare with the sample ID check, Check, the
 viewer server and the home page's API, in about 6 minutes, with no browser.
 
@@ -238,8 +238,9 @@ to read a warning in a log:
   Check on the app's own data folder flags two file names in `numba-cache\`, where numba names
   compiled code after a function and a line number, and `tau_rand_int-<line>` reads like an ID.
   That folder is a local cache and is never shared.)
-- The app never uploads. Publishing stays a separate, deliberate step (docs/SHARE_YOUR_DATA.md,
-  docs/HOSTING.md) for a folder the check has passed.
+- The app never uploads and has no share step. Publishing stays a separate, deliberate step
+  (docs/SHARE_YOUR_DATA.md: upload to your storage, connect your own copy of SODA) for a folder
+  the check has passed.
 
 ## macOS: Gatekeeper, notarisation, Apple Silicon and Intel
 
@@ -359,19 +360,37 @@ bytes, SHA-256 `8dc613d351ecb078dfe8460353b4694cae7f4171ddac1dbda0cb0a7e981eef28
   Release (a private repository's assets need a token).
 - Prepared data is never touched by an update: it lives in the folders people chose.
 
+## How much memory do I need?
+
+Rough estimates, mostly from reading the code; "measured" marks the ones measured on a real
+dataset. They are per dataset, so multiply by the number prepared at once: the app's
+**Datasets at the same time** allows at most one for every 12 GB of memory the computer has
+(1 to 8).
+
+| Data | Memory while preparing |
+|---|---|
+| Protein (multiplex IF) and H&E images | small: the image is read in strips. Exception: a TIFF stored as one compressed piece is read one channel whole (about 2.7 GB for a 37,000 × 36,000 16-bit channel) |
+| Visium (classic) | under 1 GB (measured 0.7 GB) |
+| Visium HD, 8 and 16 µm bins | about 4 to 8 GB |
+| Visium HD with the 2 µm bins | 10 to 16 GB or more |
+| Xenium molecules | about 1 GB per 100 million transcripts (1 billion: about 4.5 GB) |
+| Xenium cells | a 300-500 gene panel with 500,000 cells: about 1.5 GB; a 5K panel with 300,000 cells: about 8 to 12 GB |
+| CosMx / MERSCOPE | measured 0.9 GB / 1.6 GB |
+| Stereo-seq, whole chip | measured 8 GB |
+| GeoMx DSP | measured 0.4 GB |
+| spatial AnnData / SpatialData | about 25 to 30 bytes per non-zero count |
+| single-cell `.h5ad` | up to 2 GB file: 4 to 5 times the file size; larger files are read in pieces |
+
+A dataset that runs out of memory fails with "ran out of memory" and the others go on. Prepare
+it alone, or on a computer with more memory.
+
 ## What is still open
 
-- **macOS build**: run once on GitHub (main 83d2bb0; the run log is no longer available): the Apple
-  Silicon build succeeded, then "Check bundle minimum macOS and version" failed (Info.plist said
-  12.0; SciPy's wheels need 14.0) and the app test was skipped. The minimum is now 14.0; the
-  workflow needs a rerun (Actions tab -> "Build SODA app (macOS)" -> Run workflow; in FIVE-MGI
-  repositories the workflows only run by hand) to get past that check and test the app.
-- **Windows workflow**: not run yet either. GitHub's `windows-latest` (Windows Server 2025)
-  image lists Inno Setup 6.7.1, so the workflow uses it and only falls back to
-  `choco install innosetup` if a future image drops it; it then installs, starts and uninstalls
-  the setup.exe silently and attaches it to the Release next to the zip.
-- **Where releases live**: FIVE Atlas releases on a public repository. If SODA's repository
-  stays private, Release downloads need a GitHub login with access, and the update check sees
-  nothing. Options: make releases from a public repository, or attach the zip/dmg to a lab share.
-- **Notarisation and Windows signing**: need the certificates above.
-- **Self-update**, and an app icon (both `icon=None` today, as FIVE Atlas).
+- **Self-update**, as FIVE Atlas 1.3.3 (see [Updates](#updates)), and an app icon (both
+  `icon=None` today, as FIVE Atlas).
+- **Notarisation and Windows signing**: need the certificates above. Until then the first
+  launch needs "More info → Run anyway" (Windows) or the README in the .dmg (Mac).
+
+Done for v0.10.0: both build workflows (Windows installer and Apple Silicon .dmg) passed and
+their files are on the public [release page](https://github.com/FIVE-MGI/SODA/releases/latest);
+the repository is public, so downloads and the update check need no login.

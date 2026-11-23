@@ -32,7 +32,8 @@ Keep the docs' style: plain words, short sentences, and say what was tested and 
 
 - The de-identification key (`sample_id_key.csv` or any `*_key.csv`).
 - Real data, a prepare cache, or an export of real data.
-- Your own `config.js` and logos (they are in `.gitignore`).
+- Your own settings in `web/SpatialViewer/config.js` (the file is in git with `data: ""`; keep your
+  data folder, title and logos in your own copy of SODA) and your logos.
 - Passwords, storage keys or read-pass links.
 
 ## Licence

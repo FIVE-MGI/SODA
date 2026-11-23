@@ -10,10 +10,9 @@ SODA has two halves:
 
 So hosting means putting those two sets of files somewhere a browser can fetch them.
 
-**Looking for the easy way?** [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md) covers the two
-simplest: upload only the data and share a `?data=` link to the shared SODA page
-(https://soda.mgifive.org/), or copy
-SODA on GitHub to get your own site. This page is the full reference.
+**Looking for the easy way?** [SHARE_YOUR_DATA.md](SHARE_YOUR_DATA.md): the data in your own
+cloud storage, the page as your own copy of SODA on GitHub Pages. This page is the reference
+for everything else, and for what any storage or host must do.
 
 The options below are in order of effort.
 
@@ -22,7 +21,6 @@ The options below are in order of effort.
 | [A. Your own computer](#a-on-your-own-computer) | you | two small Python web servers | minutes |
 | [B. Any static web host](#b-any-static-web-host-public-data) | anyone with the link | nothing | an hour |
 | [C. Azure, private, with a password](#c-azure-private-data-with-a-password) | people you give the password | one small function | an afternoon |
-| [D. AWS (or another cloud), private](#d-aws-s3--cloudfront-or-another-backend) | people you give the password | your own token endpoint | a day, needs cloud experience |
 
 Visitors need an internet connection in every case, also for option A, unless you serve the
 two libraries yourself: the page loads its drawing library (deck.gl) and, for the circle tool,
@@ -183,7 +181,8 @@ the de-identification key file.
 
 ## C. Azure, private data with a password
 
-The data stays in a private Azure blob container. A small function checks one shared
+Needs your IT or cloud administrator. The data stays in a private Azure blob container. A
+small function checks one shared
 password and gives the browser a read-only token that expires after an hour by default
 (`TOKEN_HOURS`, at most 24). This is how
 the viewer runs in production. Step-by-step instructions, including CORS, upload with
@@ -195,51 +194,11 @@ made with **Copy link to this view** holds neither the token nor the password: w
 the view.
 
 Without a server, keep the data in a private container and share a link with a read pass
-(an Azure SAS; [SHARE_YOUR_DATA.md, Step 5](SHARE_YOUR_DATA.md#step-5-make-the-link)).
+(an Azure SAS; [ADVANCED.md, A link with a read pass](ADVANCED.md#a-link-with-a-read-pass)).
 
-## D. AWS S3 + CloudFront, or another backend
-
-The viewer does not care which cloud holds the data. It only needs an endpoint that
-behaves like this:
-
-```
-POST <tokenEndpoint>   body {"password": "..."}   (Content-Type: application/json)
-  200  {"base": "https://.../", "sas": "<query string>", "expires": <ms since 1970>}
-  401  wrong password          429  too many attempts (the page shows "wait a few minutes")
-
-GET  <tokenEndpoint>   (no body; the browser sends its cookies)
-  200  the same JSON, if a session cookie set by an earlier POST is still valid
-  401  otherwise (the page then asks for the password)
-```
-
-The page then fetches `<base><dataset id>/<file>?<sas>` for every file, and calls the
-endpoint again a few minutes before `expires`. So:
-
-- `base` must end in `/` and contain one folder per dataset id;
-- `sas` is appended after a `?` to every path under `base`, unchanged, so it must be one
-  query string that is valid for **every** object under `base`;
-- the page calls the endpoint with `credentials: "same-origin"`, so cookie renewal only
-  works when the endpoint is on the same site as the page. A cross-site endpoint still
-  works, but people retype the password each time the token expires.
-
-On AWS, plain S3 pre-signed URLs do not fit, because each one is signed for a single
-object. A CloudFront **signed URL with a custom policy** does: its policy may name a
-wildcard resource such as `https://dxxxx.cloudfront.net/*`, and its query string
-(`Policy=...&Signature=...&Key-Pair-Id=...`) then works for any file under it. An outline:
-
-1. A private S3 bucket holding the export folders; a CloudFront distribution in front of
-   it with Origin Access Control, a trusted key group, and a response-headers policy that
-   adds CORS for your page's origin.
-2. A small function (Lambda behind a function URL or API Gateway, ideally routed through
-   the same CloudFront distribution as the page under `/api/*`) that checks the password
-   and returns `base = "https://dxxxx.cloudfront.net/"`, `sas = "Policy=...&Signature=...&Key-Pair-Id=..."`,
-   and `expires`. Port the throttling and session-cookie logic from
-   `deploy/azure/api/token/index.js`.
-3. `tokenEndpoint` in `config.js` set to that function's address.
-
-We have not built or tested this AWS setup; treat it as a design, not a recipe. The same
-reasoning applies to other clouds: it works wherever the provider can issue one
-time-limited query string that is valid for every object under a prefix.
+Another cloud needs its own password function that answers the way the Azure one does (the
+contract is in [deploy/azure/README.md](../deploy/azure/README.md#what-the-function-does-for-reviewers)). None
+has been built or tested.
 
 ---
 

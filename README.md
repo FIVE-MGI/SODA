@@ -1,14 +1,11 @@
 # SODA: Spatial Omics Data Annex
 
-> **New to this?** [Download the SODA app](https://github.com/FIVE-MGI/SODA/releases/latest)
-> (Windows or Apple Silicon Mac): pick your data folder, click Prepare, and it writes the folder
-> to upload. Every click, from download to a link that shows your data:
-> [GETTING_STARTED.md](docs/GETTING_STARTED.md).
+## [Download the SODA app for Windows or Mac](https://github.com/FIVE-MGI/SODA/releases/latest)
 
-SODA turns what a spatial biology instrument writes into a link that opens the whole slide
-in a web browser. You prepare your data once on your own computer, with the SODA app or a Python
-notebook; SODA writes plain files that you upload to your own storage, and anyone with the
-link can look, with nothing to install.
+SODA turns what a spatial biology instrument writes into a website that opens the whole slide
+in a web browser. You prepare your data once on your own computer with the SODA app; you upload
+the result to your own cloud storage; your own free copy of SODA on GitHub shows it. Anyone
+with the link can look, with nothing to install.
 
 **Licence:** GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later), the same licence as SiDoLa-NS. See [Licence](#licence).
 
@@ -18,52 +15,48 @@ link can look, with nothing to install.
 ## Quick start
 
 **See it first.** Four public datasets (Xenium, Visium HD, PhenoCycler and MERSCOPE), prepared
-with SODA, open in Chrome with nothing to install:
-
-```
-https://soda.mgifive.org/index.html?data=https://fivestore.blob.core.windows.net/soda/examples/
-```
+with SODA, open in Chrome with nothing to install: **https://sidolans01.mgifive.org/SODA-examples/**
 
 Pick a dataset, search a gene, then try **Tissue | Side by side | UMAP**. Where each one comes
 from: [REPRODUCE.md, section 9](REPRODUCE.md#9-the-public-datasets).
 
-**Your own data, with the SODA app (no code).** Nothing leaves your computer until step 4.
+**Your own data, no code.** Nothing leaves your computer until step 3.
 
 1. **Download the app** from the [latest release](https://github.com/FIVE-MGI/SODA/releases/latest):
    `SODA-<version>-setup.exe` (Windows 10 or 11) or `SODA-<version>-macos-arm64.dmg` (Apple
    Silicon Mac, macOS 14 or newer). The app is not signed yet: the first time, Windows says
    "Windows protected your PC" (click **More info**, then **Run anyway**); on a Mac, follow the
    README inside the .dmg.
-2. **Put each dataset in its own folder** inside one data folder (any names: SODA works out
-   what each one is). What each instrument needs: [PREPARING_DATA.md](docs/PREPARING_DATA.md).
-3. **Open SODA.** Its page opens in your browser. Under **Prepare a folder of datasets**, pick
-   the data folder and an empty output folder, then click **Prepare**. At the end a green
-   banner says the export is clean (no sample IDs found). **Open viewer** shows the result.
-4. **Share it.** Upload the `export` folder (inside the output folder) as it is to your own
-   storage (Azure, AWS, Google Cloud or a web server; not Box, Google Drive or Dropbox), let
-   the SODA page read it (one setting, once), and share
-   `https://soda.mgifive.org/index.html?data=<your folder's address>`. Step by step:
-   [SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md).
+2. **Prepare.** Put each dataset in its own folder inside one data folder (what each instrument
+   needs: [PREPARING_DATA.md](docs/PREPARING_DATA.md)). Open SODA, pick the data folder and an
+   empty output folder, click **Prepare**. A green banner says the export is clean.
+3. **Upload** the `export` folder (inside the output folder) to your own cloud storage (Azure,
+   AWS or Google Cloud; not Box, Google Drive or Dropbox), readable by anyone, with a CORS rule
+   that lets your site read it.
+4. **Make your site.** On this page click **Use this template** to make your own copy of SODA,
+   turn on GitHub Pages, and paste your storage folder's address into `web/SpatialViewer/config.js`.
+   Your site is `https://<your GitHub name>.github.io/<your copy>/SODA/`.
 
-More about the app: [DESKTOP_APP.md](docs/DESKTOP_APP.md).
+Every click for steps 1-2: [GETTING_STARTED.md](docs/GETTING_STARTED.md); for steps 3-4:
+[SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md). More about the app: [DESKTOP_APP.md](docs/DESKTOP_APP.md).
 
 **More control: the notebook.** `notebooks/SODA_pipeline.ipynb` runs the same code as the app,
-with every setting. First time, every click and command:
-[GETTING_STARTED.md](docs/GETTING_STARTED.md). Installing from the code, the command line and a
-whole folder of datasets in one command: [REFERENCE.md](docs/REFERENCE.md).
+with every setting ([GETTING_STARTED.md, Part 1](docs/GETTING_STARTED.md#part-1-or-the-notebook-install-once-about-15-minutes)).
+Installing from the code, the command line and a whole folder of datasets in one command:
+[REFERENCE.md](docs/REFERENCE.md).
 
 ## Documentation
 
 | Guide | What it covers |
 |---|---|
-| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | the first time, step by step: the app or the notebook, then upload and share |
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | the first time, step by step: preparing your data with the app or the notebook |
 | [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md) | the SODA desktop app for Windows and Mac (no Python needed) |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | what the viewer does, installing from the code, the command line, requirements, browsers and phones, the repository |
 | [docs/PREPARING_DATA.md](docs/PREPARING_DATA.md) | every input type, its command and options; export, clustering, Draw a region; common problems |
-| [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | the two easy ways to share: a link to your data folder, or your own copy of SODA |
-| [docs/HOSTING.md](docs/HOSTING.md) | hosting from a laptop to a password-protected cloud site; what the host must do; pre-upload checklist |
+| [docs/SHARE_YOUR_DATA.md](docs/SHARE_YOUR_DATA.md) | your own SODA website: upload to your cloud storage, copy SODA on GitHub, connect your data |
+| [docs/HOSTING.md](docs/HOSTING.md) | your own computer or web server; what the storage or host must do; pre-upload checklist |
 | [deploy/azure/README.md](deploy/azure/README.md) | Azure, step by step: private container, password, Static Web App |
-| [docs/ADVANCED.md](docs/ADVANCED.md) | your own site, passwords, names and colours, every notebook setting, your own clusters, marker lists, the code, batch runs |
+| [docs/ADVANCED.md](docs/ADVANCED.md) | other places for the data and the page, passwords, names and colours, every notebook setting, your own clusters, marker lists, the code, batch runs |
 | [docs/DEIDENTIFICATION.md](docs/DEIDENTIFICATION.md) | `deid.py`, the private key file, the sample ID check before upload, and its limits |
 | [docs/DATA_FORMAT.md](docs/DATA_FORMAT.md) | the exported files, byte by byte, for people writing their own tools |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | measured times and memory, the machine they came from, and how to measure your own |
@@ -75,14 +68,16 @@ whole folder of datasets in one command: [REFERENCE.md](docs/REFERENCE.md).
 
 The common failures, and where the fix is written down.
 
+- **The page says "No data connected yet".** Your copy's `web/SpatialViewer/config.js` does
+  not name your storage folder yet: [SHARE_YOUR_DATA.md, Step 7](docs/SHARE_YOUR_DATA.md#step-7-connect-your-data).
 - **The page says it "could not reach" your folder, or genes do not load.** Your storage
-  does not yet let the SODA page read it. Set the CORS rule once, and allow the `Range`
-  header: [SHARE_YOUR_DATA.md, Step 4](docs/SHARE_YOUR_DATA.md#step-4-let-the-soda-page-read-it-one-setting-once).
+  does not yet let your site read it. Set the CORS rule once, and allow the `Range`
+  header: [SHARE_YOUR_DATA.md, Step 4](docs/SHARE_YOUR_DATA.md#step-4-let-your-site-read-your-storage-cors-once).
   The notebook's last cell tests this and prints the fix for your storage. A host that does
   not answer Range requests at all: [HOSTING.md, What the host must do](docs/HOSTING.md#what-the-host-must-do).
 - **A Box, Google Drive, Dropbox or OneDrive link does not work.** Their share links open a
-  preview page, not the files, and other sites may not read them. Use Azure, AWS, Google
-  Cloud or a web server: [SHARE_YOUR_DATA.md, Step 3](docs/SHARE_YOUR_DATA.md#step-3-upload-the-whole-export-folder).
+  preview page, not the files, and other sites may not read them. Use Azure, AWS or Google
+  Cloud: [SHARE_YOUR_DATA.md, Step 2](docs/SHARE_YOUR_DATA.md#step-2-make-your-cloud-storage-once).
 - **A `?data=` link opens nothing on a password-protected site.** A site with a password
   (`tokenEndpoint` in `config.js`) does not open `?data=` links from outside, unless
   `config.js` sets `allowDataLinks: true`: [ADVANCED.md, section 2](docs/ADVANCED.md#2-private-data-with-a-password).
