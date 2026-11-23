@@ -51,7 +51,7 @@ if not (SV / "prepare.py").exists():
 if str(SV) not in sys.path:
     sys.path.insert(0, str(SV))
 
-SODA_PAGE = "https://soda.mgifive.org/"   # the shared SODA page (GitHub Pages of FIVE-MGI/SODA, custom domain)
+SODA_PAGE = "https://sidolans01.mgifive.org/SODA-examples/"   # the shared SODA page that opens ?data= links (the FIVE lab's; your own copy of SODA: its address)
 PAGE_PLACEHOLDER = "<the SODA page's address>"   # shown in the link when SODA_PAGE is set to ""
 DEFAULT_KEY_FILE = Path(os.environ.get("SPATIALVIZ_KEY") or Path.home() / "private" / "soda" / "sample_id_key.csv")
 

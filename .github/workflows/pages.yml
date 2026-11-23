@@ -10,7 +10,12 @@ name: pages
 # A copy of SODA ("Use this template" on GitHub) gets its own site this way, with no server to run.
 # It needs GitHub Pages turned on once: Settings -> Pages -> Source: "GitHub Actions". Until then
 # this workflow ends without an error and says so in its summary; turn Pages on, then re-run it.
-# FIVE-MGI/SODA's own site is published the same way (soda.mgifive.org/SODA/ once its domain is set).
+#
+# FIVE-MGI/SODA itself is the exception: its site (soda.mgifive.org, the custom domain set in its
+# Settings -> Pages) is only a forward to the repository's GitHub page, https://github.com/FIVE-MGI/SODA,
+# with no viewer and no data. The example datasets are on the FIVE lab's own SODA site,
+# https://sidolans01.mgifive.org/SODA-examples/. (No CNAME file: a site published by an Actions
+# workflow takes its custom domain from the settings only.)
 #
 # Only the page is published. The .py tools stay in the repository, and data never goes here:
 # it lives in your own storage, and config.js (data: "...") or a ?data= link points at it.
@@ -33,7 +38,7 @@ jobs:
   # Is GitHub Pages turned on, with "GitHub Actions" as its source? Asks GitHub with this run's own
   # token (no secret to set up). Not turned on: a notice and a green run, never a red failure.
   check:
-    # On in FIVE-MGI/SODA (the shared page) and in every copy; off only in the private working
+    # On in FIVE-MGI/SODA (the forward, see the top) and in every copy; off only in the private working
     # repository, FIVE-MGI/spatial-viewer-v2.
     if: github.repository != 'FIVE-MGI/spatial-viewer-v2'
     runs-on: ubuntu-latest
@@ -89,11 +94,39 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}SODA/
+      url: ${{ steps.deploy.outputs.page_url }}${{ github.repository != 'FIVE-MGI/SODA' && 'SODA/' || '' }}
     steps:
       - uses: actions/checkout@v5
 
+      # FIVE-MGI/SODA: a forward to the repository page, nothing else (see the top)
+      - name: The forward to the repository page (FIVE-MGI/SODA only)
+        if: github.repository == 'FIVE-MGI/SODA'
+        run: |
+          mkdir _site
+          for f in index.html 404.html; do
+          cat > "_site/$f" <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>SODA</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta http-equiv="refresh" content="0; url=https://github.com/FIVE-MGI/SODA">
+            <link rel="canonical" href="https://github.com/FIVE-MGI/SODA">
+            <script>location.replace("https://github.com/FIVE-MGI/SODA");</script>
+          </head>
+          <body style="font:15px system-ui,sans-serif;padding:24px">
+            <p>SODA lives at <a href="https://github.com/FIVE-MGI/SODA">github.com/FIVE-MGI/SODA</a>.
+              Example datasets: <a href="https://sidolans01.mgifive.org/SODA-examples/">sidolans01.mgifive.org/SODA-examples</a>.</p>
+          </body>
+          </html>
+          HTML
+          done
+          touch _site/.nojekyll
+          ls -la _site
+
       - name: Collect the page files
+        if: github.repository != 'FIVE-MGI/SODA'
         run: |
           mkdir -p _site/SODA
           cp -r web/SpatialViewer/. _site/SODA/
@@ -143,7 +176,13 @@ jobs:
       - name: Job summary
         run: |
           {
-            echo "## SODA is published"
-            echo
-            echo "Open it at **${{ steps.deploy.outputs.page_url }}SODA/**"
+            if [ "$GITHUB_REPOSITORY" = "FIVE-MGI/SODA" ]; then
+              echo "## Published: the forward to https://github.com/FIVE-MGI/SODA"
+              echo
+              echo "${{ steps.deploy.outputs.page_url }} now opens the repository page (no viewer, no data)."
+            else
+              echo "## SODA is published"
+              echo
+              echo "Open it at **${{ steps.deploy.outputs.page_url }}SODA/**"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
