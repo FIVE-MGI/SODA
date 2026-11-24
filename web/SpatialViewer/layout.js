@@ -37,8 +37,8 @@
   const SECTIONS = {
     panelChannels: {
       help: "The picture under everything else. Image opacity: how much of it shows; at 0 the image is off (the stain settings stay). Stains: tick one to show it, click its colour to change it, and drag the two handles under its histogram to set the darkest and the brightest value shown. The γ button opens two more settings for that stain: Gamma (below 1 brightens faint signal, above 1 darkens it; 1 changes nothing, a double-click puts it back) and Colours (its own colour, or grey, viridis or magma from dark to bright, best for one stain on its own). reset puts all of these back. Type in the filter to shorten a long list. An H&E image has no stains to pick: Image opacity is its one control." },
-    panelGenes: { more: ["geneOpacity", "pointScale", "tissueBins", "cellNuclei"],
-      help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. Cell shapes (segmented cells that came with their boundaries): Outlines draws every cell's own outline once you zoom in, Dots keeps the dots. More options: opacity, point size, an outline of every bin in the tissue, and the nucleus outlines." },
+    panelGenes: { more: ["geneOpacity", "pointScale", "cellNuclei"],
+      help: "Pick the layer, then search a gene and press Enter (or click a hit) to draw it on the slide. Each gene on show gets a colour and a slider for the range of values drawn. View: Normal draws each bin as it is, Density adds up neighbours so busy areas stand out. Cell shapes (segmented cells that came with their boundaries): Outlines draws every cell's own outline once you zoom in, Dots keeps the dots. More options: opacity, point size and the nucleus outlines." },
     panelPaint: {
       help: "Colours every bin by one number, or by two genes, instead of by the genes picked above. A value per bin: pick the value (total counts, genes detected, % mitochondrial and whatever else the export measured per bin, such as a GeoMx ROI's Q3 normalisation factor). The colours run along viridis from the From value (dark) to the to value (yellow); Auto sets them to the 1st and 99th percentile, and Log spreads out values that pile up at the low end. Hover or tap a bin to read its value. Two genes: type a gene in A and in B and press Enter; a bin counts as having a gene when its value is above that gene's number (empty: above 0, that is found at all; for markers, above the median square). Both / one only colours each bin by which of the two it has (yellow both, red A only, green B only) and counts them; Blend adds red for A to green for B, brighter for more, so bins high in both turn yellow. Bins with neither are not drawn. Gene set score: type or paste a list of genes (spaces, commas or new lines between them) and press Score or Ctrl+Enter, or pick a cell type to use its marker genes (the dataset's own list first, then SODA's generic one). Each bin's score is the mean, over the listed genes the layer has, of its normalised value: log1p(10,000 × count / the bin's total count) for sequencing bins and cells, log1p(count / Q3 factor) for GeoMx ROIs, and for markers the marker scaled from its 1st to its 99th percentile square. It is a plain mean, not a module score with control genes. Genes the layer does not have are left out and named under the list. The colours and From / to work as for a value. The legend on the map and in Save image says what the colours mean. Colour bins by cluster (Clusters, Analyze tab) wins over this while it is on." },
     panelMolecules: { more: ["molSize", "molOpacity"],
@@ -303,7 +303,9 @@
   }
 
   // ---- open / closed -----------------------------------------------------------------------------
-  // which section is open when nothing is remembered: the one in use for this kind of dataset
+  // Every section starts closed (24 Nov 2026); what someone opens or closes is remembered in this browser.
+  const defaultOpen = () => false;
+  // the kind of the layer on show (the wording below needs it)
   function layerKind() {
     try {
       const S = window.__spatialViewer && window.__spatialViewer.state;
@@ -312,11 +314,6 @@
       const e = (S.m.expr || []).find((x) => x.key === S.exprKey);
       return e ? (e.modality === "protein" ? "protein" : e.kind || "bins") : "none";   // a lab's own cells of a protein image: protein
     } catch (e) { return null; }
-  }
-  function defaultOpen(id) {
-    if (id === "panelGenes") return up("panelGenes") && layerKind() !== "protein";
-    if (id === "panelChannels") return !(up("panelGenes") && layerKind() !== "protein");
-    return ["panelRna", "panelUmap", "panelLasso", "panelSave"].includes(id);
   }
   const isOpenWanted = (id) => (id in store.open ? !!store.open[id] : defaultOpen(id));
   function setOpen(sec, open, byUser) {
@@ -327,16 +324,14 @@
     if (open) { seen(); announceShown(); }
     schedule();
   }
-  // When a dataset has opened: the remembered state, else the default. A tab's only section is always open
-  // (a lone folded header helps nobody), and a tab whose sections are all folded by default, because the usual
-  // open one is not there for this dataset, opens its first; sections the user folded themselves stay folded.
+  // When a dataset has opened: the remembered state, else closed. A tab's only section is open
+  // (a lone folded header helps nobody) unless the user folded it themselves.
   function applyOpen() {
     for (const tab of TABS) {
       const secs = sections(tab);
       secs.forEach((s) => setOpen(s, isOpenWanted(s.id), false));
       const live = secs.filter((s) => !s.hidden);
-      if (!live.length || !live.every((s) => s.classList.contains("closed"))) continue;
-      if (live.length === 1 || !live.some((s) => store.open[s.id] === false)) setOpen(live.find((s) => defaultOpen(s.id)) || live[0], true, false);
+      if (live.length === 1 && live[0].classList.contains("closed") && store.open[live[0].id] !== false) setOpen(live[0], true, false);
     }
   }
   // histograms drawn while their box was folded or in another tab need drawing again (qc.js, viewer.js listen)

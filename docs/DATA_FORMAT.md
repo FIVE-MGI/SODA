@@ -340,7 +340,7 @@ by `viewlink.js`):
          "tab": "clusters", "img": {"on": true, "op": 0.8},
          "ch": [{"n": "DAPI", "on": true, "c": "#0000ff", "w": [10, 180]}],
          "genes": [{"n": "MARKER_FASC1", "c": "#ff3355", "r": [0, 12]}, {"n": "MARKER_EPI2", "c": "#33ddff", "r": [1, 7.5], "on": false}],
-         "blend": "heatmap", "palette": "viridis", "gop": 0.9, "ps": 1.5, "tb": true,
+         "blend": "heatmap", "palette": "viridis", "gop": 0.9, "ps": 1.5,
          "mol": {"genes": [{"n": "GENE_A", "c": "#ffffff"}], "size": 1.5, "op": 0.8},
          "ov": ["regions"], "colorBy": "cluster", "pick": 3, "qcOutline": true}
 ```

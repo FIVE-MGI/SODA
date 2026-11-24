@@ -19,6 +19,7 @@
 // playwright install chromium) and point NODE_PATH or --playwright at its node_modules.
 // Without it the test says so and exits 0. It draws with software rendering unless --gpu is given.
 "use strict";
+const unfold = (page, ids) => page.evaluate((ids) => { for (const id of ids) { const s = document.getElementById(id); if (s && s.classList.contains("closed")) document.getElementById(`secBtn-${id}`).click(); } }, ids);   // every section starts closed
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -291,7 +292,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
   // ---- the region click-filter: a region picked with a click cuts the gene density to its bins, and the outlines with it
   const gene = genes[0];
   await page.evaluate(() => { const b = document.getElementById("tabView"); if (b) b.click(); });
-  await page.fill("#geneSearch", gene); await page.keyboard.press("Enter");
+  await unfold(page, ["panelGenes"]); await page.fill("#geneSearch", gene); await page.keyboard.press("Enter");
   await page.waitForFunction(() => window.__spatialViewer.state.genes.length === 1 && window.__spatialViewer.state.genes[0].n > 0, null, { timeout: 60000 });
   await settled(page);
   // two regions, left and right of the image's middle, as region.bin and a region overlay would give them
@@ -537,7 +538,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
   check(asked.filter((u) => u.includes("/shapes/cell/")).length >= 2 && !asked.some((u) => u.includes("/shapes/nucleus/")), "only the cell set's index and tiles were fetched");
   await shot(page, "outlines_xenium.png");
   const gene = await page.evaluate(() => [...window.__spatialViewer.state.geneIndex].sort((a, b) => b.t - a.t)[0].n);
-  await page.fill("#geneSearch", gene); await page.keyboard.press("Enter");
+  await unfold(page, ["panelGenes"]); await page.fill("#geneSearch", gene); await page.keyboard.press("Enter");
   await page.waitForFunction(() => window.__spatialViewer.state.genes.length === 1 && window.__spatialViewer.state.genes[0].n > 0, null, { timeout: 60000 });
   await settled(page);
   let c = await page.evaluate(() => { const sv = window.__spatialViewer, col = sv.outlines._debug().col, N = sv.state.umap.pos.length / 2; let f = 0; for (let r = 0; r < N; r++) if (col.fill[4 * r + 3] > 0) f++; return { filled: f, withGene: sv.state.genes[0].n }; });
@@ -545,7 +546,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
   await shot(page, "outlines_xenium_gene.png");
   const hasClusters = await page.evaluate(() => { const S = window.__spatialViewer.state, e = S.m.expr.find((x) => x.key === S.exprKey); return !!(e.umap && (e.umap.clusterings || []).length); });
   if (hasClusters) {
-    await page.click("#tabAnalyze"); await page.selectOption("#colorBy", "cluster");
+    await page.click("#tabAnalyze"); await unfold(page, ["panelUmap"]); await page.selectOption("#colorBy", "cluster");
     await page.waitForFunction(() => { const U = window.__spatialViewer.state.umap; return U && U.cl && U.colorBy === "cluster"; }, null, { timeout: 60000 });
     await settled(page);
     c = await page.evaluate(() => { const sv = window.__spatialViewer, col = sv.outlines._debug().col, U = sv.state.umap, N = U.pos.length / 2; let f = 0, k = 0; for (let r = 0; r < N; r++) { if (col.fill[4 * r + 3] > 0) f++; if (U.cl[r] !== 0xffff) k++; } return { filled: f, clustered: k }; });
@@ -584,7 +585,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
     await shot(page, "outlines_xenium_nuclei.png");
     await page.evaluate(() => window.__spatialViewer.outlines.setNuclei(false));
   } else console.log("  (xenium_pub has no nucleus boundaries: the Nucleus outlines check is not run)");
-  await page.click("#tabView"); await page.selectOption("#cellShapes", "dots"); await page.waitForTimeout(400);
+  await page.click("#tabView"); await unfold(page, ["panelGenes"]); await page.selectOption("#cellShapes", "dots"); await page.waitForTimeout(400);
   s = await st(page);
   check(s.alpha === 0 && s.dot === 1 && s.layers === 0, "Cell shapes: Dots brings the dots back", { alpha: s.alpha, dot: s.dot });
   await page.selectOption("#cellShapes", "outlines"); await settled(page);
@@ -602,7 +603,7 @@ async function selectionChecks(B, browser, DATA, URL0) {
     console.log(ds);
     page = await open(ds);
     if ((await page.evaluate(() => window.__spatialViewer.state.exprKey)) !== "cells") {
-      await page.selectOption("#exprSelect", "cells");
+      await unfold(page, ["panelGenes"]); await page.selectOption("#exprSelect", "cells");
       await page.waitForFunction(() => window.__spatialViewer.state.exprKey === "cells" && window.__spatialViewer.outlines.available(), null, { timeout: 60000 });
       await page.waitForTimeout(800);
     }

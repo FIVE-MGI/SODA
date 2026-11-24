@@ -118,7 +118,7 @@
     imgOpacity: 1, imgOn: true, geneOpacity: 1,
     exprKey: null, geneIndex: [], genes: [],   // genes: {name,hex,color,max,p99,n,positions,values,colors}
     geneBlend: "heatmap", pointScale: 1, genePalette: "genes", geneBin: 1, heat: null,
-    tissue: { on: false, positions: null, key: null },
+    tissue: { positions: null, key: null },
     // marker squares: per-square flags (qc_flags.bin) for Draw a region's "Artefact?" cluster flag
     qc: { key: null, flags: null },
     overlays: [],          // {key,label,on,data}
@@ -974,20 +974,6 @@
     });
   }
 
-  function tissueLayer() {
-    const t = S.tissue;
-    if (!t.on || !t.positions) return null;
-    const e = currentExpr();
-    const r = Math.max(0.5, (e && e.spotDiameterPx ? e.spotDiameterPx / 2 : 4) * S.pointScale * 0.9);
-    return new ScatterplotLayer({
-      id: `tissue-${S.dsId}-${t.key}`,
-      data: { length: t.positions.length / 2, attributes: { getPosition: { value: t.positions, size: 2 } } },
-      radiusUnits: "common", getRadius: r, radiusMinPixels: 0.5,
-      getFillColor: [120, 130, 150, 90], stroked: false, opacity: dotK(),
-      parameters: NORMAL,
-    });
-  }
-
   // ---- molecules: every decoded transcript of a picked gene (Xenium ...) --------------------
   // molecules/index.json lists the genes and their counts; molecules/gene/<NAME>.bin holds
   // uint16 qx, qy per molecule, quantised over the image (x = qx * scale[0], y = qy * scale[1]).
@@ -1230,7 +1216,6 @@
     const nOn = S.imgOn ? S.channels.filter((ch) => ch.visible).length : 0;
     manyChannelsNote(nOn);
     if (S.imgOn) for (const ch of S.channels) if (ch.visible) layers.push(channelLayer(ch, S.imgOpacity, nOn));
-    const tl = tissueLayer(); if (tl) layers.push(tl);
     // Colour by cluster replaces the gene density: one colour per bin, not two on top of each other.
     // Colour by a value (binpaint.js) replaces the gene density the same way
     const pl = paint && !umapByCat() && paint.active() ? paint.layer(dotRadius(), S.geneOpacity * dotK()) : null;
@@ -1762,7 +1747,6 @@
     ["#genePalette option[value=genes]", "textContent", "Marker colors (overlap darkens)"],
     ["#lblGeneOpacity", "textContent", "Square opacity"],
     ["#lblPointScale", "textContent", "Square size ×"],
-    ["#lblTissueBins", "textContent", "Show all tissue squares"],
     ["#lblColorBy", "textContent", "Colour squares by"],
     ["#colorBy option[value=gene]", "textContent", "Markers (picked in View)"],
     ["#subSel", "textContent", null],
@@ -1941,19 +1925,11 @@
     if (outlines) outlines.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
     if (paint) paint.onLayer(S.dsId, S.exprKey, currentExpr(), S.src);
     if (own) own.onLayer();
-    if (S.tissue.on) { await loadTissue(); if (stale()) return false; }
     await lassoOnLayer(); if (stale()) return false;
     await umapOnLayer(); if (stale()) return false;
     render();
     syncUmapUI(); render();
     return true;
-  }
-  async function loadTissue() {
-    if (!S.exprKey) return;
-    status(`Loading ${wd().bin} positions…`);
-    const seq = layerSeq;
-    try { const pos = await S.src.positions(S.exprKey); if (seq === layerSeq) S.tissue.positions = pos; }
-    finally { if (seq === layerSeq) status(null); }
   }
 
   // ---- slide QC (marker squares): protgrid.py qc.json + qc_flags.bin -------------------
@@ -5755,14 +5731,6 @@
     };
     $("molSize").oninput = (e) => { S.mol.size = +e.target.value; requestRender(); };
     $("molOpacity").oninput = (e) => { S.mol.opacity = +e.target.value; requestRender(); };
-    $("tissueBins").onchange = async (e) => {
-      S.tissue.on = e.target.checked;
-      if (S.tissue.on && !S.tissue.positions) {
-        try { await loadTissue(); }
-        catch (err) { S.tissue.on = false; e.target.checked = false; partProblem(`The ${wd().bin} positions (Show all in-tissue ${wd().bins})`, err); }
-      }
-      render();
-    };
     // The description is held with the data, not in this page. Anything written
     // into index.html is readable by anyone who opens the page - including the
     // parts of the project that are not public yet - so the body is fetched from

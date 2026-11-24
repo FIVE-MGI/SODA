@@ -162,7 +162,7 @@
     put(o, "genes", list(v.genes, 24, gene));
     put(o, "blend", oneOf(v.blend, ["normal", "heatmap"]));
     put(o, "palette", oneOf(v.palette, ["genes", "viridis"]));
-    put(o, "gop", num(v.gop, 0, 1)); put(o, "ps", num(v.ps, 0.25, 4)); put(o, "tb", bool(v.tb));
+    put(o, "gop", num(v.gop, 0, 1)); put(o, "ps", num(v.ps, 0.25, 4));
     if (isObj(v.mol)) {
       const g = {};
       put(g, "genes", list(v.mol.genes, 24, gene)); put(g, "size", num(v.mol.size, 0.5, 4)); put(g, "op", num(v.mol.op, 0.1, 1));
@@ -394,7 +394,6 @@
     if (S.exprKey) {
       v.genes = S.genes.map((g) => ({ n: g.name, c: g.hex, r: [r3(g.min), r3(g.max)], ...(g.visible === false ? { on: false } : {}) }));
       v.blend = S.geneBlend; v.palette = S.genePalette; v.gop = r3(S.geneOpacity); v.ps = r3(S.pointScale);
-      if (S.tissue && S.tissue.on) v.tb = true;
       if (U && U.key) { v.colorBy = U.colorBy; if (U.pick !== null && U.pick !== undefined && U.cl) v.pick = U.pick; }
     }
     if (S.mol && S.mol.index) v.mol = { genes: S.mol.genes.map((g) => ({ n: g.name, c: g.hex, ...(g.visible ? {} : { on: false }) })), size: r3(S.mol.size), op: r3(S.mol.opacity) };
@@ -463,7 +462,6 @@
       if (view.palette) await fire("genePalette", view.palette);
       if (view.gop !== undefined) { await fire("geneOpacity", view.gop); S.geneOpacity = view.gop; }
       if (view.ps !== undefined) { await fire("pointScale", view.ps); S.pointScale = view.ps; }
-      if (view.tb !== undefined) await fire("tissueBins", !!view.tb, "checked");
       if (stale()) return notes;
       if (view.genes) {
         S.genes = []; S.heat = null;

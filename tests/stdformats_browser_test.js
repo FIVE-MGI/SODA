@@ -19,6 +19,7 @@
 // chromium) and point NODE_PATH or --playwright at its node_modules. Without it, or without any of the exports, the
 // test says SKIPPED and exits 0. Chromium draws with software rendering unless --gpu is given.
 "use strict";
+const unfold = (page, ids) => page.evaluate((ids) => { for (const id of ids) { const s = document.getElementById(id); if (s && s.classList.contains("closed")) document.getElementById(`secBtn-${id}`).click(); } }, ids);   // every section starts closed
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -122,7 +123,7 @@ async function run(B, browser, DATA, URL0) {
     if (D.layer) {
       check(st.exprKey === D.layer && st.genes === D.nGenes, `${D.id}: layer ${D.layer} with its ${D.nGenes} genes (genes.json)`, { exprKey: st.exprKey, genes: st.genes });
       const gene = await page.evaluate(() => [...window.__spatialViewer.state.geneIndex].sort((a, b) => b.t - a.t)[0].n);
-      await page.fill("#geneSearch", gene); await page.keyboard.press("Enter");
+      await unfold(page, ["panelGenes"]); await page.fill("#geneSearch", gene); await page.keyboard.press("Enter");
       let shown = false;
       try {
         await page.waitForFunction(() => window.__spatialViewer.state.genes.length === 1 && window.__spatialViewer.state.genes[0].n > 0, null, { timeout: 60000 });

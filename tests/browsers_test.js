@@ -450,6 +450,9 @@ async function walk(browser, eng, urls) {
 
     // the page's dark form controls stay dark and readable (Layer drop-down, gene search box)
     await step("form controls readable (dark <select>)", async () => {
+      // every section starts closed: open the genes' section to see its drop-downs
+      await ev(() => { const s = document.getElementById("panelGenes"); if (s && s.classList.contains("closed")) document.getElementById("secBtn-panelGenes").click(); });
+      await P.waitForTimeout(200);
       for (const sel of ["#exprSelect", "#geneBlend"]) {
         const c = await controlContrast(P, sel);
         t.ok(c && c.bg < 0.2 && c.ratio >= 4, `${sel} drawn dark and readable: ${JSON.stringify(c)} (background luminance < 0.2, contrast >= 4)`, "form controls readable (dark <select>)");
@@ -939,7 +942,11 @@ async function phone(browser, eng, urls) {
     if (tab) { if (eng.noTouch) await tab.click(); else await tab.tap(); await P.waitForTimeout(500); }
     const sheet = await ev2(P, () => { const p = [...document.querySelectorAll("[role=tabpanel]")].find((x) => !x.hidden && x.getBoundingClientRect().height > 40); return p ? Math.round(p.getBoundingClientRect().height) : 0; });
     t.ok(sheet > 0, `tapping a tab shows its panel (${sheet} px high)`);
-    const sid = await ev2(P, () => { const s = [...document.querySelectorAll("select")].find((x) => x.id && x.getClientRects().length && x.getBoundingClientRect().bottom < innerHeight - 80 && x.getBoundingClientRect().top > 0); return s ? s.id : null; });
+    // every section starts closed: open the first one on show that holds a drop-down
+    await ev2(P, () => { const s = [...document.querySelectorAll("[role=tabpanel]:not([hidden]) section.panel.closed:not([hidden])")].find((x) => x.querySelector("select"));
+      if (s) document.getElementById(`secBtn-${s.id}`).click(); });
+    await P.waitForTimeout(300);
+    const sid =await ev2(P, () => { const s = [...document.querySelectorAll("select")].find((x) => x.id && x.getClientRects().length && x.getBoundingClientRect().bottom < innerHeight - 80 && x.getBoundingClientRect().top > 0); return s ? s.id : null; });
     const cc = sid ? await controlContrast(P, `#${sid}`) : null;
     t.ok(cc && cc.bg < 0.2 && cc.ratio >= 4, `a drop-down (#${sid}) drawn dark and readable: ${JSON.stringify(cc)}`, "form controls readable (dark <select>)");
     await t.shot("phone_tab");

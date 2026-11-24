@@ -2,6 +2,19 @@
 
 What is in each version of SODA, in plain words. The details are in the [docs](README.md#documentation).
 
+## Unreleased
+
+### Changed
+
+- Every sidebar section starts closed. What you open or close is remembered in your browser, as
+  before. A tab with only one section still opens it.
+
+### Removed
+
+- **Show all in-tissue bins / cells / squares** (under the genes' More options). It drew a faint
+  grey dot for every bin under the coloured ones, which the image already shows. Links and Save
+  JSON files that had it ticked still open; the setting is ignored.
+
 ## 0.10.1 (23 November 2026): your own SODA site, fewer ways to crash
 
 Your own SODA website is now the main way to share, and the page and the preparing steps say
